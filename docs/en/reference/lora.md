@@ -75,7 +75,7 @@ LoRA Delta Sync is designed for the following combination:
 - **Training engine:** FSDP (FSDP2)
 - **Inference engine:** SGLang
 - **Fine-tuning method:** LoRA (`use_lora: true`)
-- **Weight update mode:** XCCL / NCCL (`weight_update_mode: xccl`)
+- **Weight update mode:** Disk
 
 > **Note:** Delta Sync is not available with vLLM or the Megatron training engine.
 
@@ -84,16 +84,16 @@ LoRA Delta Sync is designed for the following combination:
 The synchronization proceeds in two phases:
 
 1. **First synchronization (Phase 1)**
-   - **Phase 1a** -- The FSDP engine broadcasts the **base model weights** (excluding
-     LoRA parameters) to the SGLang inference engine via the standard
-     `/update_weights_from_distributed` endpoint.
-   - **Phase 1b** -- Immediately after, the LoRA adapter weights are transmitted via the
-     `/load_lora_adapter_from_distributed` endpoint. The SGLang server loads the
-     adapter on top of the base model.
+   - **Phase 1a** -- The FSDP engine saves the **base model weights** (excluding
+     LoRA parameters) to disk in HuggingFace safetensors format. SGLang loads
+     them via the `/update_weights_from_disk` endpoint.
+   - **Phase 1b** -- Immediately after, the LoRA adapter weights are saved to
+     disk, and SGLang loads them via the `/load_lora_adapter` endpoint. The
+     SGLang server loads the adapter on top of the base model.
 
 2. **Subsequent synchronizations (Phase 2)**
-   - Only the **updated LoRA adapter weights** are transmitted via
-     `/load_lora_adapter_from_distributed`. The base model weights already reside in
+   - Only the **updated LoRA adapter weights** are saved to disk and loaded via
+     `/load_lora_adapter`. The base model weights already reside in
      the inference engine's GPU memory and are not re-sent.
 
 This two-phase design means that after the initial (full) sync, every subsequent
@@ -110,8 +110,8 @@ actor:
   backend: "fsdp:d4"
   path: Qwen/Qwen2.5-1.5B-Instruct
 
-  # Weight update must use XCCL (NCCL-based)
-  weight_update_mode: xccl
+  # Weight update mode: disk when lora_delta_sync is enabled
+  weight_update_mode: disk
 
   # Standard LoRA settings
   use_lora: true
@@ -144,7 +144,7 @@ A complete working example is available at
 | -------------------- | --------------------------------------------------------------------------------------- |
 | `use_lora`           | `true`                                                                                  |
 | `lora_delta_sync`    | `true` -- enables the incremental sync path.                                            |
-| `weight_update_mode` | `xccl` -- NCCL-based distributed transfer is required; `disk` mode is not supported.    |
+| `weight_update_mode` | `disk`  |
 | `lora_rank`          | Must match between training and inference configs (e.g. `16`).                          |
 | `lora_alpha`         | LoRA scaling factor, same as standard LoRA.                                             |
 | `sglang.enable_lora` | `true` -- the SGLang server must be launched with LoRA support enabled.                 |
@@ -167,8 +167,8 @@ A complete working example is available at
   in GPU memory across iterations (only the KV cache is released between rounds),
   avoiding re-transmission of the base weights.
 - **SGLang version compatibility:** The SGLang server must support the
-  `/load_lora_adapter_from_distributed` API endpoint. Ensure you are using a
-  compatible SGLang version.
+  `/load_lora_adapter` and `/update_weights_from_disk` API endpoints. Ensure
+  you are using a compatible SGLang version.
 - **Adapter versioning:** Each sync produces a versioned adapter name (e.g.
   `lora-gsm8k-v0`, `lora-gsm8k-v1`). The previous adapter is automatically unloaded
   before the new one is loaded.

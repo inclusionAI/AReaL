@@ -65,7 +65,7 @@ LoRA Delta Sync 适用于以下组合：
 - **训练引擎：** FSDP (FSDP2)
 - **推理引擎：** SGLang
 - **微调方式：** LoRA（`use_lora: true`）
-- **权重更新模式：** XCCL / NCCL（`weight_update_mode: xccl`）
+- **权重更新模式：** 磁盘
 
 > **注意：** Delta Sync 不支持 vLLM 推理引擎或 Megatron 训练引擎。
 
@@ -74,14 +74,16 @@ LoRA Delta Sync 适用于以下组合：
 同步过程分为两个阶段：
 
 1. **首次同步（阶段一）**
-   - **阶段 1a** -- FSDP 引擎通过标准的 `/update_weights_from_distributed`
-     端点，将**基座模型权重**（不含 LoRA 参数）广播到 SGLang 推理引擎。
-   - **阶段 1b** -- 紧接着，通过 `/load_lora_adapter_from_distributed`
-     端点传输 LoRA adapter 权重。SGLang 服务端将 adapter 加载到基座模型之上。
+   - **阶段 1a** -- FSDP 引擎将**基座模型权重**（不含 LoRA 参数）保存为
+     HuggingFace safetensors 格式到磁盘，SGLang 通过
+     `/update_weights_from_disk` 端点加载。
+   - **阶段 1b** -- 紧接着，LoRA adapter 权重被保存到磁盘，
+     SGLang 通过 `/load_lora_adapter` 端点加载 adapter。SGLang 服务端将
+     adapter 加载到基座模型之上。
 
 2. **后续同步（阶段二）**
    - 仅传输**更新后的 LoRA adapter 权重**，通过
-     `/load_lora_adapter_from_distributed` 端点完成。基座模型权重已驻留在推理引擎的
+     `/load_lora_adapter` 端点完成。基座模型权重已驻留在推理引擎的
      GPU 显存中，无需重复传输。
 
 这种两阶段设计意味着，在初始的全量同步之后，每次后续权重更新仅传输极小的 adapter 增量，
@@ -97,8 +99,8 @@ actor:
   backend: "fsdp:d4"
   path: Qwen/Qwen2.5-1.5B-Instruct
 
-  # 权重更新必须使用 XCCL（基于 NCCL）
-  weight_update_mode: xccl
+  # 权重更新模式：启用 lora_delta_sync 后，disk
+  weight_update_mode: disk
 
   # 标准 LoRA 设置
   use_lora: true
@@ -130,7 +132,7 @@ sglang:
 | ---------------------- | ------------------------------------------------------------------------ |
 | `use_lora`             | `true`                                                                   |
 | `lora_delta_sync`      | `true` -- 启用增量同步路径。                                             |
-| `weight_update_mode`   | `xccl` -- 需要基于 NCCL 的分布式传输；不支持 `disk` 模式。              |
+| `weight_update_mode`   | `disk`  |
 | `lora_rank`            | 训练与推理配置中需保持一致（例如 `16`）。                                |
 | `lora_alpha`           | LoRA 缩放系数，与标准 LoRA 相同。                                       |
 | `sglang.enable_lora`   | `true` -- SGLang 服务端必须启用 LoRA 支持。                             |
@@ -148,8 +150,8 @@ sglang:
 - **SGLang memory saver：** 当 SGLang 配置中设置了 `enable_lora` 时，启动器会自动启用
   `enable_memory_saver=True`。此选项使基座模型权重在迭代之间保留在 GPU 显存中（仅释放
   KV cache），从而避免重复传输基座权重。
-- **SGLang 版本兼容性：** SGLang 服务端必须支持 `/load_lora_adapter_from_distributed`
-  API 端点。请确保使用兼容的 SGLang 版本。
+- **SGLang 版本兼容性：** SGLang 服务端必须支持 `/load_lora_adapter` 和
+  `/update_weights_from_disk` API 端点。请确保使用兼容的 SGLang 版本。
 - **Adapter 版本管理：** 每次同步会生成带版本号的 adapter 名称（例如 `lora-gsm8k-v0`、
   `lora-gsm8k-v1`）。在加载新 adapter 之前，会自动卸载旧版本。
 - **首次同步开销：** 首次同步仍需传输完整的基座模型，因此其耗时与标准全量权重同步相当。
