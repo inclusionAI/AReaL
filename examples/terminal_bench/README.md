@@ -232,10 +232,6 @@ AReaL/dataset/tbench-tasks_convert/tbench-selected-tasks-easy.parquet
 and they also expect the referenced task files and directories from the same converted
 dataset to be present under `AReaL/dataset/`.
 
-A copy of `train_filtered_easy.parquet` is included in this example directory as a
-convenience reference, but it is not sufficient by itself without the rest of the
-converted dataset layout.
-
 One workable setup is:
 
 ```bash
@@ -243,11 +239,15 @@ cd AReaL/dataset
 git clone https://github.com/ActuallyEdward/terminal-bench-seta.git
 ```
 
-Then place or link the easy-subset parquet at the path expected by the configs:
+The `train_filtered_easy.parquet` file is also provided in
+[`terminal-bench-seta`](https://github.com/ActuallyEdward/terminal-bench-seta).
+
+Then place or link the easy-subset parquet from that checkout at the path expected by
+the configs:
 
 ```bash
 mkdir -p AReaL/dataset/tbench-tasks_convert
-cp AReaL/examples/terminal_bench/train_filtered_easy.parquet \
+cp AReaL/dataset/terminal-bench-seta/train_filtered_easy.parquet \
   AReaL/dataset/tbench-tasks_convert/tbench-selected-tasks-easy.parquet
 ```
 
@@ -286,10 +286,6 @@ python3 examples/terminal_bench/train.py \
 python3 examples/terminal_bench/train.py \
     --config examples/terminal_bench/config_tb_vllm_npu.yaml
 ```
-
-The included `command.sh` is only a minimal launcher example. In practice, you will
-usually export your proxy variables, set `TIKTOKEN_CACHE_DIR`, and pick a specific
-config before launching training.
 
 ## Results
 
