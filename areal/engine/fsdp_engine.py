@@ -8,13 +8,13 @@ import gc
 import math
 import os
 import json
-import tempfile
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future
 from contextlib import contextmanager, nullcontext
 from datetime import datetime
+from shutil import rmtree
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -237,6 +237,22 @@ class FSDPEngine(TrainEngine):
         self._last_loaded_lora_name: str | None = None
 
         # --- Delta Sync cumulative metrics for wandb ---
+
+    @property
+    def _delta_sync_dir(self) -> str:
+        """Return a shared directory for delta sync artifacts.
+
+        Uses ``config.delta_sync_dir`` if set, otherwise falls back to
+        :func:`areal.utils.fs.get_user_tmp`.  The returned path is
+        expected to be on a shared filesystem accessible by both training
+        and inference nodes in multi-node setups.
+        """
+        custom_dir = getattr(self.config, "delta_sync_dir", None)
+        if custom_dir:
+            os.makedirs(custom_dir, exist_ok=True)
+            return custom_dir
+        from areal.utils.fs import get_user_tmp
+        return get_user_tmp()
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         patch_dist_group_timeout(DIST_GROUP_DEFAULT_TIMEOUT)
@@ -1496,7 +1512,7 @@ class FSDPEngine(TrainEngine):
         # Determine a temp directory for saving the adapter.
         # Use a persistent temp dir under /tmp so SGLang server can access it.
         adapter_dir = os.path.join(
-            tempfile.gettempdir(), "areal_lora_adapters", versioned_name
+            self._delta_sync_dir, "areal_lora_adapters", versioned_name
         )
         os.makedirs(adapter_dir, exist_ok=True)
 
@@ -1617,12 +1633,11 @@ class FSDPEngine(TrainEngine):
         # Clean up the previous version's adapter directory from disk
         if old_loaded_name is not None and old_loaded_name != versioned_name:
             old_adapter_dir = os.path.join(
-                tempfile.gettempdir(), "areal_lora_adapters", old_loaded_name
+                self._delta_sync_dir, "areal_lora_adapters", old_loaded_name
             )
             if os.path.isdir(old_adapter_dir):
                 try:
-                    import shutil
-                    shutil.rmtree(old_adapter_dir)
+                    rmtree(old_adapter_dir)
                     self.logger.debug(
                         f"[LoRA Delta Sync] Cleaned up old adapter directory: "
                         f"{old_adapter_dir}"
@@ -1768,9 +1783,8 @@ class FSDPEngine(TrainEngine):
         os.makedirs(save_path, exist_ok=True)
         state_dict = {name: t.contiguous().cpu() for name, t in base_params}
 
-        from safetensors.torch import save_file as safetensors_save_file_local
         safetensors_path = os.path.join(save_path, "model.safetensors")
-        safetensors_save_file_local(state_dict, safetensors_path)
+        safetensors_save_file(state_dict, safetensors_path)
         file_size_mb = os.path.getsize(safetensors_path) / 1024 / 1024
 
         self.model_config.save_pretrained(save_path)
@@ -1824,7 +1838,7 @@ class FSDPEngine(TrainEngine):
                 )
 
             base_save_path = os.path.join(
-                tempfile.gettempdir(),
+                self._delta_sync_dir,
                 "areal_lora_delta_sync_base",
                 f"v{meta.version or 0}",
             )

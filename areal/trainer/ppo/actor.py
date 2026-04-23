@@ -434,9 +434,7 @@ def grpo_loss_fn(
     prox_logp_gt = input_data.get("prox_logp")  # Could be None if skipped
 
     entropy_for_stats = entropy.detach()
-    if entropy_coeff > 0.0:
-        pass
-    else:
+    if entropy_coeff <= 0.0:
         entropy = entropy.detach()
 
     # Resolve proximal log-probabilities based on method
