@@ -519,7 +519,11 @@ class MegatronEngine(TrainEngine):
             model.train(mode=mode)
         return self
 
-    def connect_engine(self, engine: InferenceEngine, meta: WeightUpdateMeta):
+    def connect_engine(
+        self,
+        engine: InferenceEngine,
+        meta: WeightUpdateMeta,
+    ):
         if self.rollout_engine is not None and self.rollout_engine != engine:
             self.logger.warning(
                 f"Connected rollout engine changed from {self.rollout_engine} to {engine}."
@@ -578,6 +582,11 @@ class MegatronEngine(TrainEngine):
                 self._update_weights_from_distributed(meta)
             elif meta.type == "disk":
                 self._update_weights_from_disk(meta)
+            elif meta.type == "tensor":
+                raise NotImplementedError(
+                    "Tensor-based colocated weight update is not yet supported "
+                    "for MegatronEngine. Use weight_update_mode='disk' or 'xccl'."
+                )
             else:
                 raise ValueError(f"Unknown weight update type {meta.type}")
 

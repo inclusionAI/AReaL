@@ -183,13 +183,19 @@ class TrainEngine(abc.ABC):
         raise NotImplementedError()
 
     @abc.abstractmethod
-    def connect_engine(self, engine: InferenceEngine, meta: WeightUpdateMeta):
+    def connect_engine(
+        self,
+        engine: InferenceEngine,
+        meta: WeightUpdateMeta,
+    ):
         """Connect to an inference engine for online training.
 
         Parameters
         ----------
         engine : InferenceEngine
             The inference engine to connect to
+        meta : WeightUpdateMeta
+            Metadata containing information about the weight update
         """
         raise NotImplementedError()
 
@@ -688,6 +694,25 @@ class InferenceEngine(abc.ABC):
         -------
         Future[None]
             A future object representing the asynchronous weight update operation
+        """
+        raise NotImplementedError()
+
+    def update_weights_from_tensor(
+        self,
+        serialized_named_tensors: list[str],
+        meta: WeightUpdateMeta,
+        addresses: list[str] | None = None,
+    ) -> None:
+        """Update weights via CUDA IPC tensor transfer (synchronous).
+
+        Parameters
+        ----------
+        serialized_named_tensors : list[str]
+            Serialized tensor data with CUDA IPC handles
+        meta : WeightUpdateMeta
+            Metadata containing information about the weight update
+        addresses : list[str] | None
+            Target server addresses. If None, uses default addresses.
         """
         raise NotImplementedError()
 

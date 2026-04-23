@@ -205,6 +205,14 @@ class FSDPEngine(TrainEngine):
         self.rollout_engine: InferenceEngine | None = None
         self.rollout_coordinator: DistRolloutCoordinator | None = None
 
+        # Tensor colocated weight sync state
+        self._staged_cpu_weights: list[tuple[str, torch.Tensor]] | None = None
+        self._staged_weight_meta: WeightUpdateMeta | None = None
+        # IPC engine grouping (per-engine gather groups for multi-GPU IPC)
+        self._ipc_gather_group: dist.ProcessGroup | None = None
+        self._ipc_gather_src: int | None = None
+        self._ipc_target_address: str | None = None
+
         self.parallel_helper: ParallelHelper
         self.world_mesh: DeviceMesh
 
@@ -436,7 +444,11 @@ class FSDPEngine(TrainEngine):
         self.model.train(mode=mode)
         return self
 
-    def connect_engine(self, engine: InferenceEngine, meta: WeightUpdateMeta):
+    def connect_engine(
+        self,
+        engine: InferenceEngine,
+        meta: WeightUpdateMeta,
+    ):
         if self.rollout_engine is not None and self.rollout_engine != engine:
             self.logger.warning(
                 f"Connected rollout engine changed from {self.rollout_engine} to {engine}."
@@ -449,6 +461,18 @@ class FSDPEngine(TrainEngine):
         if meta.type == "xccl" and not self.weight_update_group_initialized:
             self._init_weight_update_from_distributed(meta)
             self.weight_update_group_initialized = True
+        elif meta.type == "tensor" and meta.tensor_target_backend is not None:
+            self._tensor_target_backend = meta.tensor_target_backend
+            self._tensor_backend = self._make_tensor_backend(
+                self._tensor_target_backend
+            )
+            self._setup_ipc_gather_groups(meta)
+            self.logger.info(
+                f"Tensor colocated weight sync configured with "
+                f"backend={self._tensor_target_backend}, "
+                f"ipc_gather_src={self._ipc_gather_src}, "
+                f"ipc_target={self._ipc_target_address}"
+            )
 
         current_platform.synchronize()
         dist.barrier(group=self.cpu_group)
@@ -489,14 +513,17 @@ class FSDPEngine(TrainEngine):
 
     def update_weights(self, meta: WeightUpdateMeta):
         self._check_rollout_engine_connected()
-        with self._offload_aware_context():
-            if meta.type == "xccl":
-                assert self.weight_update_group_initialized
-                self._update_weights_from_distributed(meta)
-            elif meta.type == "disk":
-                self._update_weights_from_disk(meta)
-            else:
-                raise ValueError(f"Unknown weight update type {meta.type}")
+        if meta.type == "tensor":
+            self._update_weights_from_tensor_colocated(meta)
+        else:
+            with self._offload_aware_context():
+                if meta.type == "xccl":
+                    assert self.weight_update_group_initialized
+                    self._update_weights_from_distributed(meta)
+                elif meta.type == "disk":
+                    self._update_weights_from_disk(meta)
+                else:
+                    raise ValueError(f"Unknown weight update type {meta.type}")
 
     def set_version(self, version: int):
         self._version = version
@@ -1356,6 +1383,245 @@ class FSDPEngine(TrainEngine):
 
         current_platform.synchronize()
         dist.barrier(group=self.cpu_group)
+
+    def _setup_ipc_gather_groups(self, meta: WeightUpdateMeta) -> None:
+        """Build per-engine Gloo gather groups for IPC weight sync.
+
+        Maps training ranks to inference engines based on GPU layout.
+        Each engine corresponds to ``gpus_per_engine`` consecutive training
+        ranks, where ``gpus_per_engine = world_size // num_engines``.
+        Within each group, ranks gather their IPC handles to the group's
+        src rank (the lowest rank in the group), who then sends them to
+        the corresponding inference engine via HTTP.
+
+        For ``sglang:d8`` (8 engines, 1 GPU each), every rank is its own
+        group (group_size=1) and sends directly — no gather overhead.
+        """
+        addresses = meta.tensor_server_addresses
+        if not addresses:
+            return
+
+        num_engines = len(addresses)
+        world_size = dist.get_world_size()
+        rank = dist.get_rank()
+        gpus_per_engine = world_size // num_engines
+
+        for i in range(num_engines):
+            start = i * gpus_per_engine
+            end = start + gpus_per_engine
+            group_ranks = list(range(start, end))
+            new_group = dist.new_group(ranks=group_ranks, backend="gloo")
+            if rank in group_ranks:
+                self._ipc_gather_group = new_group
+                self._ipc_gather_src = start
+                self._ipc_target_address = addresses[i]
+
+    @trace_perf("fsdp_engine.update_weights_from_tensor", category="comm")
+    def _update_weights_from_tensor_colocated(self, meta: WeightUpdateMeta):
+        """Two-phase tensor weight update for colocated mode.
+
+        Phase 1 (train on GPU): All ranks participate in FSDP all-gather,
+            each rank copies full tensor to CPU pinned memory.
+        Phase 2 (inference on GPU): Each rank serializes on its own GPU,
+            gather IPC handles to per-engine src rank, src rank sends to
+            the corresponding inference engine.
+        """
+        assert meta.type == "tensor"
+        assert self._tensor_backend is not None, (
+            "Tensor backend not set. Call connect_engine with "
+            "tensor_target_backend first."
+        )
+
+        # Phase 1: CPU staging (all ranks participate in all-gather + CPU copy)
+        with self._offload_aware_context():
+            self._stage_weight_update_from_tensor(meta)
+
+        # Phase 2: IPC serialize + gather + send (all ranks participate)
+        if dist.get_rank() == 0:
+            self.rollout_engine.pause_generation()
+
+        dist.barrier(group=self.cpu_group)
+
+        try:
+            self._apply_colocated_tensor_weights()
+        finally:
+            dist.barrier(group=self.cpu_group)
+            if dist.get_rank() == 0:
+                self.rollout_engine.continue_generation()
+
+        current_platform.synchronize()
+        dist.barrier(group=self.cpu_group)
+
+    def _stage_weight_update_from_tensor(self, meta: WeightUpdateMeta) -> None:
+        """Gather FSDP params to CPU pinned memory (Phase 1).
+
+        All ranks participate in ``full_tensor()`` (FSDP all-gather) and
+        each rank keeps a CPU copy for later IPC serialization on its own GPU.
+        """
+        staged: list[tuple[str, torch.Tensor]] = []
+
+        if self.config.use_lora:
+            param_iterator = (
+                (name, param)
+                for name, param in self._get_model_name_parameters(meta)
+                if param.requires_grad
+            )
+        else:
+            param_iterator = self._get_model_name_parameters(meta)
+
+        for name, param in param_iterator:
+            full_tensor = self._get_full_tensor(param)
+            cpu_tensor = full_tensor.to("cpu", non_blocking=False)
+            staged.append((name, cpu_tensor))
+            del full_tensor
+
+        current_platform.synchronize()
+        dist.barrier(group=self.cpu_group)
+
+        self._staged_cpu_weights = staged
+        self._staged_weight_meta = meta
+        self.logger.info(
+            f"CPU staging complete: {len(staged)} params, "
+            f"~{sum(t.numel() * t.element_size() for _, t in staged) / 1024 / 1024:.1f}MB"
+        )
+
+    def _apply_colocated_tensor_weights(self) -> None:
+        """Transfer staged CPU weights to inference engine via IPC (Phase 2).
+
+        Each rank moves its CPU-staged weights to its own GPU, serializes
+        IPC handles, then gathers to the per-engine src rank for HTTP send.
+        """
+        staged = self._staged_cpu_weights
+        if staged is None:
+            return
+        self._staged_cpu_weights = None
+
+        meta = self._staged_weight_meta
+        if meta is None:
+            if staged:
+                staged.clear()
+            return
+        self._staged_weight_meta = None
+
+        tms_context = (
+            torch_memory_saver.disable()
+            if is_tms_enabled() and not torch.version.hip
+            else nullcontext()
+        )
+        weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
+
+        try:
+            with tms_context:
+                if current_platform.device_type == "cuda" and torch.cuda.is_available():
+                    current_platform.set_device(int(os.environ.get("LOCAL_RANK", 0)))
+
+                bucket: list[tuple[str, torch.Tensor]] = []
+                bucket_bytes = 0
+
+                for name, cpu_tensor in staged:
+                    tensor_bytes = cpu_tensor.numel() * cpu_tensor.element_size()
+
+                    if bucket_bytes + tensor_bytes > weight_chunked_mem_size and bucket:
+                        self._flush_bucket_with_gather(bucket, meta)
+                        bucket = []
+                        bucket_bytes = 0
+
+                    gpu_tensor = cpu_tensor.to(
+                        current_platform.current_device(), non_blocking=False
+                    )
+                    bucket.append((name, gpu_tensor))
+                    bucket_bytes += tensor_bytes
+
+                if bucket:
+                    self._flush_bucket_with_gather(bucket, meta)
+        finally:
+            staged.clear()
+
+    def _flush_bucket_with_gather(
+        self,
+        bucket: list[tuple[str, torch.Tensor]],
+        meta: WeightUpdateMeta,
+    ) -> None:
+        """Serialize on each rank's GPU, gather to src rank, src sends to engine.
+
+        Aligns with Slime's ``_send_to_colocated_engine``: every rank
+        serializes IPC handles on its own GPU, then ``gather_object`` collects
+        them to the per-engine src rank, who builds the multi-GPU payload and
+        sends it to the corresponding inference engine via HTTP.
+
+        When ``group_size == 1`` (e.g. ``sglang:d8``), the gather is a no-op
+        and each rank sends directly to its own engine.
+        """
+        gather_group = self._ipc_gather_group
+        gather_src = self._ipc_gather_src
+        is_src = dist.get_rank() == gather_src
+
+        serialized: list[str] | None = None
+        long_lived: list[tuple[str, torch.Tensor]] = list(bucket)
+        try:
+            # Step 1: Each rank serializes on its own GPU
+            serialized = self._tensor_backend.serialize_tensors_for_ipc(list(bucket))
+
+            if gather_group is None or dist.get_world_size(gather_group) == 1:
+                # Single-rank group: send directly (no gather needed)
+                if self._ipc_target_address:
+                    self.rollout_engine.update_weights_from_tensor(
+                        serialized, meta=meta, addresses=[self._ipc_target_address]
+                    )
+                else:
+                    self.rollout_engine.update_weights_from_tensor(
+                        serialized, meta=meta
+                    )
+            else:
+                # Step 2: Gloo gather_object to src rank
+                group_size = dist.get_world_size(gather_group)
+                gathered: list[list[str] | None] | None = (
+                    [None] * group_size if is_src else None
+                )
+                dist.gather_object(
+                    serialized,
+                    object_gather_list=gathered,
+                    dst=gather_src,
+                    group=gather_group,
+                )
+
+                # Step 3: src rank sends multi-GPU payload to the engine
+                if is_src:
+                    num_chunks = len(gathered[0])
+                    for chunk_idx in range(num_chunks):
+                        multi_gpu_chunks = [
+                            gathered[r][chunk_idx] for r in range(group_size)
+                        ]
+                        self.rollout_engine.update_weights_from_tensor(
+                            multi_gpu_chunks,
+                            meta=meta,
+                            addresses=[self._ipc_target_address],
+                        )
+        finally:
+            if serialized is not None:
+                del serialized
+            del long_lived
+            for _, tensor in bucket:
+                del tensor
+            bucket.clear()
+            gc.collect()
+            if current_platform.device_type == "cuda" and torch.cuda.is_available():
+                torch.cuda.ipc_collect()
+                torch.cuda.empty_cache()
+
+    @staticmethod
+    def _make_tensor_backend(backend_name: str):
+        """Factory to create the appropriate tensor transport backend."""
+        if backend_name == "sglang":
+            from areal.engine.sglang_remote import SGLangBackend
+
+            return SGLangBackend()
+        elif backend_name == "vllm":
+            from areal.engine.vllm_remote import VLLMBackend
+
+            return VLLMBackend()
+        else:
+            raise ValueError(f"Unknown tensor transport backend: {backend_name}")
 
     def _save_model_to_hf(
         self,

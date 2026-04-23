@@ -10,6 +10,7 @@ from typing import Any
 
 import numpy as np
 import pybase64
+import torch
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api import (
@@ -206,6 +207,66 @@ class SGLangBackend:
         }
         return HttpRequest(endpoint="/init_weights_update_group", payload=payload)
 
+    def build_tensor_weight_update_requests(
+        self,
+        serialized_named_tensors: list[str],
+        meta: WeightUpdateMeta | None = None,
+    ) -> WeightUpdateRequests:
+        """Build SGLang tensor-based (CUDA IPC) weight update requests."""
+        weight_version = (
+            str(meta.version) if meta is not None and meta.version is not None else None
+        )
+        payload: dict[str, Any] = {
+            "serialized_named_tensors": serialized_named_tensors,
+            "load_format": "flattened_bucket",
+            "flush_cache": False,
+        }
+        if weight_version is not None:
+            payload["weight_version"] = weight_version
+        return WeightUpdateRequests(
+            requests=[
+                HttpRequest(
+                    endpoint="/update_weights_from_tensor",
+                    payload=payload,
+                )
+            ]
+        )
+
+    @staticmethod
+    def serialize_tensors_for_ipc(
+        named_tensors: list[tuple[str, "torch.Tensor"]],
+    ) -> list[str]:
+        """Serialize GPU tensors via SGLang's FlattenedTensorBucket + IPC.
+
+        Groups tensors by dtype, flattens each group, and serializes using
+        SGLang's ``MultiprocessingSerializer`` which produces CUDA IPC handles.
+
+        Returns
+        -------
+        list[str]
+            Serialized chunks (one per dtype group), each a string containing
+            the serialized FlattenedTensorBucket data with IPC handles.
+        """
+        from sglang.srt.utils import MultiprocessingSerializer
+        from sglang.srt.weight_utils import FlattenedTensorBucket
+
+        dtypes_groups: dict[str, list[tuple[str, torch.Tensor]]] = {}
+        for name, tensor in named_tensors:
+            dtype_key = str(tensor.dtype)
+            dtypes_groups.setdefault(dtype_key, []).append((name, tensor))
+
+        serialized: list[str] = []
+        for _dtype, group in dtypes_groups.items():
+            flattened = FlattenedTensorBucket(named_tensors=group)
+            flattened_data = {
+                "flattened_tensor": flattened.get_flattened_tensor(),
+                "metadata": flattened.get_metadata(),
+            }
+            serialized.append(
+                MultiprocessingSerializer.serialize(flattened_data, output_str=True)
+            )
+        return serialized
+
     def get_pause_request(self) -> HttpRequest:
         """Get SGLang pause request."""
         return HttpRequest(endpoint="/pause_generation", payload={})
@@ -283,6 +344,11 @@ class RemoteSGLangEngine(InferenceEngine):
         return self._engine.initialized
 
     @property
+    def addresses(self) -> list[str]:
+        """Get the server addresses this engine is connected to."""
+        return self._engine.addresses
+
+    @property
     def workflow_executor(self) -> WorkflowExecutor:
         """Get the workflow executor of the inference engine."""
         return self._engine.workflow_executor
@@ -319,6 +385,19 @@ class RemoteSGLangEngine(InferenceEngine):
     def update_weights_from_disk(self, meta: WeightUpdateMeta) -> Future[None]:
         """Update weights from disk."""
         return self._engine.update_weights_from_disk(meta)
+
+    def update_weights_from_tensor(
+        self,
+        serialized_named_tensors: list[str],
+        meta: WeightUpdateMeta,
+        addresses: list[str] | None = None,
+    ) -> None:
+        """Update weights via CUDA IPC tensor transfer."""
+        return self._engine.update_weights_from_tensor(
+            serialized_named_tensors,
+            meta=meta,
+            addresses=addresses,
+        )
 
     def submit(
         self,

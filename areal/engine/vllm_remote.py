@@ -8,6 +8,7 @@ from collections.abc import Callable
 from concurrent.futures import Future
 from typing import Any
 
+import torch
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api import (
@@ -193,6 +194,106 @@ class VLLMBackend:
             ]
         )
 
+    def build_tensor_weight_update_requests(
+        self,
+        serialized_named_tensors: list[str],
+        meta: WeightUpdateMeta | None = None,
+    ) -> WeightUpdateRequests:
+        """Build vLLM tensor-based (CUDA IPC) weight update requests.
+
+        Uses vLLM's native ``/update_weights`` endpoint which expects a
+        payload matching ``IPCWeightTransferUpdateInfo``:
+        ``{"update_info": {"names", "dtype_names", "shapes", "ipc_handles_pickled"}}``.
+
+        Parameters
+        ----------
+        serialized_named_tensors : list[str]
+            Each element is a JSON string containing ``names``,
+            ``dtype_names``, ``shapes``, and ``ipc_handles_pickled``,
+            produced by ``serialize_tensors_for_ipc``.
+        meta : WeightUpdateMeta | None
+            Metadata containing information about the weight update.
+            Unused for vLLM tensor path (kept for protocol compatibility).
+        """
+        import json
+
+        requests = []
+        for chunk_json in serialized_named_tensors:
+            chunk = json.loads(chunk_json)
+            payload = {
+                "update_info": {
+                    "names": chunk["names"],
+                    "dtype_names": chunk["dtype_names"],
+                    "shapes": chunk["shapes"],
+                    "ipc_handles_pickled": chunk["ipc_handles_pickled"],
+                }
+            }
+            requests.append(
+                HttpRequest(
+                    endpoint="/update_weights",
+                    payload=payload,
+                )
+            )
+        return WeightUpdateRequests(requests=requests)
+
+    @staticmethod
+    def serialize_tensors_for_ipc(
+        named_tensors: list[tuple[str, "torch.Tensor"]],
+    ) -> list[str]:
+        """Serialize GPU tensors into vLLM-native IPC format.
+
+        Produces a JSON string containing ``names``, ``dtype_names``,
+        ``shapes``, and ``ipc_handles_pickled`` — matching the format
+        expected by vLLM's ``IPCWeightTransferUpdateInfo``.
+
+        Parameters
+        ----------
+        named_tensors : list[tuple[str, torch.Tensor]]
+            List of (param_name, gpu_tensor) pairs.
+
+        Returns
+        -------
+        list[str]
+            Single-element list containing a JSON string with the
+            serialized weight data ready for ``build_tensor_weight_update_requests``.
+        """
+        import json
+        import pickle
+
+        import pybase64 as base64
+        import torch
+        from torch.multiprocessing.reductions import reduce_tensor
+
+        device_index = torch.accelerator.current_device_index()
+        props = torch.cuda.get_device_properties(device_index)
+        gpu_uuid = str(props.uuid)
+
+        names: list[str] = []
+        dtype_names: list[str] = []
+        shapes: list[list[int]] = []
+        ipc_handles: list[dict[str, tuple]] = []
+
+        for name, tensor in named_tensors:
+            names.append(name)
+            dtype_names.append(str(tensor.dtype).split(".")[-1])
+            shapes.append(list(tensor.shape))
+
+            weight = tensor.detach().contiguous()
+            ipc_handle = reduce_tensor(weight)
+            ipc_handles.append({gpu_uuid: ipc_handle})
+
+        pickled_handles = base64.b64encode(pickle.dumps(ipc_handles)).decode("utf-8")
+
+        chunk = json.dumps(
+            {
+                "names": names,
+                "dtype_names": dtype_names,
+                "shapes": shapes,
+                "ipc_handles_pickled": pickled_handles,
+            }
+        )
+        return [chunk]
+
     def build_init_weights_group_request(
         self, addr: str, server_idx: int, meta: WeightUpdateMeta
     ) -> HttpRequest:
@@ -307,6 +408,11 @@ class RemotevLLMEngine(InferenceEngine):
         return self._engine.initialized
 
     @property
+    def addresses(self) -> list[str]:
+        """Get the server addresses this engine is connected to."""
+        return self._engine.addresses
+
+    @property
     def workflow_executor(self) -> WorkflowExecutor:
         """Get the workflow executor of the inference engine."""
         return self._engine.workflow_executor
@@ -343,6 +449,19 @@ class RemotevLLMEngine(InferenceEngine):
     def update_weights_from_disk(self, meta: WeightUpdateMeta) -> Future[None]:
         """Update weights from disk."""
         return self._engine.update_weights_from_disk(meta)
+
+    def update_weights_from_tensor(
+        self,
+        serialized_named_tensors: list[str],
+        meta: WeightUpdateMeta,
+        addresses: list[str] | None = None,
+    ) -> None:
+        """Update weights via CUDA IPC tensor transfer."""
+        return self._engine.update_weights_from_tensor(
+            serialized_named_tensors,
+            meta=meta,
+            addresses=addresses,
+        )
 
     def submit(
         self,

@@ -337,12 +337,44 @@ class PPOTrainer:
                 )
             else:
                 self.weight_update_meta = WeightUpdateMeta.from_fsdp_xccl(**xccl_kwargs)
+        elif self.config.actor.weight_update_mode == "tensor":
+            # Tensor-based colocated weight update via CUDA IPC
+            tensor_kwargs: dict[str, Any] = {}
+            if config.actor.use_lora:
+                tensor_kwargs.update(
+                    {
+                        "use_lora": config.actor.use_lora,
+                        "lora_name": config.gconfig.lora_name,
+                        "base_model_name": config.actor.path,
+                    }
+                )
+
+            # Build tensor_server_addresses
+            tensor_server_addresses = None
+            if is_single_controller():
+                from areal.utils.network import format_hostport
+
+                tensor_server_addresses = [
+                    format_hostport(info.host, info.port)
+                    for info in self.rollout.server_infos
+                ]
+            else:
+                tensor_server_addresses = self.rollout.addresses
+
+            self.weight_update_meta = WeightUpdateMeta.from_tensor(
+                tensor_server_addresses=tensor_server_addresses,
+                tensor_target_backend=self.rollout_alloc.backend,
+                **tensor_kwargs,
+            )
         else:
             raise ValueError(
                 f"Invalid weight update mode: {self.config.actor.weight_update_mode}"
             )
 
-        self.actor.connect_engine(self.rollout, self.weight_update_meta)
+        self.actor.connect_engine(
+            self.rollout,
+            self.weight_update_meta,
+        )
 
         # Set up evaluation (skip in online mode)
         self.evaluator = Evaluator(config.evaluator, ft_spec)
@@ -1164,13 +1196,13 @@ class PPOTrainer:
                 "offload is enabled. Please set enable_offload=True."
             )
 
-        if (
-            self._is_actor_rollout_colocated(self.config)
-            and self.config.actor.weight_update_mode != "disk"
-        ):
+        if self._is_actor_rollout_colocated(
+            self.config
+        ) and self.config.actor.weight_update_mode not in ("disk", "tensor"):
             raise ValueError(
-                "weight_update_mode must be 'disk' when colocation scheduling is enabled. "
-                "Please set actor.weight_update_mode=disk."
+                "weight_update_mode must be 'disk' or 'tensor' when colocation "
+                "scheduling is enabled. "
+                "Please set actor.weight_update_mode=disk or actor.weight_update_mode=tensor."
             )
 
         if rollout_backend == "vllm" and self.config.rollout.return_routed_experts:
