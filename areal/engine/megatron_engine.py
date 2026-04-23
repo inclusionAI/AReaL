@@ -953,8 +953,27 @@ class MegatronEngine(TrainEngine):
                                         "3) _mtp_hs requires_grad=True, "
                                         "4) activation checkpointing compatibility."
                                     )
+                                self.logger.info(
+                                    "[MTPGradDiag] Deep chain check: examining "
+                                    "MTP param registration in grad buffer...")
+                                for module in self.model:
+                                    for name, param in module.named_parameters():
+                                        if ".mtp." not in name:
+                                            continue
+                                        _has_mg = hasattr(param, "main_grad") and param.main_grad is not None
+                                        _has_g = param.grad is not None
+                                        _flag_v = getattr(param, "grad_added_to_main_grad", "N/A")
+                                        _mg_ptr = param.main_grad.data_ptr() if _has_mg else 0
+                                        self.logger.info(
+                                            "[MTPGradDiag]   %s: "
+                                            "has_main_grad=%s, has_grad=%s, "
+                                            "grad_added_flag=%s, rg=%s, mg_ptr=%s",
+                                            name, _has_mg, _has_g,
+                                            _flag_v, param.requires_grad, _mg_ptr)
                             mtp_stats["mtp_grad_norm"] = mtp_g**0.5
                             mtp_stats["non_mtp_grad_norm"] = non_mtp_g**0.5
+                            mtp_stats["mtp_backward_scale"] = (
+                                float(scale_str) if scale_str != "N/A" else 0.0)
                         except Exception as e:
                             self.logger.warning(
                                 f"[MTPDetach] Grad norm logging failed: {e}"
@@ -1172,6 +1191,8 @@ class MegatronEngine(TrainEngine):
                     #   decoder_input back to embedding weights.
                     #   Fix: Patch _get_embeddings to detach decoder_input.
                     # -----------------------------------------------------------
+                    _mtp_diag_mb_counter = [0]
+
                     if self.mtp_detach_heads:
                         _orig_postprocess = _unwrapped._postprocess.__func__
 
@@ -1265,6 +1286,15 @@ class MegatronEngine(TrainEngine):
                                     # mtp_loss_scaling_factor) and matches
                                     # Megatron-Core's native implementation.
                                     _mtp_hs = hidden_states_list[mtp_layer_number + 1]
+                                    if _mtp_diag_mb_counter[0] == 0:
+                                        _mtp_hs_gfn = type(_mtp_hs.grad_fn).__name__ if _mtp_hs.grad_fn else "None"
+                                        _logger.info(
+                                            "[MTPFwdDiag] MB#0 Layer#%d: "
+                                            "_mtp_hs.rg=%s, shape=%s, grad_fn=%s, "
+                                            "hs.rg=%s",
+                                            mtp_layer_number, _mtp_hs.requires_grad,
+                                            list(_mtp_hs.shape), _mtp_hs_gfn,
+                                            hidden_states.requires_grad)
                                     mtp_logits, _ = self_model.output_layer(
                                         _mtp_hs,
                                         weight=output_weight,
@@ -1296,12 +1326,17 @@ class MegatronEngine(TrainEngine):
                                         mtp_labels, mtp_logits
                                     )
                                     mtp_loss = loss_mask * mtp_loss
-                                    if self_model.training and _logger.isEnabledFor(10):
+                                    if _mtp_diag_mb_counter[0] == 0:
+                                        _ml_gfn = type(mtp_loss.grad_fn).__name__ if mtp_loss.grad_fn else "None"
+                                        _logger.info(
+                                            "[MTPFwdDiag] MB#0 mtp_loss: "
+                                            "rg=%s, grad_fn=%s, sum=%.6f, num_tokens=%s",
+                                            mtp_loss.requires_grad, _ml_gfn,
+                                            mtp_loss.sum().item(), num_tokens)
+                                    elif self_model.training and _logger.isEnabledFor(10):
                                         _logger.debug(
-                                            f"[MTPFwdDiag] mtp_loss.requires_grad={mtp_loss.requires_grad}, "
-                                            f"mtp_loss.grad_fn={type(mtp_loss.grad_fn).__name__ if mtp_loss.grad_fn else 'None'}, "
-                                            f"mtp_loss_sum={mtp_loss.sum().item():.6f}"
-                                        )
+                                            "[MTPFwdDiag] mtp_loss.rg=%s, sum=%.6f",
+                                            mtp_loss.requires_grad, mtp_loss.sum().item())
                                     if self_model.training:
                                         from megatron.core import (
                                             parallel_state,
@@ -1330,9 +1365,27 @@ class MegatronEngine(TrainEngine):
                                             mtp_loss_scale * mtp_loss / num_tokens,
                                         )
 
-                                _logger.debug(
-                                    "[MTPDetach] MTP loss computed via direct output_layer"
-                                )
+                                _logger.info(
+                                    "[MTPDetach] MTP loss computed via direct output_layer call")
+
+                                if (_mtp_diag_mb_counter[0] == 0
+                                        and hidden_states.requires_grad):
+                                    def _mtp_backward_hook(grad, _lg=_logger):
+                                        _lg.info(
+                                            "[MTPBwdDiag] AutoScaler backward FIRED: "
+                                            "grad.shape=%s, grad.norm=%.8f, "
+                                            "grad.abs_max=%.8f",
+                                            list(grad.shape),
+                                            grad.float().norm().item(),
+                                            grad.float().abs().max().item())
+                                    hidden_states.register_hook(_mtp_backward_hook)
+                                    _logger.info(
+                                        "[MTPFwdDiag] MB#0 Registered backward hook on "
+                                        "hidden_states(post-AutoScaler): shape=%s, rg=%s",
+                                        list(hidden_states.shape),
+                                        hidden_states.requires_grad)
+
+                                _mtp_diag_mb_counter[0] += 1
 
                             # Inference last-token optimization
                             sequence_parallel_override = False
@@ -1431,6 +1484,16 @@ class MegatronEngine(TrainEngine):
                                         requires_grad=True,
                                         keep_graph=False,
                                     )
+                                    if not hasattr(_patched_get_embeddings, "_diag_done"):
+                                        _patched_get_embeddings._diag_done = True
+                                        import logging as _log_m
+                                        _ge_lg = _log_m.getLogger("MegatronEngine")
+                                        _hs_gfn = type(_hs.grad_fn).__name__ if _hs.grad_fn else "None"
+                                        _ge_lg.info(
+                                            "[MTPEmbDiag] _patched_get_embeddings: "
+                                            "_dec_input.rg=%s, _hs.rg=%s, _hs.grad_fn=%s",
+                                            _dec_input.requires_grad,
+                                            _hs.requires_grad, _hs_gfn)
                                     return _ids, _pos, _dec_input, _hs
 
                                 _layer._get_embeddings = _patched_get_embeddings
@@ -1472,6 +1535,12 @@ class MegatronEngine(TrainEngine):
                         _rem=_remaining,
                         _orig=_orig_clm,
                     ):
+                        if _mtp_diag_mb_counter[0] <= 2:
+                            _logger.info(
+                                "[MTPLossFnDiag] _mtp_loss_fn called: "
+                                "_rem=%d, _logits.rg=%s, shape=%s",
+                                _rem[0], _logits.requires_grad,
+                                list(_logits.shape))
                         if _rem[0] > 0:
                             _rem[0] -= 1
                             return _orig(_labels, _logits)
