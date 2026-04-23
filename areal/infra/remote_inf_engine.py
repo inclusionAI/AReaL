@@ -1524,24 +1524,10 @@ def _update_weights_from_distributed(
     """
 
     async def _fn():
-        if meta.lora_delta_sync:
-            logger.debug(
-                f"[LoRA Delta Sync] Distributed weight update: "
-                f"base_sync_done={meta.base_sync_done}, "
-                f"num_param_specs={len(param_specs)}, "
-                f"num_servers={len(addresses)}"
-            )
-
         # Get requests from backend
         weight_reqs = backend.build_distributed_weight_update_requests(
             meta, param_specs
         )
-
-        if meta.lora_delta_sync:
-            logger.debug(
-                f"[LoRA Delta Sync] Executing {len(weight_reqs.requests)} "
-                f"sequential HTTP requests across {len(addresses)} servers"
-            )
 
         # Execute all requests sequentially (they may have dependencies)
         async with aiohttp.ClientSession(
@@ -1550,12 +1536,6 @@ def _update_weights_from_distributed(
             connector=get_default_connector(),
         ) as session:
             for req_idx, http_req in enumerate(weight_reqs.requests):
-                if meta.lora_delta_sync:
-                    logger.debug(
-                        f"[LoRA Delta Sync] Sending request {req_idx + 1}/"
-                        f"{len(weight_reqs.requests)}: "
-                        f"{http_req.method} {http_req.endpoint}"
-                    )
                 is_unload = "unload" in http_req.endpoint
                 jobs = [
                     arequest_with_retry(
@@ -1573,9 +1553,7 @@ def _update_weights_from_distributed(
                     await asyncio.gather(*jobs)
                 except Exception:
                     if is_unload:
-                        # Unload may fail if no adapter is loaded yet;
-                        # this is expected on the first sync.
-                        logger.info(
+                        logger.debug(
                             "[LoRA Delta Sync] Adapter unload request failed "
                             "(may be expected if no adapter was loaded yet), "
                             "continuing..."
@@ -1625,7 +1603,7 @@ def _load_lora_adapter_on_servers(
 
     async def _fn():
         overall_start = time.monotonic()
-        logger.info(
+        logger.debug(
             f"[LoRA Delta Sync] Loading adapter '{lora_name}' from "
             f"'{lora_path}' on {len(addresses)} servers"
         )
@@ -1753,7 +1731,7 @@ def _load_lora_adapter_on_servers(
                 )
                 all_have_new = all(lora_name in ms for ms in post_model_sets)
                 if all_have_new:
-                    logger.info(
+                    logger.debug(
                         f"[LoRA Delta Sync] Post-load consistency OK: "
                         f"'{lora_name}' on all {len(addresses)} servers "
                         f"(check: {time.monotonic() - postcheck_start:.3f}s)"

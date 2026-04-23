@@ -1205,7 +1205,7 @@ class FSDPEngine(TrainEngine):
             total_params = len(collected)
             total_bytes = sum(t.numel() * t.element_size() for _, t in collected)
             total_mb = total_bytes / 1024 / 1024
-            self.logger.info(
+            self.logger.debug(
                 f"[LoRA Delta Sync] Collected {total_params} params, "
                 f"total size: {total_mb:.2f} MB, "
                 f"base_sync_done={base_sync_done}"
@@ -1520,19 +1520,12 @@ class FSDPEngine(TrainEngine):
         safetensors_save_file(state_dict, safetensors_path)
         file_size_mb = os.path.getsize(safetensors_path) / 1024 / 1024
         save_elapsed = time.monotonic() - step_start
-        self.logger.info(
+        self.logger.debug(
             f"[LoRA Delta Sync] Saved {len(state_dict)} adapter tensors "
             f"to {safetensors_path} ({file_size_mb:.2f} MB) "
             f"in {save_elapsed:.3f}s"
         )
         stats_tracker.scalar(**{"delta_sync/disk_save_s": save_elapsed})
-
-        # Log first 5 state_dict keys after adapter name stripping
-        example_keys = list(state_dict.keys())[:5]
-        self.logger.debug(
-            f"[LoRA Delta Sync] First 5 state_dict keys in safetensors: "
-            f"{example_keys}"
-        )
 
         # Verification: re-read and verify the saved file
         try:
@@ -1585,13 +1578,9 @@ class FSDPEngine(TrainEngine):
             json.dump(adapter_config, f, indent=2)
         self.logger.debug(
             f"[LoRA Delta Sync] Saved adapter_config.json to {config_path} "
-            f"in {time.monotonic() - step_start:.3f}s"
-        )
-        self.logger.debug(
-            f"[LoRA Delta Sync] adapter_config content: "
+            f"in {time.monotonic() - step_start:.3f}s, "
             f"r={adapter_config['r']}, lora_alpha={adapter_config['lora_alpha']}, "
-            f"target_modules={adapter_config['target_modules']}, "
-            f"task_type={adapter_config['task_type']}"
+            f"target_modules={adapter_config['target_modules']}"
         )
 
         example_names = [n for n, _ in adapter_params[:5]]
@@ -1605,9 +1594,9 @@ class FSDPEngine(TrainEngine):
         # directly to SGLang servers, bypassing the name_resolve-based disk
         # update flow (which is designed for full model checkpoints).
         prev_lora_name = self._last_loaded_lora_name
-        self.logger.info(
+        self.logger.debug(
             f"[LoRA Delta Sync] Loading adapter '{versioned_name}' from "
-            f"{adapter_dir} via /load_lora_adapter on SGLang servers"
+            f"{adapter_dir} via /load_lora_adapter"
             f" (previous adapter: {prev_lora_name!r})"
         )
         fut = self.rollout_engine.load_lora_adapter(
@@ -1645,7 +1634,7 @@ class FSDPEngine(TrainEngine):
                     )
 
         total_elapsed = time.monotonic() - overall_start
-        self.logger.info(
+        self.logger.debug(
             f"[LoRA Delta Sync] _save_and_load_lora_adapter total: {total_elapsed:.3f}s"
         )
 
@@ -1786,7 +1775,7 @@ class FSDPEngine(TrainEngine):
 
         self.model_config.save_pretrained(save_path)
 
-        self.logger.info(
+        self.logger.debug(
             f"[LoRA Delta Sync] Saved {len(state_dict)} base-model params "
             f"to {safetensors_path} ({file_size_mb:.2f} MB)"
         )
@@ -1818,7 +1807,7 @@ class FSDPEngine(TrainEngine):
 
         delta_sync_start = time.monotonic()
         if main_rank:
-            self.logger.info(
+            self.logger.debug(
                 f"[LoRA Delta Sync] Starting disk-based delta sync, "
                 f"_base_sync_done={self._base_sync_done}, "
                 f"lora_name='{meta.lora_name}', version={meta.version}"
@@ -1829,7 +1818,7 @@ class FSDPEngine(TrainEngine):
 
             base_params = self._collect_lora_params(meta, base_sync_done=False)
             if main_rank:
-                self.logger.info(
+                self.logger.debug(
                     f"[LoRA Delta Sync] Phase 1a: saving "
                     f"{len(base_params)} base-model params to disk"
                 )
@@ -1878,7 +1867,7 @@ class FSDPEngine(TrainEngine):
         phase_label = "1b" if not self._base_sync_done else "2"
 
         if main_rank:
-            self.logger.info(
+            self.logger.debug(
                 f"[LoRA Delta Sync] Phase {phase_label}: "
                 f"saving {len(adapter_params)} LoRA adapter params to disk "
                 f"for /load_lora_adapter"

@@ -199,7 +199,7 @@ class SGLangBackend:
         # Base model phase (or non-LoRA): standard distributed weight update
         param_names = [pspec.name for pspec in param_specs]
         if meta.lora_delta_sync:
-            logger.info(
+            logger.debug(
                 "[LoRA Delta Sync] Building distributed base-model weight update "
                 f"requests for {len(param_specs)} base params"
             )
