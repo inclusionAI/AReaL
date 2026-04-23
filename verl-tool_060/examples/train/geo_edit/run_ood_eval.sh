@@ -44,8 +44,8 @@ else
     val_temperature=0
 fi
 
-mkdir -p $WORKSPACE/logs/eval_$RUN_NAME
-action_stop_tokens_file="$WORKSPACE/logs/eval_$RUN_NAME/action_stop_tokens.txt"
+mkdir -p $WORKSPACE/logs/ood_eval_$RUN_NAME
+action_stop_tokens_file="$WORKSPACE/logs/ood_eval_$RUN_NAME/action_stop_tokens.txt"
 echo -e -n "$action_stop_tokens" | tee $action_stop_tokens_file
 
 if [ -n "${TOOL_SERVER_URL:-}" ]; then
@@ -65,10 +65,8 @@ echo "Using tool server at $tool_server_url"
 
 declare -A EVAL_GROUPS
 EVAL_GROUPS=(
-    ["visual_probe"]="${EVAL_DIR}/visual_probe_easy.parquet,${EVAL_DIR}/visual_probe_medium.parquet,${EVAL_DIR}/visual_probe_hard.parquet"
-    ["reasonmap"]="${EVAL_DIR}/reason_map_dedup.parquet,${EVAL_DIR}/reason_map_plus_dedup.parquet"
-    ["map_trace"]="${EVAL_DIR}/map_trace.parquet"
-    ["mm_mapqa"]="${EVAL_DIR}/mm_mapqa.parquet"
+    ["mapeval_visual"]="${EVAL_DIR}/mapeval_visual-tool.parquet"
+    ["cartomapqa"]="${EVAL_DIR}/carto_mfs-tool.parquet,${EVAL_DIR}/carto_mml-tool.parquet,${EVAL_DIR}/carto_mtmf-tool.parquet,${EVAL_DIR}/carto_rle-tool.parquet,${EVAL_DIR}/carto_srn-tool.parquet,${EVAL_DIR}/carto_stmf_counting-tool.parquet,${EVAL_DIR}/carto_stmf_name_listing-tool.parquet,${EVAL_DIR}/carto_stmf_presence-tool.parquet"
 )
 
 
@@ -162,20 +160,20 @@ run_eval_group() {
         trainer.test_freq=1 \
         trainer.total_epochs=1 \
         trainer.logger='[console,wandb]' \
-        trainer.project_name=mixed_rl_eval \
-        trainer.experiment_name="eval_${RUN_NAME}_${group_name}" \
+        trainer.project_name=mixed_rl_ood_eval \
+        trainer.experiment_name="ood_eval_${RUN_NAME}_${group_name}" \
         trainer.n_gpus_per_node=$n_gpus_per_node \
         trainer.nnodes=$n_nodes \
         trainer.save_freq=-1 \
-        trainer.validation_data_dir="${EVAL_DIR}/results/${RUN_NAME}/${group_name}" \
-        2>&1 | tee $WORKSPACE/logs/eval_$RUN_NAME/eval_${group_name}.log
+        trainer.validation_data_dir="${EVAL_DIR}/results/${RUN_NAME}/ood_${group_name}" \
+        2>&1 | tee $WORKSPACE/logs/ood_eval_$RUN_NAME/eval_${group_name}.log
 
-    echo "  Done: $group_name -> ${EVAL_DIR}/results/${RUN_NAME}/${group_name}"
+    echo "  Done: $group_name -> ${EVAL_DIR}/results/${RUN_NAME}/ood_${group_name}"
 }
 
-for group in visual_probe reasonmap mm_mapqa  map_trace; do
+for group in mapeval_visual cartomapqa; do
     run_eval_group "$group" "${EVAL_GROUPS[$group]}"
 done
 
 echo ""
-echo "All eval groups finished. Results: ${EVAL_DIR}/results/${RUN_NAME}/"
+echo "All OOD eval groups finished. Results: ${EVAL_DIR}/results/${RUN_NAME}/"
