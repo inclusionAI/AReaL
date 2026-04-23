@@ -65,6 +65,7 @@ from areal.engine.megatron_utils.megatron import (
 from areal.engine.megatron_utils.megatron_lora import get_vllm_lora_target_modules
 from areal.engine.megatron_utils.packed_context_parallel import (
     packed_context_parallel_forward,
+    split_packed_seqs_for_context_parallel,
 )
 from areal.engine.megatron_utils.pipeline_parallel import (
     configure_pipeline_layer_splits,
@@ -713,7 +714,14 @@ class MegatronEngine(TrainEngine):
                     mb_input.padded_mb.update(tree_kwargs)
                     tree_attn_keys = list(tree_kwargs.keys())
 
-            output = packed_context_parallel_forward(model, mb_input.padded_mb)
+            cp_size = mpu.get_context_parallel_world_size()
+            cp_local = cp_size > 1
+
+            output = packed_context_parallel_forward(
+                model,
+                mb_input.padded_mb,
+                gather_cp_output=not cp_local,
+            )
 
             # Release tree attention metadata after forward pass
             for key in tree_attn_keys:
@@ -729,12 +737,30 @@ class MegatronEngine(TrainEngine):
             if mpu.is_pipeline_last_stage(
                 ignore_virtual=False, vp_stage=model_vp_stage
             ):
-                output = unpad_logits(
-                    output,
-                    padding_length=mb_input.padding_length,
-                    cu_seqlens=cu_seqlens,
-                    old_cu_seqlens=mb_input.old_cu_seqlens,
-                )
+                if cp_local and cu_seqlens is not None:
+                    padded_cu_seqlens = mb_input.padded_mb["cu_seqlens"]
+                    rolled_ids = torch.roll(
+                        mb_input.padded_mb["input_ids"], shifts=-1, dims=-1
+                    )
+                    cp_labels = split_packed_seqs_for_context_parallel(
+                        rolled_ids, padded_cu_seqlens
+                    )
+                    cp_loss_mask = split_packed_seqs_for_context_parallel(
+                        mb_input.padded_mb["loss_mask"], padded_cu_seqlens
+                    )
+                    cp_cu_seqlens = padded_cu_seqlens // cp_size
+                    cp_inputs = dict(mb_input.orig_mb)
+                    cp_inputs["_cp_local_labels"] = cp_labels
+                    cp_inputs["loss_mask"] = cp_loss_mask
+                    cp_inputs["cu_seqlens"] = cp_cu_seqlens
+                    return output, functools.partial(_process_output, cp_inputs)
+                else:
+                    output = unpad_logits(
+                        output,
+                        padding_length=mb_input.padding_length,
+                        cu_seqlens=cu_seqlens,
+                        old_cu_seqlens=mb_input.old_cu_seqlens,
+                    )
             return output, functools.partial(_process_output, mb_input.orig_mb)
 
         forward_backward_func = get_forward_backward_func()
@@ -789,7 +815,11 @@ class MegatronEngine(TrainEngine):
                 loss_multiplier=loss_multiplier,
             )
 
-        self.forward_backward_batch(mb_list, process_output, forward_only=False)
+        self.forward_backward_batch(
+            mb_list,
+            process_output,
+            forward_only=False,
+        )
 
         # Step 4: Optimizer step
         return self.optimizer_step()
@@ -829,7 +859,9 @@ class MegatronEngine(TrainEngine):
 
         # Step 4: Aggregate losses
         if mpu.is_pipeline_last_stage():
-            return aggregate_eval_losses(losses, mpu.get_data_parallel_group())
+            return aggregate_eval_losses(
+                losses, mpu.get_data_parallel_group(with_context_parallel=True)
+            )
         return None
 
     @torch.no_grad()
@@ -1028,6 +1060,19 @@ class MegatronEngine(TrainEngine):
 
     def get_device_stats(self) -> DeviceRuntimeInfo:
         return DeviceRuntimeInfo.get_current()
+
+    def start_memory_profile(self, max_entries: int = 100000) -> None:
+        torch.cuda.memory._record_memory_history(max_entries=max_entries)
+
+    def stop_memory_profile(self, snapshot_dir: str) -> None:
+        pp = mpu.get_pipeline_model_parallel_rank()
+        dp = mpu.get_data_parallel_rank()
+        cp = mpu.get_context_parallel_rank()
+        tp = mpu.get_tensor_model_parallel_rank()
+        filename = f"snapshot_rank{self.rank:02d}_p{pp}d{dp}c{cp}t{tp}.pickle"
+        path = os.path.join(snapshot_dir, filename)
+        torch.cuda.memory._dump_snapshot(path)
+        torch.cuda.memory._record_memory_history(enabled=None)
 
     def save_perf_tracer(self, step: int | None = None, force: bool = False) -> None:
         perf_tracer.save(step=step, force=force)
@@ -1741,7 +1786,11 @@ class MegatronEngine(TrainEngine):
                     else None,
                 )
             else:
-                labels = torch.roll(inputs["input_ids"], shifts=-1, dims=-1)
+                cp_local_labels = inputs.get("_cp_local_labels")
+                if cp_local_labels is not None:
+                    labels = cp_local_labels
+                else:
+                    labels = torch.roll(inputs["input_ids"], shifts=-1, dims=-1)
                 logprobs, entropy = gather_logprobs_entropy(
                     output,
                     labels,
