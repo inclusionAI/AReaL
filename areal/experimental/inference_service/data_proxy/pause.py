@@ -10,7 +10,7 @@ When ready to resume, the controller calls POST /resume:
   1. Call SGLang POST /continue_generation
   2. Set the PauseState flag to False
 
-SGLangBackend (backend.py) polls PauseState and transparently
+InfBridge (inference_service/inf_bridge.py) polls PauseState and transparently
 resubmits aborted requests once resumed.
 """
 

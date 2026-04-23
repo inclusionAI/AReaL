@@ -85,11 +85,9 @@ def mock_areal_client():
 @pytest_asyncio.fixture
 async def client(config, mock_tokenizer, mock_areal_client):
     """Create app with mocked deps and yield an httpx async client (no auth header)."""
-    from areal.experimental.inference_service.data_proxy.backend import (
-        SGLangBridgeBackend,
-    )
-    from areal.experimental.inference_service.data_proxy.inf_bridge import InfBridge
     from areal.experimental.inference_service.data_proxy.pause import PauseState
+    from areal.experimental.inference_service.inf_bridge import InfBridge
+    from areal.experimental.inference_service.sglang.bridge import SGLangBridgeBackend
 
     app = create_app(config)
     pause_state = PauseState()
@@ -128,10 +126,8 @@ class TestStandaloneChat:
         from areal.experimental.inference_service.data_proxy.app import (
             _create_inf_bridge,
         )
-        from areal.experimental.inference_service.data_proxy.backend import (
-            VLLMBridgeBackend,
-        )
         from areal.experimental.inference_service.data_proxy.pause import PauseState
+        from areal.experimental.inference_service.vllm.bridge import VLLMBridgeBackend
 
         config = DataProxyConfig(
             host="127.0.0.1",

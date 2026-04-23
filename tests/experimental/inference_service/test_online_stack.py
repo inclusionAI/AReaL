@@ -89,11 +89,9 @@ def _make_mock_areal_client():
 @pytest_asyncio.fixture
 async def online_stack(monkeypatch):
     import areal.experimental.inference_service.gateway.app as gateway_app_module
-    from areal.experimental.inference_service.data_proxy.backend import (
-        SGLangBridgeBackend,
-    )
-    from areal.experimental.inference_service.data_proxy.inf_bridge import InfBridge
     from areal.experimental.inference_service.data_proxy.pause import PauseState
+    from areal.experimental.inference_service.inf_bridge import InfBridge
+    from areal.experimental.inference_service.sglang.bridge import SGLangBridgeBackend
 
     dp_config = DataProxyConfig(
         host="127.0.0.1",

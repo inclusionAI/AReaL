@@ -205,6 +205,9 @@ stats_tracker.get("eval-rollout").scalar(reward=0.9)
 all_stats = stats_tracker.export_all(reduce_group=group)
 ```
 
+If `evaluator.eval_before_train: true`, evaluation runs once before the first training
+step to get an estimate of the initial model's performance before finetuning.
+
 ## Data Flow
 
 The complete metrics flow from collection to logging:
