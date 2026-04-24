@@ -66,7 +66,14 @@ echo "Using tool server at $tool_server_url"
 declare -A EVAL_GROUPS
 EVAL_GROUPS=(
     ["mapeval_visual"]="${EVAL_DIR}/mapeval_visual-tool.parquet"
-    ["cartomapqa"]="${EVAL_DIR}/carto_mfs-tool.parquet,${EVAL_DIR}/carto_mml-tool.parquet,${EVAL_DIR}/carto_mtmf-tool.parquet,${EVAL_DIR}/carto_rle-tool.parquet,${EVAL_DIR}/carto_srn-tool.parquet,${EVAL_DIR}/carto_stmf_counting-tool.parquet,${EVAL_DIR}/carto_stmf_name_listing-tool.parquet,${EVAL_DIR}/carto_stmf_presence-tool.parquet"
+    ["carto_mfs"]="${EVAL_DIR}/carto_mfs-tool.parquet"
+    ["carto_mml"]="${EVAL_DIR}/carto_mml-tool.parquet"
+    ["carto_mtmf"]="${EVAL_DIR}/carto_mtmf-tool.parquet"
+    ["carto_rle"]="${EVAL_DIR}/carto_rle-tool.parquet"
+    ["carto_srn"]="${EVAL_DIR}/carto_srn-tool.parquet"
+    ["carto_stmf_counting"]="${EVAL_DIR}/carto_stmf_counting-tool.parquet"
+    ["carto_stmf_name_listing"]="${EVAL_DIR}/carto_stmf_name_listing-tool.parquet"
+    ["carto_stmf_presence"]="${EVAL_DIR}/carto_stmf_presence-tool.parquet"
 )
 
 
@@ -171,9 +178,29 @@ run_eval_group() {
     echo "  Done: $group_name -> ${EVAL_DIR}/results/${RUN_NAME}/ood_${group_name}"
 }
 
-for group in mapeval_visual cartomapqa; do
+for group in mapeval_visual carto_mfs carto_mml carto_mtmf carto_rle carto_srn carto_stmf_counting carto_stmf_name_listing carto_stmf_presence; do
     run_eval_group "$group" "${EVAL_GROUPS[$group]}"
 done
+
+has_carto=false
+for group in mapeval_visual carto_mfs carto_mml carto_mtmf carto_rle carto_srn carto_stmf_counting carto_stmf_name_listing carto_stmf_presence; do
+    if [[ "$group" == carto_* ]] || [[ "$group" == mapeval_* ]]; then
+        if [ -f "${EVAL_DIR}/results/${RUN_NAME}/ood_${group}/0.jsonl" ]; then
+            has_carto=true
+            break
+        fi
+    fi
+done
+
+if $has_carto; then
+    echo ""
+    echo "Running post-evaluation for CartoMapQA..."
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    python3 "${SCRIPT_DIR}/post_eval_cartomapqa.py" \
+        --results_dir "${EVAL_DIR}/results/${RUN_NAME}" \
+        --output "${EVAL_DIR}/results/${RUN_NAME}/post_eval_cartomapqa.json" \
+        2>&1 | tee -a $WORKSPACE/logs/ood_eval_$RUN_NAME/post_eval.log
+fi
 
 echo ""
 echo "All OOD eval groups finished. Results: ${EVAL_DIR}/results/${RUN_NAME}/"

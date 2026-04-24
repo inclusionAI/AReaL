@@ -176,6 +176,115 @@ def _compute_reasonmap_base_score(prediction: str, ground_truth, extra: dict) ->
     return score, reason
 
 
+def _compute_cartomapqa_score(prediction: str, ground_truth, data_source: str) -> float:
+    try:
+        from geo_edit.evaluation.cartomapqa.extractors import extract_structured
+        from geo_edit.evaluation.cartomapqa.metrics import mml_match, name_listing_prf1
+    except ImportError:
+        return compute_score(prediction, ground_truth)
+
+    gt = str(ground_truth).strip()
+
+    if data_source == "cartomapqa_mfs":
+        pred = extract_structured("cartomapqa_mfs", prediction)
+        return 1.0 if pred and pred == gt.upper() else 0.0
+
+    if data_source == "cartomapqa_stmf_presence":
+        pred = extract_structured("cartomapqa_stmf_presence", prediction)
+        return 1.0 if pred and pred == gt.lower() else 0.0
+
+    if data_source == "cartomapqa_stmf_counting":
+        pred = extract_structured("cartomapqa_stmf_counting", prediction)
+        try:
+            gt_val = int(gt)
+        except (ValueError, TypeError):
+            return 0.0
+        if pred is None:
+            return 0.0
+        return 1.0 if abs(pred - gt_val) <= 1 else 0.0
+
+    if data_source == "cartomapqa_stmf_name_listing":
+        pred_names = extract_structured("cartomapqa_stmf_name_listing", prediction)
+        gt_names = [n.strip() for n in gt.split("\n") if n.strip()]
+        if not pred_names:
+            return 0.0
+        m = name_listing_prf1(gt_names, pred_names)
+        return m["f1"]
+
+    if data_source == "cartomapqa_mml":
+        pred_data = extract_structured("cartomapqa_mml", prediction)
+        if not pred_data:
+            return 0.0
+        try:
+            import json as _json
+            gt_data = _json.loads(gt)
+        except (ValueError, TypeError):
+            return 0.0
+        return 1.0 if mml_match(gt_data.get("road_1", ""), gt_data.get("road_2", ""),
+                                 pred_data.get("road_1", ""), pred_data.get("road_2", "")) else 0.0
+
+    if data_source == "cartomapqa_rle":
+        pred_data = extract_structured("cartomapqa_rle", prediction)
+        if not pred_data:
+            return 0.0
+        import re as _re
+        gt_match = _re.search(r"([-+]?\d[\d,]*(?:\.\d+)?)", gt)
+        if not gt_match:
+            return 0.0
+        gt_val = float(gt_match.group(1).replace(",", ""))
+        pred_val = pred_data["value"]
+        if gt_val == 0:
+            return 1.0 if pred_val == 0 else 0.0
+        return 1.0 if abs(pred_val - gt_val) / abs(gt_val) <= 0.15 else 0.0
+
+    if data_source == "cartomapqa_srn":
+        from geo_edit.evaluation.cartomapqa.metrics import normalize_route, route_eval
+        pred_route = extract_structured("cartomapqa_srn", prediction)
+        gt_route = [item.strip() for item in gt.replace("[", "").replace("]", "").split(",")]
+        if not pred_route:
+            return 0.0
+        gt_norm = normalize_route(gt_route)
+        pred_norm = normalize_route(pred_route)
+        is_success, correct_steps = route_eval(gt_norm, pred_norm)
+        if is_success:
+            return 1.0
+        return max(0.0, (correct_steps - 1) / (len(gt_norm) - 1)) if len(gt_norm) > 1 else 0.0
+
+    if data_source == "cartomapqa_mtmf":
+        pred_data = extract_structured("cartomapqa_mtmf", prediction)
+        if not pred_data:
+            return 0.0
+        try:
+            import json as _json
+            gt_data = _json.loads(gt)
+        except (ValueError, TypeError):
+            return 0.0
+        total_f1 = 0.0
+        count = 0
+        for poi_type, gt_info in gt_data.items():
+            pred_info = pred_data.get(poi_type, {})
+            gt_names = gt_info.get("true_names", gt_info.get("names", []))
+            pred_names = [n for n in pred_info.get("names", []) if n.strip()]
+            m = name_listing_prf1(gt_names, pred_names)
+            total_f1 += m["f1"]
+            count += 1
+        return total_f1 / count if count > 0 else 0.0
+
+    if data_source == "mapeval_visual":
+        pred_norm = _normalize_answer(prediction)
+        gt_norm = _normalize_answer(gt)
+        if pred_norm == gt_norm:
+            return 1.0
+        try:
+            if int(float(pred_norm)) == int(float(gt_norm)):
+                return 1.0
+        except (ValueError, TypeError):
+            pass
+        return 0.0
+
+    return compute_score(prediction, ground_truth)
+
+
 def _compute_map_trace_score(response: str, ground_truth, lo: float = 0.3, hi: float = 0.8) -> tuple[float, float]:
     """MapTrace: linear reward based on NDTW distance. Returns (score, ndtw)."""
     from geo_edit.evaluation.map_trace_verifier import map_trace_score
@@ -311,6 +420,9 @@ class GeoVisionQARewardManager:
             score, _ = _compute_map_trace_score(prediction, ground_truth)
             return score
 
+        if data_source.startswith("cartomapqa_") or data_source == "mapeval_visual":
+            return _compute_cartomapqa_score(prediction, ground_truth, data_source)
+
         return compute_score(prediction, ground_truth)
 
     def _llm_judge_fallback(self, prompt_str: str, ground_truth, prediction: str, max_retries: int = 6) -> bool:
@@ -427,6 +539,92 @@ class GeoVisionQARewardManager:
             reward_extra_info["ndtw"].append(ndtw_val)
             reward_extra_info["ndtw_success"].append(ndtw_success)
             reward_extra_info["ndtw_count"].append(ndtw_count)
+
+            rle_m_error = 0.0
+            rle_m_count = 0.0
+            rle_ft_error = 0.0
+            rle_ft_count = 0.0
+            counting_sq_error = 0.0
+            counting_count = 0.0
+            srn_step_acc = 0.0
+            srn_count = 0.0
+            mtmf_counting_sq_error = 0.0
+            mtmf_counting_count = 0.0
+            mtmf_naming_f1 = 0.0
+            mtmf_naming_count = 0.0
+            if data_source == "cartomapqa_rle":
+                try:
+                    from geo_edit.evaluation.cartomapqa.extractors import extract_structured
+                    pred_data = extract_structured("cartomapqa_rle", prediction)
+                    import re as _re
+                    gt_str = str(ground_truth)
+                    gt_match = _re.search(r"([-+]?\d[\d,]*(?:\.\d+)?)", gt_str)
+                    is_feet = "ft" in gt_str.lower() or "feet" in gt_str.lower()
+                    if pred_data and gt_match:
+                        gt_val = float(gt_match.group(1).replace(",", ""))
+                        pred_val = pred_data["value"]
+                        rel_err = abs(pred_val - gt_val) / max(abs(gt_val), 1e-9)
+                        if is_feet:
+                            rle_ft_error = rel_err
+                            rle_ft_count = 1.0
+                        else:
+                            rle_m_error = rel_err
+                            rle_m_count = 1.0
+                except Exception:
+                    pass
+            elif data_source == "cartomapqa_stmf_counting":
+                try:
+                    from geo_edit.evaluation.cartomapqa.extractors import extract_structured
+                    pred_val = extract_structured("cartomapqa_stmf_counting", prediction)
+                    gt_val = int(str(ground_truth).strip())
+                    if pred_val is not None:
+                        counting_sq_error = (pred_val - gt_val) ** 2
+                        counting_count = 1.0
+                except Exception:
+                    pass
+            elif data_source == "cartomapqa_srn":
+                srn_step_acc = accuracy
+                srn_count = 1.0
+            elif data_source == "cartomapqa_mtmf":
+                try:
+                    from geo_edit.evaluation.cartomapqa.extractors import extract_structured
+                    from geo_edit.evaluation.cartomapqa.metrics import name_listing_prf1
+                    pred_data = extract_structured("cartomapqa_mtmf", prediction)
+                    gt_data = json.loads(str(ground_truth))
+                    if pred_data and isinstance(gt_data, dict):
+                        total_sq = 0.0
+                        total_f1 = 0.0
+                        n = 0
+                        for poi_type, gt_info in gt_data.items():
+                            pred_info = pred_data.get(poi_type, {})
+                            gt_count = gt_info.get("true_count", gt_info.get("count", 0))
+                            pred_count = pred_info.get("count", 0)
+                            total_sq += (pred_count - gt_count) ** 2
+                            gt_names = gt_info.get("true_names", gt_info.get("names", []))
+                            pred_names = [nm for nm in pred_info.get("names", []) if nm.strip()]
+                            m = name_listing_prf1(gt_names, pred_names)
+                            total_f1 += m["f1"]
+                            n += 1
+                        if n > 0:
+                            mtmf_counting_sq_error = total_sq / n
+                            mtmf_counting_count = 1.0
+                            mtmf_naming_f1 = total_f1 / n
+                            mtmf_naming_count = 1.0
+                except Exception:
+                    pass
+
+            reward_extra_info["rle_m_error"].append(rle_m_error)
+            reward_extra_info["rle_m_count"].append(rle_m_count)
+            reward_extra_info["rle_ft_error"].append(rle_ft_error)
+            reward_extra_info["rle_ft_count"].append(rle_ft_count)
+            reward_extra_info["counting_sq_error"].append(counting_sq_error)
+            reward_extra_info["counting_count"].append(counting_count)
+            reward_extra_info["srn_step_acc"].append(srn_step_acc)
+            reward_extra_info["srn_count"].append(srn_count)
+            reward_extra_info["mtmf_counting_sq_error"].append(mtmf_counting_sq_error)
+            reward_extra_info["mtmf_counting_count"].append(mtmf_counting_count)
+            reward_extra_info["mtmf_naming_f1"].append(mtmf_naming_f1)
+            reward_extra_info["mtmf_naming_count"].append(mtmf_naming_count)
 
             reward_extra_info["accuracy"].append(accuracy)
             reward_extra_info["score"].append(reward)
