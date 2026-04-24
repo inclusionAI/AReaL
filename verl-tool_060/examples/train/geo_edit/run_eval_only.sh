@@ -11,7 +11,7 @@ n_nodes=${N_NODES:-1}
 
 max_prompt_length=32768
 max_response_length=32768
-max_action_length=4096
+max_action_length=8192 
 max_obs_length=8192
 max_obs_length_image=8192
 max_obs_length_text=6144
@@ -38,7 +38,7 @@ fsdp_size=-1
 rollout_n=${ROLLOUT_N:-1}
 if [ "$rollout_n" -gt 1 ]; then
     val_do_sample=True
-    val_temperature=0.7
+    val_temperature=1.0
 else
     val_do_sample=False
     val_temperature=0
@@ -134,7 +134,7 @@ run_eval_group() {
         actor_rollout_ref.rollout.free_cache_engine=True \
         actor_rollout_ref.rollout.name=vllm \
         actor_rollout_ref.rollout.gpu_memory_utilization=$gpu_memory_utilization \
-        actor_rollout_ref.rollout.temperature=1.0 \
+        actor_rollout_ref.rollout.temperature=0.0 \
         actor_rollout_ref.rollout.top_p=1.0 \
         actor_rollout_ref.rollout.top_k=-1 \
         actor_rollout_ref.rollout.n=$rollout_n \

@@ -34,7 +34,7 @@ ppo_mini_batch_size=64
 # ---- Sequence lengths ----
 max_prompt_length=16384 
 max_response_length=32768
-max_action_length=4096
+max_action_length=8192 
 max_obs_length=8192
 max_obs_length_image=8192 
 max_obs_length_text=8192

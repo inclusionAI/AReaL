@@ -10,7 +10,7 @@ n_gpus_per_node=${N_GPUS_PER_NODE:-8}
 n_nodes=${N_NODES:-1}
 
 max_prompt_length=32768
-max_response_length=32768
+max_response_length=25600
 ppo_max_token_len_per_gpu=$(expr $max_prompt_length + $max_response_length)
 max_num_batched_tokens=$(expr $max_prompt_length + $max_response_length)
 
@@ -27,6 +27,7 @@ else
     val_temperature=0
 fi
 
+unset ROCR_VISIBLE_DEVICES
 mkdir -p $WORKSPACE/logs/notool_ood_eval_$RUN_NAME
 
 declare -A EVAL_GROUPS
@@ -95,7 +96,6 @@ run_eval_group() {
         actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=$use_dynamic_bsz \
         actor_rollout_ref.rollout.max_num_seqs=16 \
         actor_rollout_ref.rollout.max_num_batched_tokens=$max_num_batched_tokens \
-        +actor_rollout_ref.rollout.engine_kwargs.vllm.mm-processor-cache-gb=8 \
         actor_rollout_ref.ref.log_prob_use_dynamic_bsz=$use_dynamic_bsz \
         actor_rollout_ref.ref.fsdp_config.param_offload=False \
         actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=16 \

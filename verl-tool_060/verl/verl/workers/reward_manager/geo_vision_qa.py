@@ -578,7 +578,7 @@ class GeoVisionQARewardManager:
                     pred_val = extract_structured("cartomapqa_stmf_counting", prediction)
                     gt_val = int(str(ground_truth).strip())
                     if pred_val is not None:
-                        counting_sq_error = (pred_val - gt_val) ** 2
+                        counting_sq_error = float((pred_val - gt_val) ** 2)
                         counting_count = 1.0
                 except Exception:
                     pass

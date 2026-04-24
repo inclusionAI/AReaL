@@ -27,6 +27,7 @@ else
     val_temperature=0
 fi
 
+unset ROCR_VISIBLE_DEVICES
 mkdir -p $WORKSPACE/logs/notool_eval_$RUN_NAME
 
 declare -A EVAL_GROUPS

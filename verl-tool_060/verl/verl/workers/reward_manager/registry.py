@@ -51,5 +51,10 @@ def get_reward_manager_cls(name: str) -> type[AbstractRewardManager]:
         `(type)`: The reward manager class.
     """
     if name not in REWARD_MANAGER_REGISTRY:
+        try:
+            __import__(f"verl.workers.reward_manager.{name}")
+        except ImportError:
+            pass
+    if name not in REWARD_MANAGER_REGISTRY:
         raise ValueError(f"Unknown reward manager: {name}")
     return REWARD_MANAGER_REGISTRY[name]
