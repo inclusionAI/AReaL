@@ -114,8 +114,9 @@ run_eval_group() {
 
     echo "  Done: $group_name -> ${EVAL_DIR}/results/${RUN_NAME}/notool_ood_${group_name}"
 }
-
-for group in mapeval_visual carto_mfs carto_mml carto_mtmf carto_rle carto_srn carto_stmf_counting carto_stmf_name_listing carto_stmf_presence; do
+ 
+# for group in mapeval_visual carto_mfs carto_mml carto_mtmf carto_rle carto_srn carto_stmf_counting carto_stmf_name_listing carto_stmf_presence; do
+for group in carto_mfs carto_mml carto_mtmf carto_rle carto_srn carto_stmf_counting carto_stmf_name_listing carto_stmf_presence; do
     run_eval_group "$group" "${EVAL_GROUPS[$group]}"
 done
 

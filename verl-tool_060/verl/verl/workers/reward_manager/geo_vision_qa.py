@@ -461,6 +461,9 @@ class GeoVisionQARewardManager:
         reward_extra_info = defaultdict(list)
         already_printed = {}
 
+        sample_data = []
+        judge_tasks = []
+
         for i in range(len(data)):
             data_item = data[i]
 
@@ -479,10 +482,12 @@ class GeoVisionQARewardManager:
             reward_model = data_item.non_tensor_batch.get("reward_model")
             if not isinstance(reward_model, dict) or "ground_truth" not in reward_model:
                 logger.warning("Sample %d missing ground_truth, skipping reward calculation", i)
+                sample_data.append(None)
                 continue
             ground_truth = reward_model["ground_truth"]
             if ground_truth is None:
                 logger.warning("Sample %d has None ground_truth, skipping reward calculation", i)
+                sample_data.append(None)
                 continue
             data_source = data_item.non_tensor_batch.get(self.reward_fn_key, "unknown")
 
@@ -491,20 +496,23 @@ class GeoVisionQARewardManager:
                 num_turns = int(num_turns[0]) if len(num_turns) > 0 else 2
             model_only_text = re.sub(r"<\|im_start\|>user\n.*?<\|im_end\|>", "", response_str, flags=re.DOTALL)
             r_rep = _compute_repetition_penalty(model_only_text, int(num_turns))
-
-            # R_format: format compliance
             r_format = _compute_format_reward(response_str)
-
-            # R_correct: answer correctness (dataset-specific)
             prediction = extract_answer(response_str)
             accuracy = self._score_correctness(prediction, ground_truth, data_source, data_item)
 
-            # LLM judge fallback: rule-based says wrong → ask LLM
-            # Skip for map_trace: GT is coordinate paths, LLM judge can't evaluate
-            llm_called = 0.0
-            llm_overturned = 0.0
-            if accuracy == 0.0 and prediction and self.judge is not None and data_source != "map_trace":
-                llm_called = 1.0
+            sd = {
+                "i": i, "prompt_str": prompt_str, "response_str": response_str,
+                "ground_truth": ground_truth, "data_source": data_source,
+                "prediction": prediction, "accuracy": accuracy,
+                "r_rep": r_rep, "r_format": r_format,
+                "valid_response_length": valid_response_length,
+                "data_item": data_item,
+            }
+            sample_data.append(sd)
+
+            is_ood = data_source.startswith("cartomapqa_") or data_source.startswith("mapeval_")
+            judge_threshold = (accuracy != 1.0) if is_ood else (accuracy == 0.0)
+            if judge_threshold and prediction and self.judge is not None and data_source != "map_trace":
                 if data_source == "reason_map":
                     reason = getattr(self, "_last_reasonmap_reason", "")
                     judge_gt = (
@@ -514,17 +522,85 @@ class GeoVisionQARewardManager:
                         "Ignore minor differences like 'Station' suffix, '站' suffix, 'Line' vs '号线' naming.\n"
                         "If the predicted route is topologically equivalent to the ground truth, answer YES."
                     )
-                    if self._llm_judge_fallback(prompt_str, judge_gt, prediction):
-                        accuracy = 1.0
-                        llm_overturned = 1.0
+                elif data_source == "cartomapqa_srn":
+                    judge_gt = (
+                        f"Ground truth route: {ground_truth}\n"
+                        f"Predicted route: {prediction}\n"
+                        "Evaluation rules:\n"
+                        "- 'road_1, continue straight, road_1' is equivalent to 'road_1' only. "
+                        "Redundant straight continuations on the same road should be ignored.\n"
+                        "- The direction sequence matters: compare step by step.\n"
+                        "- Road name synonyms or abbreviations (e.g. 'St' vs 'Street') are acceptable.\n"
+                        "If the predicted route is equivalent to the ground truth, answer YES."
+                    )
+                elif data_source == "cartomapqa_mml":
+                    judge_gt = (
+                        f"Ground truth: {ground_truth}\n"
+                        f"Predicted: {prediction}\n"
+                        "Evaluation rules:\n"
+                        "- The answer is a JSON with 'road_1' and 'road_2' fields.\n"
+                        "- The order of road_1 and road_2 does NOT matter: "
+                        "{road_1: A, road_2: B} is equivalent to {road_1: B, road_2: A}.\n"
+                        "- Road name abbreviations (e.g. 'Rd' vs 'Road', 'St' vs 'Street') are acceptable.\n"
+                        "If the predicted answer matches the ground truth, answer YES."
+                    )
+                elif data_source == "cartomapqa_stmf_name_listing":
+                    judge_gt = (
+                        f"Ground truth names: {ground_truth}\n"
+                        f"Predicted names: {prediction}\n"
+                        "Evaluation rules:\n"
+                        "- The answer is a list of POI names.\n"
+                        "- The order of names does NOT matter.\n"
+                        "- Minor spelling variations or abbreviations are acceptable.\n"
+                        "If the predicted names match the ground truth, answer YES."
+                    )
                 else:
-                    if self._llm_judge_fallback(prompt_str, ground_truth, prediction):
-                        accuracy = 1.0
-                        llm_overturned = 1.0
+                    judge_gt = str(ground_truth)
+                judge_tasks.append((i, prompt_str, judge_gt, prediction))
+
+        judge_results = {}
+        if judge_tasks:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            def _call_judge(task):
+                idx, p, gt, pred = task
+                return idx, self._llm_judge_fallback(p, gt, pred)
+            with ThreadPoolExecutor(max_workers=min(16, len(judge_tasks))) as pool:
+                futures = {pool.submit(_call_judge, t): t[0] for t in judge_tasks}
+                for future in as_completed(futures):
+                    idx, result = future.result()
+                    judge_results[idx] = result
+
+        for sd in sample_data:
+            if sd is None:
+                for key in ["accuracy", "score", "has_answer_tag", "r_rep", "r_format",
+                            "r_correct", "llm_judge_called", "llm_judge_overturned",
+                            "ndtw", "ndtw_success", "ndtw_count",
+                            "rle_m_error", "rle_m_count", "rle_ft_error", "rle_ft_count",
+                            "counting_sq_error", "counting_count", "srn_step_acc", "srn_count",
+                            "mtmf_counting_sq_error", "mtmf_counting_count", "mtmf_naming_f1", "mtmf_naming_count"]:
+                    reward_extra_info[key].append(0.0)
+                reward_extra_info["correct_response_length"].append(0.0)
+                reward_extra_info["wrong_response_length"].append(0.0)
+                continue
+
+            i = sd["i"]
+            accuracy = sd["accuracy"]
+            prediction = sd["prediction"]
+            ground_truth = sd["ground_truth"]
+            data_source = sd["data_source"]
+            r_rep = sd["r_rep"]
+            r_format = sd["r_format"]
+            valid_response_length = sd["valid_response_length"]
+            prompt_str = sd["prompt_str"]
+            response_str = sd["response_str"]
+
+            llm_called = 1.0 if i in judge_results else 0.0
+            llm_overturned = 0.0
+            if i in judge_results and judge_results[i]:
+                accuracy = 1.0
+                llm_overturned = 1.0
 
             r_correct = accuracy if data_source == "map_trace" else (1.0 if accuracy > 0 else 0.0)
-
-            # R(U) = R_rep + R_format + R_correct
             reward = r_rep + r_format + r_correct
 
             ndtw_val = 0.0

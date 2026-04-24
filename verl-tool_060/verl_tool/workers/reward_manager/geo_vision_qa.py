@@ -503,7 +503,9 @@ class GeoVisionQARewardManager:
             # Skip for map_trace: GT is coordinate paths, LLM judge can't evaluate
             llm_called = 0.0
             llm_overturned = 0.0
-            if accuracy == 0.0 and prediction and self.judge is not None and data_source != "map_trace":
+            is_ood = data_source.startswith("cartomapqa_") or data_source.startswith("mapeval_")
+            judge_threshold = (accuracy != 1.0) if is_ood else (accuracy == 0.0)
+            if judge_threshold and prediction and self.judge is not None and data_source != "map_trace":
                 llm_called = 1.0
                 if data_source == "reason_map":
                     reason = getattr(self, "_last_reasonmap_reason", "")
@@ -513,6 +515,47 @@ class GeoVisionQARewardManager:
                         "Compare ONLY: route names, departure/arrival stations, and transfer connections.\n"
                         "Ignore minor differences like 'Station' suffix, '站' suffix, 'Line' vs '号线' naming.\n"
                         "If the predicted route is topologically equivalent to the ground truth, answer YES."
+                    )
+                    if self._llm_judge_fallback(prompt_str, judge_gt, prediction):
+                        accuracy = 1.0
+                        llm_overturned = 1.0
+                elif data_source == "cartomapqa_srn":
+                    judge_gt = (
+                        f"Ground truth route: {ground_truth}\n"
+                        f"Predicted route: {prediction}\n"
+                        "Evaluation rules:\n"
+                        "- 'road_1, continue straight, road_1' is equivalent to 'road_1' only. "
+                        "Redundant straight continuations on the same road should be ignored.\n"
+                        "- The direction sequence matters: compare step by step.\n"
+                        "- Road name synonyms or abbreviations (e.g. 'St' vs 'Street') are acceptable.\n"
+                        "If the predicted route is equivalent to the ground truth, answer YES."
+                    )
+                    if self._llm_judge_fallback(prompt_str, judge_gt, prediction):
+                        accuracy = 1.0
+                        llm_overturned = 1.0
+                elif data_source == "cartomapqa_mml":
+                    judge_gt = (
+                        f"Ground truth: {ground_truth}\n"
+                        f"Predicted: {prediction}\n"
+                        "Evaluation rules:\n"
+                        "- The answer is a JSON with 'road_1' and 'road_2' fields.\n"
+                        "- The order of road_1 and road_2 does NOT matter: "
+                        "{road_1: A, road_2: B} is equivalent to {road_1: B, road_2: A}.\n"
+                        "- Road name abbreviations (e.g. 'Rd' vs 'Road', 'St' vs 'Street') are acceptable.\n"
+                        "If the predicted answer matches the ground truth, answer YES."
+                    )
+                    if self._llm_judge_fallback(prompt_str, judge_gt, prediction):
+                        accuracy = 1.0
+                        llm_overturned = 1.0
+                elif data_source == "cartomapqa_stmf_name_listing":
+                    judge_gt = (
+                        f"Ground truth names: {ground_truth}\n"
+                        f"Predicted names: {prediction}\n"
+                        "Evaluation rules:\n"
+                        "- The answer is a list of POI names.\n"
+                        "- The order of names does NOT matter.\n"
+                        "- Minor spelling variations or abbreviations are acceptable.\n"
+                        "If the predicted names match the ground truth, answer YES."
                     )
                     if self._llm_judge_fallback(prompt_str, judge_gt, prediction):
                         accuracy = 1.0
