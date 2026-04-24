@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
+import os
 from datetime import timedelta
 
-import torch  # noqa: F401 (used by callers)
+import torch
+import torch.distributed as dist
 
 
 def patch_dist_group_timeout(timeout: timedelta):
@@ -19,6 +21,51 @@ def patch_dist_group_timeout(timeout: timedelta):
 
     if hasattr(distributed_c10d, "default_pg_nccl_timeout"):
         distributed_c10d.default_pg_nccl_timeout = timeout
+
+
+def warmup_process_groups(*groups: dist.ProcessGroup | None) -> None:
+    """Force eager initialization of the collective communicator for each group.
+
+    NCCL/HCCL communicators are created lazily on the first collective call.
+    On Ascend NPU (HCCL), deferring init until a collective runs during
+    training is prone to fail with HCCP process initialization errors
+    (e.g. ``hcclCommInitRootInfoConfig`` error code 7) when multiple
+    colocated engines (for example actor + reference) independently mint
+    overlapping subgroups and trigger their first collective in the middle
+    of training work. Running a small dummy all-reduce at setup time forces
+    the communicator to be initialized while all ranks are aligned and the
+    device is idle, which avoids the race.
+
+    ``None`` groups and duplicates are skipped. No-op on CPU-only platforms
+    or before ``dist.init_process_group``. Safe to call repeatedly;
+    subsequent calls on already-initialized groups are cheap.
+    """
+    # Deferred import to keep this module importable without a platform
+    # (e.g. during lightweight tooling or unit tests).
+    from areal.infra.platforms import current_platform
+
+    if not dist.is_initialized() or current_platform.device_type == "cpu":
+        return
+
+    seen: set[int] = set()
+    unique_groups: list[dist.ProcessGroup] = []
+    for group in groups:
+        if group is None:
+            continue
+        key = id(group)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_groups.append(group)
+    if not unique_groups:
+        return
+
+    local_rank = int(os.environ["LOCAL_RANK"])
+    current_platform.set_device(local_rank)
+    device = torch.device(current_platform.device_type, local_rank)
+    tensor = torch.zeros(1, device=device)
+    for group in unique_groups:
+        dist.all_reduce(tensor, group=group)
 
 
 # Copy from pytorch and OpenRLHF to allow creating multiple main groups.
