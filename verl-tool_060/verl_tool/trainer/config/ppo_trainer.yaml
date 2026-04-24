@@ -86,6 +86,33 @@ algorithm:
   # GIGPO parameters
   gigpo_gamma: 0.99
 
+  # AT-GiGPO: Adaptive-Task scheduling
+  at_gigpo:
+
+    # Master switch; false = pure GiGPO, no task-adaptive behavior
+    enable: false
+
+    # Softmax temperature for UCB sampling distribution (higher = more uniform)
+    tau: 1.0
+
+    # Recompute L_hat EMA every this fraction of total steps
+    l_hat_update_ratio: 0.025
+
+    # EMA smoothing for L_hat: new = alpha * current_mean + (1-alpha) * old
+    ema_alpha: 0.5
+
+    # Start epoch-decay protection after this many epochs per dataset
+    epoch_decay_start: 2.0
+
+    # Number of turn-based buckets for advantage rescaling (quantile split)
+    n_turn_buckets: 4
+
+    # Minimum bucket size as ratio of total samples; small buckets merge into neighbors
+    min_bucket_ratio: 0.15
+
+    # Sort batch by num_turns before actor update (groups similar complexity)
+    sort_by_turns: false
+
   # Whether to enable in-reward KL penalty
   use_kl_in_reward: False
 

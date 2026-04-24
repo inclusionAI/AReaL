@@ -510,6 +510,8 @@ def compute_gigpo_outcome_advantage(
             "gigpo/trajs_without_step_adv": bs - int(step_adv_nonzero),
             "gigpo/step_adv_ratio": step_adv_nonzero / bs if bs > 0 else 0.0,
         }
+        # AT-GiGPO: attach episode-level advantages for curriculum signal (not logged as metric)
+        gigpo_metrics["_episode_advantages"] = episode_advantages  # (bs,) tensor
 
     return combined, combined, gigpo_metrics if obs_hashes is not None and turn_boundaries is not None else {}
 
