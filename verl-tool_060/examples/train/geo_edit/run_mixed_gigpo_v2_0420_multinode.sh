@@ -57,7 +57,7 @@ reward_manager=geo_vision_qa
 strategy="fsdp2"
 lr=1e-6
 kl_loss_coef=0.0
-kl_coef=0.001
+kl_coef=0.0
 entropy_coeff=0
 kl_loss_type=low_var_kl
 

@@ -173,7 +173,7 @@ run_eval_group() {
     echo "  Done: $group_name -> ${EVAL_DIR}/results/${RUN_NAME}/${group_name}"
 }
 
-for group in visual_probe reasonmap mm_mapqa  map_trace; do
+for group in visual_probe mm_mapqa  map_trace reasonmap; do
     run_eval_group "$group" "${EVAL_GROUPS[$group]}"
 done
 

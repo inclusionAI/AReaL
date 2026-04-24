@@ -6,7 +6,7 @@ set -x
 # Requires an existing Ray cluster spanning all 4 nodes.
 #
 # Environment variables:
-#   WORKSPACE        – default: /storage/openpsi/data/reasonmap_rl
+#   WORKSPACE        – default: /storage/openpsi/data/reasonmap_rl 
 #   MODEL_PATH       – path to SFT checkpoint
 #   TOOL_SERVER_URL  – tool server URL (must be reachable from all nodes)
 #   TOOL_SERVER_IP   – tool server IP (port defaults to 30888)
@@ -15,16 +15,16 @@ set -x
 # ============================================================
 
 WORKSPACE=${WORKSPACE:-/storage/openpsi/data/lcy_image_edit/mixed_rl}
-model_name=${MODEL_PATH:-/storage/openpsi/models/Qwen3-VL-8B-Thinking}
+model_name=${MODEL_PATH:-/storage/openpsi/models/lcy_image_edit/sft_workspace/qwen3vl8b-thinking-5ds-v2-0419-ct65536/checkpoint-280}
 
 train_data="[/storage/openpsi/data/reasonmap_rl/combined_train_rl_only.parquet,$WORKSPACE/new_train.parquet]"
 val_data="[/storage/openpsi/data/reasonmap_rl/combined_test_10pct.parquet,$WORKSPACE/new_val.parquet,$WORKSPACE/mapqa_val_200.parquet]"
-run_name="mixed-rl-2node_rl_zero"
+run_name="mixed-grpo-4node_0424v2"
 rl_alg=grpo
 
 # ---- Cluster topology ----
 n_gpus_per_node=8
-n_nodes=2
+n_nodes=4
 
 # ---- Batch sizes (scaled for 4 nodes) ----
 n=4
@@ -55,7 +55,7 @@ reward_manager=geo_vision_qa
 
 # ---- Training ----
 strategy="fsdp2"
-lr=6e-7
+lr=1e-6
 kl_loss_coef=0.0
 kl_coef=0
 entropy_coeff=0
@@ -142,7 +142,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     data.train_files=$train_data \
     data.val_files=$val_data \
     data.train_batch_size=$batch_size \
-    data.val_batch_size=128 \
+    data.val_batch_size=256 \
     data.dataloader_num_workers=64 \
     data.max_prompt_length=$max_prompt_length \
     data.max_response_length=$max_response_length \
