@@ -756,6 +756,17 @@ class MegatronEngine(TrainEngine):
                     cp_inputs["_global_loss_mask"] = mb_input.orig_mb[
                         "loss_mask"
                     ].bool()
+                    # Expose CP-related process groups so the loss function can
+                    # (a) aggregate per-sequence stats (seqlogp / ppl) across
+                    # CP ranks that hold different slices of the same sequence,
+                    # and (b) reduce ratio-style stats (loss/entropy/vocab_*)
+                    # across DP + CP at export time so they are CP-invariant,
+                    # matching the pre-#1223 reporting semantics without
+                    # reintroducing the expensive logits all-gather.
+                    cp_inputs["_cp_reduce_group"] = mpu.get_context_parallel_group()
+                    cp_inputs["_cp_dp_reduce_group"] = mpu.get_data_parallel_group(
+                        with_context_parallel=True
+                    )
                     cp_inputs["_cp_local_labels"] = cp_labels
                     cp_inputs["loss_mask"] = cp_loss_mask
                     cp_inputs["cu_seqlens"] = cp_cu_seqlens
