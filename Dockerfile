@@ -206,7 +206,7 @@ RUN curl --proto '=https' --tlsv1.2 -LsSf \
     https://github.com/nearai/ironclaw/releases/download/ironclaw-v${IRONCLAW_VERSION}/ironclaw-installer.sh | sh
 RUN curl -fsSL \
     https://github.com/zeroclaw-labs/zeroclaw/releases/latest/download/install.sh \
-    | bash -s -- --prefer-prebuilt --skip-onboard
+    | bash -s -- --skip-onboard
 RUN uv pip install nanobot-ai
 
 ##############################################################
