@@ -61,10 +61,29 @@ def test_dedupes_repeated_groups(mock_all_reduce, monkeypatch):
         patch("torch.zeros") as zeros,
     ):
         platform.device_type = "cuda"
-        platform.set_device = lambda _: None
         zeros.return_value = object()
         warmup_process_groups(group, group, None, group)
 
     assert mock_all_reduce.call_count == 1
+    platform.set_device.assert_called_once_with(0)
     kwargs = mock_all_reduce.call_args.kwargs
     assert kwargs["group"] is group
+
+
+def test_falls_back_to_current_device_without_local_rank(mock_all_reduce, monkeypatch):
+    """When LOCAL_RANK is unset, the caller's current device is used."""
+    monkeypatch.delenv("LOCAL_RANK", raising=False)
+    group = object()
+    with (
+        patch.object(dist, "is_initialized", return_value=True),
+        patch("areal.infra.platforms.current_platform") as platform,
+        patch("torch.zeros") as zeros,
+    ):
+        platform.device_type = "cuda"
+        platform.current_device.return_value = 3
+        zeros.return_value = object()
+        warmup_process_groups(group)
+
+    platform.current_device.assert_called_once_with()
+    platform.set_device.assert_not_called()
+    assert mock_all_reduce.call_count == 1
