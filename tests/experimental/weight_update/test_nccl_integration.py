@@ -95,6 +95,53 @@ def _get_test_model_path() -> str:
     return "Qwen/Qwen3-0.6B"
 
 
+def _get_test_moe_model_path() -> str:
+    local = "/storage/openpsi/models/Qwen__Qwen3-30B-A3B/"
+    if os.path.isdir(local):
+        return local
+    return "Qwen/Qwen3-30B-A3B"
+
+
+def _make_truncated_moe_model(tmp_path, num_layers: int = 4) -> str:
+    import glob
+    import json
+    import shutil
+
+    src = _get_test_moe_model_path()
+    dst = str(tmp_path / "truncated_moe")
+    os.makedirs(dst, exist_ok=True)
+
+    with open(os.path.join(src, "config.json")) as f:
+        config = json.load(f)
+    config["num_hidden_layers"] = num_layers
+    with open(os.path.join(dst, "config.json"), "w") as f:
+        json.dump(config, f)
+
+    for fname in (
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "vocab.json",
+        "merges.txt",
+        "generation_config.json",
+    ):
+        src_file = os.path.join(src, fname)
+        if os.path.isfile(src_file):
+            shutil.copy2(src_file, dst)
+
+    for weight_file in glob.glob(os.path.join(src, "*.safetensors")) + glob.glob(
+        os.path.join(src, "*.bin")
+    ):
+        os.symlink(weight_file, os.path.join(dst, os.path.basename(weight_file)))
+
+    for index_file in glob.glob(
+        os.path.join(src, "*.safetensors.index.json")
+    ) + glob.glob(os.path.join(src, "*.bin.index.json")):
+        shutil.copy2(index_file, dst)
+
+    return dst
+
+
 def _make_local_scheduler(tmp_path, name: str, gpu_devices: list[int]):
     from areal.infra.scheduler.local import LocalScheduler
 
@@ -123,6 +170,19 @@ _VALIDATE_PARAM_NAMES = [
     "model.layers.0.mlp.gate_proj.weight",
     "model.layers.0.mlp.up_proj.weight",
     "model.layers.27.self_attn.q_proj.weight",
+    "model.norm.weight",
+]
+
+# Qwen3-30B-A3B (truncated to 4 layers) MoE validation params.
+# This model has no shared experts — pure MoE with 128 routed experts.
+_VALIDATE_PARAM_NAMES_MOE = [
+    "model.layers.0.self_attn.q_proj.weight",
+    "model.layers.0.self_attn.k_proj.weight",
+    "model.layers.0.self_attn.v_proj.weight",
+    "model.layers.1.mlp.experts.0.gate_proj.weight",
+    "model.layers.1.mlp.experts.0.up_proj.weight",
+    "model.layers.1.mlp.experts.0.down_proj.weight",
+    "model.layers.3.self_attn.q_proj.weight",
     "model.norm.weight",
 ]
 
@@ -207,10 +267,11 @@ def _validate_weight_update_correctness_megatron(
     inf_worker_url: str,
     param_dir,
     tag: str = "megatron",
+    param_names: list[str] | None = None,
 ) -> None:
     import concurrent.futures
 
-    names = _VALIDATE_PARAM_NAMES
+    names = param_names or _VALIDATE_PARAM_NAMES
     n_train = len(train_worker_urls)
     print(
         f"\n[weight-validation] Fetching parameters from {n_train} Megatron "
@@ -508,6 +569,8 @@ def _run_megatron_awex_e2e(
     tag: str,
     tmp_path_factory,
     model_path: str | None = None,
+    validate_param_names: list[str] | None = None,
+    init_from_scratch: bool = False,
 ):
     from areal.api import FinetuneSpec
     from areal.api.cli_args import OptimizerConfig, SchedulingSpec, TrainEngineConfig
@@ -552,6 +615,7 @@ def _run_megatron_awex_e2e(
         experiment_name=f"test-awex-{tag}",
         trial_name="t0",
         path=model_path,
+        init_from_scratch=init_from_scratch,
         optimizer=OptimizerConfig(),
         _version="v2",
         setup_timeout=300.0,
@@ -619,6 +683,7 @@ def _run_megatron_awex_e2e(
             inf_worker_url=inf_worker_urls[0],
             param_dir=tmp,
             tag=tag,
+            param_names=validate_param_names,
         )
     finally:
         if wu_ctrl is not None:
@@ -759,4 +824,67 @@ def test_awex_megatron_dp_cp_e2e_weight_update(
         pair_name=f"test_megatron_dp{dp_size}cp{cp_size}",
         tag=f"megatron_dp{dp_size}cp{cp_size}",
         tmp_path_factory=tmp_path_factory,
+    )
+
+
+@pytest.mark.multi_gpu
+@pytest.mark.slow
+@pytest.mark.sglang
+@pytest.mark.parametrize(
+    "n_gpus,ep_size",
+    [(4, 2), (8, 4)],
+    ids=["4gpu-dp2ep2", "8gpu-dp4ep4"],
+)
+def test_awex_megatron_ep_e2e_weight_update(n_gpus, ep_size, tmp_path_factory):
+    """Full round trip: MegatronEngine (EP) → weight-update gateway → SGLang.
+
+    Each EP rank owns a different subset of expert parameters while attention
+    and norm weights are replicated. Uses a truncated Qwen3-30B-A3B MoE model
+    (4 layers) with init_from_scratch=True to avoid loading full weights.
+    """
+    if current_platform.device_count() < n_gpus:
+        pytest.skip(f"This test requires {n_gpus} GPUs")
+    n_train = n_gpus - n_gpus // 2
+    tmp = tmp_path_factory.mktemp(f"megatron_ep{ep_size}_model")
+    _run_megatron_awex_e2e(
+        n_gpus=n_gpus,
+        backend=f"megatron:d{n_train}e{ep_size}",
+        pair_name=f"test_megatron_ep{ep_size}",
+        tag=f"megatron_ep{ep_size}",
+        tmp_path_factory=tmp_path_factory,
+        model_path=_make_truncated_moe_model(tmp, num_layers=4),
+        validate_param_names=_VALIDATE_PARAM_NAMES_MOE,
+        init_from_scratch=True,
+    )
+
+
+@pytest.mark.multi_gpu
+@pytest.mark.slow
+@pytest.mark.sglang
+@pytest.mark.parametrize(
+    "n_gpus,dp_size,ep_size",
+    [(8, 4, 2)],
+    ids=["8gpu-dp4ep2"],
+)
+def test_awex_megatron_dp_ep_e2e_weight_update(
+    n_gpus, dp_size, ep_size, tmp_path_factory
+):
+    """Full round trip: MegatronEngine (DP+EP hybrid) → weight-update gateway → SGLang.
+
+    Combines data parallelism with expert parallelism. Each DP replica has
+    ep_size EP ranks owning different expert subsets. Non-expert params
+    (attention, norms) are replicated across all ranks.
+    """
+    if current_platform.device_count() < n_gpus:
+        pytest.skip(f"This test requires {n_gpus} GPUs")
+    tmp = tmp_path_factory.mktemp(f"megatron_dp{dp_size}ep{ep_size}_model")
+    _run_megatron_awex_e2e(
+        n_gpus=n_gpus,
+        backend=f"megatron:d{dp_size}e{ep_size}",
+        pair_name=f"test_megatron_dp{dp_size}ep{ep_size}",
+        tag=f"megatron_dp{dp_size}ep{ep_size}",
+        tmp_path_factory=tmp_path_factory,
+        model_path=_make_truncated_moe_model(tmp, num_layers=4),
+        validate_param_names=_VALIDATE_PARAM_NAMES_MOE,
+        init_from_scratch=True,
     )
