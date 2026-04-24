@@ -1144,6 +1144,19 @@ class MegatronEngine(TrainEngine):
                     self._mtp_loss_ema = None  # Will be initialized on first MTP loss
                     self._mtp_loss_clip_count = 0
                     self._mtp_loss_total_count = 0
+                # [v5-F6] Hint SpecDec v2 env toggle for throughput (idempotent,
+                # rank-0 only to avoid N-rank log spam).
+                import os as _os_v5
+                try:
+                    _rank_v5 = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
+                except Exception:
+                    _rank_v5 = 0
+                if _rank_v5 == 0 and _os_v5.environ.get("SGLANG_ENABLE_SPEC_V2", "") == "":
+                    self.logger.info(
+                        "[MTPEnvHint] SGLANG_ENABLE_SPEC_V2 not set; "
+                        "consider exporting SGLANG_ENABLE_SPEC_V2=True to "
+                        "enable overlap scheduler for speculative decoding."
+                    )
 
                 _unwrapped = model
                 while hasattr(_unwrapped, "module"):
@@ -1304,13 +1317,16 @@ class MegatronEngine(TrainEngine):
                                     # mtp_loss_scaling_factor) and matches
                                     # Megatron-Core's native implementation.
                                     _mtp_hs = hidden_states_list[mtp_layer_number + 1]
-                                    if _mtp_diag_mb_counter[0] == 0:
+                                    # [v5-F1c] Gate MB#0 forward diag to first 3 steps + every 100.
+                                    _gs_fwd = getattr(_engine_ref, '_global_step', 0)
+                                    if (_mtp_diag_mb_counter[0] == 0
+                                            and (_gs_fwd <= 3 or _gs_fwd % 100 == 0)):
                                         _mtp_hs_gfn = type(_mtp_hs.grad_fn).__name__ if _mtp_hs.grad_fn else "None"
                                         _logger.info(
-                                            "[MTPFwdDiag] MB#0 Layer#%d: "
+                                            "[MTPFwdDiag] MB#0 Layer#%d step=%d: "
                                             "_mtp_hs.rg=%s, shape=%s, grad_fn=%s, "
                                             "hs.rg=%s",
-                                            mtp_layer_number, _mtp_hs.requires_grad,
+                                            mtp_layer_number, _gs_fwd, _mtp_hs.requires_grad,
                                             list(_mtp_hs.shape), _mtp_hs_gfn,
                                             hidden_states.requires_grad)
                                     mtp_logits, _ = self_model.output_layer(
@@ -1344,12 +1360,15 @@ class MegatronEngine(TrainEngine):
                                         mtp_labels, mtp_logits
                                     )
                                     mtp_loss = loss_mask * mtp_loss
-                                    if _mtp_diag_mb_counter[0] == 0:
+                                    # [v5-F1c] Gate MB#0 mtp_loss diag to first 3 steps + every 100.
+                                    _gs_ml = getattr(_engine_ref, '_global_step', 0)
+                                    if (_mtp_diag_mb_counter[0] == 0
+                                            and (_gs_ml <= 3 or _gs_ml % 100 == 0)):
                                         _ml_gfn = type(mtp_loss.grad_fn).__name__ if mtp_loss.grad_fn else "None"
                                         _logger.info(
-                                            "[MTPFwdDiag] MB#0 mtp_loss: "
+                                            "[MTPFwdDiag] MB#0 mtp_loss step=%d: "
                                             "rg=%s, grad_fn=%s, sum=%.6f, num_tokens=%s",
-                                            mtp_loss.requires_grad, _ml_gfn,
+                                            _gs_ml, mtp_loss.requires_grad, _ml_gfn,
                                             mtp_loss.sum().item(), num_tokens)
                                     elif self_model.training and _logger.isEnabledFor(10):
                                         _logger.debug(
@@ -1377,32 +1396,49 @@ class MegatronEngine(TrainEngine):
                                     else:
                                         _mtp_loss_to_store = mtp_loss_scale * mtp_loss / num_tokens
                                     _engine_ref._mtp_loss_for_backward.append(_mtp_loss_to_store)
+                                    # [v5-F4] Cap FIFO to avoid unbounded growth on producer/consumer drift.
+                                    _fifo_len = len(_engine_ref._mtp_loss_for_backward)
+                                    if _fifo_len > 32:
+                                        _logger.warning(
+                                            "[MTPFifoOverflow] MTP loss FIFO length=%d >32, "
+                                            "dropping oldest entry (producer-consumer drift).",
+                                            _fifo_len,
+                                        )
+                                        _engine_ref._mtp_loss_for_backward.pop(0)
                                     if self_model.training and _logger.isEnabledFor(10):
                                         _logger.debug(
                                             f"[MTPFix] Stored MTP loss for backward: "
                                             f"sum={_mtp_loss_to_store.sum().item():.6f}, "
                                             f"requires_grad={_mtp_loss_to_store.requires_grad}, "
-                                            f"accumulator_len={len(_engine_ref._mtp_loss_for_backward)}"
+                                            f"accumulator_len={_fifo_len}"
                                         )
 
-                                _logger.info(
-                                    "[MTPDetach] MTP loss computed via direct output_layer call")
+                                # [v5-F1a] Gate per-step to first MB to avoid 1.4k lines/step spam.
+                                if _mtp_diag_mb_counter[0] == 0:
+                                    _logger.info(
+                                        "[MTPDetach] MTP loss computed via direct output_layer call (first MB of step)")
 
+                                # [v5-F1b] Gate backward hook registration to first 3 steps
+                                # then every 100 steps; previously fired every step × every MB#0.
+                                _gs_v5 = getattr(_engine_ref, '_global_step', 0)
+                                _should_log_bwd = (_gs_v5 <= 3 or _gs_v5 % 100 == 0)
                                 if (_mtp_diag_mb_counter[0] == 0
-                                        and hidden_states.requires_grad):
-                                    def _mtp_backward_hook(grad, _lg=_logger):
+                                        and hidden_states.requires_grad
+                                        and _should_log_bwd):
+                                    def _mtp_backward_hook(grad, _lg=_logger, _gs=_gs_v5):
+                                        # Inner hook fires once per backward; log only on gated steps.
                                         _lg.info(
-                                            "[MTPBwdDiag] AutoScaler backward FIRED: "
+                                            "[MTPBwdDiag] AutoScaler backward FIRED (step=%d): "
                                             "grad.shape=%s, grad.norm=%.8f, "
                                             "grad.abs_max=%.8f",
-                                            list(grad.shape),
+                                            _gs, list(grad.shape),
                                             grad.float().norm().item(),
                                             grad.float().abs().max().item())
                                     hidden_states.register_hook(_mtp_backward_hook)
                                     _logger.info(
                                         "[MTPFwdDiag] MB#0 Registered backward hook on "
-                                        "hidden_states(post-AutoScaler): shape=%s, rg=%s",
-                                        list(hidden_states.shape),
+                                        "hidden_states(post-AutoScaler) step=%d: shape=%s, rg=%s",
+                                        _gs_v5, list(hidden_states.shape),
                                         hidden_states.requires_grad)
 
                                 _mtp_diag_mb_counter[0] += 1
@@ -1502,7 +1538,8 @@ class MegatronEngine(TrainEngine):
                                     _emb_call_count[0] += 1
                                     _call_n = _emb_call_count[0]
 
-                                    if _call_n <= 4 or _call_n % 500 == 0:
+                                    # [v5-F1d] Relax throttle 500->2000 to cut MTPEmbDiag spam ~4x.
+                                    if _call_n <= 4 or _call_n % 2000 == 0:
                                         _di_gfn = (
                                             type(_dec_input.grad_fn).__name__
                                             if _dec_input.grad_fn else "None(leaf)")
@@ -1577,11 +1614,14 @@ class MegatronEngine(TrainEngine):
                         _orig=_orig_clm,
                         _lg=self.logger,
                     ):
-                        if _mtp_diag_mb_counter[0] <= 2:
+                        # [v5-F1e] Gate LossFn diag to MB#0 of first 3 steps + every 100.
+                        _gs_lfn = getattr(_engine_ref, '_global_step', 0)
+                        if (_mtp_diag_mb_counter[0] == 0
+                                and (_gs_lfn <= 3 or _gs_lfn % 100 == 0)):
                             _lg.info(
-                                "[MTPLossFnDiag] _mtp_loss_fn called: "
+                                "[MTPLossFnDiag] _mtp_loss_fn called step=%d: "
                                 "_rem=%d, _logits.rg=%s, shape=%s",
-                                _rem[0], _logits.requires_grad,
+                                _gs_lfn, _rem[0], _logits.requires_grad,
                                 list(_logits.shape))
                         if _rem[0] > 0:
                             _rem[0] -= 1
@@ -2371,7 +2411,8 @@ class MegatronEngine(TrainEngine):
         _has_tmp = hasattr(param, "tensor_model_parallel")
         _is_tmp = getattr(param, "tensor_model_parallel", False) if _has_tmp else False
         _is_dup = name in self._duplicated_param_names if self._duplicated_param_names else False
-        self.logger.info(
+        # [v5-F1f] Downgrade per-param trace to DEBUG (was INFO, ~21k lines/run).
+        self.logger.debug(
             f"[DiagImpl] Rank {dist.get_rank()} all_gather_param START "
             f"name={name}, has_tmp={_has_tmp}, is_tmp={_is_tmp}, is_dup={_is_dup}, "
             f"param_shape={tuple(param.shape)}, param_dtype={param.dtype}"
@@ -2383,7 +2424,8 @@ class MegatronEngine(TrainEngine):
             quantization_config=self.quantization_config,
             duplicated_param_names=self._duplicated_param_names,
         )
-        self.logger.info(
+        # [v5-F1f] Downgrade per-param trace to DEBUG.
+        self.logger.debug(
             f"[DiagImpl] Rank {dist.get_rank()} all_gather_param DONE "
             f"name={name}, result_type={type(param).__name__}"
         )
@@ -2409,12 +2451,14 @@ class MegatronEngine(TrainEngine):
         import time as _diag_time
 
         _t0 = _diag_time.time()
-        self.logger.info(
+        # [v5-F1f] Downgrade per-param trace to DEBUG.
+        self.logger.debug(
             f"[DiagImpl] Rank {dist.get_rank()} _collect_param START "
             f"name={name}"
         )
         param, param_size = self._collect_param(name, param)
-        self.logger.info(
+        # [v5-F1f] Downgrade per-param trace to DEBUG.
+        self.logger.debug(
             f"[DiagImpl] Rank {dist.get_rank()} _collect_param DONE "
             f"name={name}, param_size={param_size / 1024 / 1024:.2f} MB, "
             f"took={_diag_time.time() - _t0:.3f}s"
@@ -2925,18 +2969,65 @@ class MegatronEngine(TrainEngine):
         )
 
         if mtp_hf_tensors:
-            _norm_strs = []
-            for _tn, _tv in mtp_hf_tensors[:5]:
-                _norm_strs.append(
-                    f"{_tn}:{_tv.float().norm().item():.4f}"
+            # [v5-F3] Compute norms for ALL tensors (was: only first 5).
+            # [v5-F5] Track prev norm per-tensor to surface drift direction
+            # and detect stall (draft model not learning from RL data).
+            if not hasattr(self, "_mtp_sync_prev_norms"):
+                self._mtp_sync_prev_norms = {}
+            _all_norms = []
+            _deltas = []
+            _stall_tensors = []
+            for _tn, _tv in mtp_hf_tensors:
+                _cur = _tv.float().norm().item()
+                _prev = self._mtp_sync_prev_norms.get(_tn)
+                if _prev is None:
+                    _all_norms.append((_tn, _cur, None))
+                else:
+                    _d = _cur - _prev
+                    _all_norms.append((_tn, _cur, _d))
+                    _deltas.append(abs(_d))
+                    # Stall: weight changed by <1e-5 absolute (essentially frozen).
+                    if _cur > 0 and abs(_d) < 1e-5:
+                        _stall_tensors.append(_tn)
+                self._mtp_sync_prev_norms[_tn] = _cur
+            # Compact per-tensor summary line (rank-0 only to avoid DP-spam).
+            try:
+                _rank_v5 = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
+            except Exception:
+                _rank_v5 = 0
+            if _rank_v5 == 0:
+                _fmt_parts = []
+                for _tn, _cur, _d in _all_norms:
+                    if _d is None:
+                        _fmt_parts.append(f"{_tn}:{_cur:.4f}")
+                    else:
+                        _fmt_parts.append(f"{_tn}:{_cur:.4f}(Δ{_d:+.3e})")
+                _drift_summary = ""
+                if _deltas:
+                    _max_d = max(_deltas)
+                    _sum_d = sum(_deltas)
+                    _drift_summary = f" | max|Δ|={_max_d:.3e} sum|Δ|={_sum_d:.3e}"
+                self.logger.info(
+                    "[MTPSyncDiag] MTP weight norms at sync "
+                    "(version=%d, %d tensors): %s%s",
+                    meta.version,
+                    len(mtp_hf_tensors),
+                    ", ".join(_fmt_parts),
+                    _drift_summary,
                 )
-            self.logger.info(
-                "[MTPSyncDiag] MTP weight norms at sync "
-                "(version=%d, %d tensors): %s",
-                meta.version,
-                len(mtp_hf_tensors),
-                ", ".join(_norm_strs),
-            )
+                # [v5-F5] Stall warning: if >50% of MTP tensors show sub-1e-5 drift,
+                # the draft model isn't learning — root cause of accept-rate collapse.
+                if _deltas and len(_stall_tensors) >= 0.5 * len(_deltas):
+                    self.logger.warning(
+                        "[MTPSyncHealth] MTP training STALL detected at version=%d: "
+                        "%d/%d tensors drift<1e-5. "
+                        "Likely causes: (1) mtp_lr_scale too small, "
+                        "(2) mtp_loss_scaling_factor too small, "
+                        "(3) MTP gradient is being zeroed by detach. "
+                        "Accept-rate collapse will follow. Stalled tensors (head): %s",
+                        meta.version, len(_stall_tensors), len(_deltas),
+                        ", ".join(_stall_tensors[:3]),
+                    )
 
         # Record a CUDA event on the default stream BEFORE any NCCL
         # broadcasts begin.  At this point, all MTP tensors from
