@@ -32,8 +32,6 @@ project.
 | Zhihao Guo   | Xiaomi                    | @guozhihao-224        |
 | Ming Li      | AReaL Team, Ant Group     | @sitabulaixizawaluduo |
 
-**NOTE**: Maintainers from Huawei are the code owners of the `ascend*` branches.
-
 ### Lead Maintainer (BDFL)
 
 Wei Fu ([@garrett4wade](https://github.com/garrett4wade)) serves as the lead maintainer.
