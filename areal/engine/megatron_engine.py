@@ -1139,6 +1139,11 @@ class MegatronEngine(TrainEngine):
             if self.enable_mtp_training:
                 _engine_ref = self
                 self._mtp_loss_for_backward = []
+                # MTP loss EMA for adaptive clipping (prevents loss spikes)
+                if not hasattr(self, '_mtp_loss_ema'):
+                    self._mtp_loss_ema = None  # Will be initialized on first MTP loss
+                    self._mtp_loss_clip_count = 0
+                    self._mtp_loss_total_count = 0
 
                 _unwrapped = model
                 while hasattr(_unwrapped, "module"):
@@ -1810,6 +1815,11 @@ class MegatronEngine(TrainEngine):
                 total_loss_weight,
                 loss_multiplier=loss_multiplier,
             )
+
+        # Track global training step for diagnostic logging
+        if not hasattr(self, '_global_step'):
+            self._global_step = 0
+        self._global_step += 1
 
         self.forward_backward_batch(mb_list, process_output, forward_only=False)
         DeviceRuntimeInfo.get_current().log("train_batch after forward_backward")
@@ -2569,6 +2579,20 @@ class MegatronEngine(TrainEngine):
 
             self.engine_lock.release()
 
+    # Log MTP weight norms for drift monitoring
+    if mtp_hf_tensors:
+        _norm_strs = []
+        for _tn, _tv in mtp_hf_tensors[:5]:  # Log first 5
+            _norm_strs.append(
+                f"{_tn}:{_tv.float().norm().item():.4f}"
+            )
+        self.logger.info(
+            "[MTPSyncDiag] MTP weight norms at sync "
+            "(version=%d, %d tensors): %s",
+            getattr(self, '_version', -1),
+            len(mtp_hf_tensors),
+            ", ".join(_norm_strs),
+        )
     def _serialize_mtp_tensors_for_update(
         self,
         mtp_hf_tensors: list[tuple[str, torch.Tensor]],
@@ -3365,14 +3389,59 @@ class MegatronEngine(TrainEngine):
         loss_scale = local_weight / total_loss_weight * loss_multiplier
 
         if _mtp_loss_for_this_mb is not None:
-            _mtp_contribution = _mtp_loss_for_this_mb.sum()
+            _mtp_contribution_raw = _mtp_loss_for_this_mb.sum()
+            # --- MTP loss adaptive clipping (Fix: prevent loss spike feedback loop) ---
+            # When mtp_detach_heads=True, MTP trains independently of backbone.
+            # A sudden MTP loss spike (e.g., 5x normal) causes large gradient
+            # updates that destabilize the draft model, crashing accept rate,
+            # which in turn produces worse training data -> even higher loss.
+            # Clipping breaks this positive feedback loop.
+            _mtp_clip_threshold = 5.0  # Clip if loss > 5x EMA
+            _mtp_ema_decay = 0.95
+            _mtp_contribution = _mtp_contribution_raw
+            _mtp_was_clipped = False
+            self._mtp_loss_total_count += 1
+            if self._mtp_loss_ema is None:
+                # Initialize EMA with first observed value
+                self._mtp_loss_ema = _mtp_contribution_raw.detach().item()
+            else:
+                _raw_val = _mtp_contribution_raw.detach().item()
+                _ema_val = self._mtp_loss_ema
+                if _ema_val > 0 and _raw_val > _mtp_clip_threshold * _ema_val:
+                    # Clip: scale down to threshold * EMA
+                    _clip_ratio = (_mtp_clip_threshold * _ema_val) / _raw_val
+                    _mtp_contribution = _mtp_contribution_raw * _clip_ratio
+                    _mtp_was_clipped = True
+                    self._mtp_loss_clip_count += 1
+                    self.logger.warning(
+                        "[MTPLossClip] MTP loss clipped: raw=%.4f, ema=%.4f, "
+                        "threshold=%.1fx, clip_ratio=%.4f, clipped=%.4f, "
+                        "clip_count=%d/%d",
+                        _raw_val, _ema_val, _mtp_clip_threshold,
+                        _clip_ratio, _mtp_contribution.detach().item(),
+                        self._mtp_loss_clip_count, self._mtp_loss_total_count,
+                    )
+                # Update EMA (use raw value for stable tracking, not clipped)
+                self._mtp_loss_ema = (
+                    _mtp_ema_decay * _ema_val
+                    + (1 - _mtp_ema_decay) * _raw_val
+                )
             loss = loss + _mtp_contribution
-            if random.random() < 0.01:
+            _n = self._mtp_loss_total_count
+            if _n <= 4 or _n % 100 == 0:
                 self.logger.info(
-                    f"[MTPFix] Added MTP loss to RL loss: "
-                    f"mtp_contribution={_mtp_contribution.item():.6f}, "
-                    f"rl_loss_before={(loss - _mtp_contribution).item():.6f}, "
-                    f"combined_loss={loss.item():.6f}, loss_scale={loss_scale:.6f}"
+                    "[MTPLossDiag] MTP loss added to RL loss (call #%d): "
+                    "raw=%.6f, applied=%.6f, clipped=%s, "
+                    "ema=%.6f, rl_before=%.6f, combined=%.6f, "
+                    "loss_scale=%.6f",
+                    _n,
+                    _mtp_contribution_raw.detach().item(),
+                    _mtp_contribution.detach().item(),
+                    _mtp_was_clipped,
+                    self._mtp_loss_ema if self._mtp_loss_ema else 0.0,
+                    (loss - _mtp_contribution).detach().item(),
+                    loss.detach().item(),
+                    loss_scale,
                 )
 
         return loss * loss_scale

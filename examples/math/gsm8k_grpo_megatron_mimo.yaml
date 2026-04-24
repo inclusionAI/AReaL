@@ -60,7 +60,7 @@ actor:
     lr_scheduler_type: constant
     gradient_clipping: 1.0
     warmup_steps_proportion: 0.001
-    mtp_lr_scale: 100.0
+    mtp_lr_scale: 10.0
   eps_clip: 0.4
   temperature: ${gconfig.temperature}
   reward_scaling: 10.0
@@ -82,7 +82,7 @@ actor:
   # MTP Online Training - keeps EAGLE draft heads aligned with evolving policy
   enable_mtp_training: true
   mtp_num_layers: 1
-  mtp_loss_scaling_factor: 0.2
+  mtp_loss_scaling_factor: 0.1
 
   scheduling_spec:
     - task_type: worker
@@ -94,7 +94,7 @@ actor:
 
   megatron:
     mtp_num_layers: 1
-    mtp_loss_scaling_factor: 0.2
+    mtp_loss_scaling_factor: 0.1
     
 ref:
   backend: ${actor.backend}
