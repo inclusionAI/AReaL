@@ -1,10 +1,13 @@
 import re
+from typing import Any
 
+from areal.api.sandbox_api import SandboxConfig
 from areal.utils import logging
 
 from tools import (  # isort: skip
     BaseTool,
     CalculatorTool,
+    CubeSandboxPythonTool,
     PythonTool,
     ToolCallStatus,
     ToolType,
@@ -15,11 +18,29 @@ logger = logging.getLogger("Tool Manager")
 
 
 class ToolRegistry:
-    """Tool registry that manages all available tools"""
+    """Tool registry that manages all available tools.
 
-    TOOL_NAMES = {
+    When a ``SandboxConfig`` is provided, ``ToolType.PYTHON`` is
+    automatically backed by :class:`CubeSandboxPythonTool` (KVM-isolated)
+    instead of the local in-process :class:`PythonTool`.
+
+    Parameters
+    ----------
+    timeout : int
+        Per-execution timeout.
+    enabled_tools : str
+        Semicolon-separated list of tool names to enable.
+    debug_mode : bool
+        If True, tools return dummy output.
+    sandbox_config : SandboxConfig | None
+        When provided and ``enabled=True``, Python execution uses the
+        sandbox backend.  Calculator is always local (pure compute).
+    """
+
+    TOOL_NAMES: dict[str, ToolType] = {
         "python": ToolType.PYTHON,
         "calculator": ToolType.CALCULATOR,
+        "bash": ToolType.BASH,
     }
 
     def __init__(
@@ -27,12 +48,32 @@ class ToolRegistry:
         timeout: int = 30,
         enabled_tools: str = "python;calculator",
         debug_mode: bool = False,
+        sandbox_config: SandboxConfig | None = None,
     ):
-        # All available tools
-        self.all_tools = {
-            ToolType.PYTHON: PythonTool(timeout, debug_mode),
+        use_sandbox = sandbox_config is not None and sandbox_config.enabled
+
+        # Build tool instances — backend selection is automatic
+        self.all_tools: dict[ToolType, BaseTool] = {
             ToolType.CALCULATOR: CalculatorTool(timeout, debug_mode),
         }
+
+        if use_sandbox:
+            self.all_tools[ToolType.PYTHON] = CubeSandboxPythonTool(
+                timeout=timeout,
+                debug_mode=debug_mode,
+                sandbox_config=sandbox_config,
+            )
+            logger.info(
+                "Python tool backend: CubeSandbox (api_url=%s)",
+                sandbox_config.api_url or "<env>",
+            )
+        else:
+            self.all_tools[ToolType.PYTHON] = PythonTool(timeout, debug_mode)
+            logger.info("Python tool backend: local (in-process, NOT sandboxed)")
+
+        # NOTE: ToolType.BASH is registered but has no local implementation
+        # (too dangerous).  It is only available when sandbox is enabled.
+        # Future: add CubeSandboxBashTool here.
 
         # Set enabled tools
         if enabled_tools is None:
@@ -42,8 +83,19 @@ class ToolRegistry:
             # Validate enabled tools
             self.enabled_tools = []
             for tool_type in enabled_tools.split(";"):
+                tool_type = tool_type.strip()
+                if not tool_type:
+                    continue
                 if tool_type in self.TOOL_NAMES:
-                    self.enabled_tools.append(self.TOOL_NAMES[tool_type])
+                    tt = self.TOOL_NAMES[tool_type]
+                    if tt in self.all_tools:
+                        self.enabled_tools.append(tt)
+                    else:
+                        logger.warning(
+                            "Tool type %r requires sandbox backend but sandbox is "
+                            "not configured, skipping",
+                            tool_type,
+                        )
                 else:
                     logger.warning(f"Unknown tool type: {tool_type}, skipping")
 
@@ -53,7 +105,9 @@ class ToolRegistry:
         }
 
         logger.info(
-            f"ToolRegistry initialized with enabled tools: {[t.value for t in self.enabled_tools]}"
+            "ToolRegistry initialized with enabled tools: %s (sandbox=%s)",
+            [t.value for t in self.enabled_tools],
+            use_sandbox,
         )
 
     def get_tool(self, tool_type: ToolType) -> BaseTool | None:
@@ -169,21 +223,38 @@ class ToolRouter:
 
 
 class ToolManager:
-    """General tool manager responsible for coordinating tool calls"""
+    """General tool manager responsible for coordinating tool calls.
+
+    Parameters
+    ----------
+    timeout : int
+        Per-tool-execution timeout.
+    enabled_tools : str
+        Semicolon-separated tool names (e.g. ``"python;calculator"``).
+    debug_mode : bool
+        If True, tools return dummy output.
+    sandbox_config : SandboxConfig | None
+        When provided, Python execution uses an isolated sandbox backend.
+    """
 
     def __init__(
         self,
         timeout: int = 30,
         enabled_tools: str = "python;calculator",
         debug_mode: bool = False,
+        sandbox_config: SandboxConfig | None = None,
     ):
         self.timeout = timeout
         self.debug_mode = debug_mode
-        self.registry = ToolRegistry(timeout, enabled_tools, debug_mode)
+        self.registry = ToolRegistry(
+            timeout, enabled_tools, debug_mode, sandbox_config=sandbox_config
+        )
         self.router = ToolRouter(self.registry)
 
         logger.info(
-            f"Initialized ToolManager (debug_mode={debug_mode}, enabled_tools={[t.value for t in self.registry.get_enabled_tools()]})"
+            "Initialized ToolManager (debug_mode=%s, enabled_tools=%s)",
+            debug_mode,
+            [t.value for t in self.registry.get_enabled_tools()],
         )
 
     def get_tool_descriptions_prompt(self) -> str:
@@ -202,7 +273,7 @@ class ToolManager:
         """Get all start markers for setting stop tokens
 
         Returns:
-            List[str]: List of all start markers, e.g. ['```python\n', '<calculator>']
+            List[str]: List of all start markers, e.g. ['```python\\n', '<calculator>']
         """
         return self.registry.get_all_start_markers()
 
@@ -210,7 +281,7 @@ class ToolManager:
         """Get all end markers for setting stop tokens
 
         Returns:
-            List[str]: List of all end markers, e.g. ['\n```', '</calculator>']
+            List[str]: List of all end markers, e.g. ['\\n```', '</calculator>']
         """
         return self.registry.get_all_end_markers()
 
@@ -218,7 +289,7 @@ class ToolManager:
         """Get all markers (start and end) for setting stop tokens
 
         Returns:
-            List[str]: List of all markers, e.g. ['```python\n', '\n```', '<calculator>', '</calculator>']
+            List[str]: List of all markers, e.g. ['```python\\n', '\\n```', '<calculator>', '</calculator>']
         """
         return self.registry.get_all_markers()
 
@@ -258,3 +329,37 @@ class ToolManager:
         else:
             logger.error(f"Tool execution error: {result}")
             return f"Error: Tool execution failed - {result}", status
+
+    async def async_execute_tool_call(
+        self, text: str
+    ) -> tuple[str, ToolCallStatus]:
+        """Async version of :meth:`execute_tool_call`.
+
+        Prefers ``BaseTool.async_execute`` for tools that have native
+        async backends (e.g. sandbox tools), avoiding thread-pool
+        overhead.
+        """
+        tool_type = self.router.route(text)
+        if not tool_type:
+            return (
+                "Error: No suitable tool found for the given text",
+                ToolCallStatus.NOT_FOUND,
+            )
+
+        tool = self.registry.get_tool(tool_type)
+        if not tool:
+            return f"Error: Tool {tool_type.value} not found", ToolCallStatus.NOT_FOUND
+
+        try:
+            parameters = tool.parse_parameters(text)
+        except Exception as e:
+            logger.error(f"Parameter parsing error: {e}")
+            return f"Error: Failed to parse parameters - {str(e)}", ToolCallStatus.ERROR
+
+        result, status = await tool.async_execute(parameters)
+        if status == ToolCallStatus.SUCCESS:
+            logger.debug(f"Async tool execution completed: {result}")
+        else:
+            logger.error(f"Async tool execution error: {result}")
+            result = f"Error: Tool execution failed - {result}"
+        return result, status

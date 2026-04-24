@@ -17,10 +17,16 @@ class ToolCallStatus(Enum):
 
 
 class ToolType(Enum):
-    """Tool type enumeration"""
+    """Tool type enumeration — what the tool does (semantic type).
+
+    The execution backend (local / sandbox) is an orthogonal concern and
+    is selected via ``SandboxConfig`` at ``ToolRegistry`` initialization
+    time, not encoded in the tool type.
+    """
 
     PYTHON = "python"
     CALCULATOR = "calculator"
+    BASH = "bash"
 
 
 @dataclass
@@ -79,8 +85,19 @@ class BaseTool(ABC):
 
     @abstractmethod
     def execute(self, parameters: dict[str, Any]) -> tuple[str, ToolCallStatus]:
-        """Execute tool
+        """Execute tool (sync).
 
         Returns:
             Tuple[str, ToolCallStatus]: (result, status)
         """
+
+    async def async_execute(
+        self, parameters: dict[str, Any]
+    ) -> tuple[str, ToolCallStatus]:
+        """Execute tool (async).
+
+        Default implementation delegates to the sync ``execute`` method.
+        Subclasses that have a native async backend (e.g. sandbox tools)
+        should override this for better performance.
+        """
+        return self.execute(parameters)

@@ -24,6 +24,9 @@ __all__ = [
     "LocalInfServerInfo",
     "WorkflowLike",
     "AgentWorkflow",
+    "SandboxConfig",
+    "SandboxExecutor",
+    "ExecutionResult",
 ]
 
 _LAZY_IMPORTS = {
@@ -50,6 +53,9 @@ _LAZY_IMPORTS = {
     "AgentWorkflow": "areal.api.workflow_api",
     "AsyncRewardWrapper": "areal.api.reward_api",
     "RolloutWorkflow": "areal.api.workflow_api",
+    "SandboxConfig": "areal.api.sandbox_api",
+    "SandboxExecutor": "areal.api.sandbox_api",
+    "ExecutionResult": "areal.api.sandbox_api",
 }
 
 

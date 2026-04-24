@@ -171,6 +171,9 @@ cuda-train = [
     "areal[megatron]",
     "areal[kernels]",
 ]
+sandbox = [
+    "e2b-code-interpreter>=1.0.0",
+]
 # Full CUDA setup: training packages + SGLang inference + flash-attn
 cuda = [
     "areal[cuda-train]",
