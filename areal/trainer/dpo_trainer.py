@@ -13,8 +13,8 @@ from areal.api import FinetuneSpec, Scheduler, StepInfo
 from areal.api.alloc_mode import ModelAllocation
 from areal.api.cli_args import (
     DPOConfig,
+    DPOEngineConfig,
     TrainDatasetConfig,
-    TrainEngineConfig,
     ValidDatasetConfig,
 )
 from areal.infra import (
@@ -111,19 +111,9 @@ class DPOTrainer:
 
         self.actor = self._create_actor(config.actor)
 
-        # Create ref engine for online ref_logprobs computation (like PPO/GRPO).
-        self.ref = None
-        self._should_offload_ref = False
-        if config.ref is not None:
-            ref_alloc = ModelAllocation.from_str(config.ref.backend, name="ref")
-            self.ref = self._create_ref(config.ref, ref_alloc)
-            self._should_offload_ref = config.ref.offload
-        else:
-            logger.warning(
-                "No ref model configured. ref_logprobs will default to zeros, "
-                "which degenerates DPO to a contrastive logprob loss with length bias. "
-                "For proper DPO, add a 'ref:' section to your YAML config."
-            )
+        ref_alloc = ModelAllocation.from_str(config.ref.backend, name="ref")
+        self.ref = self._create_ref(config.ref, ref_alloc)
+        self._should_offload_ref = config.ref.offload
 
         if is_single_controller() and isinstance(train_dataset, RDataset):
             ds_cfg = DataServiceConfig.from_dataset_config(config.train_dataset)
@@ -154,9 +144,7 @@ class DPOTrainer:
         )
 
         self.actor.initialize(addr=None, ft_spec=ft_spec, role="actor")
-
-        if self.ref is not None:
-            self.ref.initialize(addr=None, ft_spec=ft_spec, role="ref")
+        self.ref.initialize(addr=None, ft_spec=ft_spec, role="ref")
 
         self.valid_dataloader: StatefulDataLoader | None = None
         if config.valid_dataset is not None and valid_dataset is not None:
@@ -236,23 +224,20 @@ class DPOTrainer:
             # Wait for async checkpoint staging to complete before modifying parameters
             self.saver.maybe_wait_for_staging()
 
-            # Compute ref_logprobs online (like PPO/GRPO ref model).
-            if self.ref is not None:
-                with (
-                    stats_tracker.record_timing("ref_logp"),
-                    perf_tracer.trace_scope(
-                        "train.ref_logp",
-                        category=Category.COMPUTE,
-                        args={"global_step": global_step},
-                    ),
-                ):
-                    ref_logps = self.ref.compute_logp(batch)
-                    for seq_dict, logp in zip(batch, ref_logps):
-                        # logp is 1D (seqlen,), unsqueeze to match collate format [1, seqlen]
-                        seq_dict["ref_logprobs"] = (
-                            logp.unsqueeze(0) if logp.ndim == 1 else logp
-                        )
-                    self.ref.get_device_stats().log("ref logp")
+            with (
+                stats_tracker.record_timing("ref_logp"),
+                perf_tracer.trace_scope(
+                    "train.ref_logp",
+                    category=Category.COMPUTE,
+                    args={"global_step": global_step},
+                ),
+            ):
+                ref_logps = self.ref.compute_logp(batch)
+                for seq_dict, logp in zip(batch, ref_logps):
+                    seq_dict["ref_logprobs"] = (
+                        logp.unsqueeze(0) if logp.ndim == 1 else logp
+                    )
+                self.ref.get_device_stats().log("ref logp")
 
             with (
                 stats_tracker.record_timing("train_step"),
@@ -337,8 +322,7 @@ class DPOTrainer:
             self.data_controller.destroy()
         self.stats_logger.close()
         self.actor.destroy()
-        if self.ref is not None:
-            self.ref.destroy()
+        self.ref.destroy()
         perf_tracer.save(force=True)
 
     def _config_perf_tracer(self):
@@ -382,7 +366,7 @@ class DPOTrainer:
         )
 
     def _create_actor(
-        self, actor_config: TrainEngineConfig
+        self, actor_config: DPOEngineConfig
     ) -> FSDPDPOEngine | MegatronDPOEngine | ArchonDPOEngine | DPOController:
         if self.actor_alloc.backend == "fsdp":
             from areal.engine import FSDPDPOEngine
@@ -402,31 +386,15 @@ class DPOTrainer:
                 f"expected fsdp, megatron, or archon"
             )
         if is_single_controller():
-            actor = actor_cls.as_controller(
-                actor_config,
-                self.scheduler,
-                beta=self.config.beta,
-                loss_type=self.config.loss_type,
-            )
+            actor = actor_cls.as_controller(actor_config, self.scheduler)
         else:
-            actor = actor_cls(
-                config=actor_config,
-                beta=self.config.beta,
-                loss_type=self.config.loss_type,
-            )
+            actor = actor_cls(config=actor_config)
         actor.create_process_group(parallel_strategy=self.actor_alloc.parallel)
         return actor
 
     def _create_ref(
-        self, ref_config: TrainEngineConfig, alloc: ModelAllocation
+        self, ref_config: DPOEngineConfig, alloc: ModelAllocation
     ) -> FSDPDPOEngine | MegatronDPOEngine | ArchonDPOEngine | DPOController:
-        """Create a frozen ref engine for computing ref_logprobs.
-
-        Reuses the same DPO engine class as the actor — ref only uses its
-        ``compute_logp`` method (pure forward, no training state). The
-        ``beta`` parameter is therefore unused on the ref side; we leave it at
-        the default because it never feeds into any loss computation here.
-        """
         if alloc.backend == "fsdp":
             from areal.engine import FSDPDPOEngine
 
@@ -505,15 +473,9 @@ class DPOTrainer:
         data_generator = cycle_dataloader(self.valid_dataloader, num_cycles=1)
         for _ in range(len(self.valid_dataloader)):
             data = self._load_bcast_from(data_generator)
-            # Inject ref_logprobs the same way as in training, otherwise
-            # _compute_dpo_loss will fall back to zeros_like(logprobs) and
-            # the eval metrics (loss/reward/margin) become meaningless.
-            if self.ref is not None:
-                ref_logps = self.ref.compute_logp(data)
-                for seq_dict, logp in zip(data, ref_logps):
-                    seq_dict["ref_logprobs"] = (
-                        logp.unsqueeze(0) if logp.ndim == 1 else logp
-                    )
+            ref_logps = self.ref.compute_logp(data)
+            for seq_dict, logp in zip(data, ref_logps):
+                seq_dict["ref_logprobs"] = logp.unsqueeze(0) if logp.ndim == 1 else logp
             self.actor.evaluate_dpo(data)
 
         dist.barrier(group=self.actor.cpu_group)

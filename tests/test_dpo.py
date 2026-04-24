@@ -188,28 +188,18 @@ class TestDPOLoss:
         # Prompt tokens should not affect loss since loss_mask is 0 there
         torch.testing.assert_close(loss_a, loss_b, rtol=1e-5, atol=1e-5)
 
-    def test_no_ref_logprobs_defaults_to_zeros(self):
-        """When ref_logprobs is not in input_, loss should be same as ref_logprobs=zeros."""
+    def test_missing_ref_logprobs_raises(self):
+        """When ref_logprobs is not in input_, a KeyError should be raised."""
         cu_seqlens = torch.tensor([0, 4, 8], dtype=torch.int32)
         loss_mask = torch.ones(8, dtype=torch.bool)
         logprobs = torch.tensor([-0.5, -0.5, -0.5, -0.5, -2.0, -2.0, -2.0, -2.0])
 
-        # With explicit zeros
-        input_with_ref = {
-            "cu_seqlens": cu_seqlens,
-            "loss_mask": loss_mask,
-            "ref_logprobs": torch.zeros(8),
-        }
-        loss_with_ref = compute_dpo_loss(logprobs, None, input_with_ref, beta=0.1)
-
-        # Without ref_logprobs key
         input_no_ref = {
             "cu_seqlens": cu_seqlens,
             "loss_mask": loss_mask,
         }
-        loss_no_ref = compute_dpo_loss(logprobs, None, input_no_ref, beta=0.1)
-
-        torch.testing.assert_close(loss_with_ref, loss_no_ref, rtol=1e-5, atol=1e-5)
+        with pytest.raises(KeyError):
+            compute_dpo_loss(logprobs, None, input_no_ref, beta=0.1)
 
 
 class TestDPOValidPairs:
@@ -370,7 +360,7 @@ class TestDPOLossIntraSequenceShift:
 
 
 class TestDPOLossIPO:
-    """Test cases for the IPO (Identity Preference Optimization) loss variant."""
+    """Test cases for the IPO loss variant with per-token length normalization."""
 
     @pytest.fixture
     def simple_pair_data(self):
@@ -409,18 +399,21 @@ class TestDPOLossIPO:
         assert loss.item() >= 0.0
 
     def test_ipo_loss_zero_at_target(self, simple_pair_data):
-        """IPO loss should be zero when logits == 1/(2*beta)."""
+        """IPO loss should be zero when per-token-averaged logits == 1/(2*beta).
+
+        With all-response mask and shifted mask yielding 3 counted tokens per
+        sequence (positions 0..2; position 3 is last-of-seq and zeroed),
+        the per-token average logratio needs to equal 1/(2*beta) for zero loss.
+        """
         beta = 0.1
         target = 1.0 / (2.0 * beta)  # = 5.0
 
-        # Engineer logprobs so that pi_logratio - ref_logratio = target
-        # chosen logp sum = target, rejected logp sum = 0, ref all 0
-        # With shifted mask: positions 0..2 are counted (3 tokens per seq)
-        # Need sum of chosen positions [0,1,2] = target
-        per_token = target / 3.0
+        # 3 shifted-mask tokens per seq. chosen per-token avg = target,
+        # rejected per-token avg = 0 → ipo_delta = target → loss = 0.
+        per_token = target
         logprobs = torch.zeros(8)
-        logprobs[0:3] = per_token  # chosen response tokens
-        logprobs[4:7] = 0.0  # rejected response tokens
+        logprobs[0:3] = per_token  # chosen: sum = 3 * target, avg = target
+        logprobs[4:7] = 0.0  # rejected: sum = 0, avg = 0
 
         loss = compute_dpo_loss(
             logprobs, None, simple_pair_data, beta=beta, loss_type="ipo"
@@ -440,6 +433,35 @@ class TestDPOLossIPO:
         )
         assert loss_sigmoid.item() != loss_ipo.item()
 
+    def test_ipo_length_normalization(self):
+        """IPO must normalize by completion length; two pairs with same per-token
+        averages but different lengths should produce equal loss.
+        """
+        # Pair A: seqlen=4 each, 3 shifted-mask response tokens each
+        cu_a = torch.tensor([0, 4, 8], dtype=torch.int32)
+        mask_a = torch.ones(8, dtype=torch.bool)
+        ref_a = torch.zeros(8)
+        lp_a = torch.zeros(8)
+        lp_a[0:3] = -1.0  # chosen avg = -1.0
+        lp_a[4:7] = -2.0  # rejected avg = -2.0
+
+        # Pair B: seqlen=8 each, 7 shifted-mask response tokens each
+        cu_b = torch.tensor([0, 8, 16], dtype=torch.int32)
+        mask_b = torch.ones(16, dtype=torch.bool)
+        ref_b = torch.zeros(16)
+        lp_b = torch.zeros(16)
+        lp_b[0:7] = -1.0  # chosen avg = -1.0
+        lp_b[8:15] = -2.0  # rejected avg = -2.0
+
+        input_a = {"cu_seqlens": cu_a, "loss_mask": mask_a, "ref_logprobs": ref_a}
+        input_b = {"cu_seqlens": cu_b, "loss_mask": mask_b, "ref_logprobs": ref_b}
+
+        loss_a = compute_dpo_loss(lp_a, None, input_a, beta=0.1, loss_type="ipo")
+        loss_b = compute_dpo_loss(lp_b, None, input_b, beta=0.1, loss_type="ipo")
+
+        # Same per-token average logratios → same IPO loss
+        torch.testing.assert_close(loss_a, loss_b, rtol=1e-5, atol=1e-5)
+
     def test_ipo_chosen_preferred_lower_loss(self):
         """When policy prefers chosen, IPO loss should be lower (closer to target)."""
         cu_seqlens = torch.tensor([0, 4, 8], dtype=torch.int32)
@@ -451,19 +473,16 @@ class TestDPOLossIPO:
             "ref_logprobs": ref_logprobs,
         }
 
-        # Policy strongly prefers chosen
         logprobs_good = torch.tensor([-0.1, -0.1, -0.1, -0.1, -5.0, -5.0, -5.0, -5.0])
         loss_good = compute_dpo_loss(
             logprobs_good, None, input_, beta=0.5, loss_type="ipo"
         )
 
-        # Policy strongly prefers rejected (equally far from target but wrong direction)
         logprobs_bad = torch.tensor([-5.0, -5.0, -5.0, -5.0, -0.1, -0.1, -0.1, -0.1])
         loss_bad = compute_dpo_loss(
             logprobs_bad, None, input_, beta=0.5, loss_type="ipo"
         )
 
-        # Both are non-zero, but the "good" direction should be closer to the IPO target
         assert loss_good.item() < loss_bad.item()
 
     def test_ipo_backward(self, simple_pair_data):

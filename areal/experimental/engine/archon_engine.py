@@ -113,7 +113,7 @@ if TYPE_CHECKING:
     from torchdata.stateful_dataloader import StatefulDataLoader
 
     from areal.api import InferenceEngine, Scheduler, WorkflowLike
-    from areal.api.cli_args import PerfTracerConfig, TrainEngineConfig
+    from areal.api.cli_args import DPOEngineConfig, PerfTracerConfig, TrainEngineConfig
     from areal.experimental.engine.archon_runner import ForwardBackwardRunner
 
 
@@ -1481,18 +1481,13 @@ class ArchonRWEngine(ArchonEngine):
 class ArchonDPOEngine(ArchonEngine):
     """Archon-based DPO Engine for direct preference optimization."""
 
-    def __init__(
-        self,
-        config: TrainEngineConfig,
-        beta: float = 0.1,
-        loss_type: str = "sigmoid",
-    ):
+    def __init__(self, config: DPOEngineConfig):
         from copy import deepcopy
 
         from areal.trainer.dpo.dpo_engine import DPOEngine
 
         super().__init__(config)
-        self.dpo_engine = DPOEngine(self, beta=beta, loss_type=loss_type)
+        self.dpo_engine = DPOEngine(self)
         if self.config.mb_spec.granularity != 2:
             dpo_logger = logging.getLogger("DPOEngine")
             dpo_logger.warning("mb_spec.granularity must be 2 for DPO training")
@@ -1511,10 +1506,8 @@ class ArchonDPOEngine(ArchonEngine):
     @classmethod
     def as_controller(
         cls,
-        config: TrainEngineConfig,
+        config: DPOEngineConfig,
         scheduler: Scheduler,
-        beta: float = 0.1,
-        loss_type: str = "sigmoid",
     ):
         if config._version == "v2":
             from areal.trainer.dpo.dpo_engine import DPOControllerV2

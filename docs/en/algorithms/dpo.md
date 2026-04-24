@@ -27,7 +27,7 @@ $$
 
 $\pi_\theta$ is the policy under training, $\pi_{\text{ref}}$ the frozen reference, and $\beta$ controls the KL penalty. The objective is derived by substituting the closed-form optimal policy of KL-regularized RLHF into the Bradley-Terry preference model — the reward is implicitly defined by the policy and reference, eliminating the need for a standalone reward model.
 
-AReaL supports two loss variants via `loss_type`: the original sigmoid form (default) and **IPO** (Azar et al. 2023), which replaces the sigmoid with a squared loss targeting a fixed margin of $\frac{1}{2\beta}$ to avoid overfitting.
+AReaL supports two loss variants via `loss_type`: the original sigmoid form (default) and **IPO** (Azar et al. 2023), which replaces the sigmoid with a squared loss targeting a fixed margin of $\frac{1}{2\beta}$ per token. The IPO variant normalizes logratios by completion length (per-token average) before computing the squared loss, matching TRL's author-confirmed convention.
 
 ### Implicit Reward
 
@@ -46,11 +46,10 @@ python3 examples/alignment/hhrlhf_dpo.py \
 Key fragments of `examples/alignment/hhrlhf_dpo.yaml`:
 
 ```yaml
-beta: 0.1                          # KL penalty
-
 actor:
   backend: "fsdp:d8p1t1"
   path: Qwen/Qwen2.5-7B            # Follows the original paper: train on a base model
+  beta: 0.1                        # KL penalty
   dtype: bfloat16
   disable_dropout: true            # Required for DPO stability
   mb_spec:
@@ -91,12 +90,12 @@ python3 examples/alignment/hhrlhf_dpo.py \
 
 | Parameter | Default | Description |
 | --------- | ------- | ----------- |
-| `beta` | `0.1` | KL penalty. Higher values stay closer to the reference. Typical range: 0.05–0.5. |
-| `loss_type` | `"sigmoid"` | Loss variant. `"sigmoid"` is the original DPO; `"ipo"` uses a squared loss (Azar et al. 2023). |
+| `actor.beta` | `0.1` | KL penalty. Higher values stay closer to the reference. Typical range: 0.05–0.5. |
+| `actor.loss_type` | `"sigmoid"` | Loss variant. `"sigmoid"` is the original DPO; `"ipo"` uses a per-token-averaged squared loss (Azar et al. 2023). |
 | `actor.optimizer.lr` | `5e-6` | Learning rate. DPO is LR-sensitive; 5e-7 – 5e-6 is the sweet spot. |
 | `actor.disable_dropout` | `true` | Disable dropout for deterministic log-prob computation. |
 | `actor.mb_spec.granularity` | `2` | Micro-batch granularity. Must be 2 for DPO (chosen + rejected are paired). |
-| `ref` | — | Reference model. If `null`, the loss degenerates to a contrastive form without KL regularization — not recommended. |
+| `ref` | — | Reference model configuration (required). |
 
 Metrics `dpo/loss`, `dpo/chosen_reward`, `dpo/rejected_reward`, `dpo/reward_accuracy`, `dpo/reward_margin` are logged under the `dpo/` prefix.
 

@@ -29,7 +29,7 @@ $\pi_\theta$ 为训练中的策略模型，$\pi_{\text{ref}}$ 为冻结的参考
 
 该目标可通过将 KL 正则化 RLHF 最优策略的闭式解代入 Bradley-Terry 偏好模型推导得出——奖励函数由策略与参考隐式定义，因此无需单独训练奖励模型。
 
-AReaL 通过 `loss_type` 支持两种损失：默认的 sigmoid 形式和 **IPO**（Azar 等 2023），后者以平方损失逼近固定边际 $\frac{1}{2\beta}$，以缓解过拟合。
+AReaL 通过 `loss_type` 支持两种损失：默认的 sigmoid 形式和 **IPO**（Azar 等 2023），后者以逐 token 平均的平方损失逼近固定边际 $\frac{1}{2\beta}$。IPO 变体在计算平方损失前先按 completion 长度归一化 logratio（逐 token 平均），与 TRL 的经作者确认的实现一致。
 
 ### 隐式奖励
 
@@ -48,11 +48,10 @@ python3 examples/alignment/hhrlhf_dpo.py \
 配置文件 `examples/alignment/hhrlhf_dpo.yaml` 的关键片段：
 
 ```yaml
-beta: 0.1                          # KL 惩罚系数
-
 actor:
   backend: "fsdp:d8p1t1"
   path: Qwen/Qwen2.5-7B            # 遵循原论文：在 base 模型上训练
+  beta: 0.1                        # KL 惩罚系数
   dtype: bfloat16
   disable_dropout: true            # DPO 稳定性所必需
   mb_spec:
@@ -93,12 +92,12 @@ python3 examples/alignment/hhrlhf_dpo.py \
 
 | 参数 | 默认值 | 说明 |
 | ---- | ------ | ---- |
-| `beta` | `0.1` | KL 惩罚系数。越大越接近参考模型。典型范围 0.05–0.5。 |
-| `loss_type` | `"sigmoid"` | 损失变体。`"sigmoid"` 为原始 DPO；`"ipo"` 使用平方损失（Azar 等 2023）。 |
+| `actor.beta` | `0.1` | KL 惩罚系数。越大越接近参考模型。典型范围 0.05–0.5。 |
+| `actor.loss_type` | `"sigmoid"` | 损失变体。`"sigmoid"` 为原始 DPO；`"ipo"` 使用逐 token 平均的平方损失（Azar 等 2023）。 |
 | `actor.optimizer.lr` | `5e-6` | 学习率。DPO 对 LR 敏感，建议 5e-7 – 5e-6。 |
 | `actor.disable_dropout` | `true` | 禁用 dropout 以确保 log 概率计算确定性。 |
 | `actor.mb_spec.granularity` | `2` | 微批粒度。DPO 必须为 2（chosen+rejected 成对）。 |
-| `ref` | — | 参考模型。若为 `null`，退化为无 KL 正则的对比损失，不推荐。 |
+| `ref` | — | 参考模型配置（必填）。 |
 
 训练过程中会记录 `dpo/loss`、`dpo/chosen_reward`、`dpo/rejected_reward`、`dpo/reward_accuracy`、`dpo/reward_margin` 等指标（前缀 `dpo/`）。
 

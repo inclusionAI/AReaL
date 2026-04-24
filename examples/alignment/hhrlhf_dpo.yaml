@@ -6,10 +6,6 @@ enable_offload: false
 total_train_epochs: 1
 tokenizer_path: ${actor.path}
 
-# DPO-specific hyperparameters
-beta: 0.1
-loss_type: sigmoid  # DPO loss variant: 'sigmoid' (original DPO) or 'ipo' (squared loss)
-
 cluster:
   n_nodes: 1
   n_gpus_per_node: 8
@@ -25,12 +21,10 @@ actor:
   backend: "fsdp:d8p1t1"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  # DPO follows the original paper setup: train on top of a base model using
-  # raw HH-RLHF text. The loader infers prompt/response boundaries via the
-  # token-level longest common prefix between chosen and rejected.
   path: Qwen/Qwen2.5-7B
   init_from_scratch: false
   is_critic: false
+  beta: 0.1
   disable_dropout: true
   gradient_checkpointing: true
   dtype: bfloat16

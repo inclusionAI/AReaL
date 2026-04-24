@@ -642,7 +642,7 @@ def dpo_pair_logratios(
     cu_seqlens: torch.Tensor,
     loss_mask: torch.Tensor,
     valid_pairs: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Aggregate per-sequence masked logprobs over a packed batch and pair them up.
 
     Sequences are packed and interleaved as ``[chosen_0, rejected_0, chosen_1,
@@ -652,18 +652,11 @@ def dpo_pair_logratios(
     precision loss on long (~2k+ tok) pairs where ``fp32`` accumulation can
     flip the log-ratio sign.
 
-    Args:
-        logprobs: ``(T,)`` per-token policy logprobs over the packed batch.
-        ref_logprobs: ``(T,)`` per-token reference logprobs, same shape as
-            ``logprobs``. Pass ``torch.zeros_like(logprobs)`` for zero-ref.
-        cu_seqlens: ``(2N+1,)`` cumulative sequence lengths.
-        loss_mask: ``(T,)`` boolean mask of response tokens (pre-shift).
-        valid_pairs: ``(N,)`` boolean mask selecting pairs where both chosen
-            and rejected sequences are non-empty.
-
     Returns:
-        ``(policy_logps, ref_logps)`` each of shape ``(K, 2)`` where
-        ``K = valid_pairs.sum()``, column 0 is chosen, column 1 is rejected.
+        ``(policy_logps, ref_logps, completion_lens)`` each of shape ``(K, 2)``
+        where ``K = valid_pairs.sum()``, column 0 is chosen, column 1 is
+        rejected. ``completion_lens`` counts the shifted-mask response tokens
+        per sequence (needed by IPO for per-token normalization).
     """
     device = logprobs.device
 
@@ -681,7 +674,14 @@ def dpo_pair_logratios(
     policy_logps.index_add_(0, seq_ids, (logprobs * masked).double())
     ref_logps.index_add_(0, seq_ids, (ref_logprobs * masked).double())
 
-    return policy_logps.view(-1, 2)[valid_pairs], ref_logps.view(-1, 2)[valid_pairs]
+    completion_lens = torch.zeros(n_seqs, dtype=torch.float64, device=device)
+    completion_lens.index_add_(0, seq_ids, shifted_mask.double())
+
+    return (
+        policy_logps.view(-1, 2)[valid_pairs],
+        ref_logps.view(-1, 2)[valid_pairs],
+        completion_lens.view(-1, 2)[valid_pairs],
+    )
 
 
 def dpo_preference_loss(
@@ -689,13 +689,9 @@ def dpo_preference_loss(
 ) -> torch.Tensor:
     """Per-pair preference loss from DPO log-ratio logits.
 
-    ``logits`` should be ``(policy_chosen - policy_rejected) - (ref_chosen -
-    ref_rejected)``. Supported variants:
-
-    - ``"sigmoid"`` (Rafailov et al. 2023):
-      ``L = -log sigma(beta * logits)``
-    - ``"ipo"`` (Azar et al. 2023):
-      ``L = (logits - 1 / (2 * beta)) ** 2``
+    For ``"sigmoid"``, ``logits`` is the un-normalized pair delta.
+    For ``"ipo"``, ``logits`` must be **per-token averaged** (length-normalized)
+    before being passed here, matching trl's confirmed-with-authors convention.
     """
     if loss_type == "sigmoid":
         return -torch.nn.functional.logsigmoid(beta * logits.float())

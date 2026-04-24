@@ -2645,19 +2645,8 @@ class RWConfig(BaseExperimentConfig):
 
 
 @dataclass
-class DPOConfig(BaseExperimentConfig):
-    """Configuration for Direct Preference Optimization (DPO) experiments."""
-
-    actor: TrainEngineConfig = field(default_factory=TrainEngineConfig)
-
-    ref: TrainEngineConfig | None = field(
-        default=None,
-        metadata={
-            "help": "Reference model configuration for DPO. "
-            "The ref model computes reference log-probabilities online during training. "
-            "If None, ref_logprobs default to zeros (degenerates to contrastive logprob loss)."
-        },
-    )
+class DPOEngineConfig(TrainEngineConfig):
+    """Engine configuration for DPO training, extending TrainEngineConfig with DPO-specific fields."""
 
     beta: float = field(
         default=0.1,
@@ -2669,10 +2658,28 @@ class DPOConfig(BaseExperimentConfig):
         metadata={
             "help": "DPO loss variant. "
             "'sigmoid': original DPO loss (Rafailov et al. 2023). "
-            "'ipo': Identity Preference Optimization, uses squared loss (Azar et al. 2023).",
+            "'ipo': Identity Preference Optimization with per-token length normalization (Azar et al. 2023).",
             "choices": ["sigmoid", "ipo"],
         },
     )
+
+    def __post_init__(self):
+        super().__post_init__()
+        _valid = {"sigmoid", "ipo"}
+        if self.loss_type not in _valid:
+            raise ValueError(
+                f"Unsupported DPO loss_type '{self.loss_type}'. "
+                f"Must be one of {sorted(_valid)}."
+            )
+
+
+@dataclass
+class DPOConfig(BaseExperimentConfig):
+    """Configuration for Direct Preference Optimization (DPO) experiments."""
+
+    actor: DPOEngineConfig = field(default_factory=DPOEngineConfig)
+
+    ref: DPOEngineConfig = field(default_factory=DPOEngineConfig)
 
     def __post_init__(self):
         super().__post_init__()
@@ -2680,12 +2687,6 @@ class DPOConfig(BaseExperimentConfig):
             raise ValueError(
                 "DPOConfig requires a language model (is_critic=False). "
                 "Remove 'actor.is_critic: true' from your YAML config."
-            )
-        _valid_loss_types = {"sigmoid", "ipo"}
-        if self.loss_type not in _valid_loss_types:
-            raise ValueError(
-                f"Unsupported DPO loss_type '{self.loss_type}'. "
-                f"Must be one of {sorted(_valid_loss_types)}."
             )
 
 

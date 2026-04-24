@@ -91,7 +91,7 @@ python3 examples/alignment/hhrlhf_dpo.py \
 ```
 
 Supported `loss_type` values: `sigmoid` (original DPO, Rafailov et al. 2023) and `ipo`
-(Azar et al. 2023, squared-loss variant).
+(Azar et al. 2023, per-token-averaged squared-loss variant).
 
 For best alignment quality, the recommended pipeline is **Base → SFT → DPO**, using the
 SFT checkpoint for both the actor and the reference model. The example above trains DPO

@@ -42,15 +42,10 @@ def _log_empty_dpo_stats(device: torch.device) -> None:
 
 
 class DPOEngine:
-    def __init__(
-        self,
-        engine: TrainEngine,
-        beta: float = 0.1,
-        loss_type: str = "sigmoid",
-    ):
+    def __init__(self, engine: TrainEngine):
         self.engine = engine
-        self.beta = beta
-        self.loss_type = loss_type
+        self.beta = engine.config.beta
+        self.loss_type = engine.config.loss_type
 
     @trace_perf("dpo_engine.train_dpo", category="compute")
     @stats_tracker.scope_func_wrapper("dpo")
@@ -159,35 +154,37 @@ def compute_dpo_loss(
     vocab_min_logits: torch.Tensor | None = None,
     vocab_max_logits: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """DPO loss on packed, interleaved [chosen_0, rejected_0, chosen_1, ...] pairs.
-
-    See ``areal.utils.functional.dpo_preference_loss`` for supported
-    ``loss_type`` variants. ``input_`` must contain ``cu_seqlens`` and
-    ``loss_mask``; ``ref_logprobs`` is optional (defaults to zero-ref).
-    ``entropy`` / ``vocab_{min,max}_logits`` are engine ``loss_fn`` contract
-    parameters and unused by DPO.
-    """
     device = logprobs.device
     cu_seqlens = input_["cu_seqlens"].to(device=device, dtype=torch.long)
     loss_mask = input_["loss_mask"].bool().to(device=device)
-    ref_logprobs = input_.get("ref_logprobs")
-    ref_logprobs = (
-        ref_logprobs.to(device)
-        if ref_logprobs is not None
-        else torch.zeros_like(logprobs)
-    )
+    ref_logprobs = input_["ref_logprobs"].to(device)
 
     valid_pairs = _dpo_valid_pairs(input_).to(device=device)
     if not valid_pairs.any():
         _log_empty_dpo_stats(device)
         return torch.zeros((), dtype=torch.float32, device=device)
 
-    policy_logps, ref_logps = dpo_pair_logratios(
+    policy_logps, ref_logps, completion_lens = dpo_pair_logratios(
         logprobs, ref_logprobs, cu_seqlens, loss_mask, valid_pairs
     )
-    logits = (policy_logps[:, 0] - policy_logps[:, 1]) - (
-        ref_logps[:, 0] - ref_logps[:, 1]
-    )
+
+    if loss_type == "ipo":
+        # IPO (Azar et al. 2023): normalize per-sequence logratios by
+        # completion length (per-token average) before computing the squared
+        # loss. This matches trl's author-confirmed convention so that beta
+        # is comparable across variable-length sequences.
+        chosen_avg = (policy_logps[:, 0] - ref_logps[:, 0]) / completion_lens[
+            :, 0
+        ].clamp(min=1)
+        rejected_avg = (policy_logps[:, 1] - ref_logps[:, 1]) / completion_lens[
+            :, 1
+        ].clamp(min=1)
+        logits = chosen_avg - rejected_avg
+    else:
+        logits = (policy_logps[:, 0] - policy_logps[:, 1]) - (
+            ref_logps[:, 0] - ref_logps[:, 1]
+        )
+
     per_pair_loss = dpo_preference_loss(logits, beta=beta, loss_type=loss_type)
 
     with torch.no_grad():

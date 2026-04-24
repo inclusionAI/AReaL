@@ -131,7 +131,7 @@ from areal.utils.save_load import get_state_dict_from_repo_id_or_path
 
 if TYPE_CHECKING:
     from areal.api import Scheduler
-    from areal.api.cli_args import PPOActorConfig, PPOCriticConfig
+    from areal.api.cli_args import DPOEngineConfig, PPOActorConfig, PPOCriticConfig
 
 
 @dataclasses.dataclass
@@ -1971,18 +1971,13 @@ class FSDPRWEngine(FSDPEngine):
 class FSDPDPOEngine(FSDPEngine):
     """DPO training engine using FSDP backend."""
 
-    def __init__(
-        self,
-        config: TrainEngineConfig,
-        beta: float = 0.1,
-        loss_type: str = "sigmoid",
-    ):
+    def __init__(self, config: DPOEngineConfig):
         from copy import deepcopy
 
         from areal.trainer.dpo.dpo_engine import DPOEngine
 
         super().__init__(config)
-        self.dpo_engine = DPOEngine(self, beta=beta, loss_type=loss_type)
+        self.dpo_engine = DPOEngine(self)
         if self.config.mb_spec.granularity != 2:
             dpo_logger = logging.getLogger("DPOEngine")
             dpo_logger.warning("mb_spec.granularity must be 2 for DPO training")
@@ -2001,10 +1996,8 @@ class FSDPDPOEngine(FSDPEngine):
     @classmethod
     def as_controller(
         cls,
-        config: TrainEngineConfig,
+        config: DPOEngineConfig,
         scheduler: Scheduler,
-        beta: float = 0.1,
-        loss_type: str = "sigmoid",
     ):
         if config._version == "v2":
             from areal.trainer.dpo.dpo_engine import DPOControllerV2
