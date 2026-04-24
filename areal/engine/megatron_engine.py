@@ -2579,20 +2579,6 @@ class MegatronEngine(TrainEngine):
 
             self.engine_lock.release()
 
-    # Log MTP weight norms for drift monitoring
-    if mtp_hf_tensors:
-        _norm_strs = []
-        for _tn, _tv in mtp_hf_tensors[:5]:  # Log first 5
-            _norm_strs.append(
-                f"{_tn}:{_tv.float().norm().item():.4f}"
-            )
-        self.logger.info(
-            "[MTPSyncDiag] MTP weight norms at sync "
-            "(version=%d, %d tensors): %s",
-            getattr(self, '_version', -1),
-            len(mtp_hf_tensors),
-            ", ".join(_norm_strs),
-        )
     def _serialize_mtp_tensors_for_update(
         self,
         mtp_hf_tensors: list[tuple[str, torch.Tensor]],
@@ -2937,6 +2923,20 @@ class MegatronEngine(TrainEngine):
             f"mtp_param_count={mtp_param_count}, "
             f"buffer_size={buffer_size}"
         )
+
+        if mtp_hf_tensors:
+            _norm_strs = []
+            for _tn, _tv in mtp_hf_tensors[:5]:
+                _norm_strs.append(
+                    f"{_tn}:{_tv.float().norm().item():.4f}"
+                )
+            self.logger.info(
+                "[MTPSyncDiag] MTP weight norms at sync "
+                "(version=%d, %d tensors): %s",
+                meta.version,
+                len(mtp_hf_tensors),
+                ", ".join(_norm_strs),
+            )
 
         # Record a CUDA event on the default stream BEFORE any NCCL
         # broadcasts begin.  At this point, all MTP tensors from
