@@ -1010,10 +1010,20 @@ class MegatronEngine(TrainEngine):
             update_successful, grad_norm, _ = self.optimizer.step()
         current_lr = self.optimizer.param_groups[0]["lr"]
 
+        # Log MTP lr if using separate param group
+        _mtp_lr = None
+        if self.enable_mtp_training and len(self.optimizer.param_groups) > 1:
+            for _pg in self.optimizer.param_groups:
+                if _pg.get('max_lr', None) != self.optimizer.param_groups[0].get('max_lr', None):
+                    _mtp_lr = _pg['lr']
+                    break
+
+
         return dict(
             update_successful=float(update_successful),
             grad_norm=float(grad_norm) if grad_norm is not None else float("nan"),
             lr=current_lr,
+            mtp_lr=_mtp_lr if _mtp_lr is not None else current_lr,
         )
 
     def lr_scheduler_step(self):
@@ -1459,6 +1469,7 @@ class MegatronEngine(TrainEngine):
                             for _layer in _mtp_block.layers:
                                 _orig_get_emb = _layer._get_embeddings
 
+                                _emb_call_count = [0]  # Closure variable for call counting
                                 def _patched_get_embeddings(
                                     input_ids,
                                     position_ids,
@@ -1481,23 +1492,10 @@ class MegatronEngine(TrainEngine):
                                     _ids, _pos, _dec_input, _hs = result
 
                                     _dec_input = _dec_input.detach().requires_grad_(True)
-                                    from megatron.core.utils import (
-                                        make_viewless_tensor,
-                                    )
+                                    _hs = _hs.detach().requires_grad_(True)
 
-                                    _hs = make_viewless_tensor(
-                                        inp=_hs.detach(),
-                                        requires_grad=True,
-                                        keep_graph=False,
-                                    )
-
-                                    import logging as _log_m
-                                    _ge_lg = _log_m.getLogger("MegatronEngine")
-
-                                    if not hasattr(_patched_get_embeddings, "_call_count"):
-                                        _patched_get_embeddings._call_count = 0
-                                    _patched_get_embeddings._call_count += 1
-                                    _call_n = _patched_get_embeddings._call_count
+                                    _emb_call_count[0] += 1
+                                    _call_n = _emb_call_count[0]
 
                                     if _call_n <= 4 or _call_n % 500 == 0:
                                         _di_gfn = (
@@ -1506,12 +1504,13 @@ class MegatronEngine(TrainEngine):
                                         _hs_gfn = (
                                             type(_hs.grad_fn).__name__
                                             if _hs.grad_fn else "None(leaf)")
-                                        _ge_lg.info(
+                                        _engine_ref.logger.info(
                                             "[MTPEmbDiag] _patched_get_embeddings "
-                                            "(call #%d): "
+                                            "(call #%d, step=%d): "
                                             "_dec_input=[rg=%s, shape=%s, grad_fn=%s], "
                                             "_hs=[rg=%s, shape=%s, grad_fn=%s]",
                                             _call_n,
+                                            getattr(_engine_ref, '_global_step', -1),
                                             _dec_input.requires_grad,
                                             list(_dec_input.shape),
                                             _di_gfn,
@@ -1521,12 +1520,12 @@ class MegatronEngine(TrainEngine):
                                         )
 
                                     if not _dec_input.requires_grad:
-                                        _ge_lg.error(
+                                        _engine_ref.logger.error(
                                             "[MTPEmbDiag] CRITICAL: _dec_input.requires_grad "
                                             "is False! MTP gradients will be zero. "
                                             "call #%d", _call_n)
                                     if not _hs.requires_grad:
-                                        _ge_lg.error(
+                                        _engine_ref.logger.error(
                                             "[MTPEmbDiag] CRITICAL: _hs.requires_grad "
                                             "is False! MTP gradients will be zero. "
                                             "call #%d", _call_n)
@@ -2150,7 +2149,46 @@ class MegatronEngine(TrainEngine):
             torch, self.mcore_config.exp_avg_sq_dtype
         )
 
-        self.optimizer = get_megatron_optimizer(mcore_opt_config, self.model)
+
+        # --- MTP independent learning rate  ---
+        _mtp_lr_config_overrides = None
+        _mtp_lr_scale = getattr(self.optimizer_config, 'mtp_lr_scale', 1.0)
+        if self.enable_mtp_training and _mtp_lr_scale != 1.0:
+            try:
+                from megatron.core.optimizer.optimizer_config import ParamKey
+            except ImportError:
+                ParamKey = None
+            if ParamKey is not None:
+                _mtp_lr = self.optimizer_config.lr * _mtp_lr_scale
+                _mtp_min_lr = (
+                    self.optimizer_config.min_lr_ratio
+                    * self.optimizer_config.lr
+                    * _mtp_lr_scale
+                )
+                # Match all MTP parameters by name glob pattern
+                _mtp_param_key = ParamKey(name=("*.mtp.*",))
+                _mtp_lr_config_overrides = {
+                    _mtp_param_key: {
+                        "max_lr": _mtp_lr,
+                        "min_lr": _mtp_min_lr,
+                    }
+                }
+                self.logger.info(
+                    "[MTPOptim] MTP parameters will use separate lr: "
+                    "max_lr=%.2e (scale=%.1fx), min_lr=%.2e, base_lr=%.2e",
+                    _mtp_lr, _mtp_lr_scale, _mtp_min_lr,
+                    self.optimizer_config.lr,
+                )
+            else:
+                self.logger.warning(
+                    "[MTPOptim] ParamKey not available in this megatron-core "
+                    "version. MTP parameters will use the global learning rate."
+                )
+
+        self.optimizer = get_megatron_optimizer(
+            mcore_opt_config, self.model,
+            config_overrides=_mtp_lr_config_overrides,
+        )
 
         warmup_steps_proportion = self.optimizer_config.warmup_steps_proportion
         warmup_steps = int(warmup_steps_proportion * ft_spec.total_train_steps)

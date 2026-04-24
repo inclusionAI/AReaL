@@ -374,6 +374,15 @@ class OptimizerConfig:
     gradient_clipping: float = field(
         default=1.0, metadata={"help": "Gradient clipping threshold"}
     )
+    mtp_lr_scale: float = field(
+        default=1.0,
+        metadata={
+            "help": "Learning rate scale factor for MTP parameters relative to base lr. "
+            "Effective MTP lr = lr * mtp_lr_scale. "
+            "Set to >1.0 (e.g., 100.0) to give MTP head a higher learning rate. "
+            "Only effective when enable_mtp_training=True.",
+        },
+    )
 
 
 @dataclass
