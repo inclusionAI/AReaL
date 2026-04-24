@@ -750,6 +750,12 @@ class MegatronEngine(TrainEngine):
                     )
                     cp_cu_seqlens = padded_cu_seqlens // cp_size
                     cp_inputs = dict(mb_input.orig_mb)
+                    # Preserve the pre-CP-split loss_mask so downstream loss
+                    # functions can record CP-invariant token-count denominators
+                    # (n_tokens / n_valid_tokens / prompt_tokens). See #1242.
+                    cp_inputs["_global_loss_mask"] = mb_input.orig_mb[
+                        "loss_mask"
+                    ].bool()
                     cp_inputs["_cp_local_labels"] = cp_labels
                     cp_inputs["loss_mask"] = cp_loss_mask
                     cp_inputs["cu_seqlens"] = cp_cu_seqlens
