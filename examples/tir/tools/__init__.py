@@ -10,8 +10,8 @@ from .base import (
 from .calculator_tool import (
     CalculatorTool,
 )
-from .cube_sandbox_tool import (
-    CubeSandboxPythonTool,
+from .e2b_sandbox_tool import (
+    E2BSandboxPythonTool,
 )
 
 # Export specific tool implementations
@@ -30,7 +30,7 @@ __all__ = [
     "BaseTool",
     # Python tools
     "PythonTool",
-    "CubeSandboxPythonTool",
+    "E2BSandboxPythonTool",
     "extract_python_code",
     # Calculator tool
     "CalculatorTool",

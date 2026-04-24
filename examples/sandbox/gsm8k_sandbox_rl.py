@@ -1,14 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
-"""Example: GSM8K RL training with CubeSandbox code execution.
+"""Example: GSM8K RL training with sandboxed code execution.
 
 This example demonstrates how to use SandboxToolWorkflow for training
 a model to solve math problems using code execution. Generated Python
-code is executed in isolated CubeSandbox instances for safety.
+code is executed in isolated E2B-compatible sandbox instances for safety.
 
 Usage
 -----
-1. Set up CubeSandbox:
+1. Set up an E2B-compatible service (E2B Cloud, CubeSandbox, etc.):
    ```bash
    export SANDBOX_API_URL="http://localhost:3000"
    export SANDBOX_API_KEY="your-key"
@@ -40,7 +40,7 @@ class GSM8KSandboxConfig(GRPOConfig):
     sandbox: SandboxConfig = field(
         default_factory=lambda: SandboxConfig(
             enabled=True,
-            backend="cube",
+            backend="e2b",
             timeout=30.0,
             max_tool_turns=3,
             pool_size=0,

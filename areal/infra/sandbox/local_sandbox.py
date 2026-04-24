@@ -4,7 +4,7 @@
 
 .. warning::
     This executor runs code in the current process with NO isolation.
-    Do NOT use in production. Use :class:`CubeSandboxExecutor` instead.
+    Do NOT use in production. Use :class:`E2BSandboxExecutor` instead.
 """
 
 from __future__ import annotations

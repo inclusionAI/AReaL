@@ -1,15 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
 
-"""CubeSandbox backend implementation using E2B-compatible SDK.
+"""E2B-compatible sandbox backend implementation.
 
-CubeSandbox (https://github.com/TencentCloud/CubeSandbox) provides
-KVM-isolated sandbox instances with < 60ms cold start and < 5MB memory
-per instance, making it ideal for high-throughput RL training.
+Works with any deployment that implements the E2B Code Interpreter
+protocol, including:
 
-This module adapts CubeSandbox's E2B-compatible ``AsyncSandbox`` to
-the :class:`~areal.api.sandbox_api.SandboxExecutor` protocol.
+- `E2B Cloud <https://e2b.dev>`_ (managed SaaS)
+- `CubeSandbox <https://github.com/TencentCloud/CubeSandbox>`_
+  (TencentCloud self-hosted, KVM-isolated, <60ms cold start, <5MB
+  memory per instance — current recommended backend for RL training)
+- Other self-hosted E2B-compatible services
 
-Performance optimizations (reference: CubeSandbox official examples):
+Performance optimizations:
 
 - **SSL context manager**: temporarily sets ``SSL_CERT_FILE`` only
   during E2B SDK calls for self-hosted deployments with custom TLS
@@ -36,7 +38,7 @@ from typing import Any
 from areal.api.sandbox_api import ExecutionResult
 from areal.utils import logging
 
-logger = logging.getLogger("CubeSandbox")
+logger = logging.getLogger("E2BSandbox")
 
 # ---------------------------------------------------------------------------
 # SSL context manager
@@ -47,9 +49,10 @@ logger = logging.getLogger("CubeSandbox")
 def _ssl_context(ssl_cert_file: str = ""):
     """Temporarily set ``SSL_CERT_FILE`` for E2B SDK calls, then restore.
 
-    Self-hosted CubeSandbox deployments typically use custom TLS
-    certificates.  The E2B SDK reads ``SSL_CERT_FILE`` internally,
-    so we patch it right before the call and restore immediately after.
+    Self-hosted E2B-compatible deployments (e.g. CubeSandbox) typically
+    use custom TLS certificates.  The E2B SDK reads ``SSL_CERT_FILE``
+    internally, so we patch it right before the call and restore
+    immediately after.
 
     Parameters
     ----------
@@ -89,7 +92,7 @@ def _get_shared_sync_api_client():
     TCP and TLS handshake overhead on every request.
 
     This is the sync variant used by :func:`batch_create_sandboxes` which
-    runs in a ``ProcessPoolExecutor``.  The async ``CubeSandboxExecutor``
+    runs in a ``ProcessPoolExecutor``.  The async ``E2BSandboxExecutor``
     currently uses ``AsyncSandbox`` directly (it may be migrated to a
     shared async client in a future iteration).
     """
@@ -204,7 +207,7 @@ def batch_create_sandboxes(
     Parameters
     ----------
     template : str
-        E2B / CubeSandbox template ID.
+        E2B template ID.
     count : int
         Number of sandboxes to create.
     timeout : int
@@ -245,16 +248,19 @@ def batch_create_sandboxes(
 
 
 # ---------------------------------------------------------------------------
-# CubeSandboxExecutor — async executor conforming to SandboxExecutor protocol
+# E2BSandboxExecutor — async executor conforming to SandboxExecutor protocol
 # ---------------------------------------------------------------------------
 
 
-class CubeSandboxExecutor:
-    """CubeSandbox implementation of the SandboxExecutor protocol.
+class E2BSandboxExecutor:
+    """E2B-protocol implementation of the SandboxExecutor protocol.
 
     Wraps an E2B-compatible ``AsyncSandbox`` instance.  Created via
     :func:`~areal.infra.sandbox.factory.create_sandbox` or
-    :meth:`CubeSandboxExecutor.create`.
+    :meth:`E2BSandboxExecutor.create`.
+
+    Works with any E2B-compatible deployment including E2B Cloud,
+    CubeSandbox (self-hosted), and other compatible services.
 
     Parameters
     ----------
@@ -277,13 +283,13 @@ class CubeSandboxExecutor:
         template_id: str | None = None,
         timeout: float = 300.0,
         ssl_cert_file: str = "",
-    ) -> CubeSandboxExecutor:
-        """Create a new CubeSandbox instance.
+    ) -> E2BSandboxExecutor:
+        """Create a new E2B sandbox instance.
 
         Parameters
         ----------
         api_url : str
-            CubeSandbox API endpoint.
+            E2B-compatible API endpoint.
         api_key : str
             API key for authentication.
         template_id : str | None
@@ -295,7 +301,7 @@ class CubeSandboxExecutor:
 
         Returns
         -------
-        CubeSandboxExecutor
+        E2BSandboxExecutor
             A new executor wrapping the created sandbox.
 
         Raises
@@ -307,7 +313,7 @@ class CubeSandboxExecutor:
             from e2b_code_interpreter import AsyncSandbox
         except ImportError as exc:
             raise ImportError(
-                "CubeSandbox backend requires `e2b-code-interpreter` package. "
+                "E2B sandbox backend requires `e2b-code-interpreter` package. "
                 "Install with: pip install e2b-code-interpreter"
             ) from exc
 
@@ -321,7 +327,7 @@ class CubeSandboxExecutor:
         kwargs["timeout"] = int(timeout)
 
         logger.info(
-            "Creating CubeSandbox instance (api_url=%s, template=%s)",
+            "Creating E2B sandbox instance (api_url=%s, template=%s)",
             api_url or "<default>",
             template_id or "<default>",
         )
@@ -331,7 +337,7 @@ class CubeSandboxExecutor:
             sandbox = await AsyncSandbox.create(**kwargs)
         api_ms = round((time.monotonic() - t1) * 1000)
         logger.info(
-            "CubeSandbox created: %s (api_call=%dms)",
+            "E2B sandbox created: %s (api_call=%dms)",
             getattr(sandbox, "sandbox_id", "?"),
             api_ms,
         )
@@ -343,7 +349,7 @@ class CubeSandboxExecutor:
         language: str = "python",
         timeout: float = 30.0,
     ) -> ExecutionResult:
-        """Execute code in the CubeSandbox.
+        """Execute code in the E2B sandbox.
 
         Parameters
         ----------
@@ -415,7 +421,7 @@ class CubeSandboxExecutor:
         command: str,
         timeout: float = 30.0,
     ) -> ExecutionResult:
-        """Execute a shell command in the CubeSandbox.
+        """Execute a shell command in the E2B sandbox.
 
         Parameters
         ----------
@@ -463,7 +469,7 @@ class CubeSandboxExecutor:
             with _ssl_context(self._ssl_cert_file):
                 await self._sandbox.close()
         except Exception as exc:
-            logger.warning("Error closing CubeSandbox: %s", exc)
+            logger.warning("Error closing E2B sandbox: %s", exc)
 
     @property
     def is_closed(self) -> bool:

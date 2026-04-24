@@ -28,10 +28,10 @@ async def create_sandbox(config: SandboxConfig) -> SandboxExecutor:
     ValueError
         If the specified backend is not supported.
     """
-    if config.backend == "cube":
-        from areal.infra.sandbox.cube_sandbox import CubeSandboxExecutor
+    if config.backend == "e2b":
+        from areal.infra.sandbox.e2b_sandbox import E2BSandboxExecutor
 
-        return await CubeSandboxExecutor.create(
+        return await E2BSandboxExecutor.create(
             api_url=config.api_url,
             api_key=config.api_key,
             template_id=config.template_id or None,
@@ -45,5 +45,5 @@ async def create_sandbox(config: SandboxConfig) -> SandboxExecutor:
     else:
         raise ValueError(
             f"Unsupported sandbox backend: {config.backend!r}. "
-            f"Supported backends: 'cube', 'local'."
+            f"Supported backends: 'e2b', 'local'."
         )

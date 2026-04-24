@@ -1,16 +1,17 @@
-# CubeSandbox Integration Example for AReaL
+# Sandbox Integration Example for AReaL
 
-This directory contains examples of using CubeSandbox for sandboxed code
-execution in RL training workflows.
+This directory contains examples of using E2B-compatible sandboxes for
+sandboxed code execution in RL training workflows.
 
 ## Overview
 
 AReaL's `SandboxToolWorkflow` enables training LLMs with tool-integrated
-reasoning (TIR) where generated code is executed in isolated CubeSandbox
+reasoning (TIR) where generated code is executed in isolated sandbox
 instances, providing:
 
 - **KVM-level isolation**: Generated code cannot escape the sandbox
 - **< 60ms cold start**: Per-episode sandbox creation without latency overhead
+  (with CubeSandbox self-hosted deployment)
 - **< 5MB per instance**: Support for thousands of concurrent episodes
 - **E2B SDK compatible**: Standard `e2b-code-interpreter` Python API
 
@@ -22,15 +23,18 @@ instances, providing:
 pip install e2b-code-interpreter
 ```
 
-### 2. Start CubeSandbox
+### 2. Start an E2B-compatible service
 
-Follow the [CubeSandbox setup guide](https://github.com/TencentCloud/CubeSandbox)
-to deploy a local or cloud instance.
+Use any E2B-compatible backend:
+
+- [E2B Cloud](https://e2b.dev) (managed SaaS)
+- [CubeSandbox](https://github.com/TencentCloud/CubeSandbox) (self-hosted,
+  recommended for RL training)
 
 ### 3. Configure environment
 
 ```bash
-export SANDBOX_API_URL="http://your-cubesandbox:3000"
+export SANDBOX_API_URL="http://your-e2b-api:3000"
 export SANDBOX_API_KEY="your-api-key"
 ```
 
@@ -44,8 +48,8 @@ uv run python gsm8k_sandbox_rl.py
 
 ```
 areal/api/sandbox_api.py          ← Protocol + Config (pure abstractions)
-areal/infra/sandbox/              ← CubeSandbox adapter + pool management
-  ├── cube_sandbox.py             ← E2B SDK wrapper
+areal/infra/sandbox/              ← E2B adapter + pool management
+  ├── e2b_sandbox.py              ← E2B SDK wrapper
   ├── local_sandbox.py            ← Local executor (debug only)
   ├── factory.py                  ← Backend factory
   └── manager.py                  ← Per-thread sandbox pool
@@ -57,7 +61,7 @@ areal/workflow/sandbox_tool.py    ← SandboxToolWorkflow (core workflow)
 ```yaml
 sandbox:
   enabled: true
-  backend: cube          # or "local" for debugging
+  backend: e2b           # or "local" for debugging
   api_url: "http://localhost:3000"
   api_key: ""
   template_id: ""        # optional pre-configured environment
@@ -70,13 +74,13 @@ sandbox:
 
 | Backend | Isolation | Use Case |
 |---------|-----------|----------|
-| `cube`  | KVM (kernel-level) | Production RL training |
+| `e2b`  | KVM (kernel-level) | Production RL training |
 | `local` | None (in-process) | Development/debugging only |
 
 ## TIR Integration
 
 For existing TIR workflows, you can replace the unsafe `PythonTool` with
-the sandboxed `CubeSandboxPythonTool`:
+the sandboxed `E2BSandboxPythonTool`:
 
 ```python
 # Before (unsafe)
@@ -84,9 +88,9 @@ from tools.python_tool import PythonTool
 tool = PythonTool(timeout=30)
 
 # After (sandboxed)
-from tools.cube_sandbox_tool import CubeSandboxPythonTool
-tool = CubeSandboxPythonTool(
+from tools.e2b_sandbox_tool import E2BSandboxPythonTool
+tool = E2BSandboxPythonTool(
     timeout=30,
-    api_url="http://your-cubesandbox:3000",
+    api_url="http://your-e2b-api:3000",
 )
 ```

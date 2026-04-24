@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
-"""Multi-step tool-use workflow with CubeSandbox isolation.
+"""Multi-step tool-use workflow with sandbox isolation.
 
 This workflow enables RL training with sandboxed code execution. Each
 episode follows a generate → detect tool call → sandbox execute → append
@@ -27,7 +27,7 @@ Example
         reward_fn="areal.reward.gsm8k.gsm8k_reward_fn",
         gconfig=gconfig,
         tokenizer="Qwen/Qwen3-8B",
-        sandbox_config=SandboxConfig(enabled=True, backend="cube", api_url="http://..."),
+        sandbox_config=SandboxConfig(enabled=True, backend="e2b", api_url="http://..."),
     )
 
 See Also

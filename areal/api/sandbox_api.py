@@ -3,8 +3,8 @@
 """Sandbox execution abstraction for agent RL training.
 
 Provides the core protocol and data structures for isolated code/command
-execution backends. Any sandbox implementation (CubeSandbox, E2B, Docker,
-local process) should conform to the :class:`SandboxExecutor` protocol.
+execution backends. Any sandbox implementation (E2B-compatible services,
+Docker, local process) should conform to the :class:`SandboxExecutor` protocol.
 
 Architecture
 ------------
@@ -69,7 +69,7 @@ class SandboxExecutor(Protocol):
     checks, consistent with ``RemoteInfBackendProtocol``.
 
     Methods are async to support non-blocking I/O with remote sandbox
-    services (e.g., CubeSandbox API, E2B cloud).
+    services (e.g., E2B Cloud, CubeSandbox, other E2B-compatible APIs).
     """
 
     async def run_code(
@@ -138,20 +138,20 @@ class SandboxConfig:
     enabled : bool
         Whether sandbox execution is enabled.
     backend : str
-        Sandbox backend to use. Currently supported: ``"cube"``, ``"local"``.
+        Sandbox backend to use. Currently supported: ``"e2b"``, ``"local"``.
     api_url : str
-        CubeSandbox / E2B API endpoint URL.
+        E2B-compatible API endpoint URL.
     api_key : str
         API key for authentication with the sandbox service.
         Can also be set via ``SANDBOX_API_KEY`` environment variable.
     template_id : str
         Sandbox template ID for pre-configured environments.
     ssl_cert_file : str
-        Path to a CA certificate file for self-hosted CubeSandbox
-        instances that use custom TLS certificates. When set, it is
-        applied as ``SSL_CERT_FILE`` only during E2B SDK calls so that
-        other HTTPS connections are not affected.
-        Can also be set via ``CUBE_SSL_CERT_FILE`` environment variable.
+        Path to a CA certificate file for self-hosted E2B-compatible
+        deployments (e.g. CubeSandbox) with custom TLS certificates.
+        When set, it is applied as ``SSL_CERT_FILE`` only during E2B
+        SDK calls so that other HTTPS connections are not affected.
+        Can also be set via ``SANDBOX_SSL_CERT_FILE`` environment variable.
     timeout : float
         Default per-execution timeout in seconds.
     max_tool_turns : int
@@ -165,16 +165,19 @@ class SandboxConfig:
         metadata={"help": "Enable sandbox execution for tool-use workflows."},
     )
     backend: str = field(
-        default="cube",
+        default="e2b",
         metadata={
-            "help": "Sandbox backend. Supported: 'cube' (CubeSandbox/E2B), 'local' (unsafe, debug only).",
-            "choices": ["cube", "local"],
+            "help": (
+                "Sandbox backend. 'e2b' covers any E2B-compatible deployment "
+                "(E2B Cloud, CubeSandbox, etc.). 'local' is unsafe, debug only."
+            ),
+            "choices": ["e2b", "local"],
         },
     )
     api_url: str = field(
         default="",
         metadata={
-            "help": "CubeSandbox API URL. Also reads from SANDBOX_API_URL env var."
+            "help": "E2B-compatible API URL. Also reads from SANDBOX_API_URL env var."
         },
     )
     api_key: str = field(
@@ -191,8 +194,9 @@ class SandboxConfig:
         default="",
         metadata={
             "help": (
-                "Path to CA cert for self-hosted CubeSandbox with custom TLS. "
-                "Also reads from CUBE_SSL_CERT_FILE env var."
+                "Path to CA cert for self-hosted E2B-compatible deployments "
+                "with custom TLS (e.g. CubeSandbox). "
+                "Also reads from SANDBOX_SSL_CERT_FILE env var."
             ),
         },
     )
@@ -214,12 +218,18 @@ class SandboxConfig:
     def __post_init__(self):
         import os
 
+        if self.backend == "cube":
+            raise ValueError(
+                "backend='cube' has been removed; use backend='e2b' instead. "
+                "The underlying implementation is unchanged — CubeSandbox is an "
+                "E2B-compatible deployment and is fully supported under 'e2b'."
+            )
         if not self.api_url:
             self.api_url = os.environ.get("SANDBOX_API_URL", "")
         if not self.api_key:
             self.api_key = os.environ.get("SANDBOX_API_KEY", "")
         if not self.ssl_cert_file:
-            self.ssl_cert_file = os.environ.get("CUBE_SSL_CERT_FILE", "")
+            self.ssl_cert_file = os.environ.get("SANDBOX_SSL_CERT_FILE", "")
         if self.timeout <= 0:
             raise ValueError(f"timeout must be positive, got {self.timeout}")
         if self.max_tool_turns < 1:

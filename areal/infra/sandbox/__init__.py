@@ -7,7 +7,7 @@ and lifecycle management for use by workflow layers.
 
 Components
 ----------
-- :class:`CubeSandboxExecutor` — CubeSandbox / E2B SDK backend.
+- :class:`E2BSandboxExecutor` — E2B-compatible SDK backend.
 - :class:`LocalSandboxExecutor` — Unsafe local execution (debug only).
 - :class:`SandboxManager` — Per-thread sandbox pool and lifecycle manager.
 
@@ -18,7 +18,7 @@ areal.workflow.sandbox_tool : Workflow that consumes sandbox executors.
 """
 
 __all__ = [
-    "CubeSandboxExecutor",
+    "E2BSandboxExecutor",
     "LocalSandboxExecutor",
     "SandboxManager",
     "batch_create_sandboxes",
@@ -27,12 +27,12 @@ __all__ = [
 ]
 
 _LAZY_IMPORTS = {
-    "CubeSandboxExecutor": "areal.infra.sandbox.cube_sandbox",
+    "E2BSandboxExecutor": "areal.infra.sandbox.e2b_sandbox",
     "LocalSandboxExecutor": "areal.infra.sandbox.local_sandbox",
     "SandboxManager": "areal.infra.sandbox.manager",
-    "batch_create_sandboxes": "areal.infra.sandbox.cube_sandbox",
+    "batch_create_sandboxes": "areal.infra.sandbox.e2b_sandbox",
     "create_sandbox": "areal.infra.sandbox.factory",
-    "create_sandbox_info_sync": "areal.infra.sandbox.cube_sandbox",
+    "create_sandbox_info_sync": "areal.infra.sandbox.e2b_sandbox",
 }
 
 

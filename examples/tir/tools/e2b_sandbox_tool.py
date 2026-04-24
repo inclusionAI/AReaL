@@ -1,9 +1,9 @@
-"""CubeSandbox-backed Python execution tool for TIR workflows.
+"""E2B-backed Python execution tool for TIR workflows.
 
 Drop-in replacement for :class:`PythonTool` that executes code in a
-KVM-isolated CubeSandbox instance instead of in-process.  Provides
-production-grade security while maintaining the same ``BaseTool``
-interface.
+KVM-isolated E2B-compatible sandbox instance (e.g. CubeSandbox) instead
+of in-process.  Provides production-grade security while maintaining the
+same ``BaseTool`` interface.
 
 Usage
 -----
@@ -15,17 +15,17 @@ use this tool for ``ToolType.PYTHON``::
     registry = ToolRegistry(
         sandbox_config=SandboxConfig(
             enabled=True,
-            api_url="http://your-cubesandbox:3000",
+            api_url="http://your-e2b-api:3000",
             template_id="your-template",
         ),
     )
 
 Or construct directly::
 
-    tool = CubeSandboxPythonTool(
+    tool = E2BSandboxPythonTool(
         sandbox_config=SandboxConfig(
             enabled=True,
-            api_url="http://your-cubesandbox:3000",
+            api_url="http://your-e2b-api:3000",
             template_id="your-template",
         ),
     )
@@ -33,7 +33,7 @@ Or construct directly::
 Prerequisites
 -------------
 - ``pip install e2b-code-interpreter``
-- Running CubeSandbox service or E2B-compatible API.
+- Running E2B-compatible service (E2B Cloud, CubeSandbox, etc.).
 """
 
 from __future__ import annotations
@@ -47,11 +47,11 @@ from areal.utils import logging
 from .base import BaseTool, ToolCallStatus, ToolDescription, ToolMarkers, ToolType
 from .python_tool import extract_python_code
 
-logger = logging.getLogger("CubeSandboxPythonTool")
+logger = logging.getLogger("E2BSandboxPythonTool")
 
 
-class CubeSandboxPythonTool(BaseTool):
-    """Python code execution via CubeSandbox (KVM isolated).
+class E2BSandboxPythonTool(BaseTool):
+    """Python code execution via E2B-compatible sandbox (KVM isolated).
 
     Conforms to the TIR ``BaseTool`` interface so it can be used as a
     drop-in replacement for ``PythonTool``.
@@ -64,8 +64,8 @@ class CubeSandboxPythonTool(BaseTool):
         If True, returns dummy output without executing.
     sandbox_config : SandboxConfig | None
         Sandbox configuration.  If ``None``, reads from env vars
-        (``SANDBOX_API_URL``, ``SANDBOX_API_KEY``, ``CUBE_TEMPLATE_ID``,
-        ``CUBE_SSL_CERT_FILE``).
+        (``SANDBOX_API_URL``, ``SANDBOX_API_KEY``,
+        ``SANDBOX_SSL_CERT_FILE``).
     """
 
     def __init__(
@@ -88,15 +88,15 @@ class CubeSandboxPythonTool(BaseTool):
             if self._sandbox is not None:
                 return self._sandbox
 
-            from areal.infra.sandbox.cube_sandbox import CubeSandboxExecutor
+            from areal.infra.sandbox.e2b_sandbox import E2BSandboxExecutor
 
-            self._sandbox = await CubeSandboxExecutor.create(
+            self._sandbox = await E2BSandboxExecutor.create(
                 api_url=self._config.api_url,
                 api_key=self._config.api_key,
                 template_id=self._config.template_id or None,
                 ssl_cert_file=self._config.ssl_cert_file,
             )
-            logger.info("Created CubeSandbox instance for TIR tool.")
+            logger.info("Created E2B sandbox instance for TIR tool.")
             return self._sandbox
 
     @property
@@ -139,7 +139,7 @@ class CubeSandboxPythonTool(BaseTool):
         return {"code": code}
 
     def execute(self, parameters: dict[str, Any]) -> tuple[str, ToolCallStatus]:
-        """Execute Python code in CubeSandbox (sync wrapper).
+        """Execute Python code in E2B sandbox (sync wrapper).
 
         Bridges to the async sandbox API.  In async contexts, prefer
         :meth:`async_execute` to avoid unnecessary thread-pool overhead.
@@ -205,6 +205,6 @@ class CubeSandboxPythonTool(BaseTool):
     def __del__(self):
         if self._sandbox is not None:
             logger.warning(
-                "CubeSandboxPythonTool was not explicitly closed. "
+                "E2BSandboxPythonTool was not explicitly closed. "
                 "Call close() to release sandbox resources."
             )

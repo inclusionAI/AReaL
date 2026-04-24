@@ -48,7 +48,7 @@ class TestSandboxConfig:
 
         config = SandboxConfig()
         assert config.enabled is False
-        assert config.backend == "cube"
+        assert config.backend == "e2b"
         assert config.timeout == 30.0
         assert config.max_tool_turns == 5
         assert config.pool_size == 0

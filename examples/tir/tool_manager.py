@@ -7,7 +7,7 @@ from areal.utils import logging
 from tools import (  # isort: skip
     BaseTool,
     CalculatorTool,
-    CubeSandboxPythonTool,
+    E2BSandboxPythonTool,
     PythonTool,
     ToolCallStatus,
     ToolType,
@@ -21,7 +21,7 @@ class ToolRegistry:
     """Tool registry that manages all available tools.
 
     When a ``SandboxConfig`` is provided, ``ToolType.PYTHON`` is
-    automatically backed by :class:`CubeSandboxPythonTool` (KVM-isolated)
+    automatically backed by :class:`E2BSandboxPythonTool` (KVM-isolated)
     instead of the local in-process :class:`PythonTool`.
 
     Parameters
@@ -58,13 +58,13 @@ class ToolRegistry:
         }
 
         if use_sandbox:
-            self.all_tools[ToolType.PYTHON] = CubeSandboxPythonTool(
+            self.all_tools[ToolType.PYTHON] = E2BSandboxPythonTool(
                 timeout=timeout,
                 debug_mode=debug_mode,
                 sandbox_config=sandbox_config,
             )
             logger.info(
-                "Python tool backend: CubeSandbox (api_url=%s)",
+                "Python tool backend: E2B sandbox (api_url=%s)",
                 sandbox_config.api_url or "<env>",
             )
         else:
@@ -73,7 +73,7 @@ class ToolRegistry:
 
         # NOTE: ToolType.BASH is registered but has no local implementation
         # (too dangerous).  It is only available when sandbox is enabled.
-        # Future: add CubeSandboxBashTool here.
+        # Future: add E2BSandboxBashTool here.
 
         # Set enabled tools
         if enabled_tools is None:
