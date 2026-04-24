@@ -112,20 +112,30 @@ def compute_packed_sft_loss(
             seqlogp[i] = torch.where(m, logp.detach(), 0.0).sum() / valid_tokens
 
     ## Loggin stats
+    # Use the pre-CP-split loss_mask (when available) for token-count
+    # denominators so these metrics are invariant to CP topology. The local
+    # loss_mask is also recorded as `n_valid_tokens_local` because
+    # `stats_tracker.stat` requires denominators whose shape matches the
+    # recorded tensor, and `logprobs` / `vocab_*` are CP-local. See #1242.
+    global_loss_mask = input_.get("_global_loss_mask", loss_mask)
     stats_tracker.denominator(
         n_seqs=n_seqs,
-        n_tokens=torch.ones(logprobs.shape[0], dtype=torch.bool, device=device),
-        n_valid_tokens=loss_mask,
-        prompt_tokens=loss_mask.logical_not(),
+        n_tokens=torch.ones(
+            global_loss_mask.shape[0], dtype=torch.bool, device=global_loss_mask.device
+        ),
+        n_valid_tokens=global_loss_mask,
+        prompt_tokens=global_loss_mask.logical_not(),
+        n_tokens_local=torch.ones(logprobs.shape[0], dtype=torch.bool, device=device),
+        n_valid_tokens_local=loss_mask,
     )
     stats_tracker.stat(ppl=(-seqlogp).exp().float(), denominator="n_seqs")
-    stats_tracker.stat(loss=-logprobs.detach(), denominator="n_valid_tokens")
+    stats_tracker.stat(loss=-logprobs.detach(), denominator="n_valid_tokens_local")
 
     if vocab_min_logits is not None and vocab_max_logits is not None:
         stats_tracker.stat(
             vocab_min_logits=vocab_min_logits,
             vocab_max_logits=vocab_max_logits,
-            denominator="n_tokens",
+            denominator="n_tokens_local",
         )
 
     return loss
