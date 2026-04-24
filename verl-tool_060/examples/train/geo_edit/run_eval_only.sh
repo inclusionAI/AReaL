@@ -134,7 +134,7 @@ run_eval_group() {
         actor_rollout_ref.rollout.free_cache_engine=True \
         actor_rollout_ref.rollout.name=vllm \
         actor_rollout_ref.rollout.gpu_memory_utilization=$gpu_memory_utilization \
-        actor_rollout_ref.rollout.temperature=0 \
+        actor_rollout_ref.rollout.temperature=0.0 \
         actor_rollout_ref.rollout.top_p=1.0 \
         actor_rollout_ref.rollout.top_k=-1 \
         actor_rollout_ref.rollout.n=$rollout_n \

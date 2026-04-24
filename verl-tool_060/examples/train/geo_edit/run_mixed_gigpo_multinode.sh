@@ -234,8 +234,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     trainer.save_freq=$save_freq \
     trainer.test_freq=$test_freq \
     trainer.total_epochs=$total_epochs \
-    trainer.resume_mode=resume_path \
-    trainer.resume_from_path=$WORKSPACE/checkpoints/$run_name/global_step_120 \
+    trainer.resume_mode=auto \
     2>&1 | tee $WORKSPACE/logs/$run_name/train.log
 
 echo "Training finished"

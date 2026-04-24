@@ -1,4 +1,4 @@
-# SYNC: a copy of this file exists at verl/verl/workers/reward_manager/geo_vision_qa.py
+# SYNC: a copy of this file exists at verl_tool/workers/reward_manager/geo_vision_qa.py
 # Any changes here must be mirrored there, and vice versa.
 import json
 import os

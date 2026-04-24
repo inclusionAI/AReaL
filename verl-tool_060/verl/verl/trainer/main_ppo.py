@@ -39,6 +39,7 @@ def main(config):
     Args:
         config_dict: Hydra configuration dictionary containing training parameters.
     """
+    import verl.workers.reward_manager.geo_vision_qa  # noqa: F401
     run_ppo(config)
 
 
