@@ -111,7 +111,7 @@ def compute_packed_sft_loss(
             n_seqs[i] = True
             seqlogp[i] = torch.where(m, logp.detach(), 0.0).sum() / valid_tokens
 
-    ## Loggin stats
+    ## Logging stats
     # Use the pre-CP-split loss_mask (when available) for token-count
     # denominators so these metrics are invariant to CP topology. The local
     # loss_mask is also recorded as `n_valid_tokens_local` because
