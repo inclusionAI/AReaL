@@ -11,7 +11,7 @@ n_nodes=${N_NODES:-1}
 
 max_prompt_length=32768
 max_response_length=32768
-max_action_length=8192 
+max_action_length=8192
 max_obs_length=8192
 max_obs_length_image=8192
 max_obs_length_text=6144

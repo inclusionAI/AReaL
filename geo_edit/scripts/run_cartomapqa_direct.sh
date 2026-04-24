@@ -4,11 +4,11 @@ set -x
 API_BASE=${API_BASE:-"http://127.0.0.1:8000"}
 MODEL_PATH=${MODEL_PATH:-"/storage/openpsi/models/Qwen3-VL-8B-Thinking/"}
 MODEL_TYPE=${MODEL_TYPE:-"vLLM"}
-OUTPUT_BASE=${OUTPUT_BASE:-"/storage/openpsi/data/lcy_image_edit/cartomapqa_test_0417"}
+OUTPUT_BASE=${OUTPUT_BASE:-"/storage/openpsi/data/lcy_image_edit/cartomapqa_test_0424"}
 DATASET_ROOT="/storage/openpsi/data/lcy_image_edit/CartoMapQA_parquet"
 MAX_CONCURRENT=${MAX_CONCURRENT:-64}
 SAMPLE_RATE=${SAMPLE_RATE:-1.0}
-MAX_TOOL_CALLS=${MAX_TOOL_CALLS:-10}
+MAX_TOOL_CALLS=${MAX_TOOL_CALLS:-15}
 ENABLE_TOOLS=${ENABLE_TOOLS:-"map general"}
 
 # Mode: "direct" (no tools) or "tool" (with tool calls)
@@ -55,7 +55,8 @@ for entry in "${SUBSETS[@]}"; do
             --use_tools auto \
             --max_concurrent_requests "$MAX_CONCURRENT" \
             --max_tool_calls "$MAX_TOOL_CALLS" \
-            --enable_tools $ENABLE_TOOLS
+            --enable_tools $ENABLE_TOOLS \
+            --no_image_compression
     else
         python -m geo_edit.scripts.direct_generate \
             --api_base "$API_BASE" \
@@ -66,7 +67,8 @@ for entry in "${SUBSETS[@]}"; do
             --model_type "$MODEL_TYPE" \
             --api_mode chat_completions \
             --max_concurrent_requests "$MAX_CONCURRENT" \
-            --sample_rate "$SAMPLE_RATE"
+            --sample_rate "$SAMPLE_RATE" \
+            --no_image_compression
     fi
 
     echo "  DONE: $parquet_name -> $output_dir"

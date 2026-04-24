@@ -10,7 +10,7 @@ n_gpus_per_node=${N_GPUS_PER_NODE:-8}
 n_nodes=${N_NODES:-1}
 
 max_prompt_length=32768
-max_response_length=32768
+max_response_length=16384
 ppo_max_token_len_per_gpu=$(expr $max_prompt_length + $max_response_length)
 max_num_batched_tokens=$(expr $max_prompt_length + $max_response_length)
 

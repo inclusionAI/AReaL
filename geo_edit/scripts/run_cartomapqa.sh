@@ -17,14 +17,14 @@ OUTPUT_ROOT="/storage/openpsi/data/lcy_image_edit/CartoMapQA_iterative_gpt5_0406
 
 # Each entry: "parquet_filename:dataset_name"
 SUBSETS=(
-    # "MFS:cartomapqa_mfs"
-    # "MML:cartomapqa_mml"
-    # "MTMF:cartomapqa_mtmf" #需要结构化judge
+    "MFS:cartomapqa_mfs"
+    "MML:cartomapqa_mml"
+    "MTMF:cartomapqa_mtmf" #需要结构化judge
     "RLE:cartomapqa_rle"
-    # "SRN:cartomapqa_srn"
-    # "STMF_counting:cartomapqa_stmf_counting"
-    # "STMF_name_listing:cartomapqa_stmf_name_listing"
-    # "STMF_presence:cartomapqa_stmf_presence"
+    "SRN:cartomapqa_srn"
+    "STMF_counting:cartomapqa_stmf_counting"
+    "STMF_name_listing:cartomapqa_stmf_name_listing"
+    "STMF_presence:cartomapqa_stmf_presence"
 )
 
 echo "============================================"
@@ -61,7 +61,7 @@ for entry in "${SUBSETS[@]}"; do
         --output_dir "$output_dir" \
         --sample_rate 1.0 \
         --max_concurrent_requests 16 \
-        --max_iterative_rounds 5 \
+        --max_iterative_rounds 15 \
         --judge_model "gpt-5-mini-2025-08-07" \
         --judge_api_key "$API_KEY" \
         --judge_api_base "https://matrixllm.alipay.com/v1" \
