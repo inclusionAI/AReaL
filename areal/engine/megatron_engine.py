@@ -786,9 +786,10 @@ class MegatronEngine(TrainEngine):
     def _collect_mtp_loss(self) -> dict[str, float]:
         """Collect MTP loss from Megatron-Core's MTPLossLoggingHelper after forward-backward.
 
-        The MTP loss is computed and backpropagated by Megatron-Core's MTP module
-        during the forward-backward pass via MTPLossAutoScaler. This function only
-        collects the loss VALUE for logging and monitoring purposes.
+        The MTP loss is computed during the forward pass and added directly to the
+        RL loss in _compute_logprobs_and_loss (bypassing MTPLossAutoScaler, which
+        fails under Megatron DDP/TP). This function only collects the loss VALUE
+        for logging and monitoring purposes.
 
         IMPORTANT: All CP ranks must participate in the all-reduce to avoid deadlock.
         The gate condition uses is_pipeline_last_stage() instead of
@@ -948,10 +949,10 @@ class MegatronEngine(TrainEngine):
                                         "[MTPGradDiag] All MTP params have zero gradient "
                                         "in BOTH .main_grad and .grad. The MTP backward "
                                         "path is completely broken. Check: "
-                                        "1) MTPLossAutoScaler.backward is being called, "
-                                        "2) mtp_loss requires_grad=True, "
-                                        "3) _mtp_hs requires_grad=True, "
-                                        "4) activation checkpointing compatibility."
+                                        "1) MTP loss was stored in _mtp_loss_for_backward, "
+                                        "2) MTP loss was added to RL loss in _compute_logprobs_and_loss, "
+                                        "3) mtp_loss requires_grad=True, "
+                                        "4) _mtp_hs requires_grad=True."
                                     )
                                 self.logger.info(
                                     "[MTPGradDiag] Deep chain check: examining "
@@ -1126,6 +1127,9 @@ class MegatronEngine(TrainEngine):
                     )
 
             if self.enable_mtp_training:
+                _engine_ref = self
+                self._mtp_loss_for_backward = []
+
                 _unwrapped = model
                 while hasattr(_unwrapped, "module"):
                     _unwrapped = _unwrapped.module
@@ -1223,7 +1227,6 @@ class MegatronEngine(TrainEngine):
                             (MTPLossAutoScaler does not leak MTP grad to backbone).
                             """
                             from megatron.core.transformer.multi_token_prediction import (
-                                MTPLossAutoScaler,
                                 MTPLossLoggingHelper,
                                 roll_tensor,
                             )
@@ -1355,14 +1358,16 @@ class MegatronEngine(TrainEngine):
                                         / self_model.config.mtp_num_layers
                                     )
                                     if self_model.config.calculate_per_token_loss:
-                                        hidden_states = MTPLossAutoScaler.apply(
-                                            hidden_states,
-                                            mtp_loss_scale * mtp_loss,
-                                        )
+                                        _mtp_loss_to_store = mtp_loss_scale * mtp_loss
                                     else:
-                                        hidden_states = MTPLossAutoScaler.apply(
-                                            hidden_states,
-                                            mtp_loss_scale * mtp_loss / num_tokens,
+                                        _mtp_loss_to_store = mtp_loss_scale * mtp_loss / num_tokens
+                                    _engine_ref._mtp_loss_for_backward.append(_mtp_loss_to_store)
+                                    if self_model.training and _logger.isEnabledFor(10):
+                                        _logger.debug(
+                                            f"[MTPFix] Stored MTP loss for backward: "
+                                            f"sum={_mtp_loss_to_store.sum().item():.6f}, "
+                                            f"requires_grad={_mtp_loss_to_store.requires_grad}, "
+                                            f"accumulator_len={len(_engine_ref._mtp_loss_for_backward)}"
                                         )
 
                                 _logger.info(
@@ -1474,7 +1479,8 @@ class MegatronEngine(TrainEngine):
                                         packed_seq_params=packed_seq_params,
                                     )
                                     _ids, _pos, _dec_input, _hs = result
-                                    _dec_input = _dec_input.detach()
+
+                                    _dec_input = _dec_input.detach().requires_grad_(True)
                                     from megatron.core.utils import (
                                         make_viewless_tensor,
                                     )
@@ -1484,16 +1490,47 @@ class MegatronEngine(TrainEngine):
                                         requires_grad=True,
                                         keep_graph=False,
                                     )
-                                    if not hasattr(_patched_get_embeddings, "_diag_done"):
-                                        _patched_get_embeddings._diag_done = True
-                                        import logging as _log_m
-                                        _ge_lg = _log_m.getLogger("MegatronEngine")
-                                        _hs_gfn = type(_hs.grad_fn).__name__ if _hs.grad_fn else "None"
+
+                                    import logging as _log_m
+                                    _ge_lg = _log_m.getLogger("MegatronEngine")
+
+                                    if not hasattr(_patched_get_embeddings, "_call_count"):
+                                        _patched_get_embeddings._call_count = 0
+                                    _patched_get_embeddings._call_count += 1
+                                    _call_n = _patched_get_embeddings._call_count
+
+                                    if _call_n <= 4 or _call_n % 500 == 0:
+                                        _di_gfn = (
+                                            type(_dec_input.grad_fn).__name__
+                                            if _dec_input.grad_fn else "None(leaf)")
+                                        _hs_gfn = (
+                                            type(_hs.grad_fn).__name__
+                                            if _hs.grad_fn else "None(leaf)")
                                         _ge_lg.info(
-                                            "[MTPEmbDiag] _patched_get_embeddings: "
-                                            "_dec_input.rg=%s, _hs.rg=%s, _hs.grad_fn=%s",
+                                            "[MTPEmbDiag] _patched_get_embeddings "
+                                            "(call #%d): "
+                                            "_dec_input=[rg=%s, shape=%s, grad_fn=%s], "
+                                            "_hs=[rg=%s, shape=%s, grad_fn=%s]",
+                                            _call_n,
                                             _dec_input.requires_grad,
-                                            _hs.requires_grad, _hs_gfn)
+                                            list(_dec_input.shape),
+                                            _di_gfn,
+                                            _hs.requires_grad,
+                                            list(_hs.shape),
+                                            _hs_gfn,
+                                        )
+
+                                    if not _dec_input.requires_grad:
+                                        _ge_lg.error(
+                                            "[MTPEmbDiag] CRITICAL: _dec_input.requires_grad "
+                                            "is False! MTP gradients will be zero. "
+                                            "call #%d", _call_n)
+                                    if not _hs.requires_grad:
+                                        _ge_lg.error(
+                                            "[MTPEmbDiag] CRITICAL: _hs.requires_grad "
+                                            "is False! MTP gradients will be zero. "
+                                            "call #%d", _call_n)
+
                                     return _ids, _pos, _dec_input, _hs
 
                                 _layer._get_embeddings = _patched_get_embeddings
@@ -3222,6 +3259,14 @@ class MegatronEngine(TrainEngine):
         total_loss_weight: torch.Tensor,
         loss_multiplier: float = 1.0,
     ) -> torch.Tensor:
+        _mtp_loss_for_this_mb = None
+        if (
+            self.enable_mtp_training
+            and hasattr(self, '_mtp_loss_for_backward')
+            and self._mtp_loss_for_backward
+        ):
+            _mtp_loss_for_this_mb = self._mtp_loss_for_backward.pop(0)
+
         local_weight = loss_weight_fn(inputs)
         if local_weight == 0:
             return output.mean() * 0.0
@@ -3280,6 +3325,18 @@ class MegatronEngine(TrainEngine):
             loss = loss_fn(values, inputs)
 
         loss_scale = local_weight / total_loss_weight * loss_multiplier
+
+        if _mtp_loss_for_this_mb is not None:
+            _mtp_contribution = _mtp_loss_for_this_mb.sum()
+            loss = loss + _mtp_contribution
+            if random.random() < 0.01:
+                self.logger.info(
+                    f"[MTPFix] Added MTP loss to RL loss: "
+                    f"mtp_contribution={_mtp_contribution.item():.6f}, "
+                    f"rl_loss_before={(loss - _mtp_contribution).item():.6f}, "
+                    f"combined_loss={loss.item():.6f}, loss_scale={loss_scale:.6f}"
+                )
+
         return loss * loss_scale
 
     def _compute_forward_result(
