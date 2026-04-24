@@ -203,7 +203,7 @@ RUN curl -fsSL https://fnm.vercel.app/install | bash -s -- --install-dir "$FNM_D
 ENV PATH="/root/.cargo/bin:$PATH"
 ARG IRONCLAW_VERSION=0.24.0
 RUN curl --proto '=https' --tlsv1.2 -LsSf \
-    https://github.com/nearai/ironclaw/releases/latest/download/ironclaw-v${IRONCLAW_VERSION}/ironclaw-installer.sh | sh
+    https://github.com/nearai/ironclaw/releases/download/ironclaw-v${IRONCLAW_VERSION}/ironclaw-installer.sh | sh
 RUN curl -fsSL \
     https://github.com/zeroclaw-labs/zeroclaw/releases/latest/download/install.sh \
     | bash -s -- --prefer-prebuilt --skip-onboard
