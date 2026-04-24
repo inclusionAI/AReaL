@@ -27,14 +27,19 @@ else
     val_temperature=0
 fi
 
-mkdir -p $WORKSPACE/logs/notool_eval_$RUN_NAME
+mkdir -p $WORKSPACE/logs/notool_ood_eval_$RUN_NAME
 
 declare -A EVAL_GROUPS
 EVAL_GROUPS=(
-    ["visual_probe"]="${EVAL_DIR}/visual_probe_easy-notool.parquet,${EVAL_DIR}/visual_probe_medium-notool.parquet,${EVAL_DIR}/visual_probe_hard-notool.parquet"
-    ["reasonmap"]="${EVAL_DIR}/reason_map_dedup-notool.parquet,${EVAL_DIR}/reason_map_plus_dedup-notool.parquet"
-    ["map_trace"]="${EVAL_DIR}/map_trace-notool.parquet"
-    ["mm_mapqa"]="${EVAL_DIR}/mm_mapqa-notool.parquet"
+    ["mapeval_visual"]="${EVAL_DIR}/mapeval_visual-notool.parquet"
+    ["carto_mfs"]="${EVAL_DIR}/carto_mfs-notool.parquet"
+    ["carto_mml"]="${EVAL_DIR}/carto_mml-notool.parquet"
+    ["carto_mtmf"]="${EVAL_DIR}/carto_mtmf-notool.parquet"
+    ["carto_rle"]="${EVAL_DIR}/carto_rle-notool.parquet"
+    ["carto_srn"]="${EVAL_DIR}/carto_srn-notool.parquet"
+    ["carto_stmf_counting"]="${EVAL_DIR}/carto_stmf_counting-notool.parquet"
+    ["carto_stmf_name_listing"]="${EVAL_DIR}/carto_stmf_name_listing-notool.parquet"
+    ["carto_stmf_presence"]="${EVAL_DIR}/carto_stmf_presence-notool.parquet"
 )
 
 
@@ -44,7 +49,7 @@ run_eval_group() {
 
     echo ""
     echo "========================================"
-    echo "  Evaluating (no-tool): $group_name"
+    echo "  Evaluating (no-tool OOD): $group_name"
     echo "========================================"
 
     PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
@@ -99,20 +104,38 @@ run_eval_group() {
         trainer.test_freq=1 \
         trainer.total_epochs=1 \
         trainer.logger='[console,wandb]' \
-        trainer.project_name=mixed_rl_notool_eval \
-        trainer.experiment_name="notool_eval_${RUN_NAME}_${group_name}" \
+        trainer.project_name=mixed_rl_notool_ood_eval \
+        trainer.experiment_name="notool_ood_eval_${RUN_NAME}_${group_name}" \
         trainer.n_gpus_per_node=$n_gpus_per_node \
         trainer.nnodes=$n_nodes \
         trainer.save_freq=-1 \
-        trainer.validation_data_dir="${EVAL_DIR}/results/${RUN_NAME}/notool_${group_name}" \
-        2>&1 | tee $WORKSPACE/logs/notool_eval_$RUN_NAME/eval_${group_name}.log
+        trainer.validation_data_dir="${EVAL_DIR}/results/${RUN_NAME}/notool_ood_${group_name}" \
+        2>&1 | tee $WORKSPACE/logs/notool_ood_eval_$RUN_NAME/eval_${group_name}.log
 
-    echo "  Done: $group_name -> ${EVAL_DIR}/results/${RUN_NAME}/notool_${group_name}"
+    echo "  Done: $group_name -> ${EVAL_DIR}/results/${RUN_NAME}/notool_ood_${group_name}"
 }
 
-for group in visual_probe reasonmap map_trace; do
+for group in mapeval_visual carto_mfs carto_mml carto_mtmf carto_rle carto_srn carto_stmf_counting carto_stmf_name_listing carto_stmf_presence; do
     run_eval_group "$group" "${EVAL_GROUPS[$group]}"
 done
 
+has_carto=false
+for group in carto_mfs carto_mml carto_mtmf carto_rle carto_srn carto_stmf_counting carto_stmf_name_listing carto_stmf_presence mapeval_visual; do
+    if [ -f "${EVAL_DIR}/results/${RUN_NAME}/notool_ood_${group}/0.jsonl" ]; then
+        has_carto=true
+        break
+    fi
+done
+
+if $has_carto; then
+    echo ""
+    echo "Running post-evaluation for CartoMapQA..."
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    python3 "${SCRIPT_DIR}/post_eval_cartomapqa.py" \
+        --results_dir "${EVAL_DIR}/results/${RUN_NAME}" \
+        --output "${EVAL_DIR}/results/${RUN_NAME}/post_eval_notool_ood_cartomapqa.json" \
+        2>&1 | tee -a $WORKSPACE/logs/notool_ood_eval_$RUN_NAME/post_eval.log
+fi
+
 echo ""
-echo "All no-tool eval groups finished. Results: ${EVAL_DIR}/results/${RUN_NAME}/"
+echo "All no-tool OOD eval groups finished. Results: ${EVAL_DIR}/results/${RUN_NAME}/"

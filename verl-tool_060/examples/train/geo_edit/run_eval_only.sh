@@ -38,7 +38,7 @@ fsdp_size=-1
 rollout_n=${ROLLOUT_N:-1}
 if [ "$rollout_n" -gt 1 ]; then
     val_do_sample=True
-    val_temperature=1.0
+    val_temperature=0.7
 else
     val_do_sample=False
     val_temperature=0
@@ -134,7 +134,7 @@ run_eval_group() {
         actor_rollout_ref.rollout.free_cache_engine=True \
         actor_rollout_ref.rollout.name=vllm \
         actor_rollout_ref.rollout.gpu_memory_utilization=$gpu_memory_utilization \
-        actor_rollout_ref.rollout.temperature=0.0 \
+        actor_rollout_ref.rollout.temperature=1.0 \
         actor_rollout_ref.rollout.top_p=1.0 \
         actor_rollout_ref.rollout.top_k=-1 \
         actor_rollout_ref.rollout.n=$rollout_n \
@@ -173,7 +173,7 @@ run_eval_group() {
     echo "  Done: $group_name -> ${EVAL_DIR}/results/${RUN_NAME}/${group_name}"
 }
 
-for group in visual_probe mm_mapqa  map_trace reasonmap; do
+for group in visual_probe   map_trace reasonmap; do
     run_eval_group "$group" "${EVAL_GROUPS[$group]}"
 done
 
