@@ -179,6 +179,33 @@ def compute_response_mask(data: DataProto):
     return attention_mask[:, -response_length:]
 
 
+def _at_gigpo_turn_bucket(num_turns: np.ndarray, n_buckets: int, min_bucket_ratio: float = 0.15) -> np.ndarray:
+    n = len(num_turns)
+    if n_buckets <= 1 or n <= n_buckets:
+        return np.zeros(n, dtype=np.int32)
+
+    min_bucket_size = max(1, int(n * min_bucket_ratio))
+    quantiles = np.linspace(0, 100, n_buckets + 1)[1:-1]
+    boundaries = np.unique(np.percentile(num_turns, quantiles))
+    labels = np.digitize(num_turns, boundaries).astype(np.int32)
+
+    unique_labels, counts = np.unique(labels, return_counts=True)
+    while len(unique_labels) > 1 and counts.min() < min_bucket_size:
+        smallest_idx = counts.argmin()
+        smallest_label = unique_labels[smallest_idx]
+
+        if smallest_idx < len(unique_labels) - 1:
+            merge_target = unique_labels[smallest_idx + 1]
+        else:
+            merge_target = unique_labels[smallest_idx - 1]
+
+        labels[labels == smallest_label] = merge_target
+        unique_labels, counts = np.unique(labels, return_counts=True)
+
+    _, labels = np.unique(labels, return_inverse=True)
+    return labels.astype(np.int32)
+
+
 def compute_advantage(
     data: DataProto,
     adv_estimator: AdvantageEstimator,
@@ -280,7 +307,11 @@ def compute_advantage(
             advantages, returns = result
         data.batch["advantages"] = advantages
         data.batch["returns"] = returns
-    
+
+        if isinstance(gigpo_metrics, dict) and "_episode_advantages" in gigpo_metrics:
+            ep_adv = gigpo_metrics.pop("_episode_advantages")
+            data.batch["episode_advantages"] = ep_adv.unsqueeze(-1) * data.batch["response_mask"]
+
     # Overturn masking: A'_i = M_i · A_i
     if config is not None and config.get("overturn_masking", False):
         verl_tool_metrics = data.non_tensor_batch.get("verl_tool_metrics")
@@ -1268,6 +1299,39 @@ class RayPPOTrainer:
                             config=self.config.algorithm,
                         )
 
+                        at_gigpo_cfg = self.config.algorithm.get("at_gigpo", None)
+                        if at_gigpo_cfg is not None and at_gigpo_cfg.get("enable", False):
+                            num_turns = batch.non_tensor_batch.get("__num_turns__", None)
+                            if num_turns is not None:
+                                advantages = batch.batch["advantages"]
+                                num_turns_arr = np.array([int(t) for t in num_turns])
+                                n_buckets = at_gigpo_cfg.get("n_turn_buckets", 3)
+                                turn_buckets = _at_gigpo_turn_bucket(num_turns_arr, n_buckets, at_gigpo_cfg.get("min_bucket_ratio", 0.15))
+                                unique_buckets = np.unique(turn_buckets)
+                                K = len(unique_buckets)
+                                bs = len(turn_buckets)
+
+                                for bucket in unique_buckets:
+                                    mask_np = (turn_buckets == bucket)
+                                    n_k = mask_np.sum()
+                                    if n_k > 0 and K > 0:
+                                        scale = float(bs) / (K * n_k)
+                                        mask_t = torch.from_numpy(mask_np).to(advantages.device)
+                                        advantages[mask_t] *= scale
+
+                                batch.batch["advantages"] = advantages
+
+                                for bucket in unique_buckets:
+                                    mask_np = (turn_buckets == bucket)
+                                    mask_t = torch.from_numpy(mask_np).to(advantages.device)
+                                    bucket_adv = advantages[mask_t]
+                                    metrics[f"at_gigpo/turn_bucket_{bucket}/mean_abs_adv"] = bucket_adv.abs().mean().item()
+                                    metrics[f"at_gigpo/turn_bucket_{bucket}/n_samples"] = int(mask_np.sum())
+
+                                if at_gigpo_cfg.get("sort_by_turns", False):
+                                    sort_idx = np.argsort(num_turns_arr)
+                                    batch = batch.reorder(sort_idx)
+
                     # update critic
                     if self.use_critic:
                         with marked_timer("update_critic", timing_raw, color="pink"):
@@ -1358,6 +1422,8 @@ class RayPPOTrainer:
                 # this is experimental and may be changed/removed in the future in favor of a general-purpose one
                 if isinstance(self.train_dataloader.sampler, AbstractCurriculumSampler):
                     self.train_dataloader.sampler.update(batch=batch)
+                    if hasattr(self.train_dataloader.sampler, "get_metrics"):
+                        metrics.update(self.train_dataloader.sampler.get_metrics())
 
                 # TODO: make a canonical logger that supports various backend
                 logger.log(data=metrics, step=self.global_steps)
