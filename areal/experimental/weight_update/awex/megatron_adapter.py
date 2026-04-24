@@ -33,12 +33,17 @@ logger = logging.getLogger("AwexMegatronAdapter")
 
 
 class AwexMegatronAdapter(WeightUpdateTrainingAdapter):
-    """Awex training adapter wrapping MegatronEngine for DP-only NCCL P2P weight updates.
+    """Awex training adapter for MegatronEngine supporting DP, TP, and PP.
 
-    Scope: DP-only (tp=1, pp=1). Each rank holds a full replica of every
-    parameter. Parameters are converted to HF naming via convert_to_hf before
-    being handed to the awex transfer planner, matching what the inference
-    engine (SGLang) expects.
+    PP: get_named_parameters already yields only the current stage's layers
+    (with globally-correct HF layer indices via get_transformer_layer_offset),
+    so each rank naturally reports and sends only its own subset of parameters.
+    The gateway's _merge_training_meta_by_name unions disjoint PP stage params
+    by name, so the full model is covered across all PP ranks.
+
+    TP: all_gather_param gathers the full tensor on every TP rank before
+    convert_to_hf. dp_replicated=True tells awex that TP ranks within a DP
+    group hold identical full tensors and only one needs to send.
     """
 
     def __init__(self, engine: MegatronEngine):
@@ -242,6 +247,9 @@ class AwexMegatronAdapter(WeightUpdateTrainingAdapter):
 
         num_moe_experts = getattr(self._engine.tf_config, "num_moe_experts", None)
         model_name = self._engine.hf_config.model_type
+        tie_word_embeddings = getattr(
+            self._engine.hf_config, "tie_word_embeddings", False
+        )
 
         for mcore_name, param in get_named_parameters(
             self._engine.model, num_moe_experts
@@ -262,4 +270,6 @@ class AwexMegatronAdapter(WeightUpdateTrainingAdapter):
                 mcore_name,
                 gathered,
             ):
+                if tie_word_embeddings and hf_name == "lm_head.weight":
+                    continue
                 yield hf_name, tensor.detach()

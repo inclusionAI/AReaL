@@ -206,6 +206,7 @@ def _validate_weight_update_correctness_megatron(
     train_worker_urls: list[str],
     inf_worker_url: str,
     param_dir,
+    tag: str = "megatron",
 ) -> None:
     import concurrent.futures
 
@@ -216,7 +217,7 @@ def _validate_weight_update_correctness_megatron(
     )
 
     train_paths = [
-        str(param_dir / f"megatron_train_params_rank{i}.pt") for i in range(n_train)
+        str(param_dir / f"{tag}_train_params_rank{i}.pt") for i in range(n_train)
     ]
 
     def _fetch_train(args):
@@ -241,7 +242,7 @@ def _validate_weight_update_correctness_megatron(
             )
         )
 
-    inf_path = str(param_dir / "megatron_infer_params.pt")
+    inf_path = str(param_dir / f"{tag}_infer_params.pt")
     resp = httpx.post(
         f"{inf_worker_url}/awex/debug/get_parameters",
         json={"save_path": inf_path, "names": _VALIDATE_PARAM_NAMES},
@@ -252,12 +253,20 @@ def _validate_weight_update_correctness_megatron(
     )
 
     infer_params = torch.load(inf_path, map_location="cpu", weights_only=True)
-    train_params = torch.load(train_paths[0], map_location="cpu", weights_only=True)
+
+    # Union params across all training ranks: with PP each rank owns a disjoint
+    # subset of layers, so we need all ranks to cover _VALIDATE_PARAM_NAMES.
+    train_params: dict[str, torch.Tensor] = {}
+    for p in train_paths:
+        train_params.update(torch.load(p, map_location="cpu", weights_only=True))
 
     print(f"[weight-validation] Comparing {len(_VALIDATE_PARAM_NAMES)} parameters …")
     for name in _VALIDATE_PARAM_NAMES:
         assert name in infer_params, f"Inference missing param: {name}"
-        assert name in train_params, f"Training rank 0 missing param: {name}"
+        assert name in train_params, (
+            f"No training rank owns param: {name}. "
+            f"Available: {sorted(train_params.keys())[:5]}…"
+        )
 
         torch.testing.assert_close(
             train_params[name],
@@ -441,7 +450,7 @@ def test_awex_fsdp_e2e_weight_update(n_gpus, tmp_path_factory):
 @pytest.mark.slow
 @pytest.mark.sglang
 @pytest.mark.parametrize("n_gpus", [2, 4, 8], ids=["2gpu", "4gpu", "8gpu"])
-def test_awex_megatron_e2e_weight_update(n_gpus, tmp_path_factory):
+def test_awex_megatron_dp_e2e_weight_update(n_gpus, tmp_path_factory):
     """Full round trip: MegatronEngine (pure DP) → weight-update gateway → SGLang.
 
     Mirrors test_awex_e2e_weight_update but uses MegatronLMEngine as the
@@ -592,9 +601,9 @@ def test_awex_megatron_e2e_weight_update(n_gpus, tmp_path_factory):
 @pytest.mark.parametrize(
     "n_gpus,tp_size",
     [(4, 2), (8, 2), (8, 4)],
-    ids=["4gpu-tp2", "8gpu-tp2", "8gpu-tp4"],
+    ids=["4gpu-dp1tp2", "8gpu-dp2tp2", "8gpu-dp1tp4"],
 )
-def test_awex_megatron_tp_e2e_weight_update(n_gpus, tp_size, tmp_path_factory):
+def test_awex_megatron_dp_tp_e2e_weight_update(n_gpus, tp_size, tmp_path_factory):
     """Full round trip: MegatronEngine (DP+TP) → weight-update gateway → SGLang.
 
     Uses dp_replicated=True in parallelism_strategy so awex knows TP ranks
@@ -743,3 +752,194 @@ def test_awex_megatron_tp_e2e_weight_update(n_gpus, tp_size, tmp_path_factory):
         train_ctrl.destroy()
         inf_ctrl.destroy()
         scheduler.delete_workers(None)
+
+
+def _run_megatron_awex_e2e(
+    *,
+    n_gpus: int,
+    backend: str,
+    pair_name: str,
+    tag: str,
+    tmp_path_factory,
+):
+    from areal.api import FinetuneSpec
+    from areal.api.cli_args import OptimizerConfig, SchedulingSpec, TrainEngineConfig
+    from areal.experimental.inference_service.controller.config import (
+        GatewayControllerConfig,
+    )
+    from areal.experimental.inference_service.controller.controller import (
+        GatewayInferenceController,
+    )
+    from areal.experimental.training_service.controller.controller import (
+        GatewayTrainController,
+    )
+    from areal.experimental.weight_update.controller import (
+        WeightUpdateController,
+        WeightUpdateControllerConfig,
+    )
+
+    n_infer = n_gpus // 2
+    tmp = tmp_path_factory.mktemp(tag)
+    model_path = _get_test_model_path()
+    scheduler = _make_local_scheduler(tmp, tag, gpu_devices=list(range(n_gpus)))
+
+    inf_config = GatewayControllerConfig(
+        tokenizer_path=model_path,
+        model_path=model_path,
+        backend=f"sglang:d{n_infer}",
+        scheduling_spec=(
+            SchedulingSpec(
+                gpu=1,
+                cmd="python -m areal.experimental.inference_service.guard",
+            ),
+        ),
+        consumer_batch_size=8,
+        max_head_offpolicyness=1024,
+        setup_timeout=300.0,
+        admin_api_key="test-admin",
+    )
+    inf_ctrl = GatewayInferenceController(config=inf_config, scheduler=scheduler)
+
+    train_config = TrainEngineConfig(
+        backend=backend,
+        experiment_name=f"test-awex-{tag}",
+        trial_name="t0",
+        path=model_path,
+        optimizer=OptimizerConfig(),
+        _version="v2",
+        setup_timeout=300.0,
+        scheduling_spec=(
+            SchedulingSpec(
+                gpu=1,
+                cmd="python -m areal.experimental.training_service.guard",
+                env_vars=dict(NCCL_CUMEM_ENABLE="0", NCCL_NVLS_ENABLE="0"),
+            ),
+        ),
+    )
+    train_ctrl = GatewayTrainController(
+        train_engine="areal.engine.megatron_engine.MegatronLMEngine",
+        config=train_config,
+        scheduler=scheduler,
+    )
+
+    wu_ctrl: WeightUpdateController | None = None
+    try:
+        inf_ctrl.initialize(role="rollout", server_args={"mem_fraction_static": 0.7})
+        inf_worker_urls = list(inf_ctrl._inf_addrs)
+
+        for url in inf_worker_urls:
+            resp = httpx.post(f"{url}/awex/debug/randomize_parameters", timeout=120.0)
+            assert resp.status_code == 200, f"randomize_parameters failed: {resp.text}"
+
+        train_ctrl.initialize(
+            role="actor",
+            ft_spec=FinetuneSpec(
+                total_train_epochs=1, dataset_size=100, train_batch_size=2
+            ),
+        )
+        train_worker_urls = list(train_ctrl._worker_addrs)
+
+        wu_ctrl = WeightUpdateController(
+            config=WeightUpdateControllerConfig(host="127.0.0.1", request_timeout=300.0)
+        )
+        wu_ctrl.initialize()
+        assert wu_ctrl.health_check(), "Weight update gateway health check failed"
+
+        wu_ctrl.connect(
+            pair_name=pair_name,
+            train_worker_urls=train_worker_urls,
+            inference_worker_urls=inf_worker_urls,
+        )
+        result = wu_ctrl.update_weights(version=1)
+        assert result.status == "ok"
+        assert result.version == 1
+        wu_ctrl.disconnect()
+
+        gen_resp = httpx.post(
+            f"{inf_worker_urls[0]}/generate",
+            json={
+                "text": "Hello",
+                "sampling_params": {"max_new_tokens": 5, "temperature": 0},
+            },
+            timeout=30.0,
+        )
+        assert gen_resp.status_code == 200, (
+            f"Generation failed after weight update: {gen_resp.text}"
+        )
+
+        _validate_weight_update_correctness_megatron(
+            train_worker_urls=train_worker_urls,
+            inf_worker_url=inf_worker_urls[0],
+            param_dir=tmp,
+            tag=tag,
+        )
+    finally:
+        if wu_ctrl is not None:
+            wu_ctrl.destroy()
+        train_ctrl.destroy()
+        inf_ctrl.destroy()
+        scheduler.delete_workers(None)
+
+
+@pytest.mark.multi_gpu
+@pytest.mark.slow
+@pytest.mark.sglang
+@pytest.mark.parametrize(
+    "n_gpus,pp_size",
+    [(4, 2), (8, 4)],
+    ids=["4gpu-dp1pp2", "8gpu-dp1pp4"],
+)
+def test_awex_megatron_pp_e2e_weight_update(n_gpus, pp_size, tmp_path_factory):
+    if current_platform.device_count() < n_gpus:
+        pytest.skip(f"This test requires {n_gpus} GPUs")
+    _run_megatron_awex_e2e(
+        n_gpus=n_gpus,
+        backend=f"megatron:d1p{pp_size}",
+        pair_name=f"test_megatron_pp{pp_size}",
+        tag=f"megatron_pp{pp_size}",
+        tmp_path_factory=tmp_path_factory,
+    )
+
+
+@pytest.mark.multi_gpu
+@pytest.mark.slow
+@pytest.mark.sglang
+@pytest.mark.parametrize(
+    "n_gpus,dp_size,pp_size",
+    [(8, 2, 2)],
+    ids=["8gpu-dp2pp2"],
+)
+def test_awex_megatron_dp_pp_e2e_weight_update(
+    n_gpus, dp_size, pp_size, tmp_path_factory
+):
+    if current_platform.device_count() < n_gpus:
+        pytest.skip(f"This test requires {n_gpus} GPUs")
+    _run_megatron_awex_e2e(
+        n_gpus=n_gpus,
+        backend=f"megatron:d{dp_size}p{pp_size}",
+        pair_name=f"test_megatron_dp{dp_size}pp{pp_size}",
+        tag=f"megatron_dp{dp_size}pp{pp_size}",
+        tmp_path_factory=tmp_path_factory,
+    )
+
+
+@pytest.mark.multi_gpu
+@pytest.mark.slow
+@pytest.mark.sglang
+@pytest.mark.parametrize(
+    "n_gpus,pp_size,tp_size",
+    [(8, 2, 2)],
+    ids=["8gpu-dp1pp2tp2"],
+)
+def test_awex_megatron_pp_tp_e2e_weight_update(
+    n_gpus, pp_size, tp_size, tmp_path_factory
+):
+    if current_platform.device_count() < n_gpus:
+        pytest.skip(f"This test requires {n_gpus} GPUs")
+    _run_megatron_awex_e2e(
+        n_gpus=n_gpus,
+        backend=f"megatron:d1p{pp_size}t{tp_size}",
+        pair_name=f"test_megatron_pp{pp_size}tp{tp_size}",
+        tag=f"megatron_pp{pp_size}tp{tp_size}",
+        tmp_path_factory=tmp_path_factory,
+    )
