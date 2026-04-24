@@ -183,7 +183,7 @@ for group in  carto_mml carto_stmf_counting carto_stmf_name_listing carto_stmf_p
     run_eval_group "$group" "${EVAL_GROUPS[$group]}"
 done
 
-has_carto=false 
+has_carto=false
 for group in mapeval_visual carto_mfs carto_mml carto_mtmf carto_rle carto_srn carto_stmf_counting carto_stmf_name_listing carto_stmf_presence; do
     if [[ "$group" == carto_* ]] || [[ "$group" == mapeval_* ]]; then
         if [ -f "${EVAL_DIR}/results/${RUN_NAME}/ood_${group}/0.jsonl" ]; then

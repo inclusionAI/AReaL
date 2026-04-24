@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Post-evaluation for CartoMapQA results from run_ood_eval.sh.
 
-Reads the trajectory jsonl files and computes paper-aligned metrics
-using geo_edit's extractors and metrics.
+Reads trajectory jsonl files and computes paper-aligned aggregate metrics.
+Uses accuracy from jsonl (wandb) directly, only re-extracts structured values
+for regression/F1 metrics that need raw numbers.
 
 Usage:
     python post_eval_cartomapqa.py --results_dir /path/to/results/RUN_NAME
-    python post_eval_cartomapqa.py --results_dir /path/to/results/RUN_NAME --tasks carto_rle carto_srn
 """
 
 import argparse
@@ -14,14 +14,12 @@ import json
 import math
 import os
 import re
-import sys
 from collections import defaultdict
 from typing import Any, Dict, List
 
 from geo_edit.evaluation.cartomapqa.extractors import extract_structured
 from geo_edit.evaluation.cartomapqa.metrics import (
     binary_prf1,
-    exact_match_accuracy,
     mml_match,
     name_listing_prf1,
     normalize_route,
@@ -51,14 +49,14 @@ def load_records(jsonl_path: str) -> List[dict]:
     return records
 
 
+def _get_accuracy(r):
+    return r.get("accuracy", 0.0)
+
+
 def eval_mfs(records):
-    true_labels, pred_labels = [], []
-    for r in records:
-        pred = extract_structured("cartomapqa_mfs", r["output"])
-        gt = str(r["gts"]).strip().upper()
-        true_labels.append(gt)
-        pred_labels.append(pred if pred else "?")
-    return exact_match_accuracy(true_labels, pred_labels)
+    total = len(records)
+    correct = sum(1 for r in records if _get_accuracy(r) > 0)
+    return {"accuracy": correct / total if total else 0.0, "correct": correct, "total": total}
 
 
 def eval_stmf_presence(records):
@@ -68,7 +66,11 @@ def eval_stmf_presence(records):
         gt = str(r["gts"]).strip().lower()
         true_labels.append(gt)
         pred_labels.append(pred if pred else "unknown")
-    return binary_prf1(true_labels, pred_labels)
+    metrics = binary_prf1(true_labels, pred_labels)
+    total = len(records)
+    correct = sum(1 for r in records if _get_accuracy(r) > 0)
+    metrics["accuracy"] = correct / total if total else 0.0
+    return metrics
 
 
 def eval_stmf_counting(records):
@@ -81,11 +83,19 @@ def eval_stmf_counting(records):
             gt = 0
         gt_vals.append(gt)
         pred_vals.append(pred if pred is not None else 0)
-    metrics = regression_metrics(gt_vals, pred_vals)
+
+    valid_gt = [g for g, p in zip(gt_vals, pred_vals) if g != 0]
+    valid_pred = [p for g, p in zip(gt_vals, pred_vals) if g != 0]
+
+    metrics = regression_metrics(valid_gt, valid_pred) if valid_gt else {"rmse": 0.0, "mae": 0.0, "mape": 0.0, "r2": 0.0}
+    metrics["rmse_all"] = math.sqrt(sum((g - p) ** 2 for g, p in zip(gt_vals, pred_vals)) / len(gt_vals)) if gt_vals else 0.0
+    metrics["mae_all"] = sum(abs(g - p) for g, p in zip(gt_vals, pred_vals)) / len(gt_vals) if gt_vals else 0.0
+
     correct = sum(1 for g, p in zip(gt_vals, pred_vals) if g == p)
-    exact_tol1 = sum(1 for g, p in zip(gt_vals, pred_vals) if abs(g - p) <= 1)
+    tol1 = sum(1 for g, p in zip(gt_vals, pred_vals) if abs(g - p) <= 1)
     metrics["accuracy_exact"] = correct / len(gt_vals) if gt_vals else 0.0
-    metrics["accuracy_tol1"] = exact_tol1 / len(gt_vals) if gt_vals else 0.0
+    metrics["accuracy_tol1"] = tol1 / len(gt_vals) if gt_vals else 0.0
+    metrics["accuracy"] = sum(_get_accuracy(r) for r in records) / len(records) if records else 0.0
     return metrics
 
 
@@ -106,23 +116,13 @@ def eval_stmf_name_listing(records):
         "avg_precision": sum(all_prec) / n if n else 0.0,
         "avg_recall": sum(all_rec) / n if n else 0.0,
         "avg_f1": sum(all_f1) / n if n else 0.0,
+        "accuracy": sum(_get_accuracy(r) for r in records) / len(records) if records else 0.0,
     }
 
 
 def eval_mml(records):
-    total = correct = 0
-    for r in records:
-        pred_data = extract_structured("cartomapqa_mml", r["output"])
-        gt = str(r["gts"]).strip()
-        try:
-            gt_data = json.loads(gt)
-        except (ValueError, TypeError):
-            gt_data = {}
-        total += 1
-        if pred_data and isinstance(gt_data, dict):
-            if mml_match(gt_data.get("road_1", ""), gt_data.get("road_2", ""),
-                         pred_data.get("road_1", ""), pred_data.get("road_2", "")):
-                correct += 1
+    total = len(records)
+    correct = sum(1 for r in records if _get_accuracy(r) > 0)
     return {"accuracy": correct / total if total else 0.0, "correct": correct, "total": total}
 
 
@@ -150,6 +150,7 @@ def eval_rle(records):
     if all_gt:
         result["overall"] = regression_metrics(all_gt, all_pred)
         result["overall"]["count"] = len(all_gt)
+    result["accuracy"] = sum(_get_accuracy(r) for r in records) / len(records) if records else 0.0
     return result
 
 
@@ -171,6 +172,7 @@ def eval_srn(records):
     return {
         "shortest_path_success_rate": sum(1 for r in results if r["is_success"]) / n if n else 0.0,
         "avg_step_accuracy": sum(r["step_accuracy"] for r in results) / n if n else 0.0,
+        "accuracy": sum(_get_accuracy(r) for r in records) / len(records) if records else 0.0,
         "total": n,
     }
 
@@ -207,24 +209,13 @@ def eval_mtmf(records):
             "avg_recall": sum(all_rec) / n if n else 0.0,
             "avg_f1": sum(all_f1) / n if n else 0.0,
         },
+        "accuracy": sum(_get_accuracy(r) for r in records) / len(records) if records else 0.0,
     }
 
 
 def eval_mapeval_visual(records):
-    correct = total = 0
-    for r in records:
-        gt = str(r["gts"]).strip()
-        pred = str(r.get("output", "")).strip()
-        answer_m = re.search(r"<answer>(.*?)</answer>", pred, re.DOTALL | re.IGNORECASE)
-        if answer_m:
-            pred_ans = answer_m.group(1).strip()
-        else:
-            pred_ans = pred
-        pred_norm = re.sub(r"[^\d]", "", pred_ans)
-        gt_norm = re.sub(r"[^\d]", "", gt)
-        total += 1
-        if pred_norm == gt_norm:
-            correct += 1
+    total = len(records)
+    correct = sum(1 for r in records if _get_accuracy(r) > 0)
     return {"accuracy": correct / total if total else 0.0, "correct": correct, "total": total}
 
 
@@ -265,7 +256,7 @@ def main():
     all_results = {}
 
     for dir_name in sorted(os.listdir(args.results_dir)):
-        clean_name = dir_name.replace("ood_", "").replace("notool_", "")
+        clean_name = dir_name.replace("ood_", "").replace("notool_", "").replace("notool_ood_", "")
         if clean_name not in TASK_MAP:
             continue
         if args.tasks and clean_name not in args.tasks:
@@ -274,13 +265,11 @@ def main():
         task_name = TASK_MAP[clean_name]
         jsonl_path = os.path.join(args.results_dir, dir_name, "0.jsonl")
         if not os.path.exists(jsonl_path):
-            print(f"SKIP {dir_name}: no 0.jsonl")
             continue
 
         records = load_records(jsonl_path)
         evaluator = EVALUATORS.get(task_name)
         if not evaluator:
-            print(f"SKIP {dir_name}: no evaluator for {task_name}")
             continue
 
         print(f"\n{'='*60}")
@@ -301,20 +290,20 @@ def main():
     print("  Summary")
     print(f"{'='*60}")
     for task, metrics in all_results.items():
-        if isinstance(metrics, dict):
-            acc = metrics.get("accuracy", metrics.get("accuracy_exact", metrics.get("avg_f1", None)))
-            if acc is not None:
-                print(f"  {task}: {acc:.4f}")
-            elif "overall" in metrics:
-                overall = metrics["overall"]
-                if "rmse" in overall:
-                    print(f"  {task}: RMSE={overall['rmse']:.4f}, MAE={overall['mae']:.4f}")
-                elif "accuracy" in overall:
-                    print(f"  {task}: {overall['accuracy']:.4f}")
-            elif "shortest_path_success_rate" in metrics:
-                print(f"  {task}: success={metrics['shortest_path_success_rate']:.4f}, step_acc={metrics['avg_step_accuracy']:.4f}")
-            elif "counting" in metrics:
-                print(f"  {task}: counting_RMSE={metrics['counting'].get('rmse',0):.4f}, naming_F1={metrics['name_listing'].get('avg_f1',0):.4f}")
+        if "shortest_path_success_rate" in metrics:
+            print(f"  {task}: success={metrics['shortest_path_success_rate']:.4f}, step_acc={metrics['avg_step_accuracy']:.4f}")
+        elif "counting" in metrics:
+            print(f"  {task}: counting_RMSE={metrics['counting'].get('rmse',0):.4f}, naming_F1={metrics['name_listing'].get('avg_f1',0):.4f}")
+        elif "overall" in metrics:
+            overall = metrics["overall"]
+            print(f"  {task}: RMSE={overall['rmse']:.4f}, MAE={overall['mae']:.4f}, MAPE={overall['mape']:.4f}")
+        elif "avg_f1" in metrics:
+            print(f"  {task}: P={metrics['avg_precision']:.4f}, R={metrics['avg_recall']:.4f}, F1={metrics['avg_f1']:.4f}")
+        elif "accuracy" in metrics:
+            print(f"  {task}: accuracy={metrics['accuracy']:.4f}")
+        acc_w = metrics.get("accuracy")
+        if acc_w is not None:
+            print(f"    (wandb accuracy: {acc_w:.4f})")
 
 
 if __name__ == "__main__":

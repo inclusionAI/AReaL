@@ -91,7 +91,6 @@ run_eval_group() {
         actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=$use_dynamic_bsz \
         actor_rollout_ref.rollout.max_num_seqs=16 \
         actor_rollout_ref.rollout.max_num_batched_tokens=$max_num_batched_tokens \
-        +actor_rollout_ref.rollout.engine_kwargs.vllm.mm-processor-cache-gb=8 \
         actor_rollout_ref.ref.log_prob_use_dynamic_bsz=$use_dynamic_bsz \
         actor_rollout_ref.ref.fsdp_config.param_offload=False \
         actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=16 \
