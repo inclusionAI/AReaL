@@ -229,7 +229,7 @@ class AwexMegatronAdapter(WeightUpdateTrainingAdapter):
             is_infer=False,
             cp_rank=cp_rank,
             cp_size=cp_size,
-            cp_mode="ulysses" if cp_size > 1 else "none",
+            cp_mode="ring" if cp_size > 1 else "none",
         )
 
     def _iter_hf_params(self):
