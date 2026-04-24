@@ -47,21 +47,21 @@ def warmup_process_groups(*groups: dist.ProcessGroup | None) -> None:
     if not dist.is_initialized() or current_platform.device_type == "cpu":
         return
 
-    seen: set[int] = set()
-    unique_groups: list[dist.ProcessGroup] = []
-    for group in groups:
-        if group is None:
-            continue
-        key = id(group)
-        if key in seen:
-            continue
-        seen.add(key)
-        unique_groups.append(group)
+    # Preserve argument order while dropping None and duplicates.
+    unique_groups = list(dict.fromkeys(g for g in groups if g is not None))
     if not unique_groups:
         return
 
-    local_rank = int(os.environ["LOCAL_RANK"])
-    current_platform.set_device(local_rank)
+    # Prefer LOCAL_RANK (set by torchrun/most launchers); fall back to the
+    # device the caller has already configured via ``set_device``. This keeps
+    # the helper usable under custom launchers that don't export LOCAL_RANK.
+    local_rank_env = os.environ.get("LOCAL_RANK")
+    if local_rank_env is not None:
+        local_rank = int(local_rank_env)
+        current_platform.set_device(local_rank)
+    else:
+        local_rank = current_platform.current_device()
+
     device = torch.device(current_platform.device_type, local_rank)
     tensor = torch.zeros(1, device=device)
     for group in unique_groups:
