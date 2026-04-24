@@ -593,7 +593,7 @@ async def test_set_reward_timeout_delays_readiness_and_direct_callback(
     callback_calls = []
 
     async def _mock_post_callback(
-        callback_server_addr, admin_api_key, notification, timeout
+        callback_server_addr, admin_api_key, notification, timeout, **kwargs
     ):
         callback_calls.append(
             (

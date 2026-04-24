@@ -75,6 +75,11 @@ class InfBridge:
         self.max_resubmit_retries = max_resubmit_retries
         self.resubmit_wait = resubmit_wait
         self._version = version
+        self._client = httpx.AsyncClient(timeout=request_timeout)
+
+    async def aclose(self) -> None:
+        """Close the underlying HTTP client."""
+        await self._client.aclose()
 
     # -- version tracking ---------------------------------------------------
 
@@ -130,13 +135,12 @@ class InfBridge:
         """
         _timeout = timeout if timeout is not None else self.request_timeout
         url = f"{self.backend_addr}{http_req.endpoint}"
-        async with httpx.AsyncClient(timeout=_timeout) as client:
-            if http_req.method == "GET":
-                resp = await client.get(url)
-            else:
-                resp = await client.post(url, json=http_req.payload)
-            resp.raise_for_status()
-            return resp.json()
+        if http_req.method == "GET":
+            resp = await self._client.get(url, timeout=_timeout)
+        else:
+            resp = await self._client.post(url, json=http_req.payload, timeout=_timeout)
+        resp.raise_for_status()
+        return resp.json()
 
     # -- main generation with pause/abort/resubmit --------------------------
 
