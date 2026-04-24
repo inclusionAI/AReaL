@@ -64,7 +64,7 @@ ENV TORCH_CUDA_ARCH_LIST="8.0 8.9 9.0 9.0a"
 ENV MAX_JOBS=32
 
 # Set VIRTUAL_ENV so uv pip install targets the venv created below
-ENV VIRTUAL_ENV=/AReaL/.venv
+ENV VIRTUAL_ENV=/opt/.venv
 
 ##############################################################
 # STAGE 1: Install base torch FIRST
@@ -257,7 +257,7 @@ COPY . /AReaL
 RUN uv pip install --no-deps -e /AReaL
 
 # Place executables in the environment at the front of the path
-ENV PATH="/AReaL/.venv/bin:$PATH"
+ENV PATH="/opt/.venv/bin:$PATH"
 
 # Reset entrypoint (some base images set custom entrypoints; this ensures /bin/bash)
 ENTRYPOINT []
