@@ -7,6 +7,7 @@ import functools
 import gc
 import math
 import os
+import re
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future
 from contextlib import contextmanager
@@ -118,6 +119,22 @@ from areal.utils.seeding import get_seed
 if TYPE_CHECKING:
     from areal.api import Scheduler
     from areal.api.cli_args import DPOEngineConfig, PPOActorConfig, PPOCriticConfig
+
+
+# `model.named_modules()` yields LOCAL layer indices on each PP rank, while
+# `get_named_parameters` rewrites them to GLOBAL indices via layer_offset. Strip
+# the index so the GLU detection set matches across PP ranks. Also strip trailing
+# numeric suffixes on `weight`/`bias` so TEGroupedLinear MoE expert weights
+# (`weight0`, `weight1`, …, `weight{global_expert_idx}` after expert_offset
+# rewriting) collapse to the same canonical form.
+_LAYER_IDX_RE = re.compile(r"\.layers\.\d+\.")
+_EXPERT_NUM_RE = re.compile(r"\.(weight|bias)\d+$")
+
+
+def _normalize_glu_param_name(name: str) -> str:
+    name = _LAYER_IDX_RE.sub(".layers.", name)
+    name = _EXPERT_NUM_RE.sub(r".\1", name)
+    return name
 
 
 class _MegatronModelList(list):
@@ -386,6 +403,51 @@ class MegatronEngine(TrainEngine):
                     delattr(param, "clear_high_precision_init_val")
 
         assert self.model, "Megatron models failed to initialize."
+
+        # Detect which linear_fc1 params belong to GLU MLPs by comparing weight
+        # shapes: if fc1.weight.shape[0] == 2 * fc2.weight.shape[1] at the TP-local
+        # level, the MLP is gated and fc1 needs stride-2 de-interleave at TP>1.
+        # Shape-based detection is model-agnostic and doesn't rely on config flags.
+        # Names are stored with layer indices stripped so they match across PP
+        # ranks: `model.named_modules()` yields LOCAL indices (0..N_local-1) while
+        # `get_named_parameters` rewrites them to GLOBAL indices via layer_offset.
+        # Also handles TEGroupedLinear (MoE grouped experts), which exposes per-
+        # expert `weight0`/`weight1`/... in place of a single `.weight`.
+        self._glu_fc1_names: set[str] = set()
+        for model in self.model:
+            for mod_name, module in model.named_modules():
+                fc1 = getattr(module, "linear_fc1", None)
+                fc2 = getattr(module, "linear_fc2", None)
+                if fc1 is None or fc2 is None:
+                    continue
+                # Pick a representative weight: standard linear has `.weight`;
+                # TEGroupedLinear has `weight0` per local expert (all experts
+                # share the same shape).
+                fc1_w = getattr(fc1, "weight", None)
+                if fc1_w is None:
+                    fc1_w = getattr(fc1, "weight0", None)
+                fc2_w = getattr(fc2, "weight", None)
+                if fc2_w is None:
+                    fc2_w = getattr(fc2, "weight0", None)
+                if fc1_w is None or fc2_w is None:
+                    continue
+                fc1_out = fc1_w.shape[0]
+                fc2_in = fc2_w.shape[1] if fc2_w.dim() >= 2 else fc2_w.shape[0]
+                if fc1_out != 2 * fc2_in:
+                    continue
+                # Iterate fc1's direct parameters (recurse=False) and pick
+                # `weight`/`bias` plus their grouped-MoE numbered variants.
+                for p_name, _ in fc1.named_parameters(recurse=False):
+                    base = p_name.rstrip("0123456789")
+                    if base not in ("weight", "bias"):
+                        continue
+                    full_name = (
+                        f"{mod_name}.linear_fc1.{p_name}"
+                        if mod_name
+                        else f"linear_fc1.{p_name}"
+                    )
+                    self._glu_fc1_names.add(_normalize_glu_param_name(full_name))
+
         modules = [m.module if isinstance(m, DDP) else m for m in self.model]
         total_params = sum(
             param.numel() for module in modules for param in module.parameters()
@@ -1351,12 +1413,15 @@ class MegatronEngine(TrainEngine):
         Returns:
             Tuple of (prepared_param, param_size_in_bytes)
         """
+        normalized = _normalize_glu_param_name(name)
+        is_glu = any(normalized.endswith(glu_name) for glu_name in self._glu_fc1_names)
         param = all_gather_param(
             name,
             param,
             self.fp8_direct_convert,
             quantization_config=self.quantization_config,
             duplicated_param_names=self._duplicated_param_names,
+            gated_linear_unit=is_glu,
         )
         param = remove_padding(name, param, self.hf_config.vocab_size)
 
