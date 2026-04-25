@@ -130,6 +130,8 @@ def engine(request):
 
         engine = FSDPEngine.from_pretrained(
             model=MODEL_PATH,
+            experiment_name="test_exp",
+            trial_name="test_trial",
             dp_size=1,
             tp_size=1,
             learning_rate=1e-5,
@@ -390,6 +392,8 @@ def test_fsdp_engine_config_construction():
 
     engine = fsdp_module.FSDPEngine.from_pretrained(
         model=MODEL_PATH,
+        experiment_name="test_exp",
+        trial_name="test_trial",
         dp_size=1,
         learning_rate=1e-5,
         use_lora=True,
@@ -418,6 +422,8 @@ def test_fsdp_engine_alloc_mode_construction():
 
     engine = fsdp_module.FSDPEngine.from_pretrained(
         model=MODEL_PATH,
+        experiment_name="test_exp",
+        trial_name="test_trial",
         dp_size=2,
         tp_size=2,
         learning_rate=1e-5,
