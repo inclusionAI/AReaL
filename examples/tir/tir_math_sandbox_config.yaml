@@ -1,50 +1,57 @@
-experiment_name: gsm8k-sandbox-agent
-trial_name: trial0
+# Tool-Integrated Reasoning with Sandbox Execution
+#
+# This config is identical to tir_math_config.yaml except:
+#   - enable_tools uses "sandbox_python" instead of "python"
+#   - sandbox section is enabled with E2B backend
+#
+# Usage:
+#   # Option 1: Set credentials via environment variables (recommended)
+#   export SANDBOX_API_URL=https://your-e2b-endpoint
+#   export SANDBOX_API_KEY=your-key
+#   python3 examples/tir/train_tir.py \
+#     --config examples/tir/tir_math_sandbox_config.yaml
+#
+#   # Option 2: Pass credentials via CLI overrides
+#   python3 examples/tir/train_tir.py \
+#     --config examples/tir/tir_math_sandbox_config.yaml \
+#     tir.sandbox.api_url=https://your-e2b-endpoint \
+#     tir.sandbox.api_key=your-key
 
-seed: 1
-enable_offload: false
-total_train_epochs: 10
-tokenizer_path: ${actor.path}
-
-workflow: examples.sandbox.sandbox_math_agent.SandboxMathAgent
-eval_workflow: ${workflow}
-
+experiment_name: tir-math-sandbox
+trial_name: tir-math-sandbox
 cluster:
+  fileroot: /tmp/areal/experiments
   n_nodes: 1
   n_gpus_per_node: 8
-  fileroot: /tmp/areal/experiments
   name_resolve:
     type: nfs
     nfs_record_root: /tmp/areal/name_resolve
+seed: 1
+enable_offload: false
+total_train_epochs: 3
+tokenizer_path: ${actor.path}
 
 scheduler:
-  type: null
+  type: local
 
 rollout:
   backend: "sglang:d4p1t1"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  fileroot: ${cluster.fileroot}
-  tokenizer_path: ${tokenizer_path}
   max_concurrent_rollouts: 128
   queue_size: null
   consumer_batch_size: ${train_dataset.batch_size}
   max_head_offpolicyness: 2
   enable_rollout_tracing: false
   scheduling_spec: ${actor.scheduling_spec}
+  fileroot: ${cluster.fileroot}
+  tokenizer_path: ${tokenizer_path}
   dump_to_file: true
-  openai:
-    mode: inline
-    tool_call_parser: qwen25
-    reasoning_parser: qwen3
-    export_style: individual
-    turn_discount: 1.0
 
 gconfig:
   n_samples: 4
   min_new_tokens: 0
-  max_new_tokens: 2048
-  max_tokens: 4096
+  max_new_tokens: 512
   greedy: false
   temperature: 1.0
 
@@ -52,7 +59,7 @@ actor:
   backend: "fsdp:d4p1t1"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: Qwen/Qwen2.5-1.5B-Instruct
+  path: Qwen/Qwen2.5-Math-1.5B
   init_from_scratch: false
   disable_dropout: true
   gradient_checkpointing: true
@@ -80,16 +87,19 @@ actor:
   rejection_sampling:
     metric: ratio
     upper: 5.0
-  reward_norm: null
+  reward_norm:
+    mean_level: group
+    std_level: group
+    group_size: ${gconfig.n_samples}
   adv_norm:
     mean_level: batch
     std_level: batch
-  weight_update_mode: xccl
   max_new_tokens: ${gconfig.max_new_tokens}
   scheduling_spec:
     - task_type: worker
       port_count: 2
       gpu: 1
+      mem: 32
       cmd: python3 -m areal.infra.rpc.rpc_server
       env_vars: {}
 
@@ -109,13 +119,15 @@ ref:
     target: actor
   scheduling_spec: ${actor.scheduling_spec}
 
+# SGLang configuration
 sglang:
   model_path: ${actor.path}
   random_seed: ${seed}
-  skip_tokenizer_init: true
+  skip_tokenizer_init: false
   dtype: ${actor.dtype}
+  allow_auto_truncate: true
   max_running_requests: null
-  context_length: 32768
+  context_length: 4096
   mem_fraction_static: 0.8
 
 vllm:
@@ -124,53 +136,67 @@ vllm:
   skip_tokenizer_init: false
   dtype: ${actor.dtype}
   max_model_len: 32768
-  gpu_memory_utilization: 0.8
+  gpu_memory_utilization: 0.9
 
-# Sandbox configuration
-sandbox:
-  enabled: true
-  backend: e2b
-  api_url: ""         # or set SANDBOX_API_URL env var
-  api_key: ""         # or set SANDBOX_API_KEY env var
-  template_id: ""
-  ssl_cert_file: ""
-  timeout: 30.0
+# Tool-Integrated Reasoning configuration (with sandbox)
+tir:
+  max_turns: 2
+  max_length: 3000
+  tool_timeout: 30
+  enable_tools: sandbox_python;calculator
+  sandbox:
+    enabled: true
+    backend: e2b
+    api_url: ""              # or set SANDBOX_API_URL env var
+    api_key: ""              # or set SANDBOX_API_KEY env var
+    template_id: ""          # pre-configured sandbox template (optional)
+    ssl_cert_file: ""        # CA cert for self-hosted deployments (optional)
+    timeout: 30.0
 
-# Datasets
+# Dataset configuration
 train_dataset:
-  batch_size: 128
+  batch_size: 32
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: openai/gsm8k
+  path: /tmp/areal/torl_data/train.parquet
   type: rl
-  max_length: 1024
+  max_length: 500
 
 valid_dataset:
-  batch_size: 128
+  batch_size: 32
+  shuffle: false
   pin_memory: true
   num_workers: 4
-  path: openai/gsm8k
+  path: /tmp/areal/torl_data/test.parquet
   type: rl
+  max_length: 500
 
-# Utilities
+# Tool configuration
 saver:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
   freq_epochs: 1
+  freq_steps: null
+  freq_secs: null
 
 recover:
   mode: disabled
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: 3600
 
 evaluator:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
   freq_epochs: 1
+  freq_steps: null
+  freq_secs: null
 
 stats_logger:
   experiment_name: ${experiment_name}

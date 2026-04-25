@@ -21,6 +21,7 @@ from areal.api.cli_args import (
     dataclass,
     field,
 )
+from areal.api.sandbox_api import SandboxConfig
 from areal.utils import logging, stats_tracker
 
 from prompts import ANSWER, SYSTEM_PROMPT, TORL_PROMPT  # isort: skip
@@ -36,6 +37,7 @@ class TIRConfig:
     tool_timeout: float = field(default=30)
     enable_tools: str = field(default="python")
     is_chat_model: bool = field(default=False)
+    sandbox: SandboxConfig = field(default_factory=SandboxConfig)
 
 
 @dataclass
@@ -66,9 +68,28 @@ class TIRWorkflow(RolloutWorkflow):
         self.reward_fn = reward_fn
         self.gconfig = gconfig.new_with_stop_and_pad_token_ids(tokenizer)
         self.tokenizer = tokenizer
+
+        # Create sandbox executor if sandbox is enabled in config
+        sandbox_executor = None
+        if tir_config.sandbox.enabled:
+            import asyncio
+
+            from areal.infra.sandbox.factory import create_sandbox
+
+            sandbox_executor = asyncio.get_event_loop().run_until_complete(
+                create_sandbox(tir_config.sandbox)
+            )
+            logger.info(
+                "Sandbox executor created (backend=%s)", tir_config.sandbox.backend
+            )
+
         self.tool_manager = ToolManager(
-            tir_config.tool_timeout, tir_config.enable_tools, debug_mode=False
+            tir_config.tool_timeout,
+            tir_config.enable_tools,
+            debug_mode=False,
+            sandbox_executor=sandbox_executor,
         )
+        self._sandbox_executor = sandbox_executor
         self.is_chat_model = tir_config.is_chat_model
         self.max_turns = tir_config.max_turns
         self.max_length = tir_config.max_length

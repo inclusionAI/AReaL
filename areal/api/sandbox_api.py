@@ -10,7 +10,7 @@ Architecture
 ------------
 - ``areal/api/sandbox_api.py``   — Pure abstractions (this file)
 - ``areal/infra/sandbox/``       — Runtime implementations
-- ``examples/sandbox/``          — AgentWorkflow with sandbox code execution
+- ``examples/tir/``              — TIRWorkflow with optional sandbox execution
 
 See Also
 --------
@@ -129,8 +129,8 @@ class SandboxExecutor(Protocol):
 class SandboxConfig:
     """Configuration for sandbox execution in RL training workflows.
 
-    This config is used by the AgentWorkflow sandbox example
-    (``examples/sandbox/``) and
+    This config is used by workflows that need sandboxed code execution
+    (e.g., ``examples/tir/`` with ``enable_tools: "sandbox_python"``) and
     :func:`~areal.infra.sandbox.factory.create_sandbox`.
 
     Attributes

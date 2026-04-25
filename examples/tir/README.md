@@ -24,17 +24,21 @@ end-to-end through reinforcement learning.
 
 - **Function**: Tool manager responsible for coordinating tool calls
 - **Supported Tools**:
-  - **Python Executor**: Executes Python code for mathematical calculations
+  - **Python Executor**: Executes Python code via local subprocess
+  - **Sandbox Python Executor**: Executes Python code in an isolated sandbox (E2B /
+    CubeSandbox)
   - **Calculator**: Basic mathematical operations
 - **Key Features**:
   - Tool registration and routing mechanism
-  - Secure code execution environment
+  - Secure code execution environment (local or sandbox)
   - Unified tool calling interface
 
 #### 1.3 Tool Implementation (`tools/`)
 
 - **BaseTool** (`tools/base.py`): Tool base class that defines tool interfaces
-- **PythonTool** (`tools/python_tool.py`): Python code execution tool
+- **PythonTool** (`tools/python_tool.py`): Python code execution tool (local subprocess)
+- **SandboxPythonTool** (`tools/sandbox_python_tool.py`): Python code execution via
+  sandbox (E2B-compatible backends)
 - **CalculatorTool** (`tools/calculator_tool.py`): Mathematical calculation tool
 
 #### 1.4 Training Script (`train_tir.py`)
@@ -112,7 +116,7 @@ the data format is as follows:
 
 ### 3. Training Configuration
 
-Edit the `tir_config.yaml` configuration file:
+Edit the `tir_math_config.yaml` configuration file:
 
 ```yaml
 # Model configuration
@@ -139,12 +143,46 @@ tir:
 
 ### 4. Start Training
 
-**Single-machine Multi-GPU Training**
+**Single-machine Multi-GPU Training (Local Python Execution)**
 
 ```bash
 python3 examples/tir/train_tir.py \
-  --config examples/tir/tir_config.yaml \
+  --config examples/tir/tir_math_config.yaml \
   scheduler.type=local
+```
+
+**Single-machine Multi-GPU Training (Sandbox Python Execution)**
+
+Use the sandbox config for isolated code execution via E2B-compatible backends:
+
+```bash
+# Set sandbox credentials via environment variables (recommended)
+export SANDBOX_API_URL=https://your-e2b-endpoint
+export SANDBOX_API_KEY=your-key
+
+python3 examples/tir/train_tir.py \
+  --config examples/tir/tir_math_sandbox_config.yaml \
+  scheduler.type=local
+```
+
+Or pass credentials as CLI overrides:
+
+```bash
+python3 examples/tir/train_tir.py \
+  --config examples/tir/tir_math_sandbox_config.yaml \
+  tir.sandbox.api_url=https://your-e2b-endpoint \
+  tir.sandbox.api_key=your-key
+```
+
+You can also enable sandbox on top of the base config:
+
+```bash
+python3 examples/tir/train_tir.py \
+  --config examples/tir/tir_math_config.yaml \
+  tir.enable_tools=sandbox_python\;calculator \
+  tir.sandbox.enabled=true \
+  tir.sandbox.api_url=https://your-e2b-endpoint \
+  tir.sandbox.api_key=your-key
 ```
 
 **Multi-machine Multi-GPU Training**
@@ -186,20 +224,22 @@ Key metric changes during training:
 
 ```
 examples/tir/
-├── README.md                   # Project documentation
-├── tir_workflow.py             # Core workflow implementation
-├── tool_manager.py             # Tool manager
-├── tir_config.yaml             # Configuration file
-├── train_tir.py                # Training script
-├── test_tir.py                 # Test script
-├── tools/                      # Tool implementations
+├── README.md                          # Project documentation
+├── tir_workflow.py                    # Core workflow implementation
+├── tool_manager.py                    # Tool manager
+├── tir_math_config.yaml               # Config: local Python execution
+├── tir_math_sandbox_config.yaml       # Config: sandbox Python execution
+├── train_tir.py                       # Training script
+├── test_tir.py                        # Test script
+├── tools/                             # Tool implementations
 │   ├── __init__.py
-│   ├── base.py                 # Tool base class
-│   ├── python_tool.py          # Python executor
-│   └── calculator_tool.py      # Calculator
-├── data/                       # Data files
-│   └── sample_math.jsonl       # Sample data
-└── utils/                      # Utility functions
+│   ├── base.py                        # Tool base class
+│   ├── python_tool.py                 # Python executor (local subprocess)
+│   ├── sandbox_python_tool.py         # Python executor (sandbox)
+│   └── calculator_tool.py             # Calculator
+├── data/                              # Data files
+│   └── sample_math.jsonl              # Sample data
+└── utils/                             # Utility functions
     └── __init__.py
 ```
 

@@ -1,11 +1,16 @@
 import re
+from typing import TYPE_CHECKING
 
 from areal.utils import logging
+
+if TYPE_CHECKING:
+    from areal.api.sandbox_api import SandboxExecutor
 
 from tools import (  # isort: skip
     BaseTool,
     CalculatorTool,
     PythonTool,
+    SandboxPythonTool,
     ToolCallStatus,
     ToolType,
 )
@@ -20,6 +25,7 @@ class ToolRegistry:
     TOOL_NAMES = {
         "python": ToolType.PYTHON,
         "calculator": ToolType.CALCULATOR,
+        "sandbox_python": ToolType.SANDBOX_PYTHON,
     }
 
     def __init__(
@@ -27,12 +33,17 @@ class ToolRegistry:
         timeout: int = 30,
         enabled_tools: str = "python;calculator",
         debug_mode: bool = False,
+        sandbox_executor: "SandboxExecutor | None" = None,
     ):
-        # All available tools
-        self.all_tools = {
+        # All available tools (sandbox_python only registered when executor provided)
+        self.all_tools: dict[ToolType, BaseTool] = {
             ToolType.PYTHON: PythonTool(timeout, debug_mode),
             ToolType.CALCULATOR: CalculatorTool(timeout, debug_mode),
         }
+        if sandbox_executor is not None:
+            self.all_tools[ToolType.SANDBOX_PYTHON] = SandboxPythonTool(
+                timeout, debug_mode, sandbox_executor=sandbox_executor
+            )
 
         # Set enabled tools
         if enabled_tools is None:
@@ -48,9 +59,15 @@ class ToolRegistry:
                     logger.warning(f"Unknown tool type: {tool_type}, skipping")
 
         # Only keep enabled tools
-        self.tools = {
-            tool_type: self.all_tools[tool_type] for tool_type in self.enabled_tools
-        }
+        self.tools = {}
+        for tool_type in self.enabled_tools:
+            if tool_type in self.all_tools:
+                self.tools[tool_type] = self.all_tools[tool_type]
+            else:
+                logger.warning(
+                    f"Tool {tool_type.value} is enabled but not available "
+                    f"(missing sandbox_executor?), skipping"
+                )
 
         logger.info(
             f"ToolRegistry initialized with enabled tools: {[t.value for t in self.enabled_tools]}"
@@ -176,10 +193,13 @@ class ToolManager:
         timeout: int = 30,
         enabled_tools: str = "python;calculator",
         debug_mode: bool = False,
+        sandbox_executor: "SandboxExecutor | None" = None,
     ):
         self.timeout = timeout
         self.debug_mode = debug_mode
-        self.registry = ToolRegistry(timeout, enabled_tools, debug_mode)
+        self.registry = ToolRegistry(
+            timeout, enabled_tools, debug_mode, sandbox_executor=sandbox_executor
+        )
         self.router = ToolRouter(self.registry)
 
         logger.info(

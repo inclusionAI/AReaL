@@ -21,6 +21,7 @@ class ToolType(Enum):
 
     PYTHON = "python"
     CALCULATOR = "calculator"
+    SANDBOX_PYTHON = "sandbox_python"
 
 
 @dataclass

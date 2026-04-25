@@ -16,6 +16,9 @@ from .python_tool import (
     PythonTool,
     extract_python_code,
 )
+from .sandbox_python_tool import (
+    SandboxPythonTool,
+)
 
 __all__ = [
     # Base types
@@ -28,6 +31,8 @@ __all__ = [
     # Python tools
     "PythonTool",
     "extract_python_code",
+    # Sandbox Python tool
+    "SandboxPythonTool",
     # Calculator tool
     "CalculatorTool",
 ]
