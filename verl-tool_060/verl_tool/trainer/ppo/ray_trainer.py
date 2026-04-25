@@ -2,6 +2,7 @@ import ray
 import uuid
 import torch
 import os
+import sys
 import json
 import numpy as np
 from copy import deepcopy
@@ -34,10 +35,82 @@ verl.trainer.ppo.ray_trainer.compute_reward_async = compute_reward_async
 verl.trainer.ppo.ray_trainer.compute_data_metrics = compute_data_metrics
 verl.trainer.ppo.ray_trainer.process_validation_metrics = process_validation_metrics
 verl.workers.rollout.vllm_rollout.vllm_async_server.vLLMHttpServer = VerlToolvLLMHttpServer
+
+_verl_submod_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'verl'))
+if _verl_submod_dir not in sys.path:
+    sys.path.insert(0, _verl_submod_dir)
+from recipe.dapo.dapo_ray_trainer import RayDAPOTrainer
+import recipe.dapo.dapo_ray_trainer as _dapo_module
+_dapo_module.compute_data_metrics = compute_data_metrics
+
+_orig_compute_advantage = _dapo_module.compute_advantage
+def _compat_compute_advantage(*args, **kwargs):
+    if 'config' not in kwargs and len(args) < 7:
+        from verl_tool.trainer.ppo.ray_trainer import AgentRayPPOTrainer as _cls
+        if hasattr(_cls, '_active_config'):
+            kwargs['config'] = _cls._active_config
+    result = _orig_compute_advantage(*args, **kwargs)
+    if isinstance(result, tuple):
+        return result[0]
+    return result
+_dapo_module.compute_advantage = _compat_compute_advantage
 ##############################################################################
 
-class AgentRayPPOTrainer(RayPPOTrainer):
-    
+class AgentRayPPOTrainer(RayDAPOTrainer):
+
+    def fit(self):
+        from omegaconf import OmegaConf, open_dict
+        if getattr(self.config.algorithm, 'filter_groups', None) is None:
+            with open_dict(self.config.algorithm):
+                self.config.algorithm.filter_groups = OmegaConf.create({
+                    'enable': False,
+                    'metric': None,
+                    'max_num_gen_batches': 0,
+                })
+
+        if self.async_rollout_mode:
+            _async_gen = self.async_rollout_manager.generate_sequences
+            _reward_keys = {"data_source", "reward_model", "extra_info", "uid"}
+            _trainer_self = self
+
+            def _async_gen_with_reward_keys(gen_batch_output):
+                if hasattr(_trainer_self, '_batch_reward_data'):
+                    n = _trainer_self.config.actor_rollout_ref.rollout.n
+                    for k, v in _trainer_self._batch_reward_data.items():
+                        if k not in gen_batch_output.non_tensor_batch:
+                            gen_batch_output.non_tensor_batch[k] = np.repeat(v, n, axis=0)
+                return _async_gen(gen_batch_output)
+
+            self.actor_rollout_wg.generate_sequences = _async_gen_with_reward_keys
+
+            _orig_pop = DataProto.pop
+            def _patched_pop(proto_self, batch_keys=None, non_tensor_batch_keys=None, meta_info_keys=None):
+                result = _orig_pop(proto_self, batch_keys=batch_keys,
+                                   non_tensor_batch_keys=non_tensor_batch_keys,
+                                   meta_info_keys=meta_info_keys)
+                present = _reward_keys & proto_self.non_tensor_batch.keys()
+                if present:
+                    _trainer_self._batch_reward_data = {k: proto_self.non_tensor_batch[k] for k in present}
+                    extra_keys = set(proto_self.non_tensor_batch.keys()) - _reward_keys
+                    for k in extra_keys:
+                        del proto_self.non_tensor_batch[k]
+                return result
+            DataProto.pop = _patched_pop
+
+        AgentRayPPOTrainer._active_config = self.config.algorithm
+
+        try:
+            super().fit()
+        finally:
+            AgentRayPPOTrainer._active_config = None
+            if self.async_rollout_mode:
+                DataProto.pop = _orig_pop
+                try:
+                    del self.actor_rollout_wg.generate_sequences
+                except AttributeError:
+                    pass
+                self._batch_reward_data = {}
+
     def _validate(self):
         data_source_lst = []
         reward_extra_infos_dict: dict[str, list] = defaultdict(list)

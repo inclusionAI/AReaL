@@ -67,6 +67,10 @@ from geo_edit.datasets.input_template import (
     MAPBENCH_VQA_INPUT_TEMPLATE,
     MAPBENCH_VQA_NOTOOL_INPUT_TEMPLATE,
     MAPBENCH_VQA_SEPARATED_TEMPLATE,
+    HR_BENCH_ANSWER_FORMAT,
+    HR_BENCH_INPUT_TEMPLATE,
+    HR_BENCH_NOTOOL_INPUT_TEMPLATE,
+    HR_BENCH_SEPARATED_TEMPLATE,
 )
 
 FieldSource = str | Callable[[Mapping[str, Any]], Any]
@@ -178,6 +182,20 @@ class DatasetSpec:
 
         if unified:
             question = values.get("question", values.get("prompt", ""))
+            options_text = values.get("options_text", "")
+            if options_text:
+                question = (
+                    f"{question}\n\n"
+                    f"Options:\n{options_text}\n\n"
+                    f"Select the best option by choosing its number. "
+                    f"If none of the options are correct or the question cannot be answered, respond with 0."
+                )
+                if self.name == "mapeval_visual":
+                    question = (
+                        f"{question}\n\n"
+                        f"Your answer should be the number before the option (1, 2, 3, ...), "
+                        f"not the option text itself."
+                    )
             task_type = DATASET_TASK_TYPES.get(self.name, "visual question answering")
             output_format = self.answer_format or DEFAULT_OUTPUT_FORMAT
             return build_user_message(
@@ -222,6 +240,15 @@ def _get_visworld_tool_guidance(item: Mapping[str, Any]) -> Optional[str]:
     """Return tool guidance based on VisWorld-Eval category."""
     category = item.get("category", "")
     return VISWORLD_TOOL_GUIDANCE.get(category)
+
+
+def _format_hr_bench_options(item: Mapping[str, Any]) -> str:
+    parts = []
+    for letter in "ABCD":
+        val = item.get(letter, "")
+        if val:
+            parts.append(f"{letter}. {val}")
+    return "\n".join(parts)
 
 
 # =============================================================================
@@ -727,6 +754,25 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         answer_format=MAPBENCH_VQA_ANSWER_FORMAT,
         image_dedup_key="image_id",
         response_validator=_mapbench_response_validator,
+    ),
+    "hr_bench": DatasetSpec(
+        name="hr_bench",
+        id_key="index",
+        answer_key="answer",
+        image_key="image",
+        prompt_template=HR_BENCH_INPUT_TEMPLATE,
+        notool_prompt_template=HR_BENCH_NOTOOL_INPUT_TEMPLATE,
+        template_fields={
+            "question": "question",
+            "options_text": _format_hr_bench_options,
+        },
+        task_kwargs_fields={
+            "meta_info_extra": lambda item: {
+                "category": item.get("category", ""),
+            },
+        },
+        separated_prompt_template=HR_BENCH_SEPARATED_TEMPLATE,
+        answer_format=HR_BENCH_ANSWER_FORMAT,
     ),
 }
 

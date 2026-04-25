@@ -93,6 +93,7 @@ DATASET_TASK_TYPES = {
     "aiic_0512": "visual question answering",
     "aiic_0704": "visual question answering",
     "aiic_0716": "visual question answering",
+    "hr_bench": "high-resolution image understanding",
 }
 
 DEFAULT_OUTPUT_FORMAT = "Provide the final answer inside <answer> and </answer> tags."

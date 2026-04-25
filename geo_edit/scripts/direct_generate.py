@@ -64,6 +64,7 @@ def _init_worker(
     api_mode: str,
     api_key: str | None,
     no_image_compression: bool = False,
+    temperature: float = TEMPERATURE,
 ):
     global _WORKER_AGENT, _WORKER_OUTPUT_PATH, _WORKER_MODEL_TYPE, _WORKER_API_MODE, _WORKER_NO_IMAGE_COMPRESSION
 
@@ -73,7 +74,7 @@ def _init_worker(
     agent_configs = build_api_agent_configs(
         tool_router,
         api_mode=api_mode,
-        temperature=TEMPERATURE,
+        temperature=temperature,
         system_prompt=SYSTEM_PROMPT.strip(),
         reasoning_level="low"
     )
@@ -190,6 +191,7 @@ def main():
         action="store_true",
         help="Disable image compression (send original quality to API). Default: compress to 4MB base64.",
     )
+    parser.add_argument("--temperature", type=float, default=TEMPERATURE, help="Sampling temperature.")
     args = parser.parse_args()
 
     if args.model_type == "OpenAI" and not args.api_key:
@@ -232,7 +234,7 @@ def main():
     with ctx.Pool(
         processes=n_workers,
         initializer=_init_worker,
-        initargs=(args.model_name_or_path, args.model_type, args.api_base, args.api_mode, args.api_key, args.no_image_compression),
+        initargs=(args.model_name_or_path, args.model_type, args.api_base, args.api_mode, args.api_key, args.no_image_compression, args.temperature),
     ) as pool:
         inflight = []
         submit_idx = 0

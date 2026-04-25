@@ -2,21 +2,15 @@
 set -x
 
 # ============================================================
-# Multi-node (4×8 GPU) DAPO training for geo_edit (mixed data)
-# Based on run_mixed_rl_multinode.sh, adding DAPO configs:
-#   - Asymmetric clipping (clip_ratio_low/high)
-#   - Token-level loss aggregation
-#   - Dynamic sampling (filter_groups)
-#   - KL fully disabled
-#   - Overlong masking OFF (per user request)
+# Multi-node (4×8 GPU) no-tool RL training for geo_edit
+# Same data/model as run_mixed_rl_multinode.sh but with
+# agent/tool-calling disabled (pure VLM reasoning).
 #
 # Requires an existing Ray cluster spanning all 4 nodes.
 #
 # Environment variables:
 #   WORKSPACE        – default: /storage/openpsi/data/lcy_image_edit/mixed_rl
 #   MODEL_PATH       – path to SFT checkpoint
-#   TOOL_SERVER_URL  – tool server URL (must be reachable from all nodes)
-#   TOOL_SERVER_IP   – tool server IP (port defaults to 30888)
 #   JUDGE_API_KEY / JUDGE_API_BASE / JUDGE_MODEL – LLM judge config
 #   WANDB_API_KEY / WANDB_BASE_URL – wandb config
 # ============================================================
@@ -26,7 +20,7 @@ model_name=${MODEL_PATH:-/storage/openpsi/models/lcy_image_edit/sft_workspace/qw
 
 train_data="[/storage/openpsi/data/reasonmap_rl/combined_train_rl_only.parquet,$WORKSPACE/new_train.parquet]"
 val_data="[/storage/openpsi/data/reasonmap_rl/combined_test_10pct.parquet,$WORKSPACE/new_val.parquet,$WORKSPACE/mapqa_val_200.parquet]"
-run_name="mixed-dapo-4node_0424v3"
+run_name="mixed-grpo-notool-4node"
 rl_alg=grpo
 
 # ---- Cluster topology ----
@@ -41,22 +35,13 @@ ppo_mini_batch_size=64
 # ---- Sequence lengths ----
 max_prompt_length=16384
 max_response_length=32768
-max_action_length=8192
-max_obs_length=8192
-max_obs_length_image=8192
-max_obs_length_text=8192
 ppo_max_token_len_per_gpu=$(expr $max_prompt_length + $max_response_length)
 
 # ---- Sampling ----
 temperature=1.0
 top_p=1.0
 
-# ---- Agent / tool ----
-enable_agent=True
-action_stop_tokens='</action>'
-max_turns=10
-mask_observations=True
-enable_mtrl=True
+# ---- No agent/tool ----
 additional_eos_token_ids=[151645]
 reward_manager=geo_vision_qa
 
@@ -67,14 +52,6 @@ kl_loss_coef=0.0
 kl_coef=0
 entropy_coeff=0
 kl_loss_type=low_var_kl
-
-# ---- DAPO-specific ----
-clip_ratio_low=0.2
-clip_ratio_high=0.28
-loss_agg_mode='token-mean'
-enable_filter_groups=True
-filter_groups_metric='seq_final_reward'
-max_num_gen_batches=0
 
 # ---- Per-GPU micro batches ----
 ppo_micro_batch_size_per_gpu=4
@@ -95,8 +72,7 @@ max_num_batched_tokens=$(expr $max_prompt_length + $max_response_length)
 rollout_mode='async'
 
 # ---- Schedule ----
-total_epochs=100
-total_training_steps=300
+total_epochs=3
 save_freq=10
 test_freq=20
 
@@ -108,25 +84,6 @@ export WANDB_RESUME=allow
 export WANDB_RUN_ID=$run_name
 unset ROCR_VISIBLE_DEVICES
 mkdir -p $WORKSPACE/logs/$run_name
-
-action_stop_tokens_file="$WORKSPACE/logs/$run_name/action_stop_tokens.txt"
-echo -e -n "$action_stop_tokens" | tee $action_stop_tokens_file
-
-# ---- Resolve tool server URL ----
-if [ -n "${TOOL_SERVER_URL:-}" ]; then
-    tool_server_url=$TOOL_SERVER_URL
-elif [ -n "${TOOL_SERVER_IP:-}" ]; then
-    tool_server_url=http://$TOOL_SERVER_IP:30888/get_observation
-else
-    WORKER_IP=$(python3 -c "
-import ray; ray.init(address='auto',ignore_reinit_error=True)
-for n in ray.nodes():
-    if n['Resources'].get('tool_agent',0)>0 and n['Alive']:
-        print(n['NodeManagerAddress']); break
-")
-    tool_server_url=http://$WORKER_IP:30888/get_observation
-fi
-echo "Using tool server at $tool_server_url"
 
 # ---- Verify Ray cluster has enough nodes ----
 python3 -c "
@@ -143,21 +100,8 @@ print('Cluster OK')
 ray.shutdown()
 "
 
-# When using a pre-started Ray cluster, env vars must be set on each node
-# BEFORE running `ray start`. Example for each worker node:
-#   export JUDGE_API_KEY=xxx JUDGE_API_BASE=xxx JUDGE_MODEL=xxx
-#   export WANDB_API_KEY=xxx WANDB_BASE_URL=xxx
-#   ray start --address=<head_ip>:6379
-#
-# Alternatively, start Ray workers with --runtime-env-json:
-#   ray start --address=<head_ip>:6379 \
-#       --runtime-env-json='{"env_vars":{"JUDGE_API_KEY":"xxx","WANDB_API_KEY":"xxx"}}'
-
-PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
+PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=$rl_alg \
-    +algorithm.filter_groups.enable=$enable_filter_groups \
-    +algorithm.filter_groups.metric=$filter_groups_metric \
-    +algorithm.filter_groups.max_num_gen_batches=$max_num_gen_batches \
     data.train_files=$train_data \
     data.val_files=$val_data \
     data.train_batch_size=$batch_size \
@@ -186,32 +130,10 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     actor_rollout_ref.actor.kl_loss_coef=$kl_loss_coef \
     actor_rollout_ref.actor.kl_loss_type=$kl_loss_type \
     actor_rollout_ref.actor.entropy_coeff=$entropy_coeff \
-    actor_rollout_ref.actor.clip_ratio_low=$clip_ratio_low \
-    actor_rollout_ref.actor.clip_ratio_high=$clip_ratio_high \
-    actor_rollout_ref.actor.loss_agg_mode=$loss_agg_mode \
     actor_rollout_ref.actor.fsdp_config.param_offload=$do_offload \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=$do_offload \
     actor_rollout_ref.actor.fsdp_config.fsdp_size=$fsdp_size \
     actor_rollout_ref.actor.ulysses_sequence_parallel_size=$ulysses_sequence_parallel_size \
-    actor_rollout_ref.agent.enable_agent=$enable_agent \
-    actor_rollout_ref.agent.tool_server_url=$tool_server_url \
-    actor_rollout_ref.agent.max_prompt_length=$max_prompt_length \
-    actor_rollout_ref.agent.max_response_length=$max_response_length \
-    actor_rollout_ref.agent.max_start_length=$max_prompt_length \
-    actor_rollout_ref.agent.max_obs_length=$max_obs_length \
-    +actor_rollout_ref.agent.max_obs_length_image=$max_obs_length_image \
-    +actor_rollout_ref.agent.max_obs_length_text=$max_obs_length_text \
-    actor_rollout_ref.agent.max_turns=$max_turns \
-    actor_rollout_ref.agent.additional_eos_token_ids=$additional_eos_token_ids \
-    actor_rollout_ref.agent.mask_observations=$mask_observations \
-    actor_rollout_ref.agent.action_stop_tokens=$action_stop_tokens_file \
-    actor_rollout_ref.agent.enable_mtrl=$enable_mtrl \
-    actor_rollout_ref.agent.max_action_length=$max_action_length \
-    actor_rollout_ref.agent.tool_call_timeout=600 \
-    actor_rollout_ref.agent.max_concurrent_trajectories=128 \
-    +actor_rollout_ref.agent.dispatch_mode=work_queue \
-    actor_rollout_ref.rollout.agent.num_workers=$(expr $n_nodes \* $n_gpus_per_node) \
-    actor_rollout_ref.rollout.data_parallel_size=1 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=$tensor_model_parallel_size \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=$log_prob_micro_batch_size_per_gpu \
     actor_rollout_ref.rollout.enforce_eager=False \
@@ -226,6 +148,8 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     actor_rollout_ref.rollout.max_num_seqs=32 \
     actor_rollout_ref.rollout.mode=$rollout_mode \
     actor_rollout_ref.rollout.max_num_batched_tokens=$max_num_batched_tokens \
+    actor_rollout_ref.rollout.agent.num_workers=$(expr $n_nodes \* $n_gpus_per_node) \
+    actor_rollout_ref.rollout.agent.default_agent_loop=single_turn_agent \
     +actor_rollout_ref.rollout.engine_kwargs.vllm.mm-processor-cache-gb=8 \
     actor_rollout_ref.ref.log_prob_use_dynamic_bsz=$use_dynamic_bsz \
     actor_rollout_ref.ref.fsdp_config.param_offload=$do_offload \
@@ -251,7 +175,6 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     trainer.save_freq=$save_freq \
     trainer.test_freq=$test_freq \
     trainer.total_epochs=$total_epochs \
-    trainer.total_training_steps=$total_training_steps \
     trainer.resume_mode=auto \
     2>&1 | tee $WORKSPACE/logs/$run_name/train.log
 

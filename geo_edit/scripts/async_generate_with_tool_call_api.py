@@ -57,6 +57,7 @@ def _init_worker(
     enable_tools: "list | None" = None,
     enabled_agent_names: "list | None" = None,
     no_image_compression: bool = False,
+    temperature: float = 1.0,
 ):
     from typing import cast, Literal
 
@@ -116,7 +117,7 @@ def _init_worker(
             no_tool_router,
             api_mode=api_mode,
             max_output_tokens=max_output_tokens,
-            temperature=1.0,
+            temperature=temperature,
             system_prompt=system_prompt,
         )
         _WORKER_TASK_CLASS = OpenAICompatibleVisionQATask
@@ -130,7 +131,7 @@ def _init_worker(
                 max_output_tokens=max_output_tokens,
                 thinking_level="low",
                 include_thoughts=True,
-                temperature=1.0,
+                temperature=temperature,
                 system_prompt=system_prompt,
             )
             _WORKER_TASK_CLASS = GoogleVisionQATask
@@ -139,7 +140,7 @@ def _init_worker(
                 _WORKER_TOOL_ROUTER,
                 api_mode=api_mode,
                 max_output_tokens=max_output_tokens,
-                temperature=1.0,
+                temperature=temperature,
                 reasoning_level="low" if model_type == "OpenAI" else None,
                 system_prompt=system_prompt,
             )
@@ -412,6 +413,9 @@ def main():
         action="store_true",
         help="Disable image compression (send original quality to API). Default: compress to 4MB base64.",
     )
+    parser.add_argument(
+        "--temperature", type=float, default=1.0, help="Sampling temperature.",
+    )
     args = parser.parse_args()
     if args.model_type in {"Google", "OpenAI"} and not args.api_key:
         raise ValueError("API key must be provided for Google/OpenAI models.")
@@ -494,6 +498,7 @@ def main():
             args.enable_tools,
             enabled_agent_names,
             args.no_image_compression,
+            args.temperature,
         ),
     ) as pool:
         inflight = []  # list[(task_id, AsyncResult)]

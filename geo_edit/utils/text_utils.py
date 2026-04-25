@@ -46,6 +46,14 @@ def _extract_with_template(text: str, template: str, mode: str) -> Optional[str]
     return None
 
 
+def _extract_boxed(text: str) -> Optional[str]:
+    pattern = r'\\boxed\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}'
+    matches = list(re.finditer(pattern, text))
+    if not matches:
+        return None
+    return matches[-1].group(1).strip()
+
+
 def _extract_partial(text: str, start_tag: str) -> Optional[str]:
     """Extract answer from partial tag (without closing tag)."""
     start = text.find(start_tag)
@@ -87,7 +95,17 @@ def extract_answer(text: str, mode: str) -> Optional[str]:
     if result is not None:
         return result
 
+    # Try \boxed{...}
+    result = _extract_boxed(text)
+    if result is not None:
+        return result
+
     return None
+
+
+def _unwrap_boxed(text: str) -> str:
+    boxed = _extract_boxed(text)
+    return boxed if boxed is not None else text
 
 
 def get_final_prediction(predict_str_list: List[str], extract_mode: Optional[str]) -> str:
@@ -97,7 +115,9 @@ def get_final_prediction(predict_str_list: List[str], extract_mode: Optional[str
     if not extract_mode:
         return last
     extracted = extract_answer(last, extract_mode)
-    return extracted if extracted is not None else last
+    if extracted is not None:
+        return _unwrap_boxed(extracted)
+    return last
 
 
 def extract_choice_letter(text: str) -> Optional[str]:

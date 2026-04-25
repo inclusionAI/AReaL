@@ -167,7 +167,7 @@ Question: {question}
 
 If you need to analyze the chart in detail, you can use the available tools.
 
-Please provide your final answer in <answer></answer> tags. For multiple choice questions, provide only the letter (e.g., A, B, C, D).
+Please provide your final answer in <answer></answer> tags. For multiple choice questions, provide only the letter (e.g., A, B, C, D). If the question cannot be answered from the chart, respond with <answer>Unanswerable</answer>.
 """
 
 CHARTQAPRO_NOTOOL_INPUT_TEMPLATE = """\
@@ -177,17 +177,17 @@ Look at the chart image carefully and answer the following question. The questio
 
 Question: {question}
 
-Please analyze the chart and provide your final answer in <answer></answer> tags. For multiple choice questions, provide only the letter (e.g., A, B, C, D).
+Please analyze the chart and provide your final answer in <answer></answer> tags. For multiple choice questions, provide only the letter (e.g., A, B, C, D). If the question cannot be answered from the chart, respond with <answer>Unanswerable</answer>.
 """
 
 # Separated version: question only, no role/answer format (for separated reasoning mode)
 CHARTQAPRO_SEPARATED_TEMPLATE = """\
 Question: {question}
 
-Provide a precise and concise answer based on the chart. For multiple choice questions, provide only the letter.
+Provide a precise and concise answer based on the chart. For multiple choice questions, provide only the letter. If the question cannot be answered, respond with "Unanswerable".
 """
 
-CHARTQAPRO_ANSWER_FORMAT = "Please provide your final answer in <answer></answer> tags."
+CHARTQAPRO_ANSWER_FORMAT = "Please provide your final answer in <answer></answer> tags. If the question cannot be answered from the chart, respond with <answer>Unanswerable</answer>."
 
 REASONMAP_INPUT_TEMPLATE = """\
 Look at the subway map image and answer the following question.
@@ -430,3 +430,35 @@ MAPBENCH_VQA_ANSWER_FORMAT = (
     "Each step on a separate line in the format: "
     '"Node A -> Node B (from Direction, moving along Road/Landmark Name)"'
 )
+
+HR_BENCH_INPUT_TEMPLATE = """\
+Look at the high-resolution image carefully and answer the following multiple-choice question.
+
+Question: {question}
+
+{options_text}
+
+If you need to analyze the image in detail, you can use the available tools.
+
+Select the correct option by providing only the letter (A, B, C, or D) in <answer></answer> tags.
+"""
+
+HR_BENCH_NOTOOL_INPUT_TEMPLATE = """\
+Look at the high-resolution image carefully and answer the following multiple-choice question.
+
+Question: {question}
+
+{options_text}
+
+Select the correct option by providing only the letter (A, B, C, or D) in <answer></answer> tags.
+"""
+
+HR_BENCH_SEPARATED_TEMPLATE = """\
+Question: {question}
+
+{options_text}
+
+Select the correct option (A, B, C, or D).
+"""
+
+HR_BENCH_ANSWER_FORMAT = "Provide only the letter (A, B, C, or D) in <answer></answer> tags."

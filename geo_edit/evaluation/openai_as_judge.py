@@ -60,6 +60,27 @@ class OpenAIJudge:
         return parse_score(resp.output_text or "")
 
 
+def _normalize_for_match(s) -> str:
+    """Normalize a string for exact matching: lowercase, strip, collapse whitespace."""
+    return " ".join(str(s).strip().lower().split())
+
+
+def _try_exact_match(prediction: str, ground_truth: str) -> Optional[float]:
+    """Return 1.0/0.0 if we can determine correctness without LLM, else None."""
+    pred = _normalize_for_match(prediction)
+    gt = _normalize_for_match(ground_truth)
+    if not pred or not gt:
+        return None
+    if pred == gt:
+        return 1.0
+    try:
+        if float(pred) == float(gt):
+            return 1.0
+    except (ValueError, OverflowError):
+        pass
+    return None
+
+
 def evaluate_final_answer(
     question: str,
     predict_str_list: List[str],
@@ -73,6 +94,11 @@ def evaluate_final_answer(
     """
 
     final_pred = get_final_prediction(predict_str_list, cfg.extract_answer_tags)
+
+    exact = _try_exact_match(final_pred, ground_truth)
+    if exact is not None:
+        print(f"[ExactMatch] Question: {question}, Ground Truth: {ground_truth}, Prediction: {final_pred}, Score: {exact}")
+        return exact
 
     judge = OpenAIJudge(api_key=cfg.api_key, model=cfg.model, api_base=cfg.api_base)
     score_str = judge.judge_correctness(question, ground_truth, final_pred)
@@ -141,6 +167,33 @@ def compare_with_baseline(eval_results: list, baseline_path: str) -> None:
     print(f"Both correct: {both_correct}, Both wrong: {both_wrong}")
     print(f"Current only: {current_only}, Baseline only: {baseline_only}")
     print("=" * 50)
+
+
+def _build_eval_item(record: dict, record_id: str, cfg: EvalConfig, final_pred: str, result) -> dict:
+    question = record["question"]
+    ground_truth = record["answer"]
+    if isinstance(ground_truth, list):
+        ground_truth = "\n".join(ground_truth)
+    return {
+        "id": record_id,
+        "question": question,
+        "image_path": record.get("image_path"),
+        "total_steps": record.get("total_steps"),
+        "function_call_each_count": record.get("function_call_each_count"),
+        "function_call_total_count": record.get("function_call_total_count"),
+        "function_call_per_step": record.get("function_call_per_step"),
+        "tokens_used_total": record.get("tokens_used_total"),
+        "tokens_used_per_step": record.get("tokens_used_per_step", record.get("tokens_output_per_step")),
+        "tokens_output_per_step": record.get("tokens_output_per_step", record.get("tokens_used_per_step")),
+        "tokens_output_total": record.get("tokens_output_total"),
+        "tokens_input_total": record.get("tokens_input_total"),
+        "tokens_input_per_step": record.get("tokens_input_per_step"),
+        "tokens_total_per_step": record.get("tokens_total_per_step"),
+        "output_text": record["output_text"],
+        "ground_truth": ground_truth,
+        "prediction": final_pred,
+        "result": result,
+    }
 
 
 def evaluate_record(record: dict, cfg: EvalConfig, record_id: str) -> dict:
@@ -221,6 +274,7 @@ def main(
         default=None,
         help="Path to baseline eval results for comparison.",
     )
+    parser.add_argument("--max_workers", type=int, default=32, help="Max concurrent judge threads.")
     args = parser.parse_args()
 
     os.environ["OPENAI_API_KEY"] = args.api_key
@@ -240,10 +294,20 @@ def main(
     eval_output_path = os.path.join(args.output_path, "eval_result.jsonl")
     summary_path = os.path.join(args.output_path, "summary.txt")
 
+    done_ids = set()
+    eval_results = []
+    if os.path.exists(eval_output_path):
+        with open(eval_output_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    item = json.loads(line)
+                    eval_results.append(item)
+                    done_ids.add(str(item["id"]))
+        print(f"[Resume] Loaded {len(done_ids)} already-evaluated records from {eval_output_path}")
+
     total = 0
     correct = 0
     filtered = 0
-    eval_results = []
     output_tokens_sum = 0.0
     input_tokens_sum = 0.0
     total_tokens_sum = 0.0
@@ -251,44 +315,86 @@ def main(
     input_tokens_count = 0
     total_tokens_count = 0
 
-    max_workers = 32
+    for eval_item in eval_results:
+        result = eval_item["result"]
+        is_filter = isinstance(result, dict) and result.get("is_filter")
+        if is_filter:
+            filtered += 1
+        else:
+            total += 1
+            if result == 1.0:
+                correct += 1
+        output_total = get_output_tokens_total(eval_item)
+        if output_total is not None:
+            output_tokens_sum += output_total
+            output_tokens_count += 1
+        input_total = get_input_tokens_total(eval_item)
+        if input_total is not None:
+            input_tokens_sum += input_total
+            input_tokens_count += 1
+        total_total = get_total_tokens(eval_item)
+        if total_total is not None:
+            total_tokens_sum += float(total_total)
+            total_tokens_count += 1
+
+    def _account_and_write(eval_item, out_f):
+        nonlocal total, correct, filtered, output_tokens_sum, output_tokens_count
+        nonlocal input_tokens_sum, input_tokens_count, total_tokens_sum, total_tokens_count
+        eval_results.append(eval_item)
+        result = eval_item["result"]
+        is_filter = isinstance(result, dict) and result.get("is_filter")
+        if is_filter:
+            filtered += 1
+        else:
+            total += 1
+            if result == 1.0:
+                correct += 1
+        out_f.write(json.dumps(eval_item, ensure_ascii=False) + "\n")
+        out_f.flush()
+        output_total = get_output_tokens_total(eval_item)
+        if output_total is not None:
+            output_tokens_sum += output_total
+            output_tokens_count += 1
+        input_total = get_input_tokens_total(eval_item)
+        if input_total is not None:
+            input_tokens_sum += input_total
+            input_tokens_count += 1
+        total_total = get_total_tokens(eval_item)
+        if total_total is not None:
+            total_tokens_sum += float(total_total)
+            total_tokens_count += 1
+
+    max_workers = args.max_workers
     futures = []
-    with ThreadPoolExecutor(max_workers=max_workers) as executor, open(eval_output_path, "w", encoding="utf-8") as out_f:
+    with ThreadPoolExecutor(max_workers=max_workers) as executor, open(eval_output_path, "a", encoding="utf-8") as out_f:
         for meta_path in iter_meta_info_files(args.result_path):
             record_id = os.path.basename(os.path.dirname(meta_path))
+            if str(record_id) in done_ids:
+                continue
             for record in load_records(meta_path):
-                from time import sleep
-
-                sleep(1)
-                futures.append(executor.submit(evaluate_record, record, cfg, record_id))
+                question = record["question"]
+                ground_truth = record["answer"]
+                if isinstance(ground_truth, list):
+                    ground_truth = "\n".join(ground_truth)
+                output_text = record["output_text"]
+                if isinstance(output_text, list):
+                    predict_str_list = [str(x) for x in output_text]
+                else:
+                    predict_str_list = [str(output_text)]
+                final_pred = get_final_prediction(predict_str_list, cfg.extract_answer_tags)
+                exact = _try_exact_match(final_pred, ground_truth)
+                if exact is not None:
+                    print(f"[ExactMatch] Question: {question}, GT: {ground_truth}, Pred: {final_pred}, Score: {exact}")
+                    eval_item = _build_eval_item(record, record_id, cfg, final_pred, exact)
+                    _account_and_write(eval_item, out_f)
+                else:
+                    from time import sleep
+                    sleep(1)
+                    futures.append(executor.submit(evaluate_record, record, cfg, record_id))
 
         for future in as_completed(futures):
             eval_item = future.result()
-            eval_results.append(eval_item)
-            result = eval_item["result"]
-            is_filter = isinstance(result, dict) and result.get("is_filter")
-            if is_filter:
-                filtered += 1
-            else:
-                total += 1
-                if result == 1.0:
-                    correct += 1
-            out_f.write(json.dumps(eval_item, ensure_ascii=False) + "\n")
-
-            output_total = get_output_tokens_total(eval_item)
-            if output_total is not None:
-                output_tokens_sum += output_total
-                output_tokens_count += 1
-
-            input_total = get_input_tokens_total(eval_item)
-            if input_total is not None:
-                input_tokens_sum += input_total
-                input_tokens_count += 1
-
-            total_total = get_total_tokens(eval_item)
-            if total_total is not None:
-                total_tokens_sum += float(total_total)
-                total_tokens_count += 1
+            _account_and_write(eval_item, out_f)
 
     tool_stats_text = compute_tool_combination_statistics(eval_results)
 
