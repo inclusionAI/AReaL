@@ -31,8 +31,9 @@ def register(name: str) -> Callable[[type[AbstractRewardManager]], type[Abstract
 
     def decorator(cls: type[AbstractRewardManager]) -> type[AbstractRewardManager]:
         if name in REWARD_MANAGER_REGISTRY and REWARD_MANAGER_REGISTRY[name] != cls:
-            raise ValueError(
-                f"Reward manager {name} has already been registered: {REWARD_MANAGER_REGISTRY[name]} vs {cls}"
+            import logging
+            logging.getLogger(__name__).info(
+                "Reward manager '%s' re-registered: %s -> %s", name, REWARD_MANAGER_REGISTRY[name], cls
             )
         REWARD_MANAGER_REGISTRY[name] = cls
         return cls

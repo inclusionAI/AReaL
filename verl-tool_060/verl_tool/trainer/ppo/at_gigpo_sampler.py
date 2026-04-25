@@ -26,10 +26,15 @@ class ATGiGPOSampler(AbstractCurriculumSampler):
         self.l_hat_update_interval = max(1, int(self.total_training_steps * self.l_hat_update_ratio))
 
         self.task2indices: dict[str, list[int]] = defaultdict(list)
-        for i in range(len(data_source)):
-            item = data_source[i]
-            task = item.get("data_source", "unknown") if isinstance(item, dict) else "unknown"
-            self.task2indices[task].append(i)
+        if hasattr(data_source, "dataframe") and "data_source" in data_source.dataframe.column_names:
+            ds_col = data_source.dataframe["data_source"]
+            for i, task in enumerate(ds_col):
+                self.task2indices[str(task)].append(i)
+        else:
+            for i in range(len(data_source)):
+                item = data_source[i]
+                task = item.get("data_source", "unknown") if isinstance(item, dict) else "unknown"
+                self.task2indices[task].append(i)
 
         self.task_types = sorted(self.task2indices.keys())
         self.dataset_sizes = {t: len(self.task2indices[t]) for t in self.task_types}

@@ -16,10 +16,10 @@ set -x
 # ============================================================
 
 WORKSPACE=${WORKSPACE:-/storage/openpsi/data/lcy_image_edit/mixed_rl}
-model_name=${MODEL_PATH:-/storage/openpsi/models/lcy_image_edit/sft_workspace/qwen3vl8b-thinking-toolfree_5ds_v2-0424-ct65536}
+model_name=${MODEL_PATH:-/storage/openpsi/models/Qwen3-VL-8B-Thinking}
 
-train_data="[/storage/openpsi/data/reasonmap_rl/combined_train_rl_only.parquet,$WORKSPACE/new_train.parquet]"
-val_data="[/storage/openpsi/data/reasonmap_rl/combined_test_10pct.parquet,$WORKSPACE/new_val.parquet,$WORKSPACE/mapqa_val_200.parquet]"
+train_data="[/storage/openpsi/data/reasonmap_rl/combined_train_rl_only_notool.parquet,$WORKSPACE/new_train_notool.parquet]"
+val_data="[/storage/openpsi/data/reasonmap_rl/combined_test_10pct_notool.parquet,$WORKSPACE/new_val_notool.parquet,$WORKSPACE/mapqa_val_200_notool.parquet]"
 run_name="mixed-grpo-notool-4node"
 rl_alg=grpo
  
@@ -82,6 +82,7 @@ export WANDB_DIR=$WORKSPACE/logs/$run_name
 export WANDB_RESUME=allow
 export WANDB_RUN_ID=$run_name
 unset ROCR_VISIBLE_DEVICES
+unset JUDGE_API_KEY
 mkdir -p $WORKSPACE/logs/$run_name
 
 # ---- Verify Ray cluster has enough nodes ----

@@ -1,5 +1,5 @@
-# SYNC: a copy of this file exists at verl_tool/workers/reward_manager/geo_vision_qa.py
-# Any changes here must be mirrored there, and vice versa.
+# Fast variant: LLM judge disabled, rule-based scoring only.
+# The full version (with LLM judge) lives at verl_tool/workers/reward_manager/geo_vision_qa.py
 import json
 import os
 import re
@@ -17,13 +17,21 @@ _THINK_RE = re.compile(r"</think>", re.IGNORECASE)
 _ACTION_RE = re.compile(r"<action>.*?</action>", re.DOTALL | re.IGNORECASE)
 
 
+_BOXED_RE = re.compile(r"^\\boxed\{(.*)\}$", re.DOTALL)
+
+
+def _unwrap_boxed(text: str) -> str:
+    m = _BOXED_RE.match(text.strip())
+    return m.group(1).strip() if m else text
+
+
 def extract_answer(text: str) -> str:
     match = _ANSWER_RE.search(text)
     if match:
-        return match.group(1).strip()
+        return _unwrap_boxed(match.group(1).strip())
     think_match = re.search(r"</think>\s*(.*)", text, re.DOTALL | re.IGNORECASE)
     if think_match:
-        return think_match.group(1).strip()
+        return _unwrap_boxed(think_match.group(1).strip())
     return ""
 
 
@@ -375,22 +383,7 @@ class GeoVisionQARewardManager:
         self.num_examine = num_examine
         self.reward_fn_key = reward_fn_key
         self.config = config
-
-        api_key = os.environ.get("JUDGE_API_KEY")
-        if api_key:
-            try:
-                from geo_edit.evaluation.trajectory_judge import TrajectoryJudge
-                self.judge = TrajectoryJudge(
-                    api_key=api_key,
-                    model=os.environ.get("JUDGE_MODEL", "gpt-5-mini-2025-08-07"),
-                    api_base=os.environ.get("JUDGE_API_BASE"),
-                )
-                logger.info("LLM judge enabled (model=%s)", self.judge.model)
-            except ImportError:
-                logger.warning("TrajectoryJudge import failed, LLM judge disabled")
-                self.judge = None
-        else:
-            self.judge = None
+        self.judge = None
 
     def _score_correctness(self, prediction: str, ground_truth, data_source: str, data_item) -> float:
         if not prediction:
@@ -512,7 +505,8 @@ class GeoVisionQARewardManager:
 
             is_ood = data_source.startswith("cartomapqa_") or data_source.startswith("mapeval_")
             judge_threshold = (accuracy != 1.0) if is_ood else (accuracy == 0.0)
-            if judge_threshold and prediction and self.judge is not None and data_source != "map_trace":
+            both_short = len(prediction.split()) <= 1 and len(str(ground_truth).split()) <= 1
+            if judge_threshold and prediction and self.judge is not None and data_source != "map_trace" and not both_short:
                 if data_source == "reason_map":
                     reason = getattr(self, "_last_reasonmap_reason", "")
                     judge_gt = (

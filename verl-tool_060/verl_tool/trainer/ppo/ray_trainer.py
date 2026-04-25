@@ -56,11 +56,17 @@ def _compat_compute_advantage(*args, **kwargs):
 _dapo_module.compute_advantage = _compat_compute_advantage
 ##############################################################################
 
-class AgentRayPPOTrainer(RayDAPOTrainer):
+class AgentRayPPOTrainer(RayPPOTrainer):
+
+    compute_kl_related_metrics = RayDAPOTrainer.compute_kl_related_metrics
+
+    def _is_dapo_mode(self):
+        fg = getattr(self.config.algorithm, 'filter_groups', None)
+        return fg is not None and fg.get('enable', False)
 
     def fit(self):
         from omegaconf import OmegaConf, open_dict
-        if getattr(self.config.algorithm, 'filter_groups', None) is None:
+        if self._is_dapo_mode() and getattr(self.config.algorithm, 'filter_groups', None) is None:
             with open_dict(self.config.algorithm):
                 self.config.algorithm.filter_groups = OmegaConf.create({
                     'enable': False,
@@ -100,7 +106,10 @@ class AgentRayPPOTrainer(RayDAPOTrainer):
         AgentRayPPOTrainer._active_config = self.config.algorithm
 
         try:
-            super().fit()
+            if self._is_dapo_mode():
+                RayDAPOTrainer.fit(self)
+            else:
+                RayPPOTrainer.fit(self)
         finally:
             AgentRayPPOTrainer._active_config = None
             if self.async_rollout_mode:

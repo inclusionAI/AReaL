@@ -27,7 +27,7 @@ n_nodes=4
 # ---- Batch sizes ----
 n=4
 batch_size=64
-ppo_mini_batch_size=128
+ppo_mini_batch_size=64
 
 # ---- Sequence lengths ----
 max_prompt_length=16384
@@ -54,7 +54,7 @@ reward_manager=geo_vision_qa
 # ---- Training ----
 strategy="fsdp2"
 lr=1e-6
-kl_loss_coef=0.001
+kl_loss_coef=0.0
 kl_coef=0.0
 entropy_coeff=0
 kl_loss_type=low_var_kl
@@ -78,7 +78,7 @@ max_num_batched_tokens=$(expr $max_prompt_length + $max_response_length)
 rollout_mode='async'
 
 # ---- Schedule ----
-total_training_steps=300
+total_training_steps=200
 save_freq=10
 test_freq=20
 
@@ -89,7 +89,7 @@ at_gigpo_ema_alpha=0.5
 at_gigpo_epoch_decay_start=2.0
 at_gigpo_n_turn_buckets=4
 at_gigpo_min_bucket_ratio=0.15
-at_gigpo_sort_by_turns=false
+at_gigpo_sort_by_turns=True
 
 # ============================================================
 export VERL_RUN_ID=$run_name
@@ -139,20 +139,22 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     algorithm.gigpo_omega=1.0 \
     algorithm.gigpo_gamma=0.99 \
     +algorithm.gigpo_sim_threshold=0.9 \
-    +algorithm.at_gigpo.enable=true \
-    +algorithm.at_gigpo.tau=$at_gigpo_tau \
-    +algorithm.at_gigpo.l_hat_update_ratio=$at_gigpo_l_hat_update_ratio \
-    +algorithm.at_gigpo.ema_alpha=$at_gigpo_ema_alpha \
-    +algorithm.at_gigpo.epoch_decay_start=$at_gigpo_epoch_decay_start \
-    +algorithm.at_gigpo.n_turn_buckets=$at_gigpo_n_turn_buckets \
-    +algorithm.at_gigpo.min_bucket_ratio=$at_gigpo_min_bucket_ratio \
-    +algorithm.at_gigpo.sort_by_turns=$at_gigpo_sort_by_turns \
+    algorithm.at_gigpo.enable=true \
+    algorithm.at_gigpo.tau=$at_gigpo_tau \
+    algorithm.at_gigpo.l_hat_update_ratio=$at_gigpo_l_hat_update_ratio \
+    algorithm.at_gigpo.ema_alpha=$at_gigpo_ema_alpha \
+    algorithm.at_gigpo.epoch_decay_start=$at_gigpo_epoch_decay_start \
+    algorithm.at_gigpo.n_turn_buckets=$at_gigpo_n_turn_buckets \
+    algorithm.at_gigpo.min_bucket_ratio=$at_gigpo_min_bucket_ratio \
+    algorithm.at_gigpo.sort_by_turns=$at_gigpo_sort_by_turns \
     +algorithm.at_gigpo.total_training_steps=$total_training_steps \
     data.train_files=$train_data \
     data.val_files=$val_data \
     data.train_batch_size=$batch_size \
     data.val_batch_size=256 \
-    data.dataloader_num_workers=64 \
+    +data.sampler.class_path=verl_tool/trainer/ppo/at_gigpo_sampler.py \
+    +data.sampler.class_name=ATGiGPOSampler \
+    data.dataloader_num_workers=0 \
     data.max_prompt_length=$max_prompt_length \
     data.max_response_length=$max_response_length \
     data.filter_overlong_prompts=False \
