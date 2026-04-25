@@ -14,8 +14,6 @@ from typing import TYPE_CHECKING, Any
 import mbridge
 import torch
 import torch.distributed as dist
-from megatron.bridge import AutoBridge as MegatronBridgeAutoBridge
-from megatron.bridge.peft.lora import LoRA as MegatronBridgeLoRA
 from megatron.core import parallel_state as mpu
 from megatron.core import tensor_parallel
 from megatron.core.distributed import DistributedDataParallel as DDP
@@ -109,6 +107,8 @@ from areal.utils.seeding import get_seed
 if TYPE_CHECKING:
     from areal.api import Scheduler
     from areal.api.cli_args import PPOActorConfig, PPOCriticConfig
+    from megatron.bridge import AutoBridge as MegatronBridgeAutoBridge
+    from megatron.bridge.peft.lora import LoRA as MegatronBridgeLoRA
 
 
 class _MegatronModelList(list):
@@ -225,6 +225,8 @@ class MegatronEngine(TrainEngine):
         self.process_group_initialized = True
 
     def _apply_megatron_bridge_lora(self) -> None:
+        from megatron.bridge.peft.lora import LoRA as MegatronBridgeLoRA
+
         assert self.model is not None, "Model must be initialized before applying LoRA."
         assert self.bridge_cls == "megatron-bridge"
 
@@ -452,6 +454,8 @@ class MegatronEngine(TrainEngine):
             )
 
         elif self.bridge_cls == "megatron-bridge":
+            from megatron.bridge import AutoBridge as MegatronBridgeAutoBridge
+
             if self.enable_tree_training:
                 raise NotImplementedError(
                     "Tree training is not supported with bridge_type='megatron-bridge'."
