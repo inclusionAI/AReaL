@@ -21,7 +21,6 @@ from areal.api.cli_args import (
     dataclass,
     field,
 )
-from areal.api.sandbox_api import SandboxConfig
 from areal.utils import logging, stats_tracker
 
 from prompts import ANSWER, SYSTEM_PROMPT, TORL_PROMPT  # isort: skip
@@ -37,7 +36,6 @@ class TIRConfig:
     tool_timeout: float = field(default=30)
     enable_tools: str = field(default="python")
     is_chat_model: bool = field(default=False)
-    sandbox: SandboxConfig = field(default_factory=SandboxConfig)
 
 
 @dataclass
@@ -69,10 +67,7 @@ class TIRWorkflow(RolloutWorkflow):
         self.gconfig = gconfig.new_with_stop_and_pad_token_ids(tokenizer)
         self.tokenizer = tokenizer
         self.tool_manager = ToolManager(
-            tir_config.tool_timeout,
-            tir_config.enable_tools,
-            debug_mode=False,
-            sandbox_config=tir_config.sandbox if tir_config.sandbox.enabled else None,
+            tir_config.tool_timeout, tir_config.enable_tools, debug_mode=False
         )
         self.is_chat_model = tir_config.is_chat_model
         self.max_turns = tir_config.max_turns

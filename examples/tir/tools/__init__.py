@@ -10,9 +10,6 @@ from .base import (
 from .calculator_tool import (
     CalculatorTool,
 )
-from .cube_sandbox_tool import (
-    CubeSandboxPythonTool,
-)
 
 # Export specific tool implementations
 from .python_tool import (
