@@ -286,10 +286,6 @@ def create_engine():
 
         engine = data.get("engine")
         engine_name = data.get("engine_name")
-        logger.info(
-            f"[DIAG] /create_engine: received request for engine='{engine}', "
-            f"engine_name='{engine_name}'"
-        )
         # Deserialize init_args and init_kwargs (may contain tensors/dataclasses)
         init_args = deserialize_value(data.get("init_args", []))
         init_kwargs = deserialize_value(data.get("init_kwargs", {}))
@@ -361,10 +357,6 @@ def create_engine():
                 "create_engine", create_engine_in_engine_thread
             )
             _engines[engine_name] = engine_obj
-            logger.info(
-                f"[DIAG] /create_engine: engine '{engine_name}' "
-                f"created successfully (class: {engine})"
-            )
             return jsonify(
                 {
                     "status": "success",
@@ -411,10 +403,6 @@ def call_engine_method():
 
         method_name = data.get("method")
         engine_name = data.get("engine_name")
-        logger.info(
-            f"[DIAG] /call: received request for method='{method_name}', "
-            f"engine_name='{engine_name}'"
-        )
         raw_args = data.get("args", [])
         raw_kwargs = data.get("kwargs", {})
 

@@ -202,17 +202,11 @@ class PPOTrainer:
 
         engine_init_kwargs = {"addr": None, "ft_spec": ft_spec}
 
-        logger.info("[DIAG] PPOTrainer: initializing actor engine...")
         self.actor.initialize(**engine_init_kwargs, role="actor")
-        logger.info("[DIAG] PPOTrainer: actor engine initialized")
         if self.critic is not None:
-            logger.info("[DIAG] PPOTrainer: initializing critic engine...")
             self.critic.initialize(**engine_init_kwargs, role="critic")
-            logger.info("[DIAG] PPOTrainer: critic engine initialized")
         if self.ref is not None:
-            logger.info("[DIAG] PPOTrainer: initializing ref engine...")
             self.ref.initialize(**engine_init_kwargs, role="ref")
-            logger.info("[DIAG] PPOTrainer: ref engine initialized")
 
         self.teacher = None
         if config.teacher is not None:
@@ -226,11 +220,9 @@ class PPOTrainer:
         initial_lora_path = self._save_initial_lora_weights()
 
         # Initialize inference with LoRA path
-        logger.info("[DIAG] PPOTrainer: initializing rollout engine...")
         self.rollout = self._init_rollout(
             config.rollout, is_eval=False, lora_path=initial_lora_path
         )
-        logger.info("[DIAG] PPOTrainer: rollout engine initialized")
         # Online mode detection: skip eval rollout for efficiency.
         openai_cfg = config.rollout.openai
         self._online_mode = train_dataset is None or (

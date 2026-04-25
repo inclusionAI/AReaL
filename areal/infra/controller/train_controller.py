@@ -282,23 +282,10 @@ class TrainController:
         )
 
         # Create workers via scheduler
-        logger.info(
-            f"[DIAG] TrainController.initialize: creating {world_size} worker(s) "
-            f"for role '{self._worker_role}' via scheduler..."
-        )
         worker_ids = self.scheduler.create_workers(job=job)
-        logger.info(f"[DIAG] TrainController.initialize: workers created: {worker_ids}")
 
         # Wait for workers to be ready
-        logger.info(
-            "[DIAG] TrainController.initialize: waiting for workers to be ready..."
-        )
         self.workers = self.scheduler.get_workers(role=job.role)
-        logger.info(
-            f"[DIAG] TrainController.initialize: workers ready: "
-            f"{[w.id for w in self.workers]}, "
-            f"ips={[w.ip for w in self.workers]}"
-        )
 
         # Determine distributed training master address and port from rank 0 worker
         # These are used for PyTorch distributed initialization across workers
@@ -320,17 +307,9 @@ class TrainController:
 
         # Create and initialize engines on workers
         engine_path = f"{engine_class.__module__}.{engine_class.__name__}"
-        logger.info(
-            f"[DIAG] TrainController.initialize: creating engines "
-            f"(class={engine_path}) on {len(self.workers)} worker(s)..."
-        )
         run_async_task(
             self._async_create_engines,
             engine_path,
-        )
-        logger.info(
-            "[DIAG] TrainController.initialize: engines created, "
-            "now initializing (create_process_group + initialize)..."
         )
         run_async_task(self._async_initialize_engines, ft_spec, **kwargs)
 
@@ -347,10 +326,6 @@ class TrainController:
 
     async def _async_create_engines(self, engine: str):
         """Create engine instances on all workers. Sets distributed env vars before creation."""
-        logger.info(
-            f"[DIAG] _async_create_engines: creating engine '{engine}' "
-            f"on {len(self.workers)} worker(s)..."
-        )
 
         async def _setup_worker(worker: Worker, rank: int):
             env = {
@@ -361,36 +336,24 @@ class TrainController:
                 "LOCAL_RANK": "0",
             }
             logger.debug(
-                f"[DIAG] _async_create_engines: setting env for worker "
+                f"Setting env for worker "
                 f"'{worker.id}' (rank={rank}): {env}"
             )
             await self.scheduler.set_worker_env(worker.id, env)
-            logger.info(
-                f"[DIAG] _async_create_engines: creating engine on worker "
-                f"'{worker.id}' (rank={rank})..."
-            )
             await self.scheduler.create_engine(
                 worker_id=worker.id,
                 engine=engine,
                 engine_name=self._engine_name(rank),
                 config=self.config,
             )
-            logger.info(
-                f"[DIAG] _async_create_engines: engine created on worker "
-                f"'{worker.id}' (rank={rank})"
-            )
 
         tasks = [
             _setup_worker(worker, rank) for rank, worker in enumerate(self.workers)
         ]
         await asyncio.gather(*tasks)
-        logger.info("[DIAG] _async_create_engines: engines created on all workers!")
 
     async def _async_initialize_engines(self, ft_spec: FinetuneSpec, **kwargs):
         """Initialize engines: create process groups, then load models and setup optimizers."""
-        logger.info(
-            "[DIAG] _async_initialize_engines: Phase 1 - creating process groups..."
-        )
         # Phase 1: Create process groups for distributed training
         tasks = [
             self.scheduler.async_call_engine(
@@ -402,13 +365,7 @@ class TrainController:
             for rank, worker in enumerate(self.workers)
         ]
         await asyncio.gather(*tasks)
-        logger.info(
-            "[DIAG] _async_initialize_engines: Phase 1 complete - process groups created"
-        )
         # Phase 2: Initialize engines (load models, setup optimizers, etc.)
-        logger.info(
-            "[DIAG] _async_initialize_engines: Phase 2 - initializing engines (loading models)..."
-        )
         tasks = [
             self.scheduler.async_call_engine(
                 worker_id=worker.id,

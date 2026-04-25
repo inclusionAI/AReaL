@@ -549,15 +549,8 @@ class LocalScheduler(Scheduler):
 
         # Configure forked workers if exp_config is available
         if self.exp_config is not None:
-            logger.info(
-                f"[DIAG] create_workers: configuring {len(workers)} worker(s) "
-                f"for role '{role}' with exp_config"
-            )
             for worker_rank, worker_info in enumerate(workers):
                 self._configure_worker(worker_info, worker_rank)
-            logger.info(
-                f"[DIAG] create_workers: all workers for role '{role}' configured"
-            )
 
         return worker_ids
 
@@ -799,9 +792,6 @@ class LocalScheduler(Scheduler):
                     )
 
                 worker_ip = gethostip()
-                logger.info(
-                    f"[DIAG] create_workers: gethostip() returned '{worker_ip}' for worker '{worker_id}'"
-                )
                 worker = Worker(
                     id=worker_id,
                     ip=worker_ip,
@@ -839,15 +829,8 @@ class LocalScheduler(Scheduler):
             raise WorkerCreationError(role, "Unexpected error", str(e)) from e
 
         if self.exp_config is not None:
-            logger.info(
-                f"[DIAG] create_workers: configuring {len(workers)} worker(s) "
-                f"for role '{role}' with exp_config"
-            )
             for worker_rank, worker_info in enumerate(workers):
                 self._configure_worker(worker_info, worker_rank)
-            logger.info(
-                f"[DIAG] create_workers: all workers for role '{role}' configured"
-            )
 
         return worker_ids
 
@@ -894,10 +877,6 @@ class LocalScheduler(Scheduler):
         workers = self._workers[role]
         timeout = timeout if timeout is not None else self.startup_timeout
 
-        logger.info(
-            f"[DIAG] get_workers: waiting for {len(workers)} worker(s) "
-            f"of role '{role}' to be ready (timeout={timeout}s)"
-        )
         self._check_worker_health(role)
 
         start_time = time.time()
@@ -909,10 +888,6 @@ class LocalScheduler(Scheduler):
                 not_ready = [
                     w.worker.id for w in workers if w.worker.id not in ready_workers
                 ]
-                logger.error(
-                    f"[DIAG] get_workers: TIMEOUT after {elapsed:.1f}s. "
-                    f"Ready: {ready_workers}, Not ready: {not_ready}"
-                )
                 raise WorkerTimeoutError(
                     role,
                     timeout,
@@ -936,10 +911,6 @@ class LocalScheduler(Scheduler):
 
                 if self._is_worker_ready(worker_info):
                     ready_workers.add(worker_info.worker.id)
-                    logger.info(
-                        f"[DIAG] get_workers: worker '{worker_info.worker.id}' "
-                        f"is ready ({len(ready_workers)}/{len(workers)})"
-                    )
 
             if len(ready_workers) < len(workers):
                 time.sleep(self.health_check_interval)
@@ -954,25 +925,17 @@ class LocalScheduler(Scheduler):
         try:
             response = requests.get(url, timeout=2.0)
             ready = response.status_code == 200
-            if ready:
-                logger.info(
-                    f"[DIAG] _is_worker_ready: {url} -> {response.status_code} (ready)"
-                )
-            else:
+            if not ready:
                 logger.warning(
-                    f"[DIAG] _is_worker_ready: {url} -> {response.status_code} (not ready)"
+                    f"Worker health check failed: {url} -> {response.status_code}"
                 )
             return ready
         except Exception as e:
-            logger.warning(f"[DIAG] _is_worker_ready: {url} -> error: {e}")
+            logger.warning(f"Worker health check error: {url} -> {e}")
             return False
 
     def _configure_worker(self, worker_info: WorkerInfo, worker_rank: int):
         worker_id = worker_info.worker.id
-        logger.info(
-            f"[DIAG] _configure_worker: waiting for worker '{worker_id}' "
-            f"(ip={worker_info.worker.ip}, ports={worker_info.worker.worker_ports}) to be ready"
-        )
         wait_start = time.time()
         last_log_time = wait_start
         while not self._is_worker_ready(worker_info):
@@ -981,20 +944,15 @@ class LocalScheduler(Scheduler):
             if now - last_log_time >= 5.0:
                 elapsed = now - wait_start
                 logger.warning(
-                    f"[DIAG] _configure_worker: still waiting for worker "
+                    f"Still waiting for worker "
                     f"'{worker_id}' after {elapsed:.0f}s "
                     f"(ip={worker_info.worker.ip}, "
                     f"ports={worker_info.worker.worker_ports})"
                 )
                 last_log_time = now
-        logger.info(
-            f"[DIAG] _configure_worker: worker '{worker_id}' ready after "
-            f"{time.time() - wait_start:.1f}s, sending configure request"
-        )
 
         port = int(worker_info.worker.worker_ports[0])
         url = f"http://{format_hostport(worker_info.worker.ip, port)}/configure"
-        logger.info(f"[DIAG] _configure_worker: POST {url} for worker '{worker_id}'")
 
         try:
             response = requests.post(
@@ -1151,10 +1109,6 @@ class LocalScheduler(Scheduler):
         payload = {"env": env}
         port = int(worker_info.worker.worker_ports[0])
         url = f"http://{format_hostport(worker_info.worker.ip, port)}/set_env"
-        logger.info(
-            f"[DIAG] set_worker_env: POST {url} for worker '{worker_id}', "
-            f"env keys={list(env.keys())}"
-        )
 
         try:
             timeout = aiohttp.ClientTimeout(total=30.0)
@@ -1248,11 +1202,6 @@ class LocalScheduler(Scheduler):
         url = f"http://{format_hostport(worker_info.worker.ip, port)}/create_engine"
 
         try:
-            logger.info(
-                f"[DIAG] create_engine: POST {url} engine='{engine_name}' "
-                f"(class: {engine}) on worker '{worker_id}'"
-            )
-
             timeout = aiohttp.ClientTimeout(total=300.0)
             async with aiohttp.ClientSession(
                 timeout=timeout,
@@ -1266,10 +1215,6 @@ class LocalScheduler(Scheduler):
                 ) as response:
                     if response.status == 200:
                         result = await response.json()
-                        logger.info(
-                            f"[DIAG] create_engine: engine '{engine_name}' "
-                            f"created successfully on worker '{worker_id}'"
-                        )
                         return result.get("result")
                     elif response.status == 400:
                         # Import error or bad request
@@ -1525,11 +1470,6 @@ class LocalScheduler(Scheduler):
                 )
 
             try:
-                logger.info(
-                    f"[DIAG] async_call_engine: POST {url} method='{method}' "
-                    f"engine='{engine_name}' on worker '{worker_id}' (attempt {attempt})"
-                )
-
                 timeo = aiohttp.ClientTimeout(
                     total=http_timeout, sock_connect=http_timeout, connect=http_timeout
                 )

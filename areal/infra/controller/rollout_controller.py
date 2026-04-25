@@ -238,34 +238,16 @@ class RolloutController:
         **kwargs,
     ):
         # Create workers via scheduler
-        logger.info(
-            f"[DIAG] RolloutController._async_initialize: creating workers "
-            f"for role '{job.role}' via scheduler..."
-        )
         worker_ids = self.scheduler.create_workers(job=job)
-        logger.info(
-            f"[DIAG] RolloutController._async_initialize: workers created: {worker_ids}"
-        )
 
         # Wait for workers to be ready
-        logger.info(
-            "[DIAG] RolloutController._async_initialize: waiting for workers to be ready..."
-        )
         self.workers = self.scheduler.get_workers(role=job.role)
-        logger.info(
-            f"[DIAG] RolloutController._async_initialize: workers ready: "
-            f"{[w.id for w in self.workers]}, ips={[w.ip for w in self.workers]}"
-        )
 
         # Get engine class path for dynamic import on workers
         engine_class = self.inf_engine
         engine_path = f"{engine_class.__module__}.{engine_class.__name__}"
 
         # Create and initialize engines on workers
-        logger.info(
-            f"[DIAG] RolloutController._async_initialize: creating engines "
-            f"(class={engine_path}) on {len(self.workers)} worker(s)..."
-        )
         tasks = [
             self.scheduler.create_engine(
                 worker_id=worker.id,
@@ -276,18 +258,8 @@ class RolloutController:
             for rank, worker in enumerate(self.workers)
         ]
         await asyncio.gather(*tasks)
-        logger.info(
-            "[DIAG] RolloutController._async_initialize: engines created on all workers!"
-        )
 
-        logger.info(
-            "[DIAG] RolloutController._async_initialize: calling engine initialization..."
-        )
         if server_infos is not None:
-            logger.info(
-                f"[DIAG] RolloutController._async_initialize: connecting to "
-                f"{len(server_infos)} existing server(s) for evaluation"
-            )
             # Connecting to existing local servers for evaluation
             self.server_infos = server_infos
             assert len(self.server_infos) == len(self.workers), (
