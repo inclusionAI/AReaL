@@ -86,14 +86,14 @@ Turn 2: Client → Gateway → Router (same DataProxy) → DataProxy → Worker
 
 ```python
 from areal.experimental.agent_service.controller import (
-    AgentServiceController,
-    AgentServiceControllerConfig,
+    AgentController,
 )
+from areal.api.cli_args import AgentConfig
 from areal.infra.scheduler.local import LocalScheduler
 
 scheduler = LocalScheduler(experiment_name="demo", trial_name="run0", gpu_devices=[])
-ctrl = AgentServiceController(
-    config=AgentServiceControllerConfig(
+ctrl = AgentController(
+    config=AgentConfig(
         agent_cls_path="examples.agent_service.agent.ClaudeAgent",
         num_pairs=2,
     ),

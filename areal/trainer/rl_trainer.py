@@ -6,7 +6,7 @@ import functools
 import os
 from collections.abc import Callable
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import torch.distributed as dist
 from torchdata.stateful_dataloader import StatefulDataLoader
@@ -35,6 +35,9 @@ from areal.api.cli_args import (
     vLLMConfig,
 )
 from areal.engine import RemoteSGLangEngine, RemotevLLMEngine
+from areal.experimental.inference_service.controller.controller import (
+    RolloutControllerV2,
+)
 from areal.infra import (
     LocalScheduler,
     RayScheduler,
@@ -1008,7 +1011,12 @@ class PPOTrainer:
             return engine
 
         # Single-controller mode - no engine instantiation needed
-        controller = engine_cls.as_controller(config, self.scheduler)
+        if config._version == "v2":
+            controller = RolloutControllerV2(
+                config=config, scheduler=cast(Scheduler, self.scheduler)
+            )
+        else:
+            controller = engine_cls.as_controller(config, self.scheduler)
         init_kwargs = dict(
             role="rollout",
             server_args=server_args,

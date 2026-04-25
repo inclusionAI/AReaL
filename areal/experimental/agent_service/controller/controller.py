@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
-"""AgentServiceController — orchestrates agent service micro-services via Guards.
+"""AgentController — orchestrates agent service micro-services via Guards.
 
 Mirrors the architecture of
-:class:`~areal.experimental.inference_service.controller.controller.GatewayInferenceController`:
+:class:`~areal.experimental.inference_service.controller.controller.RolloutControllerV2`:
 Guard workers are created via the Scheduler, then the controller forks
 Router, Worker+DataProxy pairs, and Gateway onto them via HTTP API.
 
@@ -12,7 +12,7 @@ Lifecycle::
     from areal.infra.scheduler.local import LocalScheduler
 
     scheduler = LocalScheduler(...)
-    controller = AgentServiceController(config, scheduler)
+    controller = AgentController(config, scheduler)
     controller.initialize()
     # ... run traffic ...
     controller.scale_up(2)     # add 2 Worker+DataProxy pairs
@@ -32,16 +32,14 @@ from typing import TYPE_CHECKING, Any
 
 import requests
 
-from areal.experimental.agent_service.controller.config import (
-    AgentServiceControllerConfig,
-)
+from areal.api.cli_args import AgentConfig
 from areal.utils import logging
 from areal.utils.network import format_hostport
 
 if TYPE_CHECKING:
     from areal.api.scheduler_api import Scheduler, Worker
 
-logger = logging.getLogger("AgentServiceController")
+logger = logging.getLogger("AgentController")
 
 _GUARD_ROLE = "agent-guard"
 _UNREGISTER_RETRIES = 3
@@ -60,7 +58,7 @@ class _WorkerPair:
     worker_addr: str
 
 
-class AgentServiceController:
+class AgentController:
     """Orchestrator for the Agent Service micro-service stack.
 
     Parameters
@@ -73,7 +71,7 @@ class AgentServiceController:
 
     def __init__(
         self,
-        config: AgentServiceControllerConfig,
+        config: AgentConfig,
         scheduler: Scheduler,
     ) -> None:
         self.config = config

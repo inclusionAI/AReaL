@@ -21,10 +21,8 @@ import time
 
 import httpx
 
-from areal.experimental.agent_service.controller import (
-    AgentServiceController,
-    AgentServiceControllerConfig,
-)
+from areal.api.cli_args import AgentConfig
+from areal.experimental.agent_service.controller import AgentController
 
 
 async def _wait_healthy(url: str, timeout: float = 60.0) -> None:
@@ -103,12 +101,12 @@ def main() -> None:
         gpu_devices=[],
     )
 
-    ctrl_config = AgentServiceControllerConfig(
+    ctrl_config = AgentConfig(
         agent_cls_path="examples.agent_service.agent.ClaudeAgent",
         admin_api_key=args.admin_api_key,
         num_pairs=args.num_pairs,
     )
-    ctrl = AgentServiceController(config=ctrl_config, scheduler=scheduler)
+    ctrl = AgentController(config=ctrl_config, scheduler=scheduler)
 
     try:
         print(f"Initializing with {args.num_pairs} pair(s) ...")
