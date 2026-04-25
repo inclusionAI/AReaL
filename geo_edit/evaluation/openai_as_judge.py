@@ -275,6 +275,12 @@ def main(
         help="Path to baseline eval results for comparison.",
     )
     parser.add_argument("--max_workers", type=int, default=32, help="Max concurrent judge threads.")
+    parser.add_argument(
+        "--fast",
+        action="store_true",
+        default=False,
+        help="Fast mode: skip LLM judge when exact match cannot determine, score as 0.0.",
+    )
     args = parser.parse_args()
 
     os.environ["OPENAI_API_KEY"] = args.api_key
@@ -386,6 +392,10 @@ def main(
                 if exact is not None:
                     print(f"[ExactMatch] Question: {question}, GT: {ground_truth}, Pred: {final_pred}, Score: {exact}")
                     eval_item = _build_eval_item(record, record_id, cfg, final_pred, exact)
+                    _account_and_write(eval_item, out_f)
+                elif args.fast and len(final_pred.split()) <= 1 and len(ground_truth.split()) <= 1:
+                    print(f"[Fast] Question: {question}, GT: {ground_truth}, Pred: {final_pred}, Score: 0.0")
+                    eval_item = _build_eval_item(record, record_id, cfg, final_pred, 0.0)
                     _account_and_write(eval_item, out_f)
                 else:
                     from time import sleep

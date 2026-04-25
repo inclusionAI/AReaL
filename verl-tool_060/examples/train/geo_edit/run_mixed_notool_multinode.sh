@@ -16,13 +16,13 @@ set -x
 # ============================================================
 
 WORKSPACE=${WORKSPACE:-/storage/openpsi/data/lcy_image_edit/mixed_rl}
-model_name=${MODEL_PATH:-/storage/openpsi/models/lcy_image_edit/sft_workspace/qwen3vl8b-thinking-5ds-v2-0419-ct65536/checkpoint-280}
+model_name=${MODEL_PATH:-/storage/openpsi/models/lcy_image_edit/sft_workspace/qwen3vl8b-thinking-toolfree_5ds_v2-0424-ct65536}
 
 train_data="[/storage/openpsi/data/reasonmap_rl/combined_train_rl_only.parquet,$WORKSPACE/new_train.parquet]"
 val_data="[/storage/openpsi/data/reasonmap_rl/combined_test_10pct.parquet,$WORKSPACE/new_val.parquet,$WORKSPACE/mapqa_val_200.parquet]"
 run_name="mixed-grpo-notool-4node"
 rl_alg=grpo
-
+ 
 # ---- Cluster topology ----
 n_gpus_per_node=8
 n_nodes=4
@@ -34,7 +34,7 @@ ppo_mini_batch_size=64
 
 # ---- Sequence lengths ----
 max_prompt_length=16384
-max_response_length=32768
+max_response_length=16384
 ppo_max_token_len_per_gpu=$(expr $max_prompt_length + $max_response_length)
 
 # ---- Sampling ----
@@ -69,7 +69,6 @@ use_dynamic_bsz=True
 
 # ---- Rollout ----
 max_num_batched_tokens=$(expr $max_prompt_length + $max_response_length)
-rollout_mode='async'
 
 # ---- Schedule ----
 total_epochs=3
@@ -146,11 +145,7 @@ PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.n=$n \
     actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=$use_dynamic_bsz \
     actor_rollout_ref.rollout.max_num_seqs=32 \
-    actor_rollout_ref.rollout.mode=$rollout_mode \
     actor_rollout_ref.rollout.max_num_batched_tokens=$max_num_batched_tokens \
-    actor_rollout_ref.rollout.agent.num_workers=$(expr $n_nodes \* $n_gpus_per_node) \
-    actor_rollout_ref.rollout.agent.default_agent_loop=single_turn_agent \
-    +actor_rollout_ref.rollout.engine_kwargs.vllm.mm-processor-cache-gb=8 \
     actor_rollout_ref.ref.log_prob_use_dynamic_bsz=$use_dynamic_bsz \
     actor_rollout_ref.ref.fsdp_config.param_offload=$do_offload \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=$log_prob_micro_batch_size_per_gpu \
