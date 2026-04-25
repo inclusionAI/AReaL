@@ -55,7 +55,11 @@ class ATGiGPOSampler(AbstractCurriculumSampler):
 
         episode_adv = batch.batch["episode_advantages"]
         if episode_adv.dim() > 1:
-            episode_adv = episode_adv.sum(dim=-1)
+            mask = batch.batch.get("response_mask", None)
+            if mask is not None:
+                episode_adv = (episode_adv * mask).sum(dim=-1) / mask.sum(dim=-1).clamp(min=1)
+            else:
+                episode_adv = episode_adv.mean(dim=-1)
         episode_adv_abs = episode_adv.abs().cpu().numpy()
 
         task_labels = batch.non_tensor_batch.get("data_source", None)

@@ -310,7 +310,7 @@ def compute_advantage(
 
         if isinstance(gigpo_metrics, dict) and "_episode_advantages" in gigpo_metrics:
             ep_adv = gigpo_metrics.pop("_episode_advantages")
-            data.batch["episode_advantages"] = ep_adv.unsqueeze(-1) * data.batch["response_mask"]
+            data.batch["episode_advantages"] = ep_adv
 
     # Overturn masking: A'_i = M_i · A_i
     if config is not None and config.get("overturn_masking", False):
