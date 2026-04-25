@@ -479,7 +479,7 @@ requires-dist = [
     { name = "math-verify", specifier = "==0.8.0" },
     { name = "mathruler", specifier = "==0.1.0" },
     { name = "matplotlib" },
-    { name = "mbridge", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'megatron'", specifier = "==0.15.1" },
+    { name = "mbridge", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'megatron'", git = "https://github.com/ISEEKYAN/mbridge.git?rev=310e8fb" },
     { name = "megatron-bridge", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'megatron'", specifier = "==0.3.0" },
     { name = "megatron-core", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'megatron'", specifier = "==0.16.0" },
     { name = "msgspec" },
@@ -3047,11 +3047,7 @@ wheels = [
 [[package]]
 name = "mbridge"
 version = "0.15.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/65/3f/04534fb2b4ddf6b293ee41f839de8ae6542ef2dc1b32c7d25a4b5b18c1bb/mbridge-0.15.1.tar.gz", hash = "sha256:26028dbe7dc9193c6c6b3de56e82691c9a484f46ded1ed18a41f2747a08e8104", size = 99287, upload-time = "2025-09-22T09:48:30.141Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/51/dc/8208746f41ff08d0b6eb8c261569d57af97648ee0d1631ea273e68c627dc/mbridge-0.15.1-py3-none-any.whl", hash = "sha256:5c7c007c2eb13bb2d0ce9bd6b313537024d0a7fad52179ff367635eafe5cd4cd", size = 122168, upload-time = "2025-09-22T09:48:28.384Z" },
-]
+source = { git = "https://github.com/ISEEKYAN/mbridge.git?rev=310e8fb#310e8fb35ccf4fcd4419d32973e563a6d43ee5fb" }
 
 [[package]]
 name = "mcp"

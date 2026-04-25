@@ -41,6 +41,7 @@ cp "${DEFAULT_LOCK}" "${TMP_DIR}/uv.lock.bak"
 
 echo "[AReaL] Generating vLLM lockfile from pyproject.vllm.toml..."
 cp "${VLLM_PYPROJECT}" "${DEFAULT_PYPROJECT}"
+cp "${VLLM_LOCK}" "${DEFAULT_LOCK}"
 uv lock
 cp "${DEFAULT_LOCK}" "${VLLM_LOCK}"
 
