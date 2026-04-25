@@ -37,6 +37,10 @@ def _dummy_reward_fn(*args, **kwargs):
         pytest.param({"backend": "vllm", "method": "init"}, marks=pytest.mark.vllm),
         pytest.param({"backend": "sglang", "method": "init"}, marks=pytest.mark.sglang),
         pytest.param(
+            {"backend": "vllm", "method": "from_pretrained"},
+            marks=pytest.mark.vllm_from_pretrained,
+        ),
+        pytest.param(
             {"backend": "sglang", "method": "from_pretrained"},
             marks=pytest.mark.sglang_from_pretrained,
         ),
