@@ -411,6 +411,12 @@ def test_fsdp_engine_config_construction():
     assert engine.config.use_lora == engine2.config.use_lora
 
 
+@pytest.mark.skipif(
+    not torch.cuda.is_available()
+    or torch.cuda.device_count() < 4
+    or int(os.environ.get("WORLD_SIZE", "1")) < 4,
+    reason="requires 4 GPUs and 4 processes (torchrun --nproc_per_node=4)",
+)
 def test_fsdp_engine_alloc_mode_construction():
     """
     Test that FSDPEngine.from_pretrained builds a valid config.
