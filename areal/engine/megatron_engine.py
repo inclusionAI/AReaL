@@ -114,6 +114,33 @@ if TYPE_CHECKING:
     from megatron.bridge.peft.lora import LoRA as MegatronBridgeLoRA
 
 
+def _patch_gpt_model_postprocess_for_inference(model_list: _MegatronModelList) -> None:
+    from megatron.core.models.gpt.gpt_model import GPTModel
+
+    if getattr(GPTModel, "_areal_postprocess_patched", False):
+        return
+
+    _original_postprocess = GPTModel._postprocess
+
+    def _patched_postprocess(self, hidden_states, input_ids, position_ids, labels, **kwargs):
+        if labels is None and getattr(self.config, "mtp_num_layers", None) is not None:
+            original_mtp = self.config.mtp_num_layers
+            self.config.mtp_num_layers = None
+            try:
+                result = _original_postprocess(
+                    self, hidden_states, input_ids, position_ids, labels=labels, **kwargs
+                )
+            finally:
+                self.config.mtp_num_layers = original_mtp
+            return result
+        return _original_postprocess(
+            self, hidden_states, input_ids, position_ids, labels=labels, **kwargs
+        )
+
+    GPTModel._postprocess = _patched_postprocess
+    GPTModel._areal_postprocess_patched = True
+
+
 class _MegatronModelList(list):
     """List wrapper that exposes module-like helpers for Megatron model chunks."""
 
@@ -394,6 +421,8 @@ class MegatronEngine(TrainEngine):
         if self.config.disable_dropout:
             for model in self.model:
                 disable_dropout_in_model(model)
+
+        _patch_gpt_model_postprocess_for_inference(self.model)
 
         primary_model = self.model[0]
         model_config = get_model_config(primary_model)
