@@ -40,6 +40,7 @@ ESCAPABLE_PACKAGES: frozenset[str] = frozenset(
         "nvidia-cudnn-cu12",
         "openai",
         "soundfile",
+        "peft",
     }
 )
 

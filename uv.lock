@@ -494,7 +494,7 @@ requires-dist = [
     { name = "packaging" },
     { name = "pandas" },
     { name = "pebble" },
-    { name = "peft" },
+    { name = "peft", specifier = "<=0.18.1" },
     { name = "pillow", specifier = ">=12.1.1" },
     { name = "prettytable" },
     { name = "psutil" },

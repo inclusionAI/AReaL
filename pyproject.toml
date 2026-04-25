@@ -50,7 +50,7 @@ dependencies = [
     "huggingface_hub",
     "datasets>=3.0.0",
     "transformers==4.57.1",
-    "peft",
+    "peft<=0.18.1",
     "qwen_agent",
     "openai-agents",
     "anthropic",

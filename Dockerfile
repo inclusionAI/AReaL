@@ -64,7 +64,7 @@ ENV TORCH_CUDA_ARCH_LIST="8.0 8.9 9.0 9.0a"
 ENV MAX_JOBS=32
 
 # Set VIRTUAL_ENV so uv pip install targets the venv created below
-ENV VIRTUAL_ENV=/AReaL/.venv
+ENV VIRTUAL_ENV=/opt/.venv
 
 ##############################################################
 # STAGE 1: Install base torch FIRST
@@ -189,45 +189,45 @@ RUN set -ex \
 ENV FNM_DIR=/root/.fnm
 ENV NODE_VERSION=24.13.0
 ENV PATH="$FNM_DIR/aliases/default/bin:/root/.local/bin:$PATH"
-RUN curl -fsSL https://fnm.vercel.app/install | bash -s -- --install-dir "$FNM_DIR" --skip-shell \
+RUN set -ex \
+    && curl -fsSL https://fnm.vercel.app/install | bash -s -- --install-dir "$FNM_DIR" --skip-shell \
     && eval "$($FNM_DIR/fnm env --shell bash)" \
     && $FNM_DIR/fnm install $NODE_VERSION \
     && $FNM_DIR/fnm default $NODE_VERSION \
     && npm install -g npm@latest \
+    && npm install -g @openai/codex @google/gemini-cli openclaw@latest \
     && curl -fsSL https://claude.ai/install.sh | bash \
     && curl -fsSL https://opencode.ai/install | bash \
-    && npm install -g @openai/codex \
-    && npm install -g @google/gemini-cli \
-    && npm install -g openclaw@latest
+    && uv pip install nanobot-ai
 
 ENV PATH="/root/.cargo/bin:$PATH"
+ARG IRONCLAW_VERSION=0.24.0
 RUN curl --proto '=https' --tlsv1.2 -LsSf \
-    https://github.com/nearai/ironclaw/releases/latest/download/ironclaw-installer.sh | sh
+    https://github.com/nearai/ironclaw/releases/download/ironclaw-v${IRONCLAW_VERSION}/ironclaw-installer.sh | sh
 RUN curl -fsSL \
     https://github.com/zeroclaw-labs/zeroclaw/releases/latest/download/install.sh \
-    | bash -s -- --prefer-prebuilt --skip-onboard
-RUN uv pip install nanobot-ai
+    | bash -s -- --skip-onboard
 
 ##############################################################
 # STAGE 3: Install project dependencies from pyproject.toml
 # Changes to pyproject.toml/uv.lock will invalidate from here
-# but C++ packages above remain cached.
-# Using `uv pip install` instead of `uv sync` to avoid removing
-# C++ packages that aren't in uv.lock.
+# --active: target the existing $VIRTUAL_ENV instead of creating a new .venv
+# --inexact: keep C++ packages (apex, flash-attn, etc.) not tracked in the lockfile
+# --no-install-project: install dependencies only, not the areal package itself
 ##############################################################
 
-# Install the project's dependencies (not the project itself)
-# This adds packages without removing unlisted ones (like our C++ packages)
-# VARIANT selects the inference backend (sglang or vllm) via separate pyproject files
 RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-    --mount=type=bind,source=pyproject.vllm.toml,target=pyproject.vllm.toml \
+    --mount=type=bind,source=pyproject.toml,target=/tmp/sglang/pyproject.toml \
+    --mount=type=bind,source=pyproject.vllm.toml,target=/tmp/vllm/pyproject.toml \
+    --mount=type=bind,source=uv.lock,target=/tmp/sglang/uv.lock \
+    --mount=type=bind,source=uv.vllm.lock,target=/tmp/vllm/uv.lock \
     case "$VARIANT" in \
-      sglang) cp pyproject.toml /tmp/pyproject.toml ;; \
-      vllm) cp pyproject.vllm.toml /tmp/pyproject.toml ;; \
+      sglang) PROJECT_DIR=/tmp/sglang ;; \
+      vllm) PROJECT_DIR=/tmp/vllm ;; \
       *) echo "Invalid VARIANT=$VARIANT (expected: sglang|vllm)" >&2; exit 1 ;; \
     esac \
-    && uv pip install --no-build-isolation -r /tmp/pyproject.toml --extra cuda --group dev
+    && uv sync --active --inexact --no-install-project --no-build-isolation \
+       --extra cuda --group dev --project "$PROJECT_DIR"
 
 ##############################################################
 # STAGE 4: Misc fixes and final setup
@@ -257,7 +257,7 @@ COPY . /AReaL
 RUN uv pip install --no-deps -e /AReaL
 
 # Place executables in the environment at the front of the path
-ENV PATH="/AReaL/.venv/bin:$PATH"
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 # Reset entrypoint (some base images set custom entrypoints; this ensures /bin/bash)
 ENTRYPOINT []
