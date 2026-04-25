@@ -1,1 +1,0 @@
-"""AReaL test suite."""

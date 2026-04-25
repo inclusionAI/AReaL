@@ -1,0 +1,240 @@
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
+  launcher:
+    _target_: hydra._internal.core_plugins.basic_launcher.BasicLauncher
+  sweeper:
+    _target_: hydra._internal.core_plugins.basic_sweeper.BasicSweeper
+    max_batch_size: null
+    params: null
+  help:
+    app_name: ${hydra.job.name}
+    header: '${hydra.help.app_name} is powered by Hydra.
+
+      '
+    footer: 'Powered by Hydra (https://hydra.cc)
+
+      Use --hydra-help to view Hydra specific help
+
+      '
+    template: '${hydra.help.header}
+
+      == Configuration groups ==
+
+      Compose your configuration from those groups (group=option)
+
+
+      $APP_CONFIG_GROUPS
+
+
+      == Config ==
+
+      Override anything in the config (foo.bar=value)
+
+
+      $CONFIG
+
+
+      ${hydra.help.footer}
+
+      '
+  hydra_help:
+    template: 'Hydra (${hydra.runtime.version})
+
+      See https://hydra.cc for more info.
+
+
+      == Flags ==
+
+      $FLAGS_HELP
+
+
+      == Configuration groups ==
+
+      Compose your configuration from those groups (For example, append hydra/job_logging=disabled
+      to command line)
+
+
+      $HYDRA_CONFIG_GROUPS
+
+
+      Use ''--cfg hydra'' to Show the Hydra config.
+
+      '
+    hydra_help: ???
+  hydra_logging:
+    version: 1
+    formatters:
+      simple:
+        format: '[%(asctime)s][HYDRA] %(message)s'
+    handlers:
+      console:
+        class: logging.StreamHandler
+        formatter: simple
+        stream: ext://sys.stdout
+    root:
+      level: INFO
+      handlers:
+      - console
+    loggers:
+      logging_example:
+        level: DEBUG
+    disable_existing_loggers: false
+  job_logging:
+    version: 1
+    formatters:
+      simple:
+        format: '[%(asctime)s][%(name)s][%(levelname)s] - %(message)s'
+    handlers:
+      console:
+        class: logging.StreamHandler
+        formatter: simple
+        stream: ext://sys.stdout
+      file:
+        class: logging.FileHandler
+        formatter: simple
+        filename: ${hydra.runtime.output_dir}/${hydra.job.name}.log
+    root:
+      level: INFO
+      handlers:
+      - console
+      - file
+    disable_existing_loggers: false
+  env: {}
+  mode: RUN
+  searchpath: []
+  callbacks: {}
+  output_subdir: .hydra
+  overrides:
+    hydra:
+    - hydra.mode=RUN
+    task:
+    - algorithm.adv_estimator=grpo
+    - data.train_files=/storage/openpsi/users/zzy/sync/polaris/polaris-data-53K-tw.parquet
+    - data.val_files=/storage/openpsi/users/zzy/sync/AIME24_converted_copy.parquet
+    - data.filter_overlong_prompts=True
+    - data.train_batch_size=128
+    - data.val_batch_size=512
+    - data.max_prompt_length=9216
+    - data.max_response_length=40960
+    - actor_rollout_ref.model.path=/storage/openpsi/models/zzy/augment/baseline
+    - actor_rollout_ref.actor.optim.lr=1e-6
+    - actor_rollout_ref.model.use_remove_padding=True
+    - actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=null
+    - actor_rollout_ref.actor.ppo_mini_batch_size=null
+    - actor_rollout_ref.actor.use_dynamic_bsz=True
+    - actor_rollout_ref.actor.ppo_max_token_len_per_gpu=40960
+    - actor_rollout_ref.rollout.max_num_batched_tokens=40960
+    - actor_rollout_ref.actor.use_kl_loss=False
+    - actor_rollout_ref.actor.kl_loss_coef=0
+    - actor_rollout_ref.actor.kl_loss_type=low_var_kl
+    - actor_rollout_ref.actor.entropy_coeff=0
+    - actor_rollout_ref.actor.clip_ratio_low=0.2
+    - actor_rollout_ref.actor.clip_ratio_high=0.28
+    - actor_rollout_ref.actor.ulysses_sequence_parallel_size=1
+    - actor_rollout_ref.model.enable_gradient_checkpointing=True
+    - actor_rollout_ref.actor.fsdp_config.param_offload=True
+    - actor_rollout_ref.actor.fsdp_config.optimizer_offload=True
+    - actor_rollout_ref.actor.fsdp_config.fsdp_size=-1
+    - actor_rollout_ref.actor.grad_clip=1.0
+    - actor_rollout_ref.rollout.tensor_model_parallel_size=1
+    - actor_rollout_ref.rollout.name=vllm
+    - actor_rollout_ref.rollout.temperature=1.0
+    - actor_rollout_ref.rollout.top_p=1.0
+    - actor_rollout_ref.rollout.top_k=-1
+    - actor_rollout_ref.rollout.enable_chunked_prefill=True
+    - actor_rollout_ref.rollout.n=8
+    - actor_rollout_ref.rollout.gpu_memory_utilization=0.8
+    - actor_rollout_ref.rollout.val_kwargs.do_sample=True
+    - actor_rollout_ref.rollout.val_kwargs.temperature=1.0
+    - actor_rollout_ref.rollout.val_kwargs.top_p=1.0
+    - actor_rollout_ref.rollout.val_kwargs.n=8
+    - actor_rollout_ref.ref.fsdp_config.param_offload=True
+    - actor_rollout_ref.rollout.enforce_eager=False
+    - actor_rollout_ref.rollout.free_cache_engine=True
+    - algorithm.use_kl_in_reward=False
+    - algorithm.norm_adv_by_std_in_grpo=False
+    - trainer.critic_warmup=0
+    - trainer.logger=[console,tensorboard,wandb]
+    - trainer.project_name=deepscaler
+    - trainer.experiment_name=Fix-ckpt-saving-2
+    - trainer.val_before_train=False
+    - trainer.n_gpus_per_node=8
+    - trainer.nnodes=8
+    - trainer.save_freq=10
+    - trainer.test_freq=10
+    - trainer.default_local_dir=/storage/openpsi/users/zzy/checkpoints/deepscaler/Fix-ckpt-saving-2
+    - trainer.default_hdfs_dir=null
+    - trainer.rollout_data_dir=/storage/openpsi/users/zzy/zzy_tw_rollback/dump
+    - trainer.total_epochs=30
+    - actor_rollout_ref.rollout.max_model_len=40960
+    - reward_model.config.acceleration_ratio_reward=1.0
+    - reward_model.config.acceleration_ratio_reward_factor=0.5
+    - reward_model.config.acceleration_ratio_clip_max=0.2
+    - reward_model.config.version=v2
+    - reward_model.config.require_think_end=False
+    - reward_model.reward_manager_type=reward_manager_with_server
+    - actor_rollout_ref.rollout.agent.num_workers=1
+    - actor_rollout_ref.rollout.agent.enable_parallel_branching=False
+    - actor_rollout_ref.rollout.agent_return_expanded_sequences=True
+    - actor_rollout_ref.rollout.agent.no_conclusion=true
+    - reward_model.config.strip_comma_from_answer=True
+    - data.return_raw_chat=True
+    - actor_rollout_ref.rollout.mode=async
+    - trainer.max_actor_ckpt_to_keep=3
+    - actor_rollout_ref.actor.checkpoint.save_contents=['model','optimizer','extra','hf_model']
+  job:
+    name: main_ppo
+    chdir: null
+    override_dirname: actor_rollout_ref.actor.checkpoint.save_contents=['model','optimizer','extra','hf_model'],actor_rollout_ref.actor.clip_ratio_high=0.28,actor_rollout_ref.actor.clip_ratio_low=0.2,actor_rollout_ref.actor.entropy_coeff=0,actor_rollout_ref.actor.fsdp_config.fsdp_size=-1,actor_rollout_ref.actor.fsdp_config.optimizer_offload=True,actor_rollout_ref.actor.fsdp_config.param_offload=True,actor_rollout_ref.actor.grad_clip=1.0,actor_rollout_ref.actor.kl_loss_coef=0,actor_rollout_ref.actor.kl_loss_type=low_var_kl,actor_rollout_ref.actor.optim.lr=1e-6,actor_rollout_ref.actor.ppo_max_token_len_per_gpu=40960,actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=null,actor_rollout_ref.actor.ppo_mini_batch_size=null,actor_rollout_ref.actor.ulysses_sequence_parallel_size=1,actor_rollout_ref.actor.use_dynamic_bsz=True,actor_rollout_ref.actor.use_kl_loss=False,actor_rollout_ref.model.enable_gradient_checkpointing=True,actor_rollout_ref.model.path=/storage/openpsi/models/zzy/augment/baseline,actor_rollout_ref.model.use_remove_padding=True,actor_rollout_ref.ref.fsdp_config.param_offload=True,actor_rollout_ref.rollout.agent.enable_parallel_branching=False,actor_rollout_ref.rollout.agent.no_conclusion=true,actor_rollout_ref.rollout.agent.num_workers=1,actor_rollout_ref.rollout.agent_return_expanded_sequences=True,actor_rollout_ref.rollout.enable_chunked_prefill=True,actor_rollout_ref.rollout.enforce_eager=False,actor_rollout_ref.rollout.free_cache_engine=True,actor_rollout_ref.rollout.gpu_memory_utilization=0.8,actor_rollout_ref.rollout.max_model_len=40960,actor_rollout_ref.rollout.max_num_batched_tokens=40960,actor_rollout_ref.rollout.mode=async,actor_rollout_ref.rollout.n=8,actor_rollout_ref.rollout.name=vllm,actor_rollout_ref.rollout.temperature=1.0,actor_rollout_ref.rollout.tensor_model_parallel_size=1,actor_rollout_ref.rollout.top_k=-1,actor_rollout_ref.rollout.top_p=1.0,actor_rollout_ref.rollout.val_kwargs.do_sample=True,actor_rollout_ref.rollout.val_kwargs.n=8,actor_rollout_ref.rollout.val_kwargs.temperature=1.0,actor_rollout_ref.rollout.val_kwargs.top_p=1.0,algorithm.adv_estimator=grpo,algorithm.norm_adv_by_std_in_grpo=False,algorithm.use_kl_in_reward=False,data.filter_overlong_prompts=True,data.max_prompt_length=9216,data.max_response_length=40960,data.return_raw_chat=True,data.train_batch_size=128,data.train_files=/storage/openpsi/users/zzy/sync/polaris/polaris-data-53K-tw.parquet,data.val_batch_size=512,data.val_files=/storage/openpsi/users/zzy/sync/AIME24_converted_copy.parquet,reward_model.config.acceleration_ratio_clip_max=0.2,reward_model.config.acceleration_ratio_reward=1.0,reward_model.config.acceleration_ratio_reward_factor=0.5,reward_model.config.require_think_end=False,reward_model.config.strip_comma_from_answer=True,reward_model.config.version=v2,reward_model.reward_manager_type=reward_manager_with_server,trainer.critic_warmup=0,trainer.default_hdfs_dir=null,trainer.default_local_dir=/storage/openpsi/users/zzy/checkpoints/deepscaler/Fix-ckpt-saving-2,trainer.experiment_name=Fix-ckpt-saving-2,trainer.logger=[console,tensorboard,wandb],trainer.max_actor_ckpt_to_keep=3,trainer.n_gpus_per_node=8,trainer.nnodes=8,trainer.project_name=deepscaler,trainer.rollout_data_dir=/storage/openpsi/users/zzy/zzy_tw_rollback/dump,trainer.save_freq=10,trainer.test_freq=10,trainer.total_epochs=30,trainer.val_before_train=False
+    id: ???
+    num: ???
+    config_name: ppo_trainer
+    env_set: {}
+    env_copy: []
+    config:
+      override_dirname:
+        kv_sep: '='
+        item_sep: ','
+        exclude_keys: []
+  runtime:
+    version: 1.3.2
+    version_base: '1.3'
+    cwd: /storage/openpsi/users/zzy/zzy_tw_rollback
+    config_sources:
+    - path: hydra.conf
+      schema: pkg
+      provider: hydra
+    - path: /storage/openpsi/users/zzy/zzy_tw_rollback/threadweaver_rl/verl/trainer/config
+      schema: file
+      provider: main
+    - path: ''
+      schema: structured
+      provider: schema
+    output_dir: /storage/openpsi/users/zzy/zzy_tw_rollback/outputs/2026-04-10/00-04-26
+    choices:
+      reward_model: dp_reward_model
+      critic: dp_critic
+      critic/../engine@critic.model.fsdp_config: fsdp
+      critic/../optim@critic.optim: fsdp
+      model@actor_rollout_ref.model: hf_model
+      rollout@actor_rollout_ref.rollout: rollout
+      ref@actor_rollout_ref.ref: dp_ref
+      ref/../engine@actor_rollout_ref.ref.fsdp_config: fsdp
+      data: legacy_data
+      actor@actor_rollout_ref.actor: dp_actor
+      actor/../engine@actor_rollout_ref.actor.fsdp_config: fsdp
+      actor/../optim@actor_rollout_ref.actor.optim: fsdp
+      hydra/env: default
+      hydra/callbacks: null
+      hydra/job_logging: default
+      hydra/hydra_logging: default
+      hydra/hydra_help: default
+      hydra/help: default
+      hydra/sweeper: basic
+      hydra/launcher: basic
+      hydra/output: default
+  verbose: false
