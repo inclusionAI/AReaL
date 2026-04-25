@@ -58,7 +58,10 @@ from areal.engine.megatron_utils.megatron import (
     get_named_parameters,
     remove_padding,
 )
-from areal.engine.megatron_utils.megatron_lora import get_vllm_lora_target_modules
+from areal.engine.megatron_utils.megatron_lora import (
+    ensure_save_hf_adapter_patched,
+    get_vllm_lora_target_modules,
+)
 from areal.engine.megatron_utils.packed_context_parallel import (
     packed_context_parallel_forward,
 )
@@ -1560,6 +1563,7 @@ class MegatronEngine(TrainEngine):
                     "Saving critic model is not supported with megatron-bridge."
                 )
             if self.config.use_lora:
+                ensure_save_hf_adapter_patched()
                 self.bridge.save_hf_adapter(
                     self.model,
                     path=path,
