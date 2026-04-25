@@ -1329,8 +1329,8 @@ class RayPPOTrainer:
                                     metrics[f"at_gigpo/turn_bucket_{bucket}/n_samples"] = int(mask_np.sum())
 
                                 if at_gigpo_cfg.get("sort_by_turns", False):
-                                    sort_idx = np.argsort(num_turns_arr)
-                                    batch = batch.reorder(sort_idx)
+                                    sort_idx = torch.from_numpy(np.argsort(num_turns_arr))
+                                    batch.reorder(sort_idx)
 
                     # update critic
                     if self.use_critic:
