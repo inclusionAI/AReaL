@@ -54,7 +54,7 @@ innovative modules.
 Meeting** was successfully held! Thank you to everyone who joined us. Meeting materials
 are now available
 [here](https://github.com/inclusionAI/AReaL/tree/main/assets/community). Our next
-meeting is scheduled for **2026/05/01** and will also be conducted in Chinese;
+meeting is scheduled for **2026/05/02** and will also be conducted in Chinese;
 English-language meetings will be scheduled in the future. We warmly welcome everyone to
 participate! See [Community](./assets/community/README.md) for more details.
 

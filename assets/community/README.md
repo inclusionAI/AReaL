@@ -14,7 +14,7 @@ For background on how the project is governed and how to participate, please see
 
 | Date       | Agenda | Slides | Recording |
 | ---------- | ------ | ------ | --------- |
-| 2026/05/01 | TBD    | TBD    | TBD       |
+| 2026/05/02 | TBD    | TBD    | TBD       |
 
 ## Past Meetings
 
