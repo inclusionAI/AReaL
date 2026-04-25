@@ -9,13 +9,12 @@ Docker, local process) should conform to the :class:`SandboxExecutor` protocol.
 Architecture
 ------------
 - ``areal/api/sandbox_api.py``   — Pure abstractions (this file)
-- ``areal/infra/sandbox/``       — Runtime implementations and pooling
-- ``areal/workflow/sandbox_tool.py`` — Workflow that uses sandbox
+- ``areal/infra/sandbox/``       — Runtime implementations
+- ``examples/sandbox/``          — AgentWorkflow with sandbox code execution
 
 See Also
 --------
-areal.infra.sandbox : Concrete sandbox implementations and pool management.
-areal.workflow.sandbox_tool : Multi-step tool-use workflow with sandbox isolation.
+areal.infra.sandbox : Concrete sandbox implementations.
 """
 
 from __future__ import annotations
@@ -130,8 +129,9 @@ class SandboxExecutor(Protocol):
 class SandboxConfig:
     """Configuration for sandbox execution in RL training workflows.
 
-    This config is used by :class:`~areal.workflow.sandbox_tool.SandboxToolWorkflow`
-    and :class:`~areal.infra.sandbox.SandboxManager`.
+    This config is used by the AgentWorkflow sandbox example
+    (``examples/sandbox/``) and
+    :func:`~areal.infra.sandbox.factory.create_sandbox`.
 
     Attributes
     ----------
@@ -154,10 +154,6 @@ class SandboxConfig:
         Can also be set via ``SANDBOX_SSL_CERT_FILE`` environment variable.
     timeout : float
         Default per-execution timeout in seconds.
-    max_tool_turns : int
-        Maximum number of tool call rounds per episode.
-    pool_size : int
-        Number of pre-warmed sandbox instances. 0 means on-demand creation.
     """
 
     enabled: bool = field(
@@ -204,16 +200,6 @@ class SandboxConfig:
         default=30.0,
         metadata={"help": "Default per-execution timeout in seconds."},
     )
-    max_tool_turns: int = field(
-        default=5,
-        metadata={"help": "Maximum number of tool call rounds per episode."},
-    )
-    pool_size: int = field(
-        default=0,
-        metadata={
-            "help": "Number of pre-warmed sandbox instances. 0 = on-demand creation."
-        },
-    )
 
     def __post_init__(self):
         import os
@@ -232,7 +218,3 @@ class SandboxConfig:
             self.ssl_cert_file = os.environ.get("SANDBOX_SSL_CERT_FILE", "")
         if self.timeout <= 0:
             raise ValueError(f"timeout must be positive, got {self.timeout}")
-        if self.max_tool_turns < 1:
-            raise ValueError(f"max_tool_turns must be >= 1, got {self.max_tool_turns}")
-        if self.pool_size < 0:
-            raise ValueError(f"pool_size must be >= 0, got {self.pool_size}")

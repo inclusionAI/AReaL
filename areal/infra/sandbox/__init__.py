@@ -2,37 +2,28 @@
 
 """Sandbox runtime infrastructure for agent RL training.
 
-Provides concrete sandbox backend implementations, connection pooling,
-and lifecycle management for use by workflow layers.
+Provides concrete sandbox backend implementations for use by workflow layers.
 
 Components
 ----------
 - :class:`E2BSandboxExecutor` — E2B-compatible SDK backend.
 - :class:`LocalSandboxExecutor` — Unsafe local execution (debug only).
-- :class:`SandboxManager` — Per-thread sandbox pool and lifecycle manager.
 
 See Also
 --------
 areal.api.sandbox_api : Abstract protocol and config definitions.
-areal.workflow.sandbox_tool : Workflow that consumes sandbox executors.
 """
 
 __all__ = [
     "E2BSandboxExecutor",
     "LocalSandboxExecutor",
-    "SandboxManager",
-    "batch_create_sandboxes",
     "create_sandbox",
-    "create_sandbox_info_sync",
 ]
 
 _LAZY_IMPORTS = {
     "E2BSandboxExecutor": "areal.infra.sandbox.e2b_sandbox",
     "LocalSandboxExecutor": "areal.infra.sandbox.local_sandbox",
-    "SandboxManager": "areal.infra.sandbox.manager",
-    "batch_create_sandboxes": "areal.infra.sandbox.e2b_sandbox",
     "create_sandbox": "areal.infra.sandbox.factory",
-    "create_sandbox_info_sync": "areal.infra.sandbox.e2b_sandbox",
 }
 
 

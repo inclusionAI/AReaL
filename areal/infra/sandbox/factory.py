@@ -35,7 +35,7 @@ async def create_sandbox(config: SandboxConfig) -> SandboxExecutor:
             api_url=config.api_url,
             api_key=config.api_key,
             template_id=config.template_id or None,
-            timeout=max(config.timeout * config.max_tool_turns * 2, 300.0),
+            timeout=max(config.timeout * 10, 300.0),
             ssl_cert_file=config.ssl_cert_file,
         )
     elif config.backend == "local":
