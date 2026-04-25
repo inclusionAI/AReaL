@@ -1983,15 +1983,21 @@ class AgentConfig:
     )
     setup_timeout: float = field(
         default=120.0,
-        metadata={"help": "Timeout in seconds waiting for each service to become healthy."},
+        metadata={
+            "help": "Timeout in seconds waiting for each service to become healthy."
+        },
     )
     health_poll_interval: float = field(
         default=5.0,
-        metadata={"help": "Seconds between pair health polls; 0 disables health monitoring."},
+        metadata={
+            "help": "Seconds between pair health polls; 0 disables health monitoring."
+        },
     )
     drain_timeout: float = field(
         default=30.0,
-        metadata={"help": "Seconds to wait for active sessions to drain before force-killing a pair."},
+        metadata={
+            "help": "Seconds to wait for active sessions to drain before force-killing a pair."
+        },
     )
     log_level: str = field(
         default="info",
@@ -1999,7 +2005,9 @@ class AgentConfig:
     )
     env: dict[str, str] = field(
         default_factory=dict,
-        metadata={"help": "Extra environment variables passed to all forked child processes."},
+        metadata={
+            "help": "Extra environment variables passed to all forked child processes."
+        },
     )
 
     def __post_init__(self) -> None:
@@ -2153,7 +2161,9 @@ class InferenceEngineConfig:
     )
     poll_interval: float = field(
         default=5.0,
-        metadata={"help": "Health-poll interval in seconds for the inference-service router."},
+        metadata={
+            "help": "Health-poll interval in seconds for the inference-service router."
+        },
     )
     set_reward_finish_timeout: float = field(
         default=0.0,
@@ -2173,7 +2183,9 @@ class InferenceEngineConfig:
     )
     api_url: str | None = field(
         default=None,
-        metadata={"help": "External OpenAI-compatible base URL for inference-service external model mode."},
+        metadata={
+            "help": "External OpenAI-compatible base URL for inference-service external model mode."
+        },
     )
     provider_api_key: str | None = field(
         default=None,
@@ -2181,7 +2193,9 @@ class InferenceEngineConfig:
     )
     n_gpus_per_node: int | None = field(
         default=None,
-        metadata={"help": "GPUs per physical node for multinode inference-service launch."},
+        metadata={
+            "help": "GPUs per physical node for multinode inference-service launch."
+        },
     )
 
     def __post_init__(self):

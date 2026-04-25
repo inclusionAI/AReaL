@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from areal.api.cli_args import InferenceEngineConfig, OpenAIProxyConfig
+from areal.api.cli_args import InferenceEngineConfig
 from areal.experimental.inference_service.controller.controller import (
     RolloutControllerV2,
 )
@@ -252,7 +252,9 @@ class TestRolloutControllerV2Construction:
             RolloutControllerV2(config=cfg, scheduler=MagicMock())
 
     def test_model_empty_raises(self):
-        cfg = InferenceEngineConfig(backend="sglang:d1", admin_api_key="test-key", model="")
+        cfg = InferenceEngineConfig(
+            backend="sglang:d1", admin_api_key="test-key", model=""
+        )
         with pytest.raises(ValueError, match="model must not be empty"):
             RolloutControllerV2(config=cfg, scheduler=MagicMock())
 

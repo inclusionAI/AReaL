@@ -963,9 +963,7 @@ class RolloutControllerV2:
 
     def get_capacity(self) -> int:
         if self.staleness_manager is None:
-            raise RuntimeError(
-                "RolloutControllerV2.initialize() must be called first"
-            )
+            raise RuntimeError("RolloutControllerV2.initialize() must be called first")
         return self.staleness_manager.get_capacity()
 
     # -- Submit / Wait / Batch ---------------------------------------------
@@ -1056,9 +1054,7 @@ class RolloutControllerV2:
             A list of trajectory dicts (one per completed rollout).
         """
         if not self._gateway_addr:
-            raise RuntimeError(
-                "RolloutControllerV2.initialize() must be called first"
-            )
+            raise RuntimeError("RolloutControllerV2.initialize() must be called first")
         if data is None:
             if batch_size is None:
                 raise ValueError(
@@ -1127,9 +1123,7 @@ class RolloutControllerV2:
             A list of trajectory dicts (matching ``RolloutController`` API).
         """
         if not self._gateway_addr:
-            raise RuntimeError(
-                "RolloutControllerV2.initialize() must be called first"
-            )
+            raise RuntimeError("RolloutControllerV2.initialize() must be called first")
         if dataloader is None:
             if batch_size is None:
                 raise ValueError(
@@ -1333,9 +1327,7 @@ class RolloutControllerV2:
     @property
     def workflow_executor(self):
         if self._workflow_executor is None:
-            raise RuntimeError(
-                "RolloutControllerV2.initialize() must be called first"
-            )
+            raise RuntimeError("RolloutControllerV2.initialize() must be called first")
         return self._workflow_executor
 
     @property
