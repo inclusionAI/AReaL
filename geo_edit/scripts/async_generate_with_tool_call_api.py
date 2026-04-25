@@ -557,6 +557,9 @@ def main():
                         elif isinstance(img, str) and os.path.exists(img):
                             import shutil
                             shutil.copy2(img, path)
+                        elif isinstance(img, str):
+                            import base64
+                            Image.open(BytesIO(base64.b64decode(img))).save(path)
                         else:
                             raise ValueError(f"Invalid image type: {type(img)}")
 

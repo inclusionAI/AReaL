@@ -440,7 +440,7 @@ Question: {question}
 
 If you need to analyze the image in detail, you can use the available tools.
 
-Select the correct option by providing only the letter (A, B, C, or D) in <answer></answer> tags.
+You MUST select one of the given options. Do NOT provide the raw answer text — respond with only the option letter (A, B, C, or D) in <answer></answer> tags.
 """
 
 HR_BENCH_NOTOOL_INPUT_TEMPLATE = """\
@@ -450,7 +450,7 @@ Question: {question}
 
 {options_text}
 
-Select the correct option by providing only the letter (A, B, C, or D) in <answer></answer> tags.
+You MUST select one of the given options. Do NOT provide the raw answer text — respond with only the option letter (A, B, C, or D) in <answer></answer> tags.
 """
 
 HR_BENCH_SEPARATED_TEMPLATE = """\
@@ -458,7 +458,7 @@ Question: {question}
 
 {options_text}
 
-Select the correct option (A, B, C, or D).
+You MUST select one of the given options (A, B, C, or D). Do NOT provide the raw answer text.
 """
 
-HR_BENCH_ANSWER_FORMAT = "Provide only the letter (A, B, C, or D) in <answer></answer> tags."
+HR_BENCH_ANSWER_FORMAT = "You MUST respond with only the option letter (A, B, C, or D) in <answer></answer> tags. Do NOT output the answer text itself."
