@@ -125,7 +125,9 @@ class Tau2AgentServiceWorkflow(RolloutWorkflow):
         next_user_message = first_user_message
 
         for turn_idx in range(self.max_turns):
-            response = await self.agent_controller.step(next_user_message, agent_session_id)
+            response = await self.agent_controller.step(
+                next_user_message, agent_session_id
+            )
             agent_text = _extract_response_text(response) or "(no response)"
 
             tau2_messages.append(

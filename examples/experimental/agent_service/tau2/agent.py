@@ -220,4 +220,6 @@ class Tau2Agent:
         if final_text:
             await emitter.emit_delta(final_text)
 
-        return AgentResponse(summary=final_text[:200], metadata={"tool_calls": tool_calls})
+        return AgentResponse(
+            summary=final_text[:200], metadata={"tool_calls": tool_calls}
+        )

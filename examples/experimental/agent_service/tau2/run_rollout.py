@@ -54,7 +54,9 @@ def get_tau2_dataset(domain: str, type: str = "rl", split: str = "train") -> Dat
 
 @dataclass
 class Tau2AgentServiceRolloutConfig(BaseExperimentConfig):
-    gconfig: GenerationHyperparameters = field(default_factory=GenerationHyperparameters)
+    gconfig: GenerationHyperparameters = field(
+        default_factory=GenerationHyperparameters
+    )
     rollout: InferenceEngineConfig = field(default_factory=InferenceEngineConfig)
     model_path: str = ""
     econfig: dict[str, Any] = field(default_factory=dict)
