@@ -1964,6 +1964,68 @@ class OpenAIProxyConfig:
 
 
 @dataclass
+class AgentConfig:
+    """Configuration for the experimental agent service controller."""
+
+    agent_cls_path: str = field(
+        default="",
+        metadata={
+            "help": "Fully-qualified import path for the AgentRunnable implementation."
+        },
+    )
+    admin_api_key: str = field(
+        default="areal-agent-admin",
+        metadata={"help": "Shared admin API key for agent-service inter-service auth."},
+    )
+    num_pairs: int = field(
+        default=1,
+        metadata={"help": "Number of Worker+DataProxy pairs to launch on initialize."},
+    )
+    setup_timeout: float = field(
+        default=120.0,
+        metadata={
+            "help": "Timeout in seconds waiting for each service to become healthy."
+        },
+    )
+    health_poll_interval: float = field(
+        default=5.0,
+        metadata={
+            "help": "Seconds between pair health polls; 0 disables health monitoring."
+        },
+    )
+    drain_timeout: float = field(
+        default=30.0,
+        metadata={
+            "help": "Seconds to wait for active sessions to drain before force-killing a pair."
+        },
+    )
+    log_level: str = field(
+        default="info",
+        metadata={"help": "Log level for spawned agent-service micro-services."},
+    )
+    env: dict[str, str] = field(
+        default_factory=dict,
+        metadata={
+            "help": "Extra environment variables passed to all forked child processes."
+        },
+    )
+
+    def __post_init__(self) -> None:
+        if not self.agent_cls_path:
+            raise ValueError("agent_cls_path must be a non-empty import path")
+        if self.num_pairs < 0:
+            raise ValueError(f"num_pairs must be non-negative, got {self.num_pairs}")
+        if self.setup_timeout <= 0:
+            raise ValueError(
+                f"setup_timeout must be positive, got {self.setup_timeout}"
+            )
+        if self.drain_timeout < 0:
+            raise ValueError(
+                f"drain_timeout must be non-negative, got {self.drain_timeout}"
+            )
+
+
+@dataclass
 class InferenceEngineConfig:
     """Configuration for inference servers, including offpolicyness control."""
 
@@ -2081,12 +2143,86 @@ class InferenceEngineConfig:
         },
     )
 
+    # v2 controller options
+    _version: str = field(
+        default="v1",
+        metadata={
+            "help": "Rollout controller implementation version. Use 'v1' for legacy RolloutController, 'v2' for RolloutControllerV2.",
+            "choices": ["v1", "v2"],
+        },
+    )
+    model: str = field(
+        default="default",
+        metadata={"help": "Model name exposed through the inference-service gateway."},
+    )
+    routing_strategy: str = field(
+        default="round_robin",
+        metadata={"help": "Routing strategy for the inference-service router."},
+    )
+    poll_interval: float = field(
+        default=5.0,
+        metadata={
+            "help": "Health-poll interval in seconds for the inference-service router."
+        },
+    )
+    set_reward_finish_timeout: float = field(
+        default=0.0,
+        metadata={
+            "help": "Timeout in seconds to wait for additional reward updates before finalizing a session."
+        },
+    )
+    log_level: str = field(
+        default="info",
+        metadata={"help": "Log level for inference-service micro-services."},
+    )
+    admin_api_key: str = field(
+        default="areal-admin-key",
+        metadata={
+            "help": "Admin API key used by the inference-service gateway, router, and data proxies."
+        },
+    )
+    api_url: str | None = field(
+        default=None,
+        metadata={
+            "help": "External OpenAI-compatible base URL for inference-service external model mode."
+        },
+    )
+    provider_api_key: str | None = field(
+        default=None,
+        metadata={"help": "API key for the external OpenAI-compatible provider."},
+    )
+    n_gpus_per_node: int | None = field(
+        default=None,
+        metadata={
+            "help": "GPUs per physical node for multinode inference-service launch."
+        },
+    )
+
     def __post_init__(self):
         """Validate scheduling_spec length."""
         if len(self.scheduling_spec) not in (1, 2):
             raise ValueError(
                 f"scheduling_spec must contain 1 or 2 SchedulingSpec, "
                 f"got {len(self.scheduling_spec)}"
+            )
+        if self._version not in ("v1", "v2"):
+            raise ValueError(
+                f"_version must be either 'v1' or 'v2', got '{self._version}'"
+            )
+        if self.n_gpus_per_node is not None and self.n_gpus_per_node < 1:
+            raise ValueError(
+                f"n_gpus_per_node must be >= 1, got {self.n_gpus_per_node}"
+            )
+        if not self.admin_api_key or not self.admin_api_key.strip():
+            raise ValueError("admin_api_key must not be empty or whitespace-only")
+        if (
+            self._version == "v2"
+            and self.openai is not None
+            and self.openai.admin_api_key != "areal-admin-key"
+        ):
+            logger.warning(
+                "rollout.openai.admin_api_key is ignored by rollout controller v2; "
+                "use rollout.admin_api_key instead."
             )
 
 

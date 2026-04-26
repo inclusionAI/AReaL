@@ -1,4 +1,4 @@
-"""Unit tests for GatewayInferenceController version management.
+"""Unit tests for RolloutControllerV2 version management.
 
 Tests set_version and get_version with mocked HTTP calls.
 """
@@ -8,12 +8,9 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from areal.api.cli_args import SchedulingSpec
-from areal.experimental.inference_service.controller.config import (
-    GatewayControllerConfig,
-)
+from areal.api.cli_args import InferenceEngineConfig, SchedulingSpec
 from areal.experimental.inference_service.controller.controller import (
-    GatewayInferenceController,
+    RolloutControllerV2,
 )
 
 # =============================================================================
@@ -25,17 +22,18 @@ def _make_controller(
     gateway_addr: str = "",
     worker_ids: dict[str, str] | None = None,
     version: int = 0,
-) -> GatewayInferenceController:
+) -> RolloutControllerV2:
     """Create a controller with minimal config and manually injected state.
 
     Does NOT call initialize() — internal fields are set directly.
     """
-    cfg = GatewayControllerConfig(
+    cfg = InferenceEngineConfig(
+        backend="sglang:d1",
         admin_api_key="test-key",
         scheduling_spec=(SchedulingSpec(),),
     )
     scheduler = MagicMock()
-    ctrl = GatewayInferenceController(config=cfg, scheduler=scheduler)
+    ctrl = RolloutControllerV2(config=cfg, scheduler=scheduler)
     ctrl._gateway_addr = gateway_addr
     ctrl._worker_ids = worker_ids or {}
     ctrl._version = version
@@ -48,7 +46,7 @@ def _make_controller(
 
 
 class TestControllerSetVersion:
-    """Test GatewayInferenceController.set_version."""
+    """Test RolloutControllerV2.set_version."""
 
     def test_set_version_updates_local(self):
         ctrl = _make_controller()
@@ -93,7 +91,7 @@ class TestControllerSetVersion:
 
 
 class TestControllerGetVersion:
-    """Test GatewayInferenceController.get_version."""
+    """Test RolloutControllerV2.get_version."""
 
     def test_get_version_returns_local(self):
         ctrl = _make_controller(version=0)

@@ -1,5 +1,5 @@
-experiment_name: tau2-gateway-rollout
-trial_name: 1.5b-airline
+experiment_name: tau2-agent-service-rollout
+trial_name: 1.7b-telecom
 
 seed: 1
 enable_offload: false
@@ -7,21 +7,21 @@ total_train_epochs: 1
 total_train_steps: null
 tokenizer_path: ${model_path}
 
-model_path: Qwen/Qwen3-1.7B  # HuggingFace model path
+model_path: Qwen/Qwen3-1.7B
 
 cluster:
   n_nodes: 1
   n_gpus_per_node: 2
-  fileroot: /path/to/experiments  # Replace with your experiment directory
+  fileroot: /path/to/experiments
   name_resolve:
     type: nfs
-    nfs_record_root: /path/to/name_resolve  # Replace with your name resolve directory
+    nfs_record_root: /path/to/name_resolve
 
 scheduler:
   type: local
 
 gconfig:
-  n_samples: 8
+  n_samples: 1
   min_new_tokens: 0
   max_new_tokens: 8192
   max_tokens: 16384
@@ -33,10 +33,10 @@ rollout:
   backend: "sglang:d2"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  max_concurrent_rollouts: 256
+  max_concurrent_rollouts: 32
   queue_size: null
-  consumer_batch_size: 16
-  max_head_offpolicyness: 1000000000  # 1e9: disable staleness control for pure rollout
+  consumer_batch_size: 8
+  max_head_offpolicyness: 1000000000
   enable_rollout_tracing: true
   fileroot: ${cluster.fileroot}
   tokenizer_path: ${tokenizer_path}
@@ -60,13 +60,22 @@ rollout:
       env_vars:
         AREAL_PROXY_WARN_ONCE: "1"
 
-# Tau2 environment configuration
+agent_service:
+  agent_cls_path: examples.experimental.agent_service.tau2.agent.Tau2Agent
+  admin_api_key: areal-agent-admin
+  num_pairs: 1
+  setup_timeout: 120.0
+  health_poll_interval: 5.0
+  drain_timeout: 30.0
+  log_level: info
+  env: {}
+
 econfig:
   domain: telecom
   max_steps: 50
   add_thinking_tool: false
   solo_mode: false
-  user_llm_base_url: http://localhost:8000/v1/  # Replace with your user LLM endpoint
+  user_llm_base_url: http://localhost:8000/v1/
   user_llm: openai/self-hosted-Qwen2.5-72B
   user_llm_args:
     temperature: 0.0
@@ -74,7 +83,6 @@ econfig:
   turn_discount: 1.0
   invalid_format_penalty: 0.1
 
-# SGLang inference server configuration
 sglang:
   model_path: ${model_path}
   random_seed: ${seed}
@@ -84,9 +92,8 @@ sglang:
   context_length: 32768
   mem_fraction_static: 0.8
 
-# Dataset
 train_dataset:
-  batch_size: 16
+  batch_size: 8
   shuffle: true
   pin_memory: true
   num_workers: 4
@@ -94,7 +101,6 @@ train_dataset:
   type: rl
   max_length: 1024
 
-# Utilities (required by BaseExperimentConfig)
 saver:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}

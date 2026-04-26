@@ -1,19 +1,9 @@
 """Claude Agent for AReaL Agent Service.
 
 Implements :class:`AgentRunnable` using the Claude Agent SDK
-(``claude-agent-sdk``).  Each Worker instance holds a pool of
+(``claude-agent-sdk``). Each Worker instance holds a pool of
 :class:`ClaudeSDKClient` sessions keyed by ``session_key``, so multi-turn
 conversations preserve full context without re-sending history.
-
-Requires::
-
-    pip install claude-agent-sdk
-
-Environment variables:
-    ANTHROPIC_API_KEY   — Anthropic API key (required)
-    CLAUDE_MODEL        — model name (default: claude-sonnet-4-6)
-    CLAUDE_SYSTEM_PROMPT — optional system prompt override
-    CLAUDE_MAX_TURNS    — max agentic turns per query (default: 20)
 """
 
 from __future__ import annotations
@@ -45,20 +35,14 @@ _DEFAULT_PERMISSION_MODE: PermissionMode = "bypassPermissions"
 
 
 class ClaudeAgent:
-    """AgentRunnable backed by the Claude Agent SDK.
-
-    Maintains a ``ClaudeSDKClient`` per session for true multi-turn
-    continuity — the SDK's internal session keeps the full transcript,
-    so ``request.history`` is only used for the very first turn of a
-    new session (to seed context if provided by the caller).
-    """
+    """AgentRunnable backed by the Claude Agent SDK."""
 
     def __init__(self, **kwargs: Any) -> None:
+        del kwargs
         self._model = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")
         self._system_prompt = os.environ.get("CLAUDE_SYSTEM_PROMPT", "")
         self._max_turns = int(os.environ.get("CLAUDE_MAX_TURNS", "20"))
         self._permission_mode: PermissionMode = _DEFAULT_PERMISSION_MODE
-
         self._sessions: dict[str, ClaudeSDKClient] = {}
 
         logger.info(
@@ -94,8 +78,7 @@ class ClaudeAgent:
                 logger.warning("Error closing session %s", session_key, exc_info=True)
 
     async def close_all_sessions(self) -> None:
-        keys = list(self._sessions.keys())
-        for key in keys:
+        for key in list(self._sessions):
             await self.close_session(key)
 
     async def run(
@@ -111,7 +94,6 @@ class ClaudeAgent:
 
             text_parts: list[str] = []
             tool_calls: list[dict[str, Any]] = []
-
             async for msg in client.receive_response():
                 if isinstance(msg, AssistantMessage):
                     for block in msg.content:
@@ -129,9 +111,8 @@ class ClaudeAgent:
                 elif isinstance(msg, ResultMessage):
                     break
 
-            summary = "".join(text_parts)
             return AgentResponse(
-                summary=summary[:200],
+                summary="".join(text_parts)[:200],
                 metadata={"tool_calls": tool_calls},
             )
         except Exception:

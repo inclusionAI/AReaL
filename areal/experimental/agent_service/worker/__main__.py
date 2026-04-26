@@ -6,7 +6,7 @@ Start a standalone Agent Worker process. The Controller forks this
 via Guard to create Worker+DataProxy pairs.
 
     python -m areal.experimental.agent_service.worker \
-        --agent examples.agent_service.agent.ClaudeAgent \
+        --agent examples.experimental.agent_service.claude.agent.ClaudeAgent \
         --host 127.0.0.1 --port 9000
 """
 

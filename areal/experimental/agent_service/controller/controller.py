@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
-"""AgentServiceController — orchestrates agent service micro-services via Guards.
+"""AgentController — orchestrates agent service micro-services via Guards.
 
 Mirrors the architecture of
-:class:`~areal.experimental.inference_service.controller.controller.GatewayInferenceController`:
+:class:`~areal.experimental.inference_service.controller.controller.RolloutControllerV2`:
 Guard workers are created via the Scheduler, then the controller forks
 Router, Worker+DataProxy pairs, and Gateway onto them via HTTP API.
 
@@ -12,7 +12,7 @@ Lifecycle::
     from areal.infra.scheduler.local import LocalScheduler
 
     scheduler = LocalScheduler(...)
-    controller = AgentServiceController(config, scheduler)
+    controller = AgentController(config, scheduler)
     controller.initialize()
     # ... run traffic ...
     controller.scale_up(2)     # add 2 Worker+DataProxy pairs
@@ -26,26 +26,30 @@ import sys
 import threading
 import time
 import traceback
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+import aiohttp
 import requests
 
-from areal.experimental.agent_service.controller.config import (
-    AgentServiceControllerConfig,
-)
+from areal.api.cli_args import AgentConfig
+from areal.experimental.openai.proxy.server import deserialize_interactions
 from areal.utils import logging
 from areal.utils.network import format_hostport
 
 if TYPE_CHECKING:
     from areal.api.scheduler_api import Scheduler, Worker
+    from areal.experimental.openai.types import InteractionWithTokenLogpReward
 
-logger = logging.getLogger("AgentServiceController")
+logger = logging.getLogger("AgentController")
 
 _GUARD_ROLE = "agent-guard"
 _UNREGISTER_RETRIES = 3
 _HEALTH_CHECK_WORKERS = 4
+_DEFAULT_RUNTIME_TIMEOUT = 600.0
+_DEFAULT_INFERENCE_ADMIN_API_KEY = "areal-admin-key"
 
 
 @dataclass
@@ -60,7 +64,17 @@ class _WorkerPair:
     worker_addr: str
 
 
-class AgentServiceController:
+@dataclass
+class _RuntimeSession:
+    agent_session_id: str
+    inference_gateway_addr: str
+    inference_admin_api_key: str
+    inference_session_id: str
+    inference_session_api_key: str
+    inference_model: str = ""
+
+
+class AgentController:
     """Orchestrator for the Agent Service micro-service stack.
 
     Parameters
@@ -73,7 +87,7 @@ class AgentServiceController:
 
     def __init__(
         self,
-        config: AgentServiceControllerConfig,
+        config: AgentConfig,
         scheduler: Scheduler,
     ) -> None:
         self.config = config
@@ -91,6 +105,8 @@ class AgentServiceController:
         self._next_pair_index: int = 0
 
         self._forked_services: list[tuple[str, str, int]] = []
+        self._sessions: dict[str, _RuntimeSession] = {}
+        self._sessions_lock = threading.Lock()
 
         self._health_stop = threading.Event()
         self._health_thread: threading.Thread | None = None
@@ -219,6 +235,8 @@ class AgentServiceController:
         self._guard_addrs.clear()
         with self._pairs_lock:
             self._pairs.clear()
+        with self._sessions_lock:
+            self._sessions.clear()
         self._router_addr = ""
         self._gateway_addr = ""
 
@@ -370,6 +388,166 @@ class AgentServiceController:
     def pairs(self) -> dict[int, _WorkerPair]:
         with self._pairs_lock:
             return dict(self._pairs)
+
+    # ------------------------------------------------------------------
+    # Runtime APIs
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _bearer_headers(api_key: str) -> dict[str, str]:
+        return {"Authorization": f"Bearer {api_key}"}
+
+    async def _post_json(
+        self,
+        url: str,
+        payload: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+        *,
+        timeout: float = _DEFAULT_RUNTIME_TIMEOUT,
+        expect_json: bool = True,
+    ) -> dict[str, Any]:
+        client_timeout = aiohttp.ClientTimeout(total=timeout)
+        async with aiohttp.ClientSession(timeout=client_timeout) as session:
+            async with session.post(url, json=payload, headers=headers) as resp:
+                resp.raise_for_status()
+                if not expect_json:
+                    return {}
+                return await resp.json()
+
+    async def _grant_capacity(
+        self,
+        inference_gateway_addr: str,
+        inference_admin_api_key: str,
+    ) -> None:
+        await self._post_json(
+            f"{inference_gateway_addr.rstrip('/')}/grant_capacity",
+            headers=self._bearer_headers(inference_admin_api_key),
+            expect_json=False,
+        )
+
+    async def start_session(
+        self,
+        task_id: str,
+        *,
+        inference_gateway_addr: str,
+        inference_admin_api_key: str = _DEFAULT_INFERENCE_ADMIN_API_KEY,
+        inference_model: str = "",
+        api_key: str | None = None,
+    ) -> dict[str, str]:
+        agent_session_id = f"agent-sess-{uuid.uuid4().hex[:12]}"
+        normalized_task_id = task_id or agent_session_id
+        gateway_addr = inference_gateway_addr.rstrip("/")
+
+        await self._grant_capacity(gateway_addr, inference_admin_api_key)
+
+        payload: dict[str, Any] = {"task_id": normalized_task_id}
+        if api_key is not None:
+            payload["api_key"] = api_key
+
+        data = await self._post_json(
+            f"{gateway_addr}/rl/start_session",
+            payload=payload,
+            headers=self._bearer_headers(inference_admin_api_key),
+        )
+
+        session = _RuntimeSession(
+            agent_session_id=agent_session_id,
+            inference_gateway_addr=gateway_addr,
+            inference_admin_api_key=inference_admin_api_key,
+            inference_session_id=data["session_id"],
+            inference_session_api_key=data["api_key"],
+            inference_model=inference_model,
+        )
+        with self._sessions_lock:
+            self._sessions[agent_session_id] = session
+
+        return {
+            "session_id": agent_session_id,
+            "inference_session_id": session.inference_session_id,
+            "api_key": session.inference_session_api_key,
+        }
+
+    async def step(
+        self,
+        input: str | list[dict[str, Any]],
+        session_id: str,
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if not self._gateway_addr:
+            raise RuntimeError(
+                "step() requires the agent-service gateway to be running"
+            )
+
+        session = self._resolve_session(session_id)
+        input_items = (
+            [{"type": "message", "content": input}] if isinstance(input, str) else input
+        )
+
+        merged_metadata: dict[str, Any] = {
+            "inference_base_url": session.inference_gateway_addr,
+            "inference_api_key": session.inference_session_api_key,
+        }
+        if session.inference_model:
+            merged_metadata["inference_model"] = session.inference_model
+        if metadata:
+            merged_metadata.update(metadata)
+
+        body: dict[str, Any] = {
+            "input": input_items,
+            "model": (session.inference_model or "default").replace("/", "--"),
+            "user": session.agent_session_id,
+        }
+        if merged_metadata:
+            body["metadata"] = merged_metadata
+
+        return await self._post_json(
+            f"{self._gateway_addr}/v1/responses",
+            payload=body,
+            headers=self._bearer_headers(self.config.admin_api_key),
+        )
+
+    async def set_reward(
+        self,
+        reward: float,
+        session_id: str,
+        *,
+        interaction_id: str | None = None,
+    ) -> dict[str, Any]:
+        session = self._resolve_session(session_id)
+        return await self._post_json(
+            f"{session.inference_gateway_addr}/rl/set_reward",
+            payload={"interaction_id": interaction_id, "reward": reward},
+            headers=self._bearer_headers(session.inference_session_api_key),
+        )
+
+    async def export_trajectory(
+        self,
+        session_id: str,
+        *,
+        trajectory_id: int | None = None,
+        discount: float = 1.0,
+        style: str = "individual",
+    ) -> dict[str, InteractionWithTokenLogpReward]:
+        session = self._resolve_session(session_id)
+        data = await self._post_json(
+            f"{session.inference_gateway_addr}/export_trajectories",
+            payload={
+                "session_id": session.inference_session_id,
+                "trajectory_id": trajectory_id,
+                "discount": discount,
+                "style": style,
+            },
+            headers=self._bearer_headers(session.inference_admin_api_key),
+        )
+        return deserialize_interactions(data["interactions"])
+
+    def _resolve_session(self, session_id: str) -> _RuntimeSession:
+        with self._sessions_lock:
+            session = self._sessions.get(session_id)
+        if session is None:
+            raise KeyError(f"Unknown session_id: {session_id!r}")
+        return session
 
     # ------------------------------------------------------------------
     # Guard interaction helpers

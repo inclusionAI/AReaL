@@ -4,7 +4,9 @@
 
 The Agent Service provides **agent-level** capabilities on top of AReaL's model-level
 proxy. It exposes complete agent sessions — multi-turn conversations with tool use,
-memory, and pluggable agent frameworks — via independent HTTP microservices.
+memory, and pluggable agent frameworks — via independent HTTP microservices. It also
+includes an `AgentController` that can launch the stack through Guard processes and
+bridge agent conversations to the experimental inference service for RL data collection.
 
 ## Architecture
 
@@ -46,6 +48,10 @@ history) → forwards to Worker → appends messages to history → returns resp
 at startup. Each `POST /run` request is a single turn — the agent receives the full
 conversation history in the request and returns a response. The Worker has no session
 state.
+
+**AgentController** — Python orchestrator that launches Guards via the scheduler, forks
+the Router / Gateway / Worker+DataProxy pairs onto them, supports scale-up and
+scale-down, and exposes async runtime APIs for inference-backed RL sessions.
 
 ## Agent Protocol
 
@@ -129,6 +135,29 @@ class EventEmitter(Protocol):
 | `/ws`           | WS     | Gateway WebSocket protocol |
 | `/v1/responses` | POST   | OpenResponses HTTP bridge  |
 
+## AgentController Runtime APIs
+
+`AgentController` is the integration point used by the examples and rollout workflows.
+It manages the agent-service stack and exposes async helpers for RL/inference flows:
+
+| Method                                                | Description                                                                    |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `initialize()`                                        | Launch Guards, Router, Worker+DataProxy pairs, Gateway, and the health monitor |
+| `destroy()`                                           | Tear down the full stack in reverse order                                      |
+| `scale_up(count)`                                     | Add Worker+DataProxy pairs                                                     |
+| `scale_down(count)`                                   | Unregister, drain, and remove pairs                                            |
+| `start_session(...)`                                  | Grant inference capacity and create an RL session bound to an agent session    |
+| `step(input, session_id, metadata=None)`              | Send a turn through the agent-service Gateway `POST /v1/responses`             |
+| `set_reward(reward, session_id, interaction_id=None)` | Forward the final reward to the inference service                              |
+| `export_trajectory(session_id, ...)`                  | Export serialized interactions from the inference service                      |
+
+Typical rollout flow:
+
+1. `start_session()` to create the agent/inference session pair.
+1. `step()` for each user turn.
+1. `set_reward()` when the episode completes.
+1. `export_trajectory()` to retrieve interactions for training.
+
 ## Multi-turn Conversation Flow
 
 ```
@@ -159,9 +188,8 @@ areal/experimental/agent_service/
 ├── protocol.py          # Gateway protocol frame types
 ├── types.py             # AgentRequest, AgentResponse, EventEmitter, AgentRunnable
 ├── controller/
-│   ├── __init__.py      # AgentServiceController, AgentServiceControllerConfig
-│   ├── config.py        # AgentServiceControllerConfig dataclass
-│   └── controller.py    # AgentServiceController orchestrator
+│   ├── __init__.py      # AgentController export
+│   └── controller.py    # AgentController orchestrator
 ├── guard/
 │   ├── __init__.py      # Module docstring
 │   ├── __main__.py      # python -m areal.experimental.agent_service.guard
@@ -190,8 +218,25 @@ areal/experimental/agent_service/
     ├── app.py           # create_worker_app()
     └── config.py        # WorkerConfig dataclass
 
-examples/agent_service/
-├── agent.py                  # ClaudeAgent (Claude Agent SDK)
-├── run_agent_service.py      # Controller-based launcher + interactive demo
+examples/experimental/agent_service/
+├── __init__.py               # Marks the examples package
+├── claude/
+│   ├── __init__.py           # Claude example package
+│   ├── agent.py              # ClaudeAgent (Claude Agent SDK)
+│   └── run_agent_service.py  # Controller-based launcher + interactive demo
+├── tau2/
+│   ├── __init__.py           # Tau2 example package
+│   ├── agent.py              # Tau2 agent-service worker example
+│   ├── workflow.py           # Tau2 workflow using async controller APIs
+│   ├── run_rollout.py        # Direct rollout driver for Tau2
+│   └── config.yaml           # Tau2 example config
 └── README.md                 # Example documentation
+```
+
+For a standalone worker process, the agent import path now points at the nested Claude
+example module:
+
+```bash
+python -m areal.experimental.agent_service.worker \
+    --agent examples.experimental.agent_service.claude.agent.ClaudeAgent
 ```

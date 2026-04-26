@@ -308,15 +308,13 @@ def test_awex_fsdp_e2e_weight_update(n_gpus, tmp_path_factory):
 
     from areal.api import FinetuneSpec
     from areal.api.cli_args import (
+        InferenceEngineConfig,
         OptimizerConfig,
         SchedulingSpec,
         TrainEngineConfig,
     )
-    from areal.experimental.inference_service.controller.config import (
-        GatewayControllerConfig,
-    )
     from areal.experimental.inference_service.controller.controller import (
-        GatewayInferenceController,
+        RolloutControllerV2,
     )
     from areal.experimental.training_service.controller.controller import (
         GatewayTrainController,
@@ -332,9 +330,8 @@ def test_awex_fsdp_e2e_weight_update(n_gpus, tmp_path_factory):
 
     scheduler = _make_local_scheduler(tmp, "e2e", gpu_devices=list(range(n_gpus)))
 
-    inf_config = GatewayControllerConfig(
+    inf_config = InferenceEngineConfig(
         tokenizer_path=model_path,
-        model_path=model_path,
         backend=f"sglang:d{n_half}",
         scheduling_spec=(
             SchedulingSpec(
@@ -347,7 +344,7 @@ def test_awex_fsdp_e2e_weight_update(n_gpus, tmp_path_factory):
         setup_timeout=300.0,
         admin_api_key="test-admin",
     )
-    inf_ctrl = GatewayInferenceController(config=inf_config, scheduler=scheduler)
+    inf_ctrl = RolloutControllerV2(config=inf_config, scheduler=scheduler)
 
     train_config = TrainEngineConfig(
         backend=f"fsdp:d{n_half}",
@@ -377,7 +374,7 @@ def test_awex_fsdp_e2e_weight_update(n_gpus, tmp_path_factory):
         # -- 1. SGLang via inference controller ----------------------------
         inf_ctrl.initialize(
             role="rollout",
-            server_args={"mem_fraction_static": 0.7},
+            server_args={"model_path": model_path, "mem_fraction_static": 0.7},
         )
         inf_worker_urls = list(inf_ctrl._inf_addrs)
 
@@ -510,12 +507,14 @@ def _run_megatron_awex_e2e(
     model_path: str | None = None,
 ):
     from areal.api import FinetuneSpec
-    from areal.api.cli_args import OptimizerConfig, SchedulingSpec, TrainEngineConfig
-    from areal.experimental.inference_service.controller.config import (
-        GatewayControllerConfig,
+    from areal.api.cli_args import (
+        InferenceEngineConfig,
+        OptimizerConfig,
+        SchedulingSpec,
+        TrainEngineConfig,
     )
     from areal.experimental.inference_service.controller.controller import (
-        GatewayInferenceController,
+        RolloutControllerV2,
     )
     from areal.experimental.training_service.controller.controller import (
         GatewayTrainController,
@@ -530,9 +529,8 @@ def _run_megatron_awex_e2e(
     model_path = model_path or _get_test_model_path()
     scheduler = _make_local_scheduler(tmp, tag, gpu_devices=list(range(n_gpus)))
 
-    inf_config = GatewayControllerConfig(
+    inf_config = InferenceEngineConfig(
         tokenizer_path=model_path,
-        model_path=model_path,
         backend=f"sglang:d{n_infer}",
         scheduling_spec=(
             SchedulingSpec(
@@ -545,7 +543,7 @@ def _run_megatron_awex_e2e(
         setup_timeout=300.0,
         admin_api_key="test-admin",
     )
-    inf_ctrl = GatewayInferenceController(config=inf_config, scheduler=scheduler)
+    inf_ctrl = RolloutControllerV2(config=inf_config, scheduler=scheduler)
 
     train_config = TrainEngineConfig(
         backend=backend,
@@ -571,7 +569,10 @@ def _run_megatron_awex_e2e(
 
     wu_ctrl: WeightUpdateController | None = None
     try:
-        inf_ctrl.initialize(role="rollout", server_args={"mem_fraction_static": 0.7})
+        inf_ctrl.initialize(
+            role="rollout",
+            server_args={"model_path": model_path, "mem_fraction_static": 0.7},
+        )
         inf_worker_urls = list(inf_ctrl._inf_addrs)
 
         for url in inf_worker_urls:
