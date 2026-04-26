@@ -31,6 +31,9 @@ class TestInferenceEngineConfigForInferenceService:
         assert cfg.max_head_offpolicyness == 0
         assert cfg.enable_rollout_tracing is False
         assert cfg.set_reward_finish_timeout == 0.0
+        assert cfg.session_timeout_seconds == 3600.0
+        assert cfg.stale_session_cleanup_interval_seconds == 60.0
+        assert cfg.stale_session_dump_path == ""
 
     def test_custom_values(self):
         cfg = InferenceEngineConfig(
@@ -40,12 +43,18 @@ class TestInferenceEngineConfigForInferenceService:
             max_concurrent_rollouts=64,
             max_head_offpolicyness=5,
             set_reward_finish_timeout=3.0,
+            session_timeout_seconds=120.0,
+            stale_session_cleanup_interval_seconds=15.0,
+            stale_session_dump_path="/tmp/stale-dumps",
         )
         assert cfg.admin_api_key == "custom-key"
         assert cfg.consumer_batch_size == 32
         assert cfg.max_concurrent_rollouts == 64
         assert cfg.max_head_offpolicyness == 5
         assert cfg.set_reward_finish_timeout == 3.0
+        assert cfg.session_timeout_seconds == 120.0
+        assert cfg.stale_session_cleanup_interval_seconds == 15.0
+        assert cfg.stale_session_dump_path == "/tmp/stale-dumps"
 
     def test_scheduling_fields(self):
         cfg = InferenceEngineConfig(
@@ -388,6 +397,65 @@ class TestRolloutControllerV2Construction:
         assert "7.5" in data_proxy_cmd
         assert "--callback-server-addr" in data_proxy_cmd
         assert "http://127.0.0.1:19000" in data_proxy_cmd
+
+    @pytest.mark.asyncio
+    async def test_async_initialize_passes_stale_cleanup_settings_to_data_proxy(
+        self,
+    ):
+        from areal.api.cli_args import SchedulingSpec
+        from areal.api.io_struct import LocalInfServerInfo
+
+        worker = MagicMock()
+        worker.ip = "127.0.0.1"
+        worker.worker_ports = [18000]
+
+        scheduler = MagicMock()
+        scheduler.get_workers.return_value = [worker]
+
+        cfg = InferenceEngineConfig(
+            backend="sglang:d1",
+            tokenizer_path="mock-tokenizer",
+            request_timeout=15.0,
+            session_timeout_seconds=321.0,
+            stale_session_cleanup_interval_seconds=22.5,
+            stale_session_dump_path="/tmp/stale-session-dumps",
+            scheduling_spec=(
+                SchedulingSpec(
+                    gpu=0,
+                    cpu=1,
+                    mem=1,
+                    cmd="python -m areal.experimental.inference_service.guard",
+                ),
+            ),
+            admin_api_key="test-admin-key",
+        )
+        controller = RolloutControllerV2(config=cfg, scheduler=scheduler)
+        controller._callback_host = "127.0.0.1"
+        controller._callback_port = 19000
+
+        with patch.object(controller, "_fork_on_guard") as mock_fork:
+            mock_fork.side_effect = [
+                ("127.0.0.1", 18081),
+                ("127.0.0.1", 18082),
+                ("127.0.0.1", 18080),
+            ]
+
+            await controller._async_initialize(
+                server_args=None,
+                server_infos=[
+                    LocalInfServerInfo(
+                        host="127.0.0.1", port=30000, process=MagicMock()
+                    )
+                ],
+            )
+
+        data_proxy_cmd = mock_fork.call_args_list[1].kwargs["raw_cmd"]
+        assert "--session-timeout-seconds" in data_proxy_cmd
+        assert "321.0" in data_proxy_cmd
+        assert "--stale-session-cleanup-interval-seconds" in data_proxy_cmd
+        assert "22.5" in data_proxy_cmd
+        assert "--stale-session-dump-path" in data_proxy_cmd
+        assert "/tmp/stale-session-dumps" in data_proxy_cmd
 
 
 # =============================================================================
