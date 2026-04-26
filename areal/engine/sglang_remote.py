@@ -98,53 +98,107 @@ class SGLangBackend:
         stop_message = finish_reason.get("message", "")
 
         # Extract routed_experts information if available.
-        # SGLang may return routed_experts in two formats:
-        # 1. Base64-encoded string (skip_tokenizer_init=False, normal path)
-        # 2. Raw list/dict (skip_tokenizer_init=True or newer SGLang versions)
-        routed_experts = meta_info.get("routed_experts", None)
+        routed_experts_raw = meta_info.get("routed_experts", None)
+        routed_experts = routed_experts_raw
         if routed_experts is not None:
             num_sgl_token = (
                 meta_info["prompt_tokens"] + meta_info["completion_tokens"] - 1
             )
-            if isinstance(routed_experts, str):
+            re_type_name = type(routed_experts_raw).__name__
+            if isinstance(routed_experts, dict):
+                # Empty dict -> jsonable_encoder(tensor) failure.  Non-empty
+                # dict is not a documented SGLang wire format; surface it
+                # loudly so we can add a decoder if/when it starts
+                # happening rather than silently corrupting R3 data.
+                if not routed_experts:
+                    logger.warning(
+                        "[R3] SGLang returned routed_experts=%s (empty "
+                        "dict).  This is the fingerprint of a raw "
+                        "torch.Tensor being serialised by FastAPI's "
+                        "jsonable_encoder.  Ensure the AReaL SGLang "
+                        "server-side patch (areal.infra.launcher."
+                        "sglang_r3_patch) is installed on the inference "
+                        "server; dropping payload.",
+                        routed_experts_raw,
+                    )
+                else:
+                    logger.warning(
+                        "[R3] SGLang returned routed_experts as a "
+                        "non-empty dict (keys=%s); no decoder registered. "
+                        "Dropping payload.",
+                        sorted(routed_experts.keys()),
+                    )
+                routed_experts = None
+            elif isinstance(routed_experts, str):
                 try:
-                    routed_experts = np.frombuffer(
+                    flat = np.frombuffer(
                         pybase64.b64decode(routed_experts.encode("utf-8")),
                         dtype=np.int32,
-                    ).reshape(num_sgl_token, -1)
-                    logger.info(
-                        "[R3-VERIFY] SGLang decoded routed_experts: "
-                        "shape=%s, first3=%s, hash=%d",
-                        routed_experts.shape,
-                        routed_experts.flat[:3].tolist(),
-                        hash(routed_experts.tobytes()),
                     )
-                except Exception:
+                    if num_sgl_token <= 0 or flat.size % num_sgl_token != 0:
+                        # Total element count does not divide by
+                        # ``num_sgl_token``.  This usually means SGLang's
+                        # tokenizer round-trip (``skip_tokenizer_init=False``)
+                        # inserted/removed tokens between the router capture
+                        # and the returned ``output_tokens``.  Drop the
+                        # payload instead of silently reshaping into a wrong
+                        # grid that would corrupt R3 replay.
+                        logger.warning(
+                            "[R3] routed_experts size=%d does not divide "
+                            "num_sgl_token=%d (prompt=%d + completion=%d - 1). "
+                            "Likely tokenizer round-trip drift; dropping.",
+                            flat.size,
+                            num_sgl_token,
+                            meta_info.get("prompt_tokens", -1),
+                            meta_info.get("completion_tokens", -1),
+                        )
+                        routed_experts = None
+                    else:
+                        routed_experts = flat.reshape(num_sgl_token, -1)
+                        logger.info(
+                            "[R3-VERIFY] SGLang decoded routed_experts: "
+                            "shape=%s, first3=%s, hash=%d",
+                            routed_experts.shape,
+                            routed_experts.flat[:3].tolist(),
+                            hash(routed_experts.tobytes()),
+                        )
+                except Exception as exc:
                     logger.warning(
                         "[R3] Failed to decode base64 routed_experts "
                         "(num_sgl_token=%d): %s",
                         num_sgl_token,
+                        exc,
                         exc_info=True,
                     )
                     routed_experts = None
             else:
                 try:
-                    routed_experts = np.asarray(
-                        routed_experts, dtype=np.int32
-                    ).reshape(num_sgl_token, -1)
-                    logger.info(
-                        "[R3-VERIFY] SGLang converted routed_experts: "
-                        "shape=%s, first3=%s, hash=%d",
-                        routed_experts.shape,
-                        routed_experts.flat[:3].tolist(),
-                        hash(routed_experts.tobytes()),
-                    )
-                except Exception:
+                    raw = np.asarray(routed_experts, dtype=np.int32).reshape(-1)
+                    if num_sgl_token <= 0 or raw.size % num_sgl_token != 0:
+                        logger.warning(
+                            "[R3] routed_experts size=%d does not divide "
+                            "num_sgl_token=%d; likely tokenizer round-trip "
+                            "drift, dropping.",
+                            raw.size,
+                            num_sgl_token,
+                        )
+                        routed_experts = None
+                    else:
+                        routed_experts = raw.reshape(num_sgl_token, -1)
+                        logger.info(
+                            "[R3-VERIFY] SGLang converted routed_experts: "
+                            "shape=%s, first3=%s, hash=%d",
+                            routed_experts.shape,
+                            routed_experts.flat[:3].tolist(),
+                            hash(routed_experts.tobytes()),
+                        )
+                except Exception as exc:
                     logger.warning(
                         "[R3] Failed to convert routed_experts from %s "
                         "(num_sgl_token=%d): %s",
-                        type(meta_info.get("routed_experts")).__name__,
+                        re_type_name,
                         num_sgl_token,
+                        exc,
                         exc_info=True,
                     )
                     routed_experts = None

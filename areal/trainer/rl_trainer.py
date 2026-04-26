@@ -140,6 +140,26 @@ class PPOTrainer:
                 type(config.actor.megatron).__name__,
             )
 
+            sglang_cfg = getattr(config, "sglang", None)
+            if sglang_cfg is not None and not getattr(
+                sglang_cfg, "skip_tokenizer_init", True
+            ):
+                logger.warning(
+                    "[R3] rollout.return_routed_experts=True but "
+                    "sglang.skip_tokenizer_init=False.  Forcing "
+                    "sglang.skip_tokenizer_init=True to avoid "
+                    "tokenizer round-trip token-shift that breaks "
+                    "per-token router-index alignment."
+                )
+                try:
+                    sglang_cfg.skip_tokenizer_init = True
+                except Exception:
+                    # Tolerate frozen/struct-style omegaconf containers
+                    from omegaconf import OmegaConf
+
+                    OmegaConf.set_struct(sglang_cfg, False)
+                    sglang_cfg.skip_tokenizer_init = True
+
         # Create models: actor, critic, ref — each with its own allocation.
         self.actor = self._create_train_engine(config.actor, self.actor_alloc)
         self.critic = None

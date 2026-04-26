@@ -102,6 +102,9 @@ def extract_routed_experts(
         return None
 
 
+_INFER_LOGGED: set[tuple[int, int]] = set()
+
+
 def _infer_and_preprocess(
     routed_experts_np: np.ndarray,
     input_ids: torch.Tensor,
@@ -128,13 +131,19 @@ def _infer_and_preprocess(
         )
     num_moe_layers = flat_dim // topk
 
-    logger.debug(
-        "[R3] Inferred num_moe_layers=%d, topk=%d from flat_dim=%d "
-        "(warning: these may be incorrect without model config).",
-        num_moe_layers,
-        topk,
-        flat_dim,
-    )
+    _key = (num_moe_layers, topk)
+    if _key not in _INFER_LOGGED:
+        _INFER_LOGGED.add(_key)
+        logger.info(
+            "[R3] rlvr workflow inferred num_moe_layers=%d, topk=%d from "
+            "flat_dim=%d (this count includes any dense-FFN layers; the "
+            "engine-side router_replay_utils.set_router_replay_data handles "
+            "the dense-vs-MoE split).  For deterministic behaviour, pass "
+            "num_moe_layers and topk explicitly from the model config.",
+            num_moe_layers,
+            topk,
+            flat_dim,
+        )
 
     from areal.engine.router_replay_utils import preprocess_routed_experts_batch
 
