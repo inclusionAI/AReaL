@@ -10,12 +10,15 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from areal.api.cli_args import AgentConfig
-from areal.experimental.agent_service.controller.controller import AgentController
+from areal.experimental.agent_service.controller.controller import (
+    AgentController,
+    _RuntimeSession,
+)
 
 CTRL = "areal.experimental.agent_service.controller.controller"
 
@@ -334,3 +337,135 @@ class TestHealthMonitor:
         assert ctrl._health_thread is None
 
         ctrl.destroy()
+
+
+class TestRuntimeAPIs:
+    @pytest.mark.asyncio
+    async def test_start_session_grants_capacity_and_stores_session(self, config):
+        scheduler = _make_scheduler(("10.0.0.1", "8090"))
+        ctrl = AgentController(config=config, scheduler=scheduler)
+        ctrl._grant_capacity = AsyncMock()
+        ctrl._post_json = AsyncMock(
+            return_value={"session_id": "inf-sess-1", "api_key": "sess-key"}
+        )
+
+        session = await ctrl.start_session(
+            "task-1",
+            inference_gateway_addr="http://inference",
+            inference_admin_api_key="rollout-admin",
+            inference_model="Qwen/Test",
+        )
+
+        assert session["session_id"].startswith("agent-sess-")
+        assert session["inference_session_id"] == "inf-sess-1"
+        assert session["api_key"] == "sess-key"
+        ctrl._grant_capacity.assert_awaited_once_with(
+            "http://inference", "rollout-admin"
+        )
+        ctrl._post_json.assert_awaited_once_with(
+            "http://inference/rl/start_session",
+            payload={"task_id": "task-1"},
+            headers={"Authorization": "Bearer rollout-admin"},
+        )
+
+        stored = ctrl._resolve_session(session["session_id"])
+        assert stored.inference_session_id == "inf-sess-1"
+        assert stored.inference_session_api_key == "sess-key"
+        assert stored.inference_model == "Qwen/Test"
+
+    @pytest.mark.asyncio
+    async def test_step_posts_async_gateway_request(self, config):
+        scheduler = _make_scheduler(("10.0.0.1", "8090"))
+        ctrl = AgentController(config=config, scheduler=scheduler)
+        ctrl._gateway_addr = "http://agent-gateway"
+        ctrl._post_json = AsyncMock(return_value={"status": "completed"})
+        ctrl._sessions["agent-sess-1"] = _RuntimeSession(
+            agent_session_id="agent-sess-1",
+            inference_gateway_addr="http://inference",
+            inference_admin_api_key="rollout-admin",
+            inference_session_id="inf-sess-1",
+            inference_session_api_key="sess-key",
+            inference_model="Qwen/Test",
+        )
+
+        result = await ctrl.step(
+            "hello",
+            "agent-sess-1",
+            metadata={"extra": "value"},
+        )
+
+        assert result == {"status": "completed"}
+        ctrl._post_json.assert_awaited_once_with(
+            "http://agent-gateway/v1/responses",
+            payload={
+                "input": [{"type": "message", "content": "hello"}],
+                "model": "Qwen--Test",
+                "user": "agent-sess-1",
+                "metadata": {
+                    "inference_base_url": "http://inference",
+                    "inference_api_key": "sess-key",
+                    "inference_model": "Qwen/Test",
+                    "extra": "value",
+                },
+            },
+            headers={"Authorization": "Bearer test-key"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_set_reward_uses_session_api_key(self, config):
+        scheduler = _make_scheduler(("10.0.0.1", "8090"))
+        ctrl = AgentController(config=config, scheduler=scheduler)
+        ctrl._post_json = AsyncMock(return_value={"trajectory_id": 7})
+        ctrl._sessions["agent-sess-1"] = _RuntimeSession(
+            agent_session_id="agent-sess-1",
+            inference_gateway_addr="http://inference",
+            inference_admin_api_key="rollout-admin",
+            inference_session_id="inf-sess-1",
+            inference_session_api_key="sess-key",
+        )
+
+        result = await ctrl.set_reward(1.0, "agent-sess-1", interaction_id="resp-1")
+
+        assert result == {"trajectory_id": 7}
+        ctrl._post_json.assert_awaited_once_with(
+            "http://inference/rl/set_reward",
+            payload={"interaction_id": "resp-1", "reward": 1.0},
+            headers={"Authorization": "Bearer sess-key"},
+        )
+
+    @pytest.mark.asyncio
+    @patch(f"{CTRL}.deserialize_interactions")
+    async def test_export_trajectory_deserializes_response(
+        self, mock_deserialize, config
+    ):
+        scheduler = _make_scheduler(("10.0.0.1", "8090"))
+        ctrl = AgentController(config=config, scheduler=scheduler)
+        ctrl._post_json = AsyncMock(return_value={"interactions": {"k": "v"}})
+        ctrl._sessions["agent-sess-1"] = _RuntimeSession(
+            agent_session_id="agent-sess-1",
+            inference_gateway_addr="http://inference",
+            inference_admin_api_key="rollout-admin",
+            inference_session_id="inf-sess-1",
+            inference_session_api_key="sess-key",
+        )
+        mock_deserialize.return_value = {"interaction-1": MagicMock(reward=1.0)}
+
+        result = await ctrl.export_trajectory(
+            "agent-sess-1",
+            trajectory_id=5,
+            discount=0.9,
+            style="individual",
+        )
+
+        assert "interaction-1" in result
+        ctrl._post_json.assert_awaited_once_with(
+            "http://inference/export_trajectories",
+            payload={
+                "session_id": "inf-sess-1",
+                "trajectory_id": 5,
+                "discount": 0.9,
+                "style": "individual",
+            },
+            headers={"Authorization": "Bearer rollout-admin"},
+        )
+        mock_deserialize.assert_called_once_with({"k": "v"})
