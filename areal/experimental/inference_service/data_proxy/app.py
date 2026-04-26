@@ -224,6 +224,22 @@ async def _ready_trajectory_loop(app: FastAPI) -> None:
         await asyncio.sleep(0.1)
 
 
+async def _cleanup_stale_sessions(app: FastAPI) -> None:
+    store: SessionStore = app.state.session_store
+    config: DataProxyConfig = app.state.config
+    await store.cleanup_stale(
+        timeout_seconds=config.session_timeout_seconds,
+        stale_session_dump_path=config.stale_session_dump_path,
+        serving_addr=config.serving_addr,
+    )
+
+
+async def _stale_session_cleanup_loop(app: FastAPI) -> None:
+    while True:
+        await _cleanup_stale_sessions(app)
+        await asyncio.sleep(app.state.config.stale_session_cleanup_interval_seconds)
+
+
 def create_app(config: DataProxyConfig) -> FastAPI:
     """Factory that creates the FastAPI app with lifespan-managed resources."""
 
@@ -257,12 +273,18 @@ def create_app(config: DataProxyConfig) -> FastAPI:
             app.state.areal_client = areal_client
 
         ready_task = asyncio.create_task(_ready_trajectory_loop(app))
+        cleanup_task = asyncio.create_task(_stale_session_cleanup_loop(app))
         try:
             yield
         finally:
             ready_task.cancel()
+            cleanup_task.cancel()
             try:
                 await ready_task
+            except asyncio.CancelledError:
+                pass
+            try:
+                await cleanup_task
             except asyncio.CancelledError:
                 pass
         logger.info("Data proxy shutting down")
