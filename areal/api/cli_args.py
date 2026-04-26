@@ -2532,6 +2532,14 @@ class _DatasetConfig:
             "If set, dataset loading will be offloaded to a data service with remote workers."
         },
     )
+    setup_timeout: float = field(
+        default=120.0,
+        metadata={
+            "help": "Timeout in seconds for the data service to load and register a dataset. "
+            "Increase this value when loading large datasets for the first time "
+            "(e.g. HuggingFace datasets that require downloading and preprocessing)."
+        },
+    )
 
 
 @dataclass
