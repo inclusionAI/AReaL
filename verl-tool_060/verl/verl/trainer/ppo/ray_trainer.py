@@ -1301,8 +1301,9 @@ class RayPPOTrainer:
 
                         at_gigpo_cfg = self.config.algorithm.get("at_gigpo", None)
                         if at_gigpo_cfg is not None and at_gigpo_cfg.get("enable", False):
+                            at_gigpo_v2 = at_gigpo_cfg.get("v2", False)
                             num_turns = batch.non_tensor_batch.get("__num_turns__", None)
-                            if num_turns is not None:
+                            if num_turns is not None and not at_gigpo_v2:
                                 advantages = batch.batch["advantages"]
                                 num_turns_arr = np.array([int(t) for t in num_turns])
                                 n_buckets = at_gigpo_cfg.get("n_turn_buckets", 3)

@@ -20,7 +20,7 @@ model_name=${MODEL_PATH:-/storage/openpsi/models/Qwen3-VL-8B-Thinking}
 
 train_data="[/storage/openpsi/data/reasonmap_rl/combined_train_rl_only_notool.parquet,$WORKSPACE/new_train_notool.parquet]"
 val_data="[/storage/openpsi/data/reasonmap_rl/combined_test_10pct_notool.parquet,$WORKSPACE/new_val_notool.parquet,$WORKSPACE/mapqa_val_200_notool.parquet]"
-run_name="mixed-grpo-notool-4node"
+run_name="mixed-grpo-notool-4nodev2"
 rl_alg=grpo
  
 # ---- Cluster topology ----
@@ -34,7 +34,7 @@ ppo_mini_batch_size=64
 
 # ---- Sequence lengths ----
 max_prompt_length=16384
-max_response_length=16384
+max_response_length=8192
 ppo_max_token_len_per_gpu=$(expr $max_prompt_length + $max_response_length)
 
 # ---- Sampling ----
@@ -54,8 +54,8 @@ entropy_coeff=0
 kl_loss_type=low_var_kl
 
 # ---- Per-GPU micro batches ----
-ppo_micro_batch_size_per_gpu=4
-log_prob_micro_batch_size_per_gpu=16
+ppo_micro_batch_size_per_gpu=2
+log_prob_micro_batch_size_per_gpu=8
 
 # ---- Parallelism ----
 tensor_model_parallel_size=1
@@ -73,7 +73,7 @@ max_num_batched_tokens=$(expr $max_prompt_length + $max_response_length)
 # ---- Schedule ----
 total_epochs=3
 save_freq=10
-test_freq=20
+test_freq=40
 
 # ============================================================
 export VERL_RUN_ID=$run_name
@@ -105,7 +105,7 @@ PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
     data.train_files=$train_data \
     data.val_files=$val_data \
     data.train_batch_size=$batch_size \
-    data.val_batch_size=256 \
+    data.val_batch_size=128 \
     data.dataloader_num_workers=64 \
     data.max_prompt_length=$max_prompt_length \
     data.max_response_length=$max_response_length \

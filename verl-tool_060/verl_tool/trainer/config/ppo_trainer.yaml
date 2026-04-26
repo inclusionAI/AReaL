@@ -92,6 +92,9 @@ algorithm:
     # Master switch; false = pure GiGPO, no task-adaptive behavior
     enable: false
 
+    # v2: disable turn-bucket reweight, fix epoch inflation by rollout n
+    v2: false
+
     # Softmax temperature for UCB sampling distribution (higher = more uniform)
     tau: 1.0
 
@@ -104,13 +107,19 @@ algorithm:
     # Start epoch-decay protection after this many epochs per dataset
     epoch_decay_start: 2.0
 
-    # Number of turn-based buckets for advantage rescaling (quantile split)
+    # Epoch decay slope per epoch past epoch_decay_start
+    epoch_decay_slope: 0.3
+
+    # Epoch decay floor (minimum decay multiplier)
+    epoch_decay_floor: 0.1
+
+    # Number of turn-based buckets for advantage rescaling (v1 only)
     n_turn_buckets: 4
 
-    # Minimum bucket size as ratio of total samples; small buckets merge into neighbors
+    # Minimum bucket size as ratio of total samples (v1 only)
     min_bucket_ratio: 0.15
 
-    # Sort batch by num_turns before actor update (groups similar complexity)
+    # Sort batch by num_turns before actor update (v1 only)
     sort_by_turns: false
 
   # Whether to enable in-reward KL penalty

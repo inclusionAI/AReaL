@@ -71,6 +71,18 @@ from geo_edit.datasets.input_template import (
     HR_BENCH_INPUT_TEMPLATE,
     HR_BENCH_NOTOOL_INPUT_TEMPLATE,
     HR_BENCH_SEPARATED_TEMPLATE,
+    VSTAR_BENCH_ANSWER_FORMAT,
+    VSTAR_BENCH_INPUT_TEMPLATE,
+    VSTAR_BENCH_NOTOOL_INPUT_TEMPLATE,
+    VSTAR_BENCH_SEPARATED_TEMPLATE,
+    SPATIALAB_ANSWER_FORMAT,
+    SPATIALAB_INPUT_TEMPLATE,
+    SPATIALAB_NOTOOL_INPUT_TEMPLATE,
+    SPATIALAB_SEPARATED_TEMPLATE,
+    VISULOGIC_ANSWER_FORMAT,
+    VISULOGIC_INPUT_TEMPLATE,
+    VISULOGIC_NOTOOL_INPUT_TEMPLATE,
+    VISULOGIC_SEPARATED_TEMPLATE,
 )
 
 FieldSource = str | Callable[[Mapping[str, Any]], Any]
@@ -773,6 +785,53 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         },
         separated_prompt_template=HR_BENCH_SEPARATED_TEMPLATE,
         answer_format=HR_BENCH_ANSWER_FORMAT,
+    ),
+    "vstar_bench": DatasetSpec(
+        name="vstar_bench",
+        id_key="index",
+        answer_key="answer",
+        image_key="image",
+        prompt_template=VSTAR_BENCH_INPUT_TEMPLATE,
+        notool_prompt_template=VSTAR_BENCH_NOTOOL_INPUT_TEMPLATE,
+        template_fields={"question": "question"},
+        separated_prompt_template=VSTAR_BENCH_SEPARATED_TEMPLATE,
+        answer_format=VSTAR_BENCH_ANSWER_FORMAT,
+    ),
+    "spatialab": DatasetSpec(
+        name="spatialab",
+        id_key="index",
+        answer_key="answer",
+        image_key="image",
+        prompt_template=SPATIALAB_INPUT_TEMPLATE,
+        notool_prompt_template=SPATIALAB_NOTOOL_INPUT_TEMPLATE,
+        template_fields={
+            "question": "question",
+            "options_text": "options_text",
+        },
+        task_kwargs_fields={
+            "meta_info_extra": lambda item: {
+                "category": item.get("category", ""),
+                "sub_category": item.get("sub_category", ""),
+            },
+        },
+        separated_prompt_template=SPATIALAB_SEPARATED_TEMPLATE,
+        answer_format=SPATIALAB_ANSWER_FORMAT,
+    ),
+    "visulogic": DatasetSpec(
+        name="visulogic",
+        id_key="index",
+        answer_key="answer",
+        image_key="image",
+        prompt_template=VISULOGIC_INPUT_TEMPLATE,
+        notool_prompt_template=VISULOGIC_NOTOOL_INPUT_TEMPLATE,
+        template_fields={"question": "question"},
+        task_kwargs_fields={
+            "meta_info_extra": lambda item: {
+                "category": item.get("category", ""),
+            },
+        },
+        separated_prompt_template=VISULOGIC_SEPARATED_TEMPLATE,
+        answer_format=VISULOGIC_ANSWER_FORMAT,
     ),
 }
 

@@ -16,12 +16,17 @@ class ATGiGPOSampler(AbstractCurriculumSampler):
 
     def __init__(self, data_source: Sized, data_config: DictConfig):
         self.data_source = data_source
-        self.tau = data_config.get("tau", 1.0)
-        self.epoch_decay_start = data_config.get("epoch_decay_start", 2.0)
+        sampler_cfg = data_config.get("sampler", {})
+        self.v2 = sampler_cfg.get("v2", False)
+        self.rollout_n = sampler_cfg.get("rollout_n", 1)
+        self.tau = sampler_cfg.get("tau", 1.0)
+        self.epoch_decay_start = sampler_cfg.get("epoch_decay_start", 2.0)
+        self.epoch_decay_slope = sampler_cfg.get("epoch_decay_slope", 0.3)
+        self.epoch_decay_floor = sampler_cfg.get("epoch_decay_floor", 0.1)
         self.batch_size = data_config.get("train_batch_size", 64)
-        self.total_training_steps = data_config.get("total_training_steps", 200)
-        self.ema_alpha = data_config.get("ema_alpha", 0.5)
-        self.l_hat_update_ratio = data_config.get("l_hat_update_ratio", 0.025)
+        self.total_training_steps = sampler_cfg.get("total_training_steps", 200)
+        self.ema_alpha = sampler_cfg.get("ema_alpha", 0.5)
+        self.l_hat_update_ratio = sampler_cfg.get("l_hat_update_ratio", 0.025)
 
         self.l_hat_update_interval = max(1, int(self.total_training_steps * self.l_hat_update_ratio))
 
@@ -89,11 +94,12 @@ class ATGiGPOSampler(AbstractCurriculumSampler):
             self.period_buffer[d_j] = []
 
     def _recompute_probs(self):
+        rollout_n = self.rollout_n if self.v2 else 1
         scores = []
         for d_j in self.task_types:
             explore = math.sqrt(2.0 * math.log(self.n_total + 1) / (self.n_samples[d_j] + 1))
-            epoch = self.n_samples[d_j] / max(self.dataset_sizes[d_j], 1)
-            decay = max(0.1, 1.0 - 0.3 * max(0.0, epoch - self.epoch_decay_start))
+            epoch = self.n_samples[d_j] / (max(self.dataset_sizes[d_j], 1) * rollout_n)
+            decay = max(self.epoch_decay_floor, 1.0 - self.epoch_decay_slope * max(0.0, epoch - self.epoch_decay_start))
             scores.append((self.L_hat_ema[d_j] + explore) * decay)
 
         scores_t = torch.tensor(scores, dtype=torch.float32)
@@ -101,11 +107,12 @@ class ATGiGPOSampler(AbstractCurriculumSampler):
         self.sampling_probs = {t: float(probs[i]) for i, t in enumerate(self.task_types)}
 
     def get_metrics(self) -> dict:
+        rollout_n = self.rollout_n if self.v2 else 1
         metrics: dict[str, float] = {}
         for d_j in self.task_types:
             metrics[f"at_gigpo/{d_j}/L_hat_ema"] = self.L_hat_ema[d_j]
             metrics[f"at_gigpo/{d_j}/sampling_prob"] = self.sampling_probs[d_j]
-            metrics[f"at_gigpo/{d_j}/epoch_count"] = self.n_samples[d_j] / max(self.dataset_sizes[d_j], 1)
+            metrics[f"at_gigpo/{d_j}/epoch_count"] = self.n_samples[d_j] / (max(self.dataset_sizes[d_j], 1) * rollout_n)
             metrics[f"at_gigpo/{d_j}/period_buffer_size"] = len(self.period_buffer[d_j])
 
         probs = list(self.sampling_probs.values())

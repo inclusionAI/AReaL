@@ -462,3 +462,87 @@ You MUST select one of the given options (A, B, C, or D). Do NOT provide the raw
 """
 
 HR_BENCH_ANSWER_FORMAT = "You MUST respond with only the option letter (A, B, C, or D) in <answer></answer> tags. Do NOT output the answer text itself."
+
+VSTAR_BENCH_INPUT_TEMPLATE = """\
+Look at the image carefully and answer the following multiple-choice question. The image may be very large and the target object may be small — you can zoom in on specific regions to see details more clearly.
+
+Question: {question}
+
+If you need to analyze the image in detail, you can use the available tools.
+
+You MUST respond with only the option letter (A, B, C, or D) in <answer></answer> tags.
+"""
+
+VSTAR_BENCH_NOTOOL_INPUT_TEMPLATE = """\
+Look at the image carefully and answer the following multiple-choice question. The image may be very large and the target object may be small — examine all regions carefully.
+
+Question: {question}
+
+You MUST respond with only the option letter (A, B, C, or D) in <answer></answer> tags.
+"""
+
+VSTAR_BENCH_SEPARATED_TEMPLATE = """\
+Question: {question}
+
+You MUST select one of the given options (A, B, C, or D). Do NOT provide the raw answer text.
+"""
+
+VSTAR_BENCH_ANSWER_FORMAT = "You MUST respond with only the option letter (A, B, C, or D) in <answer></answer> tags. Do NOT output the answer text itself."
+
+SPATIALAB_INPUT_TEMPLATE = """\
+Look at the image and answer the following spatial reasoning question.
+
+Question: {question}
+
+{options_text}
+
+If you need to analyze the image in detail, you can use the available tools.
+
+You MUST respond with only the option letter (A, B, C, or D) in <answer></answer> tags.
+"""
+
+SPATIALAB_NOTOOL_INPUT_TEMPLATE = """\
+Look at the image and answer the following spatial reasoning question.
+
+Question: {question}
+
+{options_text}
+
+You MUST respond with only the option letter (A, B, C, or D) in <answer></answer> tags.
+"""
+
+SPATIALAB_SEPARATED_TEMPLATE = """\
+Question: {question}
+
+{options_text}
+
+You MUST select one of the given options (A, B, C, or D). Do NOT provide the raw answer text.
+"""
+
+SPATIALAB_ANSWER_FORMAT = "You MUST respond with only the option letter (A, B, C, or D) in <answer></answer> tags. Do NOT output the answer text itself."
+
+VISULOGIC_INPUT_TEMPLATE = """\
+Look at the image and answer the following visual logic reasoning question.
+
+{question}
+
+If you need to analyze the image in detail, you can use the available tools.
+
+You MUST respond with only the option letter (A, B, C, or D) in <answer></answer> tags.
+"""
+
+VISULOGIC_NOTOOL_INPUT_TEMPLATE = """\
+Look at the image and answer the following visual logic reasoning question.
+
+{question}
+
+You MUST respond with only the option letter (A, B, C, or D) in <answer></answer> tags.
+"""
+
+VISULOGIC_SEPARATED_TEMPLATE = """\
+{question}
+
+You MUST select one of the given options (A, B, C, or D). Do NOT provide the raw answer text.
+"""
+
+VISULOGIC_ANSWER_FORMAT = "You MUST respond with only the option letter (A, B, C, or D) in <answer></answer> tags. Do NOT output the answer text itself."
