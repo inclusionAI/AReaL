@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import secrets
 import threading
@@ -357,10 +358,6 @@ class SessionData:
         matching the existing export behavior.
         """
 
-        with self._lock:
-            ready_trajectories = list(self._ready_trajectories.values())
-            active_completions = self._active_completions
-
         exports: list[tuple[int | None, dict[str, InteractionWithTokenLogpReward]]] = []
 
         def _export_cache(
@@ -372,15 +369,16 @@ class SessionData:
                 reward_discount=reward_discount,
             )
 
-        for ready in ready_trajectories:
-            interactions = _export_cache(ready.completions)
-            if interactions:
-                exports.append((ready.trajectory_id, interactions))
+        with self._lock:
+            for ready in self._ready_trajectories.values():
+                interactions = _export_cache(ready.completions)
+                if interactions:
+                    exports.append((ready.trajectory_id, interactions))
 
-        if len(active_completions) != 0:
-            interactions = _export_cache(active_completions)
-            if interactions:
-                exports.append((None, interactions))
+            if len(self._active_completions) != 0:
+                interactions = _export_cache(self._active_completions)
+                if interactions:
+                    exports.append((None, interactions))
 
         return exports
 
@@ -455,8 +453,9 @@ async def _dump_stale_session_exports(
             f"trajectory-{trajectory_id}" if trajectory_id is not None else "active"
         )
         dump_path = dump_dir / f"{session_id}-{trajectory_suffix}.json"
+        serialized_json = await asyncio.to_thread(json.dumps, serialized)
         async with aiofiles.open(dump_path, "w") as dump_file:
-            await dump_file.write(json.dumps(serialized))
+            await dump_file.write(serialized_json)
 
         # Once the dump has been written with inline tensors, the original RTensor
         # shards are no longer needed for stale-session recovery. Remove them to

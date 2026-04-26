@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -21,6 +22,7 @@ from areal.experimental.inference_service.data_proxy.config import DataProxyConf
 from areal.experimental.inference_service.data_proxy.session import (
     SessionData,
     SessionStore,
+    _dump_stale_session_exports,
 )
 from areal.experimental.openai.proxy.server import deserialize_interactions
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
@@ -1440,3 +1442,68 @@ async def test_cleanup_stale_removes_session_before_async_dump(monkeypatch, tmp_
 
     continue_dump.set()
     await cleanup_task
+
+
+def test_snapshot_cleanup_exports_holds_session_lock_during_export(monkeypatch):
+    session = SessionData("snapshot-lock")
+
+    interaction = InteractionWithTokenLogpReward(
+        messages=[{"role": "user", "content": "hi"}],
+        output_message_list=[{"role": "assistant", "content": "hello"}],
+    )
+    interaction.interaction_id = "snapshot-interaction"
+    session.active_completions[interaction.interaction_id] = interaction
+
+    export_lock_states: list[bool] = []
+    original_export = session.active_completions.export_interactions
+
+    def _recording_export(*args, **kwargs):
+        export_lock_states.append(session._lock.locked())
+        return original_export(*args, **kwargs)
+
+    monkeypatch.setattr(
+        session.active_completions,
+        "export_interactions",
+        _recording_export,
+    )
+
+    exports = session.snapshot_cleanup_exports(discount=1.0, style="individual")
+
+    assert exports
+    assert export_lock_states == [True]
+
+
+@pytest.mark.asyncio
+async def test_dump_stale_session_exports_offloads_json_dumps(monkeypatch, tmp_path):
+    interaction = InteractionWithTokenLogpReward(
+        messages=[{"role": "user", "content": "hi"}],
+        output_message_list=[{"role": "assistant", "content": "hello"}],
+    )
+    interaction.interaction_id = "dump-interaction"
+    interaction._cache = {
+        "input_ids": torch.tensor([[1, 2, 3]]),
+        "attention_mask": torch.tensor([[True, True, True]]),
+        "loss_mask": torch.tensor([[0, 1, 1]]),
+        "logprobs": torch.tensor([[0.0, -0.5, -0.1]]),
+        "versions": torch.tensor([[0, 0, 0]]),
+        "rewards": torch.tensor([1.0]),
+    }
+
+    recorded: list[object] = []
+    original_to_thread = asyncio.to_thread
+
+    async def _recording_to_thread(func, /, *args, **kwargs):
+        recorded.append(func)
+        return await original_to_thread(func, *args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", _recording_to_thread)
+
+    await _dump_stale_session_exports(
+        "dump-session",
+        [(None, {interaction.interaction_id: interaction})],
+        stale_session_dump_path=str(tmp_path),
+        serving_addr="",
+    )
+
+    assert recorded == [json.dumps]
+    assert (Path(tmp_path) / "dump-session-active.json").exists()
