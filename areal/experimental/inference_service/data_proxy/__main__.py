@@ -45,6 +45,20 @@ def main():
         default=0.0,
     )
     parser.add_argument(
+        "--session-timeout-seconds",
+        type=float,
+        default=3600.0,
+    )
+    parser.add_argument(
+        "--stale-session-cleanup-interval-seconds",
+        type=float,
+        default=60.0,
+    )
+    parser.add_argument(
+        "--stale-session-dump-path",
+        default="",
+    )
+    parser.add_argument(
         "--admin-api-key",
         default="areal-admin-key",
     )
@@ -88,6 +102,9 @@ def main():
         log_level=args.log_level,
         request_timeout=args.request_timeout,
         set_reward_finish_timeout=args.set_reward_finish_timeout,
+        session_timeout_seconds=args.session_timeout_seconds,
+        stale_session_cleanup_interval_seconds=args.stale_session_cleanup_interval_seconds,
+        stale_session_dump_path=args.stale_session_dump_path,
         admin_api_key=args.admin_api_key,
         callback_server_addr=args.callback_server_addr,
         serving_addr=format_hostport(serving_host, args.port),

@@ -2,6 +2,10 @@
 
 from dataclasses import dataclass
 
+from areal.experimental.inference_service.data_proxy.session import (
+    SESSION_TIMEOUT_SECONDS,
+)
+
 
 @dataclass
 class DataProxyConfig:
@@ -13,6 +17,9 @@ class DataProxyConfig:
     log_level: str = "info"
     request_timeout: float = 120.0  # seconds per SGLang call
     set_reward_finish_timeout: float = 0.0
+    session_timeout_seconds: float = SESSION_TIMEOUT_SECONDS
+    stale_session_cleanup_interval_seconds: float = 60.0
+    stale_session_dump_path: str = ""
     max_resubmit_retries: int = 20  # max abort/resubmit cycles before giving up
     resubmit_wait: float = 0.5  # seconds between is_paused polls
     admin_api_key: str = "areal-admin-key"  # admin key for authentication

@@ -2171,6 +2171,24 @@ class InferenceEngineConfig:
             "help": "Timeout in seconds to wait for additional reward updates before finalizing a session."
         },
     )
+    session_timeout_seconds: float = field(
+        default=3600.0,
+        metadata={
+            "help": "Timeout in seconds before an inactive inference-service session is considered stale and cleaned up."
+        },
+    )
+    stale_session_cleanup_interval_seconds: float = field(
+        default=60.0,
+        metadata={
+            "help": "Polling interval in seconds for stale-session cleanup in inference-service data proxies."
+        },
+    )
+    stale_session_dump_path: str = field(
+        default="",
+        metadata={
+            "help": "Optional directory path where stale-session trajectory dumps are written before cleanup."
+        },
+    )
     log_level: str = field(
         default="info",
         metadata={"help": "Log level for inference-service micro-services."},
@@ -2212,6 +2230,16 @@ class InferenceEngineConfig:
         if self.n_gpus_per_node is not None and self.n_gpus_per_node < 1:
             raise ValueError(
                 f"n_gpus_per_node must be >= 1, got {self.n_gpus_per_node}"
+            )
+        if self.session_timeout_seconds <= 0:
+            raise ValueError(
+                "session_timeout_seconds must be positive, "
+                f"got {self.session_timeout_seconds}"
+            )
+        if self.stale_session_cleanup_interval_seconds <= 0:
+            raise ValueError(
+                "stale_session_cleanup_interval_seconds must be positive, "
+                f"got {self.stale_session_cleanup_interval_seconds}"
             )
         if not self.admin_api_key or not self.admin_api_key.strip():
             raise ValueError("admin_api_key must not be empty or whitespace-only")
