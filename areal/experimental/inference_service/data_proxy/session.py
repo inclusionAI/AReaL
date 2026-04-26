@@ -583,9 +583,11 @@ class SessionStore:
     ) -> None:
         with self._lock:
             stale_sessions: list[tuple[str, SessionData]] = []
-            for sid, session in self._sessions.items():
+            for sid, session in list(self._sessions.items()):
                 if not session.is_stale(timeout_seconds):
                     continue
+                self._sessions.pop(sid, None)
+                self._remove_api_keys_for_session(sid)
                 stale_sessions.append((sid, session))
 
         for sid, session in stale_sessions:
@@ -599,7 +601,6 @@ class SessionStore:
                 stale_session_dump_path=stale_session_dump_path,
                 serving_addr=serving_addr,
             )
-            self.remove_session(sid)
 
     def stale_session_ids(
         self,

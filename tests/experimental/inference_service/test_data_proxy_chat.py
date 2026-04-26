@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -1387,3 +1388,55 @@ async def test_session_store_cleanup_stale_dumps_and_removes_session(tmp_path):
         restored[interaction.interaction_id]._cache["input_ids"], torch.Tensor
     )
     assert store.get_session(session_id) is None
+
+
+@pytest.mark.asyncio
+async def test_cleanup_stale_removes_session_before_async_dump(monkeypatch, tmp_path):
+    store = SessionStore()
+    session_id, api_key = store.start_session("store-stale-race")
+    session = store.get_session(session_id)
+    assert session is not None
+
+    interaction = InteractionWithTokenLogpReward(
+        messages=[{"role": "user", "content": "hi"}],
+        output_message_list=[{"role": "assistant", "content": "hello"}],
+    )
+    interaction.interaction_id = "race-interaction"
+    interaction._cache = {
+        "input_ids": torch.tensor([[1, 2, 3]]),
+        "attention_mask": torch.tensor([[True, True, True]]),
+        "loss_mask": torch.tensor([[0, 1, 1]]),
+        "logprobs": torch.tensor([[0.0, -0.5, -0.1]]),
+        "versions": torch.tensor([[0, 0, 0]]),
+        "rewards": torch.tensor([1.0]),
+    }
+    session.active_completions[interaction.interaction_id] = interaction
+    session._last_access_time -= 10.0
+
+    started = asyncio.Event()
+    continue_dump = asyncio.Event()
+
+    async def _blocking_dump(*args, **kwargs):
+        started.set()
+        await continue_dump.wait()
+
+    monkeypatch.setattr(
+        "areal.experimental.inference_service.data_proxy.session._dump_stale_session_exports",
+        _blocking_dump,
+    )
+
+    cleanup_task = asyncio.create_task(
+        store.cleanup_stale(
+            timeout_seconds=1.0,
+            stale_session_dump_path=str(tmp_path),
+            serving_addr="",
+        )
+    )
+
+    await started.wait()
+
+    assert store.get_session(session_id) is None
+    assert store.get_session_by_api_key(api_key) is None
+
+    continue_dump.set()
+    await cleanup_task
