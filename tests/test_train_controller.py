@@ -675,6 +675,33 @@ class TestTrainControllerDispatchInputs:
         assert len(split_args) == 1
         assert len(split_args[0]) == train_controller.parallel_strategy.dp_size
 
+    def test_prepare_dispatch_partitions_without_duplication(
+        self, train_controller, ft_spec
+    ):
+        """Regression for #1202: trajectories are partitioned across DP ranks,
+        never replicated. Each DP rank must see a disjoint slice so that total
+        tokens processed equal the original batch, not batch * dp_size."""
+        train_controller.initialize(
+            role="train_worker",
+            ft_spec=ft_spec,
+        )
+
+        dp_size = train_controller.parallel_strategy.dp_size
+        batch_size = 4 * dp_size
+        batch = create_mock_distributed_batch(size=batch_size)
+
+        split_args, _, group_indices = train_controller._prepare_dispatch(batch)
+
+        # Sanity: tensor-like list triggers the partition path, not replication.
+        assert group_indices is not None
+        assert len(group_indices) == dp_size
+
+        shards = split_args[0]
+        assert sum(len(shard) for shard in shards) == batch_size
+
+        flat_indices = [idx for group in group_indices for idx in group]
+        assert sorted(flat_indices) == list(range(batch_size))
+
     def test_prepare_dispatch_replicates_non_batch_args(
         self, train_controller, ft_spec
     ):
