@@ -39,7 +39,9 @@ async def test_arun_episode_returns_exported_interactions(
     )
     workflow._run_dialog = AsyncMock(return_value=1.0)
     mock_scope = object()
-    mock_workflow_context.get.return_value = SimpleNamespace(task_id="task-from-context")
+    mock_workflow_context.get.return_value = SimpleNamespace(
+        task_id="task-from-context"
+    )
     mock_workflow_context.stat_scope.return_value = mock_scope
     mock_stats = MagicMock()
     mock_stats_tracker.get.return_value = mock_stats
