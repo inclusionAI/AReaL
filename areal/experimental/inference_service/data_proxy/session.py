@@ -4,18 +4,26 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import secrets
 import threading
 import time
 import uuid
 from collections import OrderedDict
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
+import aiofiles
+import aiofiles.os
 from pydantic import BaseModel
 
 from areal.experimental.openai.cache import InteractionCache
+from areal.experimental.openai.proxy.server import serialize_interactions
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
+from areal.infra.rpc import rtensor as rtensor_storage
+from areal.infra.rpc.rtensor import RTensor
 
 # Session timeout for cleanup (1 hour)
 SESSION_TIMEOUT_SECONDS = 3600
@@ -338,6 +346,127 @@ class SessionData:
         )
         return ready.trajectory_id, interactions
 
+    def snapshot_cleanup_exports(
+        self,
+        discount: float,
+        style: str,
+    ) -> list[tuple[int | None, dict[str, InteractionWithTokenLogpReward]]]:
+        """Snapshot exportable trajectory data for stale-session cleanup.
+
+        This does not mutate session membership in ``SessionStore``. It may apply
+        reward discounting in-place on cached interactions the first time it runs,
+        matching the existing export behavior.
+        """
+
+        exports: list[tuple[int | None, dict[str, InteractionWithTokenLogpReward]]] = []
+
+        def _export_cache(
+            cache: InteractionCache,
+        ) -> dict[str, InteractionWithTokenLogpReward]:
+            reward_discount = None if cache._apply_reward_discount_called else discount
+            return cache.export_interactions(
+                style=style,
+                reward_discount=reward_discount,
+            )
+
+        with self._lock:
+            for ready in self._ready_trajectories.values():
+                interactions = _export_cache(ready.completions)
+                if interactions:
+                    exports.append((ready.trajectory_id, interactions))
+
+            if len(self._active_completions) != 0:
+                interactions = _export_cache(self._active_completions)
+                if interactions:
+                    exports.append((None, interactions))
+
+        return exports
+
+
+def _prepare_interactions_for_stale_dump(
+    interactions: dict[str, Any],
+    serving_addr: str,
+) -> dict[str, list[Any]]:
+    def _localize_for_stale_dump(obj: Any) -> Any:
+        if isinstance(obj, RTensor):
+            if obj.data.is_meta and (
+                not obj.shard.node_addr or obj.shard.node_addr == serving_addr
+            ):
+                return rtensor_storage.fetch(obj.shard.shard_id)
+            return obj
+
+        if isinstance(obj, dict):
+            return {k: _localize_for_stale_dump(v) for k, v in obj.items()}
+
+        if isinstance(obj, list):
+            return [_localize_for_stale_dump(item) for item in obj]
+
+        if isinstance(obj, tuple):
+            return tuple(_localize_for_stale_dump(item) for item in obj)
+
+        return obj
+
+    shards_by_node: dict[str, list[Any]] = {}
+
+    for item in interactions.values():
+        if item.has_tensor_data:
+            tensor_dict = item.to_tensor_dict()
+            shard_map = RTensor.collect_shards(tensor_dict)
+            if shard_map:
+                # Stale-session dumps must be self-contained. If an interaction cache
+                # already contains RTensors (for example because /export_trajectories
+                # remotized it earlier), serialize_interactions() would otherwise dump
+                # RTensor metadata that depends on external shard storage.
+                # Localize everything back to plain torch.Tensor values before writing
+                # the dump file so the dumped JSON remains reloadable on its own.
+                localized = RTensor.localize(_localize_for_stale_dump(tensor_dict))
+                item._cache = localized
+            else:
+                item._cache = tensor_dict
+
+            for node_addr, shard_ids in shard_map.items():
+                shards_by_node.setdefault(node_addr, []).extend(shard_ids)
+
+    return shards_by_node
+
+
+async def _dump_stale_session_exports(
+    session_id: str,
+    exports: list[tuple[int | None, dict[str, Any]]],
+    stale_session_dump_path: str | None,
+    serving_addr: str,
+) -> None:
+    if not stale_session_dump_path:
+        return
+
+    dump_dir = Path(stale_session_dump_path)
+    await aiofiles.os.makedirs(dump_dir, exist_ok=True)
+
+    for trajectory_id, interactions in exports:
+        # Prepare a self-contained dump payload and remember any RTensor shards
+        # that backed the interactions before localization.
+        shards_by_node = _prepare_interactions_for_stale_dump(
+            interactions, serving_addr
+        )
+        serialized = serialize_interactions(interactions)
+        trajectory_suffix = (
+            f"trajectory-{trajectory_id}" if trajectory_id is not None else "active"
+        )
+        dump_path = dump_dir / f"{session_id}-{trajectory_suffix}.json"
+        serialized_json = await asyncio.to_thread(json.dumps, serialized)
+        async with aiofiles.open(dump_path, "w") as dump_file:
+            await dump_file.write(serialized_json)
+
+        # Once the dump has been written with inline tensors, the original RTensor
+        # shards are no longer needed for stale-session recovery. Remove them to
+        # avoid leaking local/remote shard storage.
+        for node_addr, shard_ids in shards_by_node.items():
+            if not node_addr or node_addr == serving_addr:
+                for shard_id in shard_ids:
+                    rtensor_storage.remove(shard_id)
+                continue
+            await RTensor.clear_node(node_addr, shard_ids)
+
 
 # =============================================================================
 # Session Store
@@ -445,19 +574,43 @@ class SessionStore:
         if api_key:
             self._api_key_to_session.pop(api_key, None)
 
-    def cleanup_stale(self, timeout_seconds: float = SESSION_TIMEOUT_SECONDS) -> None:
+    async def cleanup_stale(
+        self,
+        timeout_seconds: float = SESSION_TIMEOUT_SECONDS,
+        stale_session_dump_path: str | None = None,
+        serving_addr: str = "",
+    ) -> None:
         with self._lock:
-            stale_sessions: list[str] = []
-            for sid, session in self._sessions.items():
+            stale_sessions: list[tuple[str, SessionData]] = []
+            for sid, session in list(self._sessions.items()):
                 if not session.is_stale(timeout_seconds):
                     continue
-                if session.has_ready_trajectories:
-                    continue
-                stale_sessions.append(sid)
-
-            for sid in stale_sessions:
                 self._sessions.pop(sid, None)
                 self._remove_api_keys_for_session(sid)
+                stale_sessions.append((sid, session))
+
+        for sid, session in stale_sessions:
+            exports = session.snapshot_cleanup_exports(
+                discount=1.0,
+                style="individual",
+            )
+            await _dump_stale_session_exports(
+                sid,
+                exports,
+                stale_session_dump_path=stale_session_dump_path,
+                serving_addr=serving_addr,
+            )
+
+    def stale_session_ids(
+        self,
+        timeout_seconds: float = SESSION_TIMEOUT_SECONDS,
+    ) -> list[str]:
+        with self._lock:
+            return [
+                sid
+                for sid, session in self._sessions.items()
+                if session.is_stale(timeout_seconds)
+            ]
 
     def finalize_rewarded_trajectories(
         self,

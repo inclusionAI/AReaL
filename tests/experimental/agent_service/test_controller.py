@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
-"""Unit tests for AgentServiceController.
+"""Unit tests for AgentController.
 
 All Guard HTTP interactions are mocked — no real processes or servers.
 Tests cover: initialize, destroy, scale_up, scale_down, and error handling.
@@ -14,12 +14,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from areal.experimental.agent_service.controller.config import (
-    AgentServiceControllerConfig,
-)
-from areal.experimental.agent_service.controller.controller import (
-    AgentServiceController,
-)
+from areal.api.cli_args import AgentConfig
+from areal.experimental.agent_service.controller.controller import AgentController
 
 CTRL = "areal.experimental.agent_service.controller.controller"
 
@@ -83,7 +79,7 @@ def _mock_health_response(active_sessions: int = 0) -> MagicMock:
 
 @pytest.fixture()
 def config():
-    return AgentServiceControllerConfig(
+    return AgentConfig(
         agent_cls_path="my.Agent",
         admin_api_key="test-key",
         num_pairs=2,
@@ -116,7 +112,7 @@ def _setup_mock_requests(mock_requests, port_start=9001):
 class TestConstruction:
     def test_construction(self, config):
         scheduler = _make_scheduler(("10.0.0.1", "8090"))
-        ctrl = AgentServiceController(config=config, scheduler=scheduler)
+        ctrl = AgentController(config=config, scheduler=scheduler)
         assert ctrl.router_addr == ""
         assert ctrl.gateway_addr == ""
         assert ctrl.pairs == {}
@@ -129,7 +125,7 @@ class TestInitialize:
         _setup_mock_requests(mock_requests)
 
         scheduler = _make_scheduler(("10.0.0.1", "8090"), ("10.0.0.2", "8090"))
-        ctrl = AgentServiceController(config=config, scheduler=scheduler)
+        ctrl = AgentController(config=config, scheduler=scheduler)
         ctrl.initialize()
 
         scheduler.create_workers.assert_called_once()
@@ -148,7 +144,7 @@ class TestScaleUp:
         _setup_mock_requests(mock_requests)
 
         scheduler = _make_scheduler(("10.0.0.1", "8090"))
-        ctrl = AgentServiceController(config=config, scheduler=scheduler)
+        ctrl = AgentController(config=config, scheduler=scheduler)
         ctrl.initialize()
         assert len(ctrl.pairs) == 0
 
@@ -178,7 +174,7 @@ class TestScaleUp:
         mock_requests.RequestException = Exception
 
         scheduler = _make_scheduler(("g0", "8090"), ("g1", "8091"))
-        ctrl = AgentServiceController(config=config, scheduler=scheduler)
+        ctrl = AgentController(config=config, scheduler=scheduler)
         ctrl.initialize()
         guards_called.clear()
 
@@ -197,7 +193,7 @@ class TestScaleDown:
         _setup_mock_requests(mock_requests)
 
         scheduler = _make_scheduler(("10.0.0.1", "8090"))
-        ctrl = AgentServiceController(config=config, scheduler=scheduler)
+        ctrl = AgentController(config=config, scheduler=scheduler)
         ctrl.initialize()
         assert len(ctrl.pairs) == 3
 
@@ -214,7 +210,7 @@ class TestDestroy:
         _setup_mock_requests(mock_requests)
 
         scheduler = _make_scheduler(("10.0.0.1", "8090"))
-        ctrl = AgentServiceController(config=config, scheduler=scheduler)
+        ctrl = AgentController(config=config, scheduler=scheduler)
         ctrl.initialize()
         assert len(ctrl._forked_services) > 0
 
@@ -246,7 +242,7 @@ class TestDestroy:
         mock_requests.RequestException = Exception
 
         scheduler = _make_scheduler(("10.0.0.1", "8090"))
-        ctrl = AgentServiceController(config=config, scheduler=scheduler)
+        ctrl = AgentController(config=config, scheduler=scheduler)
         ctrl.initialize()
 
         ctrl.destroy()
@@ -274,7 +270,7 @@ class TestDrain:
         mock_requests.get = mock_get
 
         scheduler = _make_scheduler(("10.0.0.1", "8090"))
-        ctrl = AgentServiceController(config=config, scheduler=scheduler)
+        ctrl = AgentController(config=config, scheduler=scheduler)
         ctrl.initialize()
 
         health_call_count = 0
@@ -301,7 +297,7 @@ class TestDrain:
         mock_requests.get = counting_get
 
         scheduler = _make_scheduler(("10.0.0.1", "8090"))
-        ctrl = AgentServiceController(config=config, scheduler=scheduler)
+        ctrl = AgentController(config=config, scheduler=scheduler)
         ctrl.initialize()
 
         pre_get_count = get_count
@@ -318,7 +314,7 @@ class TestHealthMonitor:
         _setup_mock_requests(mock_requests)
 
         scheduler = _make_scheduler(("10.0.0.1", "8090"))
-        ctrl = AgentServiceController(config=config, scheduler=scheduler)
+        ctrl = AgentController(config=config, scheduler=scheduler)
         ctrl.initialize()
         assert ctrl._health_thread is not None
         assert ctrl._health_thread.is_alive()
@@ -333,7 +329,7 @@ class TestHealthMonitor:
         _setup_mock_requests(mock_requests)
 
         scheduler = _make_scheduler(("10.0.0.1", "8090"))
-        ctrl = AgentServiceController(config=config, scheduler=scheduler)
+        ctrl = AgentController(config=config, scheduler=scheduler)
         ctrl.initialize()
         assert ctrl._health_thread is None
 

@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import time
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
+import orjson
 import pytest
 import pytest_asyncio
+import torch
 
 from areal.experimental.inference_service.data_proxy.app import (
     _flush_ready_trajectories,
@@ -17,7 +22,12 @@ from areal.experimental.inference_service.data_proxy.config import DataProxyConf
 from areal.experimental.inference_service.data_proxy.session import (
     SessionData,
     SessionStore,
+    _dump_stale_session_exports,
 )
+from areal.experimental.openai.proxy.server import deserialize_interactions
+from areal.experimental.openai.types import InteractionWithTokenLogpReward
+from areal.infra.rpc import rtensor as rtensor_storage
+from areal.infra.rpc.rtensor import RTensor
 
 # =============================================================================
 # Fixtures
@@ -116,6 +126,15 @@ def mock_areal_client():
 
     mock_client.chat.completions.create = AsyncMock(side_effect=_mock_create)
     return mock_client
+
+
+@pytest.fixture(autouse=True)
+def clear_rtensor_storage():
+    rtensor_storage._storage.clear()
+    rtensor_storage._storage_stats.clear()
+    yield
+    rtensor_storage._storage.clear()
+    rtensor_storage._storage_stats.clear()
 
 
 @pytest_asyncio.fixture
@@ -1197,3 +1216,294 @@ async def test_full_session_lifecycle(client, mock_areal_client):
     assert resp.status_code == 200
     data = resp.json()
     assert "interactions" in data
+
+
+@pytest.mark.asyncio
+async def test_cleanup_stale_sessions_dumps_and_removes_ready_session(client, tmp_path):
+    app = client._transport.app
+    app.state.config.stale_session_dump_path = str(tmp_path)
+    app.state.config.session_timeout_seconds = 1.0
+
+    start = await client.post(
+        "/rl/start_session",
+        json={"task_id": "stale-ready"},
+        headers=admin_headers(),
+    )
+    session_api_key = start.json()["api_key"]
+    session_id = start.json()["session_id"]
+
+    await client.post(
+        "/chat/completions",
+        json={"model": "sglang", "messages": [{"role": "user", "content": "hi"}]},
+        headers=session_headers(session_api_key),
+    )
+    reward_resp = await client.post(
+        "/rl/set_reward",
+        json={"reward": 1.0},
+        headers=session_headers(session_api_key),
+    )
+    assert reward_resp.status_code == 200
+
+    session = app.state.session_store.get_session(session_id)
+    assert session is not None
+    session._last_access_time -= 10.0
+
+    await app.state.session_store.cleanup_stale(
+        timeout_seconds=app.state.config.session_timeout_seconds,
+        stale_session_dump_path=app.state.config.stale_session_dump_path,
+        serving_addr=app.state.config.serving_addr,
+    )
+
+    dump_file = Path(tmp_path) / f"{session_id}-trajectory-0.json"
+    assert dump_file.exists()
+    dumped = orjson.loads(dump_file.read_bytes())
+    assert list(dumped) == ["chatcmpl-test0"]
+    restored = deserialize_interactions(dumped)
+    assert isinstance(restored["chatcmpl-test0"]._cache["input_ids"], torch.Tensor)
+    assert app.state.session_store.get_session(session_id) is None
+
+
+@pytest.mark.asyncio
+async def test_cleanup_stale_sessions_dumps_active_interactions_and_clears_shards(
+    client, tmp_path
+):
+    app = client._transport.app
+    app.state.config.stale_session_dump_path = str(tmp_path)
+    app.state.config.session_timeout_seconds = 1.0
+
+    start = await client.post(
+        "/rl/start_session",
+        json={"task_id": "stale-active"},
+        headers=admin_headers(),
+    )
+    session_api_key = start.json()["api_key"]
+    session_id = start.json()["session_id"]
+
+    await client.post(
+        "/chat/completions",
+        json={"model": "sglang", "messages": [{"role": "user", "content": "hi"}]},
+        headers=session_headers(session_api_key),
+    )
+
+    session = app.state.session_store.get_session(session_id)
+    assert session is not None
+    session._last_access_time -= 10.0
+
+    await app.state.session_store.cleanup_stale(
+        timeout_seconds=app.state.config.session_timeout_seconds,
+        stale_session_dump_path=app.state.config.stale_session_dump_path,
+        serving_addr=app.state.config.serving_addr,
+    )
+
+    dump_file = Path(tmp_path) / f"{session_id}-active.json"
+    assert dump_file.exists()
+    dumped = orjson.loads(dump_file.read_bytes())
+    assert list(dumped) == ["chatcmpl-test0"]
+    restored = deserialize_interactions(dumped)
+    input_ids = restored["chatcmpl-test0"]._cache["input_ids"]
+    assert isinstance(input_ids, torch.Tensor)
+    assert not input_ids.is_meta
+    assert app.state.session_store.get_session(session_id) is None
+    assert rtensor_storage._storage == {}
+
+
+@pytest.mark.asyncio
+async def test_cleanup_stale_sessions_localizes_existing_rtensors_before_dump(
+    client, tmp_path
+):
+    app = client._transport.app
+    app.state.config.stale_session_dump_path = str(tmp_path)
+    app.state.config.session_timeout_seconds = 1.0
+    app.state.config.serving_addr = ""
+
+    session_id, _ = app.state.session_store.start_session("stale-rtensor")
+    session = app.state.session_store.get_session(session_id)
+    assert session is not None
+
+    interaction = InteractionWithTokenLogpReward(
+        messages=[{"role": "user", "content": "hi"}],
+        output_message_list=[{"role": "assistant", "content": "hello"}],
+    )
+    interaction.interaction_id = "rtensor-interaction"
+    interaction._cache = RTensor.remotize(
+        {
+            "input_ids": torch.tensor([[1, 2, 3]]),
+            "attention_mask": torch.tensor([[True, True, True]]),
+            "loss_mask": torch.tensor([[0, 1, 1]]),
+            "logprobs": torch.tensor([[0.0, -0.5, -0.1]]),
+            "versions": torch.tensor([[0, 0, 0]]),
+            "rewards": torch.tensor([1.0]),
+        },
+        node_addr="",
+    )
+    session.active_completions[interaction.interaction_id] = interaction
+    session._last_access_time -= 10.0
+
+    await app.state.session_store.cleanup_stale(
+        timeout_seconds=app.state.config.session_timeout_seconds,
+        stale_session_dump_path=app.state.config.stale_session_dump_path,
+        serving_addr=app.state.config.serving_addr,
+    )
+
+    dump_file = Path(tmp_path) / f"{session_id}-active.json"
+    assert dump_file.exists()
+    restored = deserialize_interactions(orjson.loads(dump_file.read_bytes()))
+    cache = restored[interaction.interaction_id]._cache
+    assert isinstance(cache["input_ids"], torch.Tensor)
+    assert not cache["input_ids"].is_meta
+    assert rtensor_storage._storage == {}
+
+
+@pytest.mark.asyncio
+async def test_session_store_cleanup_stale_dumps_and_removes_session(tmp_path):
+    store = SessionStore()
+    session_id, _ = store.start_session("store-stale")
+    session = store.get_session(session_id)
+    assert session is not None
+
+    interaction = InteractionWithTokenLogpReward(
+        messages=[{"role": "user", "content": "hi"}],
+        output_message_list=[{"role": "assistant", "content": "hello"}],
+    )
+    interaction.interaction_id = "store-interaction"
+    interaction._cache = {
+        "input_ids": torch.tensor([[1, 2, 3]]),
+        "attention_mask": torch.tensor([[True, True, True]]),
+        "loss_mask": torch.tensor([[0, 1, 1]]),
+        "logprobs": torch.tensor([[0.0, -0.5, -0.1]]),
+        "versions": torch.tensor([[0, 0, 0]]),
+        "rewards": torch.tensor([1.0]),
+    }
+    session.active_completions[interaction.interaction_id] = interaction
+    session._last_access_time -= 10.0
+
+    await store.cleanup_stale(
+        timeout_seconds=1.0,
+        stale_session_dump_path=str(tmp_path),
+        serving_addr="",
+    )
+
+    dump_file = Path(tmp_path) / f"{session_id}-active.json"
+    assert dump_file.exists()
+    restored = deserialize_interactions(orjson.loads(dump_file.read_bytes()))
+    assert isinstance(
+        restored[interaction.interaction_id]._cache["input_ids"], torch.Tensor
+    )
+    assert store.get_session(session_id) is None
+
+
+@pytest.mark.asyncio
+async def test_cleanup_stale_removes_session_before_async_dump(monkeypatch, tmp_path):
+    store = SessionStore()
+    session_id, api_key = store.start_session("store-stale-race")
+    session = store.get_session(session_id)
+    assert session is not None
+
+    interaction = InteractionWithTokenLogpReward(
+        messages=[{"role": "user", "content": "hi"}],
+        output_message_list=[{"role": "assistant", "content": "hello"}],
+    )
+    interaction.interaction_id = "race-interaction"
+    interaction._cache = {
+        "input_ids": torch.tensor([[1, 2, 3]]),
+        "attention_mask": torch.tensor([[True, True, True]]),
+        "loss_mask": torch.tensor([[0, 1, 1]]),
+        "logprobs": torch.tensor([[0.0, -0.5, -0.1]]),
+        "versions": torch.tensor([[0, 0, 0]]),
+        "rewards": torch.tensor([1.0]),
+    }
+    session.active_completions[interaction.interaction_id] = interaction
+    session._last_access_time -= 10.0
+
+    started = asyncio.Event()
+    continue_dump = asyncio.Event()
+
+    async def _blocking_dump(*args, **kwargs):
+        started.set()
+        await continue_dump.wait()
+
+    monkeypatch.setattr(
+        "areal.experimental.inference_service.data_proxy.session._dump_stale_session_exports",
+        _blocking_dump,
+    )
+
+    cleanup_task = asyncio.create_task(
+        store.cleanup_stale(
+            timeout_seconds=1.0,
+            stale_session_dump_path=str(tmp_path),
+            serving_addr="",
+        )
+    )
+
+    await started.wait()
+
+    assert store.get_session(session_id) is None
+    assert store.get_session_by_api_key(api_key) is None
+
+    continue_dump.set()
+    await cleanup_task
+
+
+def test_snapshot_cleanup_exports_holds_session_lock_during_export(monkeypatch):
+    session = SessionData("snapshot-lock")
+
+    interaction = InteractionWithTokenLogpReward(
+        messages=[{"role": "user", "content": "hi"}],
+        output_message_list=[{"role": "assistant", "content": "hello"}],
+    )
+    interaction.interaction_id = "snapshot-interaction"
+    session.active_completions[interaction.interaction_id] = interaction
+
+    export_lock_states: list[bool] = []
+    original_export = session.active_completions.export_interactions
+
+    def _recording_export(*args, **kwargs):
+        export_lock_states.append(session._lock.locked())
+        return original_export(*args, **kwargs)
+
+    monkeypatch.setattr(
+        session.active_completions,
+        "export_interactions",
+        _recording_export,
+    )
+
+    exports = session.snapshot_cleanup_exports(discount=1.0, style="individual")
+
+    assert exports
+    assert export_lock_states == [True]
+
+
+@pytest.mark.asyncio
+async def test_dump_stale_session_exports_offloads_json_dumps(monkeypatch, tmp_path):
+    interaction = InteractionWithTokenLogpReward(
+        messages=[{"role": "user", "content": "hi"}],
+        output_message_list=[{"role": "assistant", "content": "hello"}],
+    )
+    interaction.interaction_id = "dump-interaction"
+    interaction._cache = {
+        "input_ids": torch.tensor([[1, 2, 3]]),
+        "attention_mask": torch.tensor([[True, True, True]]),
+        "loss_mask": torch.tensor([[0, 1, 1]]),
+        "logprobs": torch.tensor([[0.0, -0.5, -0.1]]),
+        "versions": torch.tensor([[0, 0, 0]]),
+        "rewards": torch.tensor([1.0]),
+    }
+
+    recorded: list[object] = []
+    original_to_thread = asyncio.to_thread
+
+    async def _recording_to_thread(func, /, *args, **kwargs):
+        recorded.append(func)
+        return await original_to_thread(func, *args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", _recording_to_thread)
+
+    await _dump_stale_session_exports(
+        "dump-session",
+        [(None, {interaction.interaction_id: interaction})],
+        stale_session_dump_path=str(tmp_path),
+        serving_addr="",
+    )
+
+    assert recorded == [json.dumps]
+    assert (Path(tmp_path) / "dump-session-active.json").exists()
