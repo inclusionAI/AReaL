@@ -51,7 +51,7 @@ actor:
     max_tokens_per_mb: 1280                             # ← 从 2048 降至 512
   optimizer:
     type: adam
-    lr: 4e-6
+    lr: 2e-6
     weight_decay: 0.003
     beta1: 0.9
     beta2: 0.999
