@@ -51,7 +51,10 @@ from areal.engine.core import (
     compute_total_loss_weight,
     reorder_and_pad_outputs,
 )
-from areal.engine.core.distributed import init_custom_process_group
+from areal.engine.core.distributed import (
+    init_custom_process_group,
+    warmup_process_groups,
+)
 from areal.engine.core.model import disable_dropout_in_model
 from areal.engine.megatron_utils.checkpointer import MegatronCheckpointManager
 from areal.engine.megatron_utils.deterministic import set_deterministic_algorithms
@@ -218,6 +221,13 @@ class MegatronEngine(TrainEngine):
             timeout=DIST_GROUP_DEFAULT_TIMEOUT, backend="gloo"
         )
         self.process_group_initialized = True
+
+        # Eagerly initialize HCCL/NCCL communicators for the subgroups so
+        # that lazy init doesn't race with colocated engines (issue #1099).
+        warmup_process_groups(
+            self._context_and_model_parallel_group,
+            mpu.get_data_parallel_group(),
+        )
 
     def _apply_megatron_bridge_lora(self) -> None:
         assert self.model is not None, "Model must be initialized before applying LoRA."

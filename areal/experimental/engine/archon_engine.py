@@ -35,7 +35,10 @@ from areal.api import (
 )
 from areal.api.cli_args import MicroBatchSpec
 from areal.api.io_struct import DeviceRuntimeInfo
-from areal.engine.core.distributed import patch_dist_group_timeout
+from areal.engine.core.distributed import (
+    patch_dist_group_timeout,
+    warmup_process_groups,
+)
 from areal.engine.core.train_engine import (
     aggregate_eval_losses,
     compute_total_loss_weight,
@@ -282,6 +285,15 @@ class ArchonEngine(TrainEngine):
             f"pp={self.parallel_dims.pp}, dp_shard={self.parallel_dims.dp_shard}, "
             f"tp={self.parallel_dims.tp}, cp={self.parallel_dims.cp} (Ulysses SP), "
             f"ep={self.parallel_dims.ep}, etp={self.parallel_dims.etp}"
+        )
+
+        # Eagerly initialize HCCL/NCCL communicators for the subgroups so
+        # that lazy init doesn't race with colocated engines (issue #1099).
+        warmup_process_groups(
+            self.parallel_dims.world_mesh["dp"].get_group(),
+            self._pp_cp_tp_group,
+            self._tp_group,
+            self._cp_group,
         )
 
     def initialize(self, addr: str | None, ft_spec: FinetuneSpec, *args, **kwargs):

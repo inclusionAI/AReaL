@@ -64,6 +64,7 @@ from areal.engine.core import (
 from areal.engine.core.distributed import (
     init_custom_process_group,
     patch_dist_group_timeout,
+    warmup_process_groups,
 )
 from areal.engine.core.model import (
     disable_dropout_in_model,
@@ -266,6 +267,10 @@ class FSDPEngine(TrainEngine):
         self.dp_rank = dist.get_rank(self.dp_group)
 
         self.logger.info(f"Data parallel head {self.dp_head} and rank {self.dp_rank}")
+
+        # Eagerly initialize HCCL/NCCL communicators for the subgroups so
+        # that lazy init doesn't race with colocated engines (issue #1099).
+        warmup_process_groups(self.dp_group, self.sp_group, self.mp_group)
 
     def initialize(self, addr: str | None, ft_spec: FinetuneSpec, *args, **kwargs):
         # Initialize distributed enviroments and load model.
