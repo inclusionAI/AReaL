@@ -6,8 +6,7 @@ The Agent Service provides **agent-level** capabilities on top of AReaL's model-
 proxy. It exposes complete agent sessions — multi-turn conversations with tool use,
 memory, and pluggable agent frameworks — via independent HTTP microservices. It also
 includes an `AgentController` that can launch the stack through Guard processes and
-bridge agent conversations to the experimental inference service for RL data
-collection.
+bridge agent conversations to the experimental inference service for RL data collection.
 
 ## Architecture
 
@@ -141,23 +140,23 @@ class EventEmitter(Protocol):
 `AgentController` is the integration point used by the examples and rollout workflows.
 It manages the agent-service stack and exposes async helpers for RL/inference flows:
 
-| Method | Description |
-| ------ | ----------- |
-| `initialize()` | Launch Guards, Router, Worker+DataProxy pairs, Gateway, and the health monitor |
-| `destroy()` | Tear down the full stack in reverse order |
-| `scale_up(count)` | Add Worker+DataProxy pairs |
-| `scale_down(count)` | Unregister, drain, and remove pairs |
-| `start_session(...)` | Grant inference capacity and create an RL session bound to an agent session |
-| `step(input, session_id, metadata=None)` | Send a turn through the agent-service Gateway `POST /v1/responses` |
-| `set_reward(reward, session_id, interaction_id=None)` | Forward the final reward to the inference service |
-| `export_trajectory(session_id, ...)` | Export serialized interactions from the inference service |
+| Method                                                | Description                                                                    |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `initialize()`                                        | Launch Guards, Router, Worker+DataProxy pairs, Gateway, and the health monitor |
+| `destroy()`                                           | Tear down the full stack in reverse order                                      |
+| `scale_up(count)`                                     | Add Worker+DataProxy pairs                                                     |
+| `scale_down(count)`                                   | Unregister, drain, and remove pairs                                            |
+| `start_session(...)`                                  | Grant inference capacity and create an RL session bound to an agent session    |
+| `step(input, session_id, metadata=None)`              | Send a turn through the agent-service Gateway `POST /v1/responses`             |
+| `set_reward(reward, session_id, interaction_id=None)` | Forward the final reward to the inference service                              |
+| `export_trajectory(session_id, ...)`                  | Export serialized interactions from the inference service                      |
 
 Typical rollout flow:
 
 1. `start_session()` to create the agent/inference session pair.
-2. `step()` for each user turn.
-3. `set_reward()` when the episode completes.
-4. `export_trajectory()` to retrieve interactions for training.
+1. `step()` for each user turn.
+1. `set_reward()` when the episode completes.
+1. `export_trajectory()` to retrieve interactions for training.
 
 ## Multi-turn Conversation Flow
 

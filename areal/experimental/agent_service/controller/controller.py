@@ -475,13 +475,13 @@ class AgentController:
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if not self._gateway_addr:
-            raise RuntimeError("step() requires the agent-service gateway to be running")
+            raise RuntimeError(
+                "step() requires the agent-service gateway to be running"
+            )
 
         session = self._resolve_session(session_id)
         input_items = (
-            [{"type": "message", "content": input}]
-            if isinstance(input, str)
-            else input
+            [{"type": "message", "content": input}] if isinstance(input, str) else input
         )
 
         merged_metadata: dict[str, Any] = {
