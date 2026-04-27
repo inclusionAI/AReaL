@@ -103,7 +103,10 @@ class PPSchedulerBridge:
             group_name = recv_req.group_name
             pp_rank_from_name = _extract_pp_rank_from_group_name(group_name)
 
-            if pp_rank_from_name is not None and model_runner.pp_rank != pp_rank_from_name:
+            if (
+                pp_rank_from_name is not None
+                and model_runner.pp_rank != pp_rank_from_name
+            ):
                 # This worker is at a different PP rank -- skip group creation
                 # and store a None sentinel so update/destroy can short-circuit.
                 model_runner._model_update_group[group_name] = None
@@ -136,8 +139,7 @@ class PPSchedulerBridge:
                         return
                     elapsed = _time.monotonic() - _t0
                     logger.warning(
-                        "init_weights_update_group BLOCKED %.0fs: "
-                        "pp=%s tp=%s group=%s",
+                        "init_weights_update_group BLOCKED %.0fs: pp=%s tp=%s group=%s",
                         elapsed,
                         getattr(model_runner, "pp_rank", "?"),
                         getattr(model_runner, "tp_rank", "?"),
@@ -184,7 +186,11 @@ class PPSchedulerBridge:
         _orig_update = model_runner.update_weights_from_distributed
 
         def _pp_update_weights_from_distributed(
-            names, dtypes, shapes, group_name, load_format=None,
+            names,
+            dtypes,
+            shapes,
+            group_name,
+            load_format=None,
         ):
             """Skip broadcast receive if this worker did not join *group_name*."""
             pg = model_runner._model_update_group.get(group_name)
@@ -202,7 +208,9 @@ class PPSchedulerBridge:
                 )
             return _orig_update(names, dtypes, shapes, group_name, load_format)
 
-        model_runner.update_weights_from_distributed = _pp_update_weights_from_distributed
+        model_runner.update_weights_from_distributed = (
+            _pp_update_weights_from_distributed
+        )
 
         # ---- destroy_weights_update_group ----
         _orig_destroy = model_runner.destroy_weights_update_group
