@@ -99,7 +99,7 @@ class GatewayInferenceController:
 
             self.rollout_alloc = ModelAllocation.from_str(config.backend)
 
-        # Multi-node: derive nnodes_per_instance from n_gpus_per_node.
+        # Multi-node: derive nnodes_per_instance from scheduler's n_gpus_per_node.
         # External mode has no local inference servers, so always single-node.
         if self.rollout_alloc is None:
             nnodes_per_instance = 1
@@ -108,19 +108,17 @@ class GatewayInferenceController:
                 self.rollout_alloc.parallel.tp_size
                 * self.rollout_alloc.parallel.pp_size
             )
-            n_gpus_per_node = config.n_gpus_per_node
-            if n_gpus_per_node is None:
+            n_gpus_per_node = self.scheduler.n_gpus_per_node
+            if n_gpus_per_node < 1:
+                raise ValueError(f"n_gpus_per_node must be >= 1, got {n_gpus_per_node}")
+            if total_gpus <= n_gpus_per_node:
                 nnodes_per_instance = 1
+            elif total_gpus % n_gpus_per_node != 0:
+                raise ValueError(
+                    f"tp_size * pp_size ({total_gpus}) must be divisible "
+                    f"by n_gpus_per_node ({n_gpus_per_node})"
+                )
             else:
-                if n_gpus_per_node < 1:
-                    raise ValueError(
-                        f"n_gpus_per_node must be >= 1, got {n_gpus_per_node}"
-                    )
-                if total_gpus % n_gpus_per_node != 0:
-                    raise ValueError(
-                        f"tp_size * pp_size ({total_gpus}) must be divisible "
-                        f"by n_gpus_per_node ({n_gpus_per_node})"
-                    )
                 nnodes_per_instance = total_gpus // n_gpus_per_node
         self._nnodes_per_instance = nnodes_per_instance
 
