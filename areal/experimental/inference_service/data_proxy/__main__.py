@@ -32,7 +32,7 @@ def main():
     )
     parser.add_argument(
         "--log-level",
-        default="info",
+        default="warning",
     )
     parser.add_argument(
         "--request-timeout",
