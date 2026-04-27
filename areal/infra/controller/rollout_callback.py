@@ -180,3 +180,63 @@ class RolloutCallback:
         This is synchronous as it should complete before returning control.
         """
         self._post("/callback/continue_generation")
+
+    def load_lora_adapter(
+        self,
+        lora_name: str,
+        lora_path: str,
+        prev_lora_name: str | None = None,
+    ) -> Future[None]:
+        """Callback to controller to load a LoRA adapter on inference engines.
+
+        Sends adapter loading request through the callback chain:
+        RolloutCallback -> RolloutController -> RemoteSGLangEngine ->
+        RemoteInfEngine -> SGLang HTTP /load_lora_adapter.
+
+        This method is NON-BLOCKING to avoid deadlocks in the weight
+        update pipeline.
+
+        Parameters
+        ----------
+        lora_name : str
+            Versioned LoRA adapter name (e.g., "lora-gsm8k-v1").
+        lora_path : str
+            Local filesystem path containing adapter_model.safetensors
+            and adapter_config.json.
+
+        Returns
+        -------
+        Future[None]
+            Future that completes when all servers have loaded the adapter.
+        """
+        logger.debug(
+            f"[LoRA Delta Sync] RolloutCallback.load_lora_adapter: "
+            f"lora_name='{lora_name}', lora_path='{lora_path}', "
+            f"prev_lora_name={prev_lora_name!r}"
+        )
+        payload = {
+            "lora_name": lora_name,
+            "lora_path": lora_path,
+            "prev_lora_name": prev_lora_name,
+        }
+        return self._post_nowait_void("/callback/load_lora_adapter", payload)
+
+    def unload_lora_adapter(self, lora_name: str) -> Future[None]:
+        """Callback to controller to unload a LoRA adapter from inference engines.
+
+        Parameters
+        ----------
+        lora_name : str
+            The versioned LoRA adapter name to unload.
+
+        Returns
+        -------
+        Future[None]
+            Future that completes when all servers have processed the unload.
+        """
+        logger.debug(
+            f"[LoRA Delta Sync] RolloutCallback.unload_lora_adapter: "
+            f"lora_name='{lora_name}'"
+        )
+        payload = {"lora_name": lora_name}
+        return self._post_nowait_void("/callback/unload_lora_adapter", payload)

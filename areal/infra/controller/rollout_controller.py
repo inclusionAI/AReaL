@@ -584,6 +584,37 @@ class RolloutController:
             self._callback_loop.run_until_complete(self.continue_generation())
             return jsonify({"status": "ok"})
 
+        @app.route("/callback/load_lora_adapter", methods=["POST"])
+        def load_lora_adapter():
+            payload = request.get_json() or {}
+            lora_name = payload.get("lora_name", "")
+            lora_path = payload.get("lora_path", "")
+            prev_lora_name = payload.get("prev_lora_name", None)
+            logger.debug(
+                f"[LoRA Delta Sync] Callback received: /load_lora_adapter "
+                f"lora_name='{lora_name}', lora_path='{lora_path}', "
+                f"prev_lora_name={prev_lora_name!r}"
+            )
+            self._callback_loop.run_until_complete(
+                self.load_lora_adapter(
+                    lora_name,
+                    lora_path,
+                    prev_lora_name=prev_lora_name,
+                )
+            )
+            return jsonify({"status": "ok"})
+
+        @app.route("/callback/unload_lora_adapter", methods=["POST"])
+        def unload_lora_adapter():
+            payload = request.get_json() or {}
+            lora_name = payload.get("lora_name", "")
+            logger.debug(
+                f"[LoRA Delta Sync] Callback received: /unload_lora_adapter "
+                f"lora_name='{lora_name}'"
+            )
+            self._callback_loop.run_until_complete(self.unload_lora_adapter(lora_name))
+            return jsonify({"status": "ok"})
+
         @app.route("/callback/rollout_complete", methods=["POST"])
         def rollout_complete():
             payload = request.get_json() or {}
@@ -1038,6 +1069,72 @@ class RolloutController:
 
     async def continue_generation(self):
         await self._collective_rpc_async("continue_generation")
+
+    async def load_lora_adapter(
+        self,
+        lora_name: str,
+        lora_path: str,
+        prev_lora_name: str | None = None,
+    ) -> None:
+        """Load a LoRA adapter on all inference engine workers.
+
+        Dispatches ``load_lora_adapter(lora_name, lora_path)`` to every
+        rollout worker's engine via the collective RPC mechanism.  Each
+        worker's ``RemoteSGLangEngine.load_lora_adapter`` will in turn
+        send HTTP ``/load_lora_adapter`` requests to its SGLang servers.
+
+        Parameters
+        ----------
+        lora_name : str
+            Versioned adapter name (e.g., ``lora-gsm8k-v1``).
+        lora_path : str
+            Filesystem path containing ``adapter_model.safetensors`` and
+            ``adapter_config.json``.
+        prev_lora_name : str or None
+            Name of the previously loaded adapter to unload first.
+        """
+        logger.debug(
+            f"[LoRA Delta Sync] RolloutController.load_lora_adapter: "
+            f"dispatching to {len(self.workers)} workers, "
+            f"lora_name='{lora_name}', lora_path='{lora_path}', "
+            f"prev_lora_name={prev_lora_name!r}"
+        )
+        await self._collective_rpc_async(
+            "load_lora_adapter",
+            lora_name=lora_name,
+            lora_path=lora_path,
+            prev_lora_name=prev_lora_name,
+        )
+        logger.debug(
+            f"[LoRA Delta Sync] RolloutController.load_lora_adapter: "
+            f"all workers completed for '{lora_name}'"
+        )
+
+    async def unload_lora_adapter(self, lora_name: str) -> None:
+        """Unload a LoRA adapter from all inference engine workers.
+
+        Parameters
+        ----------
+        lora_name : str
+            The versioned adapter name to unload.
+        """
+        logger.debug(
+            f"[LoRA Delta Sync] RolloutController.unload_lora_adapter: "
+            f"dispatching to {len(self.workers)} workers, "
+            f"lora_name='{lora_name}'"
+        )
+        try:
+            await self._collective_rpc_async("unload_lora_adapter", lora_name=lora_name)
+            logger.debug(
+                f"[LoRA Delta Sync] RolloutController.unload_lora_adapter: "
+                f"all workers completed for '{lora_name}'"
+            )
+        except Exception as e:
+            logger.debug(
+                f"[LoRA Delta Sync] RolloutController.unload_lora_adapter: "
+                f"failed for '{lora_name}' (type={type(e).__name__}, msg={e}), "
+                f"may be expected if no adapter loaded yet"
+            )
 
     def offload(self) -> None:
         """Offload rollout model memory on all inference workers."""

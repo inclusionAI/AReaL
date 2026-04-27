@@ -32,8 +32,10 @@ from areal.api.io_struct import (
 from areal.infra import RemoteInfEngine, RolloutController, WorkflowExecutor
 from areal.infra.platforms import current_platform
 from areal.infra.utils.launcher import TRITON_CACHE_PATH
-from areal.utils import perf_tracer, stats_tracker
+from areal.utils import logging, perf_tracer, stats_tracker
 from areal.utils.network import format_host_for_url
+
+logger = logging.getLogger("SGLangBackend")
 
 
 class SGLangBackend:
@@ -164,23 +166,141 @@ class SGLangBackend:
 
         Note: SGLang distributed weight update (NCCL-based) does not support LoRA.
         For LoRA weight updates with SGLang, use disk-based update mode instead.
+
+        When lora_delta_sync is enabled, both base-model and adapter weights
+        are synced via disk (``/update_weights_from_disk`` for the base model
+        and ``/load_lora_adapter`` for the adapter).
+
+        For non-delta-sync LoRA, the original error is preserved to guide
+        users towards disk-based updates.
         """
-        if meta.use_lora:
+        if meta.use_lora and not meta.lora_delta_sync:
             raise ValueError(
-                "SGLang distributed (XCCL/NCCL) weight update does not support LoRA. "
-                "Use weight_update_mode='disk' for LoRA weight updates with SGLang."
+                "SGLang distributed (XCCL/NCCL) weight update does not support LoRA "
+                "without lora_delta_sync. Use weight_update_mode='disk' for LoRA "
+                "weight updates with SGLang, or enable lora_delta_sync=True."
             )
+
+        if meta.lora_delta_sync and meta.base_sync_done:
+            # Adapter-only phase: this should no longer be reached because
+            # the FSDP engine now saves adapters to disk and uses
+            # /load_lora_adapter directly.  If we get here, something is wrong.
+            logger.error(
+                "[LoRA Delta Sync] build_distributed_weight_update_requests called "
+                f"with base_sync_done=True for {len(param_specs)} adapter params. "
+                "This path is no longer supported; adapter loading should go "
+                "through the disk-based path in fsdp_engine.py."
+            )
+            raise NotImplementedError(
+                "Distributed LoRA adapter loading is not supported. "
+                "The FSDP engine should use disk-based adapter loading instead."
+            )
+
+        # Base model phase (or non-LoRA): standard distributed weight update
+        param_names = [pspec.name for pspec in param_specs]
+        if meta.lora_delta_sync:
+            logger.debug(
+                "[LoRA Delta Sync] Building distributed base-model weight update "
+                f"requests for {len(param_specs)} base params"
+            )
+
+        logger.debug(
+            f"[Weight Update] First 5 param names being sent to SGLang: "
+            f"{param_names[:5]}"
+        )
+        # Estimate total payload size
+        total_elements = 0
+        for pspec in param_specs:
+            if pspec.shape:
+                elems = 1
+                for s in pspec.shape:
+                    elems *= s
+                total_elements += elems
+            else:
+                total_elements += 1
+        estimated_size_mb = total_elements * 2 / 1024 / 1024
+        logger.debug(
+            f"[Weight Update] Total params: {len(param_specs)}, "
+            f"estimated payload (fp16): {estimated_size_mb:.2f} MB"
+        )
+
         return WeightUpdateRequests(
             requests=[
                 HttpRequest(
                     endpoint="/update_weights_from_distributed",
                     payload={
-                        "names": [pspec.name for pspec in param_specs],
+                        "names": param_names,
                         "dtypes": [pspec.dtype for pspec in param_specs],
                         "shapes": [pspec.shape for pspec in param_specs],
                         "group_name": meta.nccl_group_name,
                         "abort_all_requests": True,
                     },
+                )
+            ]
+        )
+
+    def build_lora_adapter_load_requests(
+        self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]
+    ) -> WeightUpdateRequests:
+        """Build requests to load LoRA adapter weights.
+
+        .. note::
+
+           SGLang v0.5.9 does NOT have a ``/load_lora_adapter_from_distributed``
+           endpoint.  LoRA adapters should be loaded via the disk-based path
+           (``/load_lora_adapter``) instead.  The FSDP engine now saves the
+           adapter to disk and calls ``update_weights_from_disk`` directly.
+
+           This method is kept as a safety net and raises ``NotImplementedError``
+           to prevent silent misuse.
+
+        Parameters
+        ----------
+        meta : WeightUpdateMeta
+            Must have ``peft_config`` populated with LoRA hyper-parameters.
+        param_specs : list[ParamSpec]
+            Specifications for the adapter tensors being sent.
+
+        Raises
+        ------
+        NotImplementedError
+            Always raised.  Use the disk-based adapter loading path instead.
+        """
+        raise NotImplementedError(
+            "SGLang v0.5.9 does not support /load_lora_adapter_from_distributed. "
+            "LoRA adapters should be loaded via the disk-based path "
+            "(/load_lora_adapter). The FSDP engine handles this automatically "
+            "when lora_delta_sync is enabled."
+        )
+
+    def build_lora_adapter_unload_requests(
+        self, lora_name: str, version: int = 0
+    ) -> WeightUpdateRequests:
+        """Build requests to unload a LoRA adapter from the SGLang server.
+
+        Parameters
+        ----------
+        lora_name : str
+            Base LoRA adapter name.
+        version : int
+            Version number for versioned adapter naming.
+
+        Returns
+        -------
+        WeightUpdateRequests
+            A single request targeting the adapter unload endpoint.
+        """
+        versioned_name = get_versioned_lora_name(lora_name, version)
+        logger.debug(
+            f"[LoRA Delta Sync] Building adapter unload request: "
+            f"lora_name='{versioned_name}', "
+            f"payload={{'lora_name': '{versioned_name}'}}"
+        )
+        return WeightUpdateRequests(
+            requests=[
+                HttpRequest(
+                    endpoint="/unload_lora_adapter",
+                    payload={"lora_name": versioned_name},
                 )
             ]
         )
@@ -319,6 +439,23 @@ class RemoteSGLangEngine(InferenceEngine):
     def update_weights_from_disk(self, meta: WeightUpdateMeta) -> Future[None]:
         """Update weights from disk."""
         return self._engine.update_weights_from_disk(meta)
+
+    def load_lora_adapter(
+        self,
+        lora_name: str,
+        lora_path: str,
+        prev_lora_name: str | None = None,
+    ) -> Future[None]:
+        """Load a LoRA adapter from a local path on all SGLang servers."""
+        return self._engine.load_lora_adapter(
+            lora_name,
+            lora_path,
+            prev_lora_name=prev_lora_name,
+        )
+
+    def unload_lora_adapter(self, lora_name: str) -> Future[None]:
+        """Unload a LoRA adapter from all SGLang servers."""
+        return self._engine.unload_lora_adapter(lora_name)
 
     def submit(
         self,

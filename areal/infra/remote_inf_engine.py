@@ -308,6 +308,54 @@ class RemoteInfBackendProtocol(Protocol):
         """
         ...
 
+    def build_lora_adapter_load_requests(
+        self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]
+    ) -> WeightUpdateRequests:
+        """Build requests to load LoRA adapter weights via distributed path.
+
+        Parameters
+        ----------
+        meta : WeightUpdateMeta
+            Metadata with peft_config and NCCL group info.
+        param_specs : list[ParamSpec]
+            Specifications for the adapter tensors being sent.
+
+        Returns
+        -------
+        WeightUpdateRequests
+            Collection of HTTP requests for adapter loading.
+
+        Raises
+        ------
+        NotImplementedError
+            If LoRA adapter loading is not supported by this backend.
+        """
+        ...
+
+    def build_lora_adapter_unload_requests(
+        self, lora_name: str, version: int = 0
+    ) -> WeightUpdateRequests:
+        """Build requests to unload a LoRA adapter.
+
+        Parameters
+        ----------
+        lora_name : str
+            Base LoRA adapter name.
+        version : int
+            Version number for versioned adapter naming.
+
+        Returns
+        -------
+        WeightUpdateRequests
+            Collection of HTTP requests for adapter unloading.
+
+        Raises
+        ------
+        NotImplementedError
+            If LoRA adapter unloading is not supported by this backend.
+        """
+        ...
+
     def launch_server(self, server_args: dict[str, Any]) -> subprocess.Popen:
         """Launch inference server subprocess.
 
@@ -1014,6 +1062,65 @@ class RemoteInfEngine(InferenceEngine):
         fut.add_done_callback(callback)
         return fut
 
+    def load_lora_adapter(
+        self,
+        lora_name: str,
+        lora_path: str,
+        prev_lora_name: str | None = None,
+    ) -> Future[None]:
+        """Load a LoRA adapter from a local path on all SGLang servers.
+
+        This sends ``/load_lora_adapter`` HTTP requests directly without
+        going through the name_resolve-based disk update flow, which is
+        designed for full model checkpoints.
+
+        Parameters
+        ----------
+        lora_name : str
+            The versioned LoRA adapter name (e.g. ``lora-v1``).
+        lora_path : str
+            Local filesystem path containing adapter_model.safetensors
+            and adapter_config.json.
+        prev_lora_name : str or None
+            The versioned name of the previously loaded adapter to unload
+            first.  ``None`` means no adapter was loaded yet (first load).
+
+        Returns
+        -------
+        Future[None]
+            Resolves when all servers have loaded the adapter.
+        """
+        fut = get_executor().submit(
+            _load_lora_adapter_on_servers,
+            lora_name,
+            lora_path,
+            prev_lora_name,
+            self.addresses,
+            self.config.request_timeout,
+        )
+        return fut
+
+    def unload_lora_adapter(self, lora_name: str) -> Future[None]:
+        """Unload a LoRA adapter from all SGLang servers.
+
+        Parameters
+        ----------
+        lora_name : str
+            The versioned LoRA adapter name to unload.
+
+        Returns
+        -------
+        Future[None]
+            Resolves when all servers have processed the request.
+        """
+        fut = get_executor().submit(
+            _unload_lora_adapter_on_servers,
+            lora_name,
+            self.addresses,
+            self.config.request_timeout,
+        )
+        return fut
+
     def submit(
         self,
         data: dict[str, Any],
@@ -1407,7 +1514,13 @@ def _update_weights_from_distributed(
     addresses: list[str],
     request_timeout: float,
 ):
-    """Helper to update weights from distributed memory in a separate process."""
+    """Helper to update weights from distributed memory in a separate process.
+
+    When lora_delta_sync is enabled on meta, the backend may return multiple
+    sequential requests (e.g. unload old adapter, then load new adapter).
+    Each request is sent to all servers in parallel, but requests are
+    executed sequentially to respect ordering dependencies.
+    """
 
     async def _fn():
         # Get requests from backend
@@ -1421,7 +1534,8 @@ def _update_weights_from_distributed(
             read_bufsize=1024 * 1024 * 10,
             connector=get_default_connector(),
         ) as session:
-            for http_req in weight_reqs.requests:
+            for req_idx, http_req in enumerate(weight_reqs.requests):
+                is_unload = "unload" in http_req.endpoint
                 jobs = [
                     arequest_with_retry(
                         session=session,
@@ -1429,11 +1543,262 @@ def _update_weights_from_distributed(
                         endpoint=http_req.endpoint,
                         payload=http_req.payload,
                         method=http_req.method,
-                        max_retries=1,
+                        max_retries=1 if not is_unload else 1,
                         timeout=request_timeout,
                     )
                     for addr in addresses
                 ]
+                try:
+                    await asyncio.gather(*jobs)
+                except Exception:
+                    if is_unload:
+                        logger.debug(
+                            "[LoRA Delta Sync] Adapter unload request failed "
+                            "(may be expected if no adapter was loaded yet), "
+                            "continuing..."
+                        )
+                    else:
+                        raise
+
+    return uvloop.run(_fn())
+
+
+def _load_lora_adapter_on_servers(
+    lora_name: str,
+    lora_path: str,
+    prev_lora_name: str | None,
+    addresses: list[str],
+    request_timeout: float,
+):
+    """Helper to load LoRA adapter on all servers via HTTP.
+
+    Parameters
+    ----------
+    prev_lora_name : str or None
+        The versioned name of the previously loaded adapter to unload
+        before loading the new one. ``None`` skips unloading (first load).
+    """
+
+    async def _query_available_models(session, addr):
+        """Query GET /v1/models on a single SGLang server, return model ids."""
+        try:
+            result = await arequest_with_retry(
+                session=session,
+                addr=addr,
+                endpoint="/v1/models",
+                method="GET",
+                max_retries=1,
+                timeout=min(request_timeout, 10.0),
+            )
+            if isinstance(result, dict):
+                return {m.get("id", "") for m in result.get("data", [])}
+            return set()
+        except Exception as e:
+            logger.warning(
+                f"[LoRA Delta Sync] Failed to query /v1/models on "
+                f"{addr}: {type(e).__name__}: {e}"
+            )
+            return set()
+
+    async def _fn():
+        overall_start = time.monotonic()
+        logger.debug(
+            f"[LoRA Delta Sync] Loading adapter '{lora_name}' from "
+            f"'{lora_path}' on {len(addresses)} servers"
+        )
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=request_timeout),
+            read_bufsize=1024 * 1024 * 10,
+            connector=get_default_connector(),
+        ) as session:
+            # Unload the PREVIOUS version's adapter if one was loaded.
+            # Key: SGLang registry stores adapters by their versioned name.
+            # We must unload the previously-registered name (prev_lora_name),
+            # not the new name we're about to load (lora_name).
+            if prev_lora_name is not None:
+                # --- Pre-unload check: query /v1/models to verify adapter
+                # Avoids unnecessary unload failures, e.g.
+                # after a SGLang server restart where the registry was lost.
+                precheck_start = time.monotonic()
+                model_sets = await asyncio.gather(
+                    *[_query_available_models(session, a) for a in addresses]
+                )
+                logger.debug(
+                    f"[LoRA Delta Sync] Pre-unload /v1/models check "
+                    f"in {time.monotonic() - precheck_start:.3f}s"
+                )
+                any_have = any(prev_lora_name in ms for ms in model_sets)
+                all_have = all(prev_lora_name in ms for ms in model_sets)
+
+                if not any_have:
+                    logger.warning(
+                        f"[LoRA Delta Sync] Previous adapter "
+                        f"'{prev_lora_name}' not found on ANY server "
+                        f"(possible server restart). Skipping unload."
+                    )
+                else:
+                    if not all_have:
+                        for addr, ms in zip(addresses, model_sets):
+                            if prev_lora_name not in ms:
+                                logger.warning(
+                                    f"[LoRA Delta Sync] Server {addr} "
+                                    f"missing '{prev_lora_name}' "
+                                    f"(has: {list(ms)})"
+                                )
+                    unload_payload = {"lora_name": prev_lora_name}
+                    logger.debug(
+                        f"[LoRA Delta Sync] Unloading previous adapter "
+                        f"'{prev_lora_name}' before loading '{lora_name}', "
+                        f"servers={addresses}"
+                    )
+                    unload_start = time.monotonic()
+                    unload_jobs = [
+                        arequest_with_retry(
+                            session=session,
+                            addr=addr,
+                            endpoint="/unload_lora_adapter",
+                            payload=unload_payload,
+                            method="POST",
+                            max_retries=1,
+                            timeout=request_timeout,
+                        )
+                        for addr in addresses
+                    ]
+                    try:
+                        await asyncio.gather(*unload_jobs)
+                        logger.debug(
+                            f"[LoRA Delta Sync] Unloaded previous adapter "
+                            f"'{prev_lora_name}' in "
+                            f"{time.monotonic() - unload_start:.3f}s"
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"[LoRA Delta Sync] Unload of "
+                            f"'{prev_lora_name}' failed "
+                            f"({type(e).__name__}: {e}), "
+                            f"continuing with load..."
+                        )
+            else:
+                logger.debug(
+                    f"[LoRA Delta Sync] No previous adapter to unload "
+                    f"(first load), proceeding to load '{lora_name}'"
+                )
+
+            # Then load the new adapter
+            load_payload = {"lora_name": lora_name, "lora_path": lora_path}
+            logger.debug(
+                f"[LoRA Delta Sync] Sending /load_lora_adapter, "
+                f"payload={load_payload}, servers={addresses}"
+            )
+            load_start = time.monotonic()
+            load_jobs = [
+                arequest_with_retry(
+                    session=session,
+                    addr=addr,
+                    endpoint="/load_lora_adapter",
+                    payload=load_payload,
+                    method="POST",
+                    max_retries=3,
+                    timeout=request_timeout,
+                )
+                for addr in addresses
+            ]
+            try:
+                await asyncio.gather(*load_jobs)
+                load_elapsed = time.monotonic() - load_start
+                total_elapsed = time.monotonic() - overall_start
+                logger.info(
+                    f"[LoRA Delta Sync] Successfully loaded adapter '{lora_name}' "
+                    f"on {len(addresses)} servers "
+                    f"in {load_elapsed:.3f}s "
+                    f"(total: {total_elapsed:.3f}s)"
+                )
+            except Exception as e:
+                logger.error(
+                    f"[LoRA Delta Sync] Failed to load adapter '{lora_name}': "
+                    f"type={type(e).__name__}, msg={e}"
+                )
+                raise
+
+            # --- Post-load consistency check ---
+            # Query /v1/models on all servers to confirm the new adapter
+            # is registered everywhere, detecting split-brain states.
+            try:
+                postcheck_start = time.monotonic()
+                post_model_sets = await asyncio.gather(
+                    *[_query_available_models(session, a) for a in addresses]
+                )
+                all_have_new = all(lora_name in ms for ms in post_model_sets)
+                if all_have_new:
+                    logger.debug(
+                        f"[LoRA Delta Sync] Post-load consistency OK: "
+                        f"'{lora_name}' on all {len(addresses)} servers "
+                        f"(check: {time.monotonic() - postcheck_start:.3f}s)"
+                    )
+                else:
+                    missing = [
+                        a
+                        for a, ms in zip(addresses, post_model_sets)
+                        if lora_name not in ms
+                    ]
+                    logger.error(
+                        f"[LoRA Delta Sync] Post-load INCONSISTENCY: "
+                        f"'{lora_name}' missing on "
+                        f"{len(missing)}/{len(addresses)} "
+                        f"servers: {missing}"
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"[LoRA Delta Sync] Post-load check failed: {type(e).__name__}: {e}"
+                )
+
+    return uvloop.run(_fn())
+
+
+def _unload_lora_adapter_on_servers(
+    lora_name: str,
+    addresses: list[str],
+    request_timeout: float,
+):
+    """Helper to unload LoRA adapter from all servers via HTTP."""
+
+    async def _fn():
+        unload_start = time.monotonic()
+        unload_payload = {"lora_name": lora_name}
+        logger.debug(
+            f"[LoRA Delta Sync] Unloading adapter '{lora_name}' "
+            f"from {len(addresses)} servers, "
+            f"endpoint=/unload_lora_adapter, payload={unload_payload}"
+        )
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=request_timeout),
+            read_bufsize=1024 * 1024 * 10,
+            connector=get_default_connector(),
+        ) as session:
+            jobs = [
+                arequest_with_retry(
+                    session=session,
+                    addr=addr,
+                    endpoint="/unload_lora_adapter",
+                    payload=unload_payload,
+                    method="POST",
+                    max_retries=1,
+                    timeout=request_timeout,
+                )
+                for addr in addresses
+            ]
+            try:
                 await asyncio.gather(*jobs)
+                logger.info(
+                    f"[LoRA Delta Sync] Unloaded adapter '{lora_name}' "
+                    f"from {len(addresses)} servers "
+                    f"in {time.monotonic() - unload_start:.3f}s"
+                )
+            except Exception as e:
+                logger.info(
+                    f"[LoRA Delta Sync] Unload of '{lora_name}' failed "
+                    f"(type={type(e).__name__}, msg={e}), "
+                    f"may be expected if adapter was not loaded, continuing..."
+                )
 
     return uvloop.run(_fn())

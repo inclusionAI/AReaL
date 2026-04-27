@@ -1131,6 +1131,25 @@ class TrainEngineConfig:
         default="lora",
         metadata={"help": "peft method type. Only LoRA is supported for now."},
     )
+    lora_delta_sync: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable LoRA delta weight sync. When True, base model weights are "
+            "sent only on the first sync; subsequent syncs transmit only the LoRA "
+            "adapter weights, significantly reducing communication overhead. "
+            "Requires use_lora=True. "
+            "Only effective with SGLang backend.",
+        },
+    )
+    delta_sync_dir: str | None = field(
+        default=None,
+        metadata={
+            "help": "Shared directory for LoRA delta sync artifacts (adapter files, "
+            "base model checkpoints). Must be on a filesystem accessible by both "
+            "training and inference nodes in multi-node setups. "
+            "Defaults to ~/.cache/areal/ if not set.",
+        },
+    )
 
     # Tree training
     enable_tree_training: bool = field(
@@ -1453,6 +1472,13 @@ class PPOActorConfig(TrainEngineConfig):
     kl_estimator: str = field(
         default="k1",
         metadata={"help": "KL divergence estimator", "choices": ["k1", "k2", "k3"]},
+    )
+
+    entropy_coeff: float = field(
+        default=0.0,
+        metadata={
+            "help": "Entropy bonus coefficient. 0 disables entropy regularization."
+        },
     )
 
     # SAPO (Soft Adaptive Policy Optimization) - https://arxiv.org/abs/2511.20347

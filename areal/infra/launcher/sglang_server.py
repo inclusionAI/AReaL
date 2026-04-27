@@ -243,6 +243,21 @@ def launch_sglang_server(argv):
     if config.rollout.return_routed_experts:
         config.sglang.enable_return_routed_experts = True
 
+    if getattr(config.sglang, "enable_lora", False):
+        if not getattr(config.sglang, "enable_memory_saver", False):
+            logger.info(
+                "[LoRA Delta Sync] enable_lora is set but enable_memory_saver "
+                "is False. Setting enable_memory_saver=True for LoRA delta sync "
+                "compatibility (keeps base weights in GPU memory across iterations)."
+            )
+            config.sglang.enable_memory_saver = True
+        logger.info(
+            f"[LoRA Delta Sync] SGLang server will be launched with LoRA support: "
+            f"enable_lora={config.sglang.enable_lora}, "
+            f"max_lora_rank={getattr(config.sglang, 'max_lora_rank', 'not set')}, "
+            f"enable_memory_saver={config.sglang.enable_memory_saver}"
+        )
+
     sglang_server = SGLangServerWrapper(
         config.experiment_name,
         config.trial_name,

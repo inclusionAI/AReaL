@@ -359,6 +359,7 @@ class PPOActor:
                         sapo_tau_pos=self.config.sapo_tau_pos,
                         sapo_tau_neg=self.config.sapo_tau_neg,
                         use_decoupled_loss=self.config.use_decoupled_loss,
+                        entropy_coeff=getattr(self.config, "entropy_coeff", 0.0),
                     ),
                     loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
                 )
@@ -423,6 +424,7 @@ def grpo_loss_fn(
     use_decoupled_loss: bool = False,
     vocab_min_logits: torch.Tensor | None = None,
     vocab_max_logits: torch.Tensor | None = None,
+    entropy_coeff: float = 0.0,
 ):
     """Loss function for actor step, all inputs should be splitted into
     pipeline micro batches, returns loss and logging stats."""
@@ -431,7 +433,9 @@ def grpo_loss_fn(
     loss_mask = input_data["loss_mask"].bool()
     prox_logp_gt = input_data.get("prox_logp")  # Could be None if skipped
 
-    entropy = entropy.detach()
+    entropy_for_stats = entropy.detach()
+    if entropy_coeff <= 0.0:
+        entropy = entropy.detach()
 
     # Resolve proximal log-probabilities based on method
     prox_logp = _resolve_proximal_logp(
@@ -530,7 +534,7 @@ def grpo_loss_fn(
         approx_kl=stat["approx_kl"],
         new_logp=logprobs.detach(),
         old_logp=old_logp,
-        entropy=entropy.float(),
+        entropy=entropy_for_stats.float(),
         actor_loss=stat["loss"],
         clip_ratio=stat["clip_mask"].float(),
         dual_clip_ratio=stat["dual_clip_mask"].float(),
@@ -592,6 +596,12 @@ def grpo_loss_fn(
             current_version=current_version,
             version_metrics_mask=version_metrics_mask,
         )
+
+    if entropy_coeff > 0.0:
+        ent_loss_mask_count = loss_mask.count_nonzero() or 1
+        entropy_bonus = torch.where(loss_mask, entropy, 0).sum() / ent_loss_mask_count
+        loss = loss - entropy_coeff * entropy_bonus
+        stats_tracker.scalar(**{"entropy_bonus": entropy_bonus.detach().item()})
 
     return loss
 

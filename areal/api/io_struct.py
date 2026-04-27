@@ -180,6 +180,12 @@ class WeightUpdateMeta:
     base_model_name: str = ""
     peft_config: dict = field(default_factory=dict)
 
+    # LoRA delta sync fields: when lora_delta_sync is True, base model weights
+    # are only transmitted on the first sync (base_sync_done=False), and
+    # subsequent syncs transmit only the LoRA adapter weights (base_sync_done=True).
+    lora_delta_sync: bool = False
+    base_sync_done: bool = False
+
     clear_checkpoint_after_load: bool = True
 
     version: int | None = None
