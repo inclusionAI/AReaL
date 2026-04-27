@@ -60,6 +60,7 @@ actor:
     lr_scheduler_type: constant
     gradient_clipping: 1.0
     warmup_steps_proportion: 0.001
+    mtp_lr_scale: 10.0
   eps_clip: 0.4
   temperature: ${gconfig.temperature}
   reward_scaling: 10.0
@@ -82,7 +83,6 @@ actor:
   enable_mtp_training: true
   mtp_num_layers: 1
   mtp_loss_scaling_factor: 0.2
-  mtp_lr_scale: 10.0
 
   scheduling_spec:
     - task_type: worker
