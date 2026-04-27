@@ -48,6 +48,12 @@ class Scheduler(abc.ABC):
     on workers, and facilitating RPC calls to engine methods.
     """
 
+    @property
+    @abc.abstractmethod
+    def n_gpus_per_node(self) -> int:
+        """Return the number of GPUs per node configured for this scheduler."""
+        raise NotImplementedError()
+
     @abc.abstractmethod
     def create_workers(self, job: Job, *args, **kwargs) -> list[str]:
         """Create and start worker processes for a specific role.

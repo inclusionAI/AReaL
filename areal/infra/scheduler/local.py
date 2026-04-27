@@ -181,6 +181,10 @@ class LocalScheduler(Scheduler):
             f"log directory: {self.log_dir}"
         )
 
+    @property
+    def n_gpus_per_node(self) -> int:
+        return len(self.gpu_devices)
+
     def _detect_gpus(self) -> list[int]:
         cuda_visible = os.environ.get(current_platform.device_control_env_var)
         if current_platform.device_control_env_var and cuda_visible:
