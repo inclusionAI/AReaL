@@ -151,11 +151,21 @@ def areal_launch_server(server_args) -> None:
 
 
 if __name__ == "__main__":
+    import logging as _logging
+
     from sglang.srt.server_args import prepare_server_args
     from sglang.srt.utils import kill_process_tree
     from sglang.srt.utils.common import suppress_noisy_warnings
 
     suppress_noisy_warnings()
+
+    _logging.basicConfig(
+        level=_logging.INFO,
+        format="[%(name)s] %(asctime)s PID=%(process)d %(levelname)s: %(message)s",
+        stream=sys.stderr,
+    )
+    _logging.getLogger("areal").setLevel(_logging.DEBUG)
+
     server_args = prepare_server_args(sys.argv[1:])
 
     try:
