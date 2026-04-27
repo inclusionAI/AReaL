@@ -1,12 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
-"""AReaL wrapper for sglang.launch_server.
+"""AReaL wrapper for sglang server launch.
 
 This module is the entry point used by ``python -m`` when launching
-sglang servers from within AReaL.  It applies runtime monkey-patches
-(e.g. per-PP-rank NCCL group support) **before** sglang initialises
-its workers, then delegates to the upstream ``sglang.launch_server``
-logic.
+sglang servers from within AReaL, which uses
+compositional bridges to extend sglang's scheduler
+with AReaL-specific capabilities.
 
 Usage (automatically invoked by AReaL's launcher infrastructure)::
 
@@ -17,23 +16,16 @@ import logging
 import os
 import sys
 
-from sglang.srt.server_args import prepare_server_args
-from sglang.srt.utils import kill_process_tree
-from sglang.srt.utils.common import suppress_noisy_warnings
-
 logger = logging.getLogger("areal.engine.sglang_ext")
-
-suppress_noisy_warnings()
-
-
-def _apply_patches() -> None:
-    """Apply AReaL-specific patches to sglang before server start."""
-    from areal.patches.sglang_pp_weight_update import apply_sglang_pp_patch
-
-    apply_sglang_pp_patch()
 
 
 if __name__ == "__main__":
+    from sglang.srt.server_args import prepare_server_args
+    from sglang.srt.utils import kill_process_tree
+    from sglang.srt.utils.common import suppress_noisy_warnings
+
+    suppress_noisy_warnings()
+
     logging.basicConfig(
         level=logging.INFO,
         format="[%(name)s] %(asctime)s PID=%(process)d %(levelname)s: %(message)s",
@@ -42,15 +34,17 @@ if __name__ == "__main__":
     logging.getLogger("areal").setLevel(logging.DEBUG)
     logger.info("areal_sglang_server starting (PID=%d)", os.getpid())
 
-    # Apply AReaL patches before sglang initialises any workers.
-    _apply_patches()
-
     server_args = prepare_server_args(sys.argv[1:])
 
     try:
-        # Delegate to sglang's server runner.
-        from sglang.launch_server import run_server
+        # ---- BEGIN AREAL ----
+        # Use the customized launch_server that wires up compositional bridges
+        # (AwexSchedulerBridge, PPSchedulerBridge) instead of monkey-patches.
+        from areal.experimental.inference_service.sglang.launch_server import (
+            areal_launch_server,
+        )
 
-        run_server(server_args)
+        areal_launch_server(server_args)
+        # ---- END AREAL ----
     finally:
         kill_process_tree(os.getpid(), include_parent=False)

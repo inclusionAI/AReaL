@@ -8,7 +8,7 @@ Covers two scenarios:
   1. PP=1 (original / backward compatible)
   2. PP>1 with per-PP-rank groups (group name ends with _{digit})
 
-Also tests allocation mode parsing with PP dimension and patch module imports.
+Also tests allocation mode parsing with PP dimension and pp_bridge module imports.
 """
 
 import pytest
@@ -305,33 +305,50 @@ class TestBackwardCompatibilityPerEngine:
 
 
 # ===================================================================== #
-#  Patch module importability and constants                             #
+#  PPSchedulerBridge module importability and helpers                    #
 # ===================================================================== #
 
 
-class TestSGLangPPPatchModule:
-    """Test the sglang PP patch module can be imported and has expected symbols."""
+class TestPPBridgeModule:
+    """Test the pp_bridge module can be imported and has expected symbols."""
 
-    def test_apply_patch_is_callable(self):
-        from areal.patches.sglang_pp_weight_update import apply_sglang_pp_patch
+    def test_pp_bridge_class_exists(self):
+        from areal.experimental.inference_service.sglang.pp_bridge import (
+            PPSchedulerBridge,
+        )
 
-        assert callable(apply_sglang_pp_patch)
+        assert PPSchedulerBridge is not None
 
-    def test_patched_flag_exists(self):
-        from areal.patches.sglang_pp_weight_update import _PATCHED
+    def test_extract_pp_rank_from_group_name(self):
+        from areal.experimental.inference_service.sglang.pp_bridge import (
+            _extract_pp_rank_from_group_name,
+        )
 
-        assert isinstance(_PATCHED, bool)
+        assert _extract_pp_rank_from_group_name("update_weight_group_0") == 0
+        assert _extract_pp_rank_from_group_name("update_weight_group_3") == 3
+        assert _extract_pp_rank_from_group_name("update_weight_group_10") == 10
+        assert _extract_pp_rank_from_group_name("my_custom_group") is None
+        assert _extract_pp_rank_from_group_name("update_weight_group") is None
 
-    def test_pp_skip_sentinel_defined(self):
-        from areal.patches.sglang_pp_weight_update import _PP_SKIP_SENTINEL
+    def test_pp_bridge_bind_is_callable(self):
+        from areal.experimental.inference_service.sglang.pp_bridge import (
+            PPSchedulerBridge,
+        )
 
-        assert isinstance(_PP_SKIP_SENTINEL, str)
-        assert len(_PP_SKIP_SENTINEL) > 0
+        assert callable(getattr(PPSchedulerBridge, "bind", None))
 
-    def test_patch_idempotent_flag(self):
-        """apply_sglang_pp_patch sets _PATCHED; second call is a no-op."""
-        import areal.patches.sglang_pp_weight_update as mod
+    def test_pp_bridge_noop_when_pp1(self):
+        """PPSchedulerBridge.bind() should be a no-op when pp_size <= 1."""
+        from areal.experimental.inference_service.sglang.pp_bridge import (
+            PPSchedulerBridge,
+        )
 
-        # Just verify the flag mechanism exists; actual patching needs sglang.
-        assert hasattr(mod, "_PATCHED")
-        assert hasattr(mod, "apply_sglang_pp_patch")
+        class FakeServerArgs:
+            pp_size = 1
+
+        class FakeScheduler:
+            pass
+
+        bridge = PPSchedulerBridge(FakeScheduler(), FakeServerArgs())
+        # Should not raise
+        bridge.bind()
