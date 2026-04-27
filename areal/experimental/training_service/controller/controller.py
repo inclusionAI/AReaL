@@ -9,6 +9,9 @@ import traceback
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+import aiohttp
+
+from areal.infra.utils.concurrent import run_async_task
 from areal.utils import logging
 from areal.utils.network import format_hostport
 
@@ -57,8 +60,6 @@ class GatewayTrainController:
     def initialize(
         self, role: str, ft_spec: FinetuneSpec | None = None, **kwargs: Any
     ) -> None:
-        from areal.infra.utils.concurrent import run_async_task
-
         self._role = role
         run_async_task(self._async_initialize, role, ft_spec, **kwargs)
         logger.info(
@@ -817,6 +818,49 @@ class GatewayTrainController:
 
     # -- Destroy -----------------------------------------------------------
 
+    def _graceful_shutdown_workers(self) -> None:
+        """Destroy engines on all training workers before killing processes.
+
+        ``dist.destroy_process_group()`` is a local operation
+        (``ncclCommAbort`` + HeartbeatMonitor join), but rank-0 hosts the
+        TCPStore server.  All workers must stop their HeartbeatMonitor
+        before any process exits, otherwise surviving ranks get a
+        ``recvValue failed`` warning from the now-dead TCPStore.
+        """
+        if not self._worker_addrs:
+            return
+
+        async def _shutdown_all() -> None:
+            timeout = aiohttp.ClientTimeout(total=30)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                tasks = []
+                for addr in self._worker_addrs:
+                    tasks.append(_shutdown_one(session, addr))
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+        async def _shutdown_one(session: aiohttp.ClientSession, addr: str) -> None:
+            try:
+                async with session.post(f"{addr}/awex/teardown") as resp:
+                    resp.raise_for_status()
+            except Exception as e:
+                logger.warning(
+                    "Graceful shutdown: failed to call /awex/teardown on %s: %s",
+                    addr,
+                    e,
+                )
+            try:
+                async with session.post(f"{addr}/destroy_engine", json={}) as resp:
+                    resp.raise_for_status()
+            except Exception as e:
+                logger.warning(
+                    "Graceful shutdown: failed to call /destroy_engine on %s: %s",
+                    addr,
+                    e,
+                )
+
+        run_async_task(_shutdown_all)
+        logger.info("All training worker engines destroyed gracefully")
+
     def _cleanup_runtime_state(self) -> None:
         if self._router_addr and self._model_addr:
             try:
@@ -830,6 +874,8 @@ class GatewayTrainController:
                 )
             except Exception:
                 logger.error("Failed to unregister model: %s", traceback.format_exc())
+
+        self._graceful_shutdown_workers()
 
         for guard_addr, role, worker_index in reversed(self._forked_services):
             try:

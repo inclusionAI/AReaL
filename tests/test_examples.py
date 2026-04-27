@@ -796,7 +796,7 @@ def test_tau2(tmp_path_factory):
         [
             "python3",
             "-m",
-            "sglang.launch_server",
+            "areal.experimental.inference_service.sglang.launch_server",
             "--model-path",
             model_path,
             "--host",

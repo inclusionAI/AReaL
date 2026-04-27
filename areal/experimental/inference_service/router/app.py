@@ -101,6 +101,81 @@ class RemoveModelRequest(BaseModel):
 
 
 # =============================================================================
+# Response models
+# =============================================================================
+
+
+class StatusResponse(BaseModel):
+    status: str
+
+
+class HealthResponse(BaseModel):
+    status: str
+    workers: int
+    sessions: int
+    capacity: int
+    strategy: str
+
+
+class RegisterWorkerResponse(BaseModel):
+    status: str
+    worker_id: str
+
+
+class UnregisterWorkerResponse(BaseModel):
+    status: str
+    sessions_revoked: int
+
+
+class RouteResponse(BaseModel):
+    worker_addr: str
+    url: str | None = None
+    api_key: str | None = None
+
+
+class RemoveSessionResponse(BaseModel):
+    status: str
+    removed: bool
+    persistent: bool
+
+
+class WorkerInfo(BaseModel):
+    worker_id: str
+    addr: str
+    healthy: bool
+    active_requests: int
+
+
+class WorkersResponse(BaseModel):
+    workers: list[WorkerInfo]
+
+
+class RegisterModelResponse(BaseModel):
+    status: str
+    model: str
+    data_proxy_addrs: list[str]
+
+
+class ModelsResponse(BaseModel):
+    models: list[str]
+
+
+class RemoveModelResponse(BaseModel):
+    status: str
+    name: str
+
+
+class ResolveWorkerResponse(BaseModel):
+    worker_id: str
+    worker_addr: str
+
+
+class CapacityResponse(BaseModel):
+    status: str
+    capacity: int
+
+
+# =============================================================================
 # App factory
 # =============================================================================
 
@@ -118,17 +193,17 @@ def create_app(config: RouterConfig) -> FastAPI:
         """Background task: periodically poll worker /health endpoints."""
         while True:
             workers = await worker_registry.get_all_workers()
-            for w in workers:
+
+            async def _check(w):
                 try:
-                    async with httpx.AsyncClient(
-                        timeout=config.worker_health_timeout
-                    ) as client:
-                        resp = await client.get(f"{w.worker_addr}/health")
-                        await worker_registry.update_health(
-                            w.worker_addr, resp.status_code == 200
-                        )
+                    resp = await app.state.http_client.get(f"{w.worker_addr}/health")
+                    await worker_registry.update_health(
+                        w.worker_addr, resp.status_code == 200
+                    )
                 except Exception:
                     await worker_registry.update_health(w.worker_addr, False)
+
+            await asyncio.gather(*[_check(w) for w in workers])
             await asyncio.sleep(config.poll_interval)
 
     @asynccontextmanager
@@ -138,19 +213,23 @@ def create_app(config: RouterConfig) -> FastAPI:
             config.routing_strategy,
             config.poll_interval,
         )
+        app.state.http_client = httpx.AsyncClient(timeout=config.worker_health_timeout)
         poll_task = asyncio.create_task(_poll_workers())
         app.state.worker_registry = worker_registry
         app.state.session_registry = session_registry
         app.state.model_registry = model_registry
         app.state.capacity_manager = capacity_manager
         app.state.strategy = strategy
-        yield
-        poll_task.cancel()
         try:
-            await poll_task
-        except asyncio.CancelledError:
-            pass
-        logger.info("Router shutting down")
+            yield
+        finally:
+            poll_task.cancel()
+            try:
+                await poll_task
+            except asyncio.CancelledError:
+                pass
+            await app.state.http_client.aclose()
+            logger.info("Router shutting down")
 
     app = FastAPI(title="AReaL Router", lifespan=lifespan)
 
@@ -165,31 +244,31 @@ def create_app(config: RouterConfig) -> FastAPI:
     # Health
     # =========================================================================
 
-    @app.get("/health")
+    @app.get("/health", response_model=HealthResponse)
     async def health():
         all_workers = await worker_registry.get_all_workers()
         session_count = await session_registry.count()
         capacity = await capacity_manager.get_capacity()
-        return {
-            "status": "ok",
-            "workers": len(all_workers),
-            "sessions": session_count,
-            "capacity": capacity,
-            "strategy": config.routing_strategy,
-        }
+        return HealthResponse(
+            status="ok",
+            workers=len(all_workers),
+            sessions=session_count,
+            capacity=capacity,
+            strategy=config.routing_strategy,
+        )
 
     # =========================================================================
     # Worker management (admin key required)
     # =========================================================================
 
-    @app.post("/register")
+    @app.post("/register", response_model=RegisterWorkerResponse)
     async def register(body: RegisterWorkerRequest, request: Request):
         _require_admin_key(request, config.admin_api_key)
         worker_id = await worker_registry.register(body.worker_addr)
         logger.info("Worker registered: %s (id=%s)", body.worker_addr, worker_id)
-        return {"status": "ok", "worker_id": worker_id}
+        return RegisterWorkerResponse(status="ok", worker_id=worker_id)
 
-    @app.post("/unregister")
+    @app.post("/unregister", response_model=UnregisterWorkerResponse)
     async def unregister(body: UnregisterWorkerRequest, request: Request):
         _require_admin_key(request, config.admin_api_key)
         if body.worker_id is not None:
@@ -205,10 +284,7 @@ def create_app(config: RouterConfig) -> FastAPI:
                 worker_addr,
                 revoked,
             )
-            return {
-                "status": "ok",
-                "sessions_revoked": revoked,
-            }
+            return UnregisterWorkerResponse(status="ok", sessions_revoked=revoked)
         elif body.worker_addr is not None:
             await worker_registry.deregister(body.worker_addr)
             revoked = await session_registry.revoke_by_worker(body.worker_addr)
@@ -217,10 +293,7 @@ def create_app(config: RouterConfig) -> FastAPI:
                 body.worker_addr,
                 revoked,
             )
-            return {
-                "status": "ok",
-                "sessions_revoked": revoked,
-            }
+            return UnregisterWorkerResponse(status="ok", sessions_revoked=revoked)
         else:
             raise HTTPException(
                 status_code=422,
@@ -231,7 +304,7 @@ def create_app(config: RouterConfig) -> FastAPI:
     # Routing (admin key required)
     # =========================================================================
 
-    @app.post("/route")
+    @app.post("/route", response_model=RouteResponse)
     async def route(body: RouteRequest, request: Request):
         _require_admin_key(request, config.admin_api_key)
 
@@ -256,7 +329,7 @@ def create_app(config: RouterConfig) -> FastAPI:
         if body.session_id is not None:
             worker = await session_registry.lookup_by_id(body.session_id)
             if worker is not None:
-                return {"worker_addr": worker}
+                return RouteResponse(worker_addr=worker)
             if model_addrs is None:
                 raise HTTPException(status_code=404, detail="Session not found")
 
@@ -275,11 +348,11 @@ def create_app(config: RouterConfig) -> FastAPI:
                 if body.model
                 else await model_registry.first()
             )
-            return {
-                "worker_addr": worker.worker_addr,
-                "url": info.url if info else "",
-                "api_key": info.api_key if info else None,
-            }
+            return RouteResponse(
+                worker_addr=worker.worker_addr,
+                url=info.url if info else None,
+                api_key=info.api_key if info else None,
+            )
 
         if body.api_key is None and body.model is not None and model_addrs is None:
             raise HTTPException(
@@ -300,7 +373,7 @@ def create_app(config: RouterConfig) -> FastAPI:
             w = worker_map.get(pinned)
             if w is None or not w.is_healthy:
                 raise HTTPException(status_code=503, detail="Pinned worker unhealthy")
-            return {"worker_addr": pinned}
+            return RouteResponse(worker_addr=pinned)
 
         # Step D: Admin key → pick from model addrs
         if hmac.compare_digest(body.api_key, config.admin_api_key):
@@ -316,7 +389,7 @@ def create_app(config: RouterConfig) -> FastAPI:
                 "__hitl__",
                 worker.worker_addr,
             )
-            return {"worker_addr": worker.worker_addr}
+            return RouteResponse(worker_addr=worker.worker_addr)
 
         # Step E: Unknown key
         raise HTTPException(status_code=404, detail="Unknown API key")
@@ -328,7 +401,7 @@ def create_app(config: RouterConfig) -> FastAPI:
     # no permits remain.
     # =========================================================================
 
-    @app.post("/register_session")
+    @app.post("/register_session", response_model=StatusResponse)
     async def register_session(body: RegisterSessionRequest, request: Request):
         _require_admin_key(request, config.admin_api_key)
 
@@ -343,13 +416,13 @@ def create_app(config: RouterConfig) -> FastAPI:
         await session_registry.register_session(
             body.session_api_key, body.session_id, body.worker_addr
         )
-        return {"status": "ok"}
+        return StatusResponse(status="ok")
 
     # =========================================================================
     # Session cleanup (admin key required)
     # =========================================================================
 
-    @app.post("/remove_session")
+    @app.post("/remove_session", response_model=RemoveSessionResponse)
     async def remove_session(body: RemoveSessionRequest, request: Request):
         """Remove a session from the registry after export.
 
@@ -366,33 +439,33 @@ def create_app(config: RouterConfig) -> FastAPI:
             if is_hitl_persistent
             else await session_registry.revoke_session(body.session_id)
         )
-        return {
-            "status": "ok",
-            "removed": removed,
-            "persistent": is_hitl_persistent,
-        }
+        return RemoveSessionResponse(
+            status="ok",
+            removed=removed,
+            persistent=is_hitl_persistent,
+        )
 
     # =========================================================================
     # Worker listing (admin key required)
     # =========================================================================
 
-    @app.get("/workers")
+    @app.get("/workers", response_model=WorkersResponse)
     async def list_workers(request: Request):
         _require_admin_key(request, config.admin_api_key)
         all_workers = await worker_registry.get_all_workers()
-        return {
-            "workers": [
-                {
-                    "worker_id": w.worker_id,
-                    "addr": w.worker_addr,
-                    "healthy": w.is_healthy,
-                    "active_requests": w.active_requests,
-                }
+        return WorkersResponse(
+            workers=[
+                WorkerInfo(
+                    worker_id=w.worker_id,
+                    addr=w.worker_addr,
+                    healthy=w.is_healthy,
+                    active_requests=w.active_requests,
+                )
                 for w in all_workers
             ]
-        }
+        )
 
-    @app.post("/register_model")
+    @app.post("/register_model", response_model=RegisterModelResponse)
     async def register_model(body: RegisterModelRequest, request: Request):
         _require_admin_key(request, config.admin_api_key)
         addrs = body.data_proxy_addrs
@@ -413,19 +486,19 @@ def create_app(config: RouterConfig) -> FastAPI:
             body.url or "(internal)",
             addrs,
         )
-        return {
-            "status": "ok",
-            "model": body.model,
-            "data_proxy_addrs": addrs,
-        }
+        return RegisterModelResponse(
+            status="ok",
+            model=body.model,
+            data_proxy_addrs=addrs,
+        )
 
-    @app.get("/models")
+    @app.get("/models", response_model=ModelsResponse)
     async def list_models(request: Request):
         _require_admin_key(request, config.admin_api_key)
         names = await model_registry.list_names()
-        return {"models": names}
+        return ModelsResponse(models=names)
 
-    @app.post("/remove_model")
+    @app.post("/remove_model", response_model=RemoveModelResponse)
     async def remove_model(body: RemoveModelRequest, request: Request):
         _require_admin_key(request, config.admin_api_key)
         removed = await model_registry.remove(body.name)
@@ -435,56 +508,43 @@ def create_app(config: RouterConfig) -> FastAPI:
                 detail=f"External model '{body.name}' not found",
             )
         logger.info("External model removed: name=%s", body.name)
-        return {"status": "ok", "name": body.name}
+        return RemoveModelResponse(status="ok", name=body.name)
 
     # =========================================================================
     # Worker resolution by ID (admin key required)
     # =========================================================================
 
-    @app.get("/resolve_worker/{worker_id}")
+    @app.get("/resolve_worker/{worker_id}", response_model=ResolveWorkerResponse)
     async def resolve_worker(worker_id: str, request: Request):
-        """Resolve a worker_id to its address.
-
-        Returns the worker address for a given worker ID.
-        Used by the gateway to target specific workers for
-        pause/continue generation.
-        """
+        """Resolve a worker_id to its address."""
         _require_admin_key(request, config.admin_api_key)
         worker = await worker_registry.get_by_id(worker_id)
         if worker is None:
             raise HTTPException(
                 status_code=404, detail=f"Worker ID {worker_id} not found"
             )
-        return {"worker_id": worker.worker_id, "worker_addr": worker.worker_addr}
+        return ResolveWorkerResponse(
+            worker_id=worker.worker_id, worker_addr=worker.worker_addr
+        )
 
     # =========================================================================
     # Capacity management (admin key required)
     # =========================================================================
 
-    @app.post("/grant_capacity")
+    @app.post("/grant_capacity", response_model=CapacityResponse)
     async def grant_capacity(request: Request):
-        """Increment session capacity by 1.
-
-        Called by the rollout controller (via the gateway) when the current
-        weight version is within the allowed staleness window.  Each call
-        issues one permit for a future ``/register_session`` request.
-        """
+        """Increment session capacity by 1."""
         _require_admin_key(request, config.admin_api_key)
         new_capacity = await capacity_manager.grant()
         logger.info("Capacity granted — now %d", new_capacity)
-        return {"status": "ok", "capacity": new_capacity}
+        return CapacityResponse(status="ok", capacity=new_capacity)
 
-    @app.post("/release_capacity")
+    @app.post("/release_capacity", response_model=CapacityResponse)
     async def release_capacity(request: Request):
-        """Return one previously acquired capacity permit.
-
-        Called by the gateway when ``/rl/start_session`` fails after
-        capacity was acquired via ``/register_session``, to avoid
-        leaking permits.
-        """
+        """Return one previously acquired capacity permit."""
         _require_admin_key(request, config.admin_api_key)
         new_capacity = await capacity_manager.release()
         logger.info("Capacity released — now %d", new_capacity)
-        return {"status": "ok", "capacity": new_capacity}
+        return CapacityResponse(status="ok", capacity=new_capacity)
 
     return app

@@ -16,20 +16,21 @@ Maintainers have write access to the repository and are responsible for reviewin
 merging pull requests, triaging issues, and guiding the technical direction of the
 project.
 
-| Name                     | Organization              | GitHub            |
-| ------------------------ | ------------------------- | ----------------- |
-| Wei Fu                   | IIIS, Tsinghua University | @garrett4wade     |
-| Wentai Zhang             | AReaL Team, Ant Group     | @rchardx          |
-| Zhiyu Mei                | AReaL Team, Ant Group     | @nuzant           |
-| Xujie Shen               | AReaL Team, Ant Group     | @fishcrap         |
-| Tongkai Yang             | AReaL Team, Ant Group     | @fredy12          |
-| Han Jiang                | AReaL Team, Ant Group     | @CormickKneey     |
-| Huawei Vancouver ICI Lab | Huawei                    | @HwVanICI         |
-| Zhenan Fan               | Huawei                    | @zhenanf          |
-| Ge Shi                   | Huawei                    | @geshi001         |
-| Xiaojie Xu               | Huawei                    | @PrometheusComing |
-
-**NOTE**: Maintainers from Huawei are the code owners of the `ascend*` branches.
+| Name         | Organization              | GitHub                |
+| ------------ | ------------------------- | --------------------- |
+| Wei Fu       | IIIS, Tsinghua University | @garrett4wade         |
+| Wentai Zhang | AReaL Team, Ant Group     | @rchardx              |
+| Zhiyu Mei    | AReaL Team, Ant Group     | @nuzant               |
+| Xujie Shen   | AReaL Team, Ant Group     | @fishcrap             |
+| Tongkai Yang | AReaL Team, Ant Group     | @fredy12              |
+| Han Jiang    | AReaL Team, Ant Group     | @CormickKneey         |
+| Yong Zhang   | Huawei                    | @HwVanICI             |
+| Zhenan Fan   | Huawei                    | @zhenanf              |
+| Ge Shi       | Huawei                    | @geshi001             |
+| Xiaojie Xu   | Huawei                    | @PrometheusComing     |
+| Bingye Chen  | ByteDance                 | @TaoZex               |
+| Zhihao Guo   | Xiaomi                    | @guozhihao-224        |
+| Ming Li      | AReaL Team, Ant Group     | @sitabulaixizawaluduo |
 
 ### Lead Maintainer (BDFL)
 

@@ -9,7 +9,7 @@ import math
 import os
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -51,7 +51,10 @@ from areal.engine.core import (
     compute_total_loss_weight,
     reorder_and_pad_outputs,
 )
-from areal.engine.core.distributed import init_custom_process_group
+from areal.engine.core.distributed import (
+    init_custom_process_group,
+    warmup_process_groups,
+)
 from areal.engine.core.model import disable_dropout_in_model
 from areal.engine.megatron_utils.checkpointer import MegatronCheckpointManager
 from areal.engine.megatron_utils.deterministic import set_deterministic_algorithms
@@ -65,6 +68,7 @@ from areal.engine.megatron_utils.megatron import (
 from areal.engine.megatron_utils.megatron_lora import get_vllm_lora_target_modules
 from areal.engine.megatron_utils.packed_context_parallel import (
     packed_context_parallel_forward,
+    split_packed_seqs_for_context_parallel,
 )
 from areal.engine.megatron_utils.pipeline_parallel import (
     configure_pipeline_layer_splits,
@@ -112,7 +116,7 @@ from areal.utils.seeding import get_seed
 
 if TYPE_CHECKING:
     from areal.api import Scheduler
-    from areal.api.cli_args import PPOActorConfig, PPOCriticConfig
+    from areal.api.cli_args import DPOEngineConfig, PPOActorConfig, PPOCriticConfig
 
 
 class _MegatronModelList(list):
@@ -166,6 +170,7 @@ class MegatronEngine(TrainEngine):
         self.seed: int = 0
         self.own_global_group: bool = False
         self.is_offload: bool = False
+        self._offload_depth: int = 0
         self.enable_tree_training: bool = self.config.enable_tree_training
         # FP8 configuration
         self.fp8_config = self.mcore_config.fp8_config
@@ -216,6 +221,13 @@ class MegatronEngine(TrainEngine):
             timeout=DIST_GROUP_DEFAULT_TIMEOUT, backend="gloo"
         )
         self.process_group_initialized = True
+
+        # Eagerly initialize HCCL/NCCL communicators for the subgroups so
+        # that lazy init doesn't race with colocated engines (issue #1099).
+        warmup_process_groups(
+            self._context_and_model_parallel_group,
+            mpu.get_data_parallel_group(),
+        )
 
     def _apply_megatron_bridge_lora(self) -> None:
         assert self.model is not None, "Model must be initialized before applying LoRA."
@@ -508,6 +520,19 @@ class MegatronEngine(TrainEngine):
         # handles still exist and we expect another engine to
         # clean up these groups.
         if dist.is_initialized() and self.own_global_group:
+            # Pre-destroy synchronization on a CPU (gloo) group so that all
+            # ranks leave the NCCL collective phase together. Without this
+            # barrier, rank-0 (which owns the TCPStore server) may exit
+            # before peers finish their final NCCL abort, causing
+            # HeartbeatMonitor background threads on other ranks to observe
+            # "recvValue failed" on the already-closed store.
+            if getattr(self, "_cpu_group", None) is not None:
+                try:
+                    dist.barrier(group=self._cpu_group)
+                except Exception as e:  # pragma: no cover - best-effort
+                    self.logger.warning(
+                        f"pre-destroy CPU barrier failed (ignored): {e}"
+                    )
             mpu.destroy_model_parallel()
             dist.destroy_process_group()
             self.own_global_group = False
@@ -635,17 +660,24 @@ class MegatronEngine(TrainEngine):
 
     @contextmanager
     def _offload_aware_context(self):
-        """Temporarily onload parameters for offload-unsafe operations."""
+        """Temporarily onload parameters for offload-unsafe operations.
+
+        Reentrant: nested calls increment depth; only the outermost
+        call performs actual onload/offload transitions.
+        """
         if not self.is_offload:
-            with nullcontext():
-                yield
+            yield
             return
 
-        self.onload()
+        self._offload_depth += 1
+        if self._offload_depth == 1:
+            self.onload()
         try:
             yield
         finally:
-            self.offload()
+            self._offload_depth -= 1
+            if self._offload_depth == 0:
+                self.offload()
 
     def optimizer_zero_grad(self):
         assert self.optimizer is not None, "Optimizer is not initialized."
@@ -705,7 +737,14 @@ class MegatronEngine(TrainEngine):
                     mb_input.padded_mb.update(tree_kwargs)
                     tree_attn_keys = list(tree_kwargs.keys())
 
-            output = packed_context_parallel_forward(model, mb_input.padded_mb)
+            cp_size = mpu.get_context_parallel_world_size()
+            cp_local = cp_size > 1
+
+            output = packed_context_parallel_forward(
+                model,
+                mb_input.padded_mb,
+                gather_cp_output=not cp_local,
+            )
 
             # Release tree attention metadata after forward pass
             for key in tree_attn_keys:
@@ -721,12 +760,30 @@ class MegatronEngine(TrainEngine):
             if mpu.is_pipeline_last_stage(
                 ignore_virtual=False, vp_stage=model_vp_stage
             ):
-                output = unpad_logits(
-                    output,
-                    padding_length=mb_input.padding_length,
-                    cu_seqlens=cu_seqlens,
-                    old_cu_seqlens=mb_input.old_cu_seqlens,
-                )
+                if cp_local and cu_seqlens is not None:
+                    padded_cu_seqlens = mb_input.padded_mb["cu_seqlens"]
+                    rolled_ids = torch.roll(
+                        mb_input.padded_mb["input_ids"], shifts=-1, dims=-1
+                    )
+                    cp_labels = split_packed_seqs_for_context_parallel(
+                        rolled_ids, padded_cu_seqlens
+                    )
+                    cp_loss_mask = split_packed_seqs_for_context_parallel(
+                        mb_input.padded_mb["loss_mask"], padded_cu_seqlens
+                    )
+                    cp_cu_seqlens = padded_cu_seqlens // cp_size
+                    cp_inputs = dict(mb_input.orig_mb)
+                    cp_inputs["_cp_local_labels"] = cp_labels
+                    cp_inputs["loss_mask"] = cp_loss_mask
+                    cp_inputs["cu_seqlens"] = cp_cu_seqlens
+                    return output, functools.partial(_process_output, cp_inputs)
+                else:
+                    output = unpad_logits(
+                        output,
+                        padding_length=mb_input.padding_length,
+                        cu_seqlens=cu_seqlens,
+                        old_cu_seqlens=mb_input.old_cu_seqlens,
+                    )
             return output, functools.partial(_process_output, mb_input.orig_mb)
 
         forward_backward_func = get_forward_backward_func()
@@ -781,7 +838,11 @@ class MegatronEngine(TrainEngine):
                 loss_multiplier=loss_multiplier,
             )
 
-        self.forward_backward_batch(mb_list, process_output, forward_only=False)
+        self.forward_backward_batch(
+            mb_list,
+            process_output,
+            forward_only=False,
+        )
 
         # Step 4: Optimizer step
         return self.optimizer_step()
@@ -821,7 +882,9 @@ class MegatronEngine(TrainEngine):
 
         # Step 4: Aggregate losses
         if mpu.is_pipeline_last_stage():
-            return aggregate_eval_losses(losses, mpu.get_data_parallel_group())
+            return aggregate_eval_losses(
+                losses, mpu.get_data_parallel_group(with_context_parallel=True)
+            )
         return None
 
     @torch.no_grad()
@@ -1020,6 +1083,19 @@ class MegatronEngine(TrainEngine):
 
     def get_device_stats(self) -> DeviceRuntimeInfo:
         return DeviceRuntimeInfo.get_current()
+
+    def start_memory_profile(self, max_entries: int = 100000) -> None:
+        torch.cuda.memory._record_memory_history(max_entries=max_entries)
+
+    def stop_memory_profile(self, snapshot_dir: str) -> None:
+        pp = mpu.get_pipeline_model_parallel_rank()
+        dp = mpu.get_data_parallel_rank()
+        cp = mpu.get_context_parallel_rank()
+        tp = mpu.get_tensor_model_parallel_rank()
+        filename = f"snapshot_rank{self.rank:02d}_p{pp}d{dp}c{cp}t{tp}.pickle"
+        path = os.path.join(snapshot_dir, filename)
+        torch.cuda.memory._dump_snapshot(path)
+        torch.cuda.memory._record_memory_history(enabled=None)
 
     def save_perf_tracer(self, step: int | None = None, force: bool = False) -> None:
         perf_tracer.save(step=step, force=force)
@@ -1797,7 +1873,11 @@ class MegatronEngine(TrainEngine):
                     else None,
                 )
             else:
-                labels = torch.roll(inputs["input_ids"], shifts=-1, dims=-1)
+                cp_local_labels = inputs.get("_cp_local_labels")
+                if cp_local_labels is not None:
+                    labels = cp_local_labels
+                else:
+                    labels = torch.roll(inputs["input_ids"], shifts=-1, dims=-1)
                 logprobs, entropy = gather_logprobs_entropy(
                     output,
                     labels,
@@ -1994,3 +2074,44 @@ class MegatronRWEngine(MegatronEngine):
         from areal.trainer.rw.rw_engine import RWController
 
         return RWController(train_engine=cls, config=config, scheduler=scheduler)
+
+
+class MegatronDPOEngine(MegatronEngine):
+    """DPO training engine using Megatron backend."""
+
+    def __init__(self, config: DPOEngineConfig):
+        from copy import deepcopy
+
+        from areal.trainer.dpo.dpo_engine import DPOEngine
+
+        super().__init__(config)
+        self.dpo_engine = DPOEngine(self)
+        if self.config.mb_spec.granularity != 2:
+            dpo_logger = logging.getLogger("DPOEngine")
+            dpo_logger.warning("mb_spec.granularity must be 2 for DPO training")
+            self.config = deepcopy(self.config)
+            self.config.mb_spec.granularity = 2
+
+    def train_dpo(self, data):
+        return self.dpo_engine.train_dpo(data)
+
+    def evaluate_dpo(self, data):
+        return self.dpo_engine.evaluate_dpo(data)
+
+    def compute_logp(self, data: list[dict[str, Any]]) -> list[torch.Tensor] | None:
+        return self.dpo_engine.compute_logp(data)
+
+    @classmethod
+    def as_controller(
+        cls,
+        config: DPOEngineConfig,
+        scheduler: Scheduler,
+    ):
+        if config._version == "v2":
+            from areal.trainer.dpo.dpo_engine import DPOControllerV2
+
+            return DPOControllerV2(train_engine=cls, config=config, scheduler=scheduler)
+
+        from areal.trainer.dpo.dpo_engine import DPOController
+
+        return DPOController(train_engine=cls, config=config, scheduler=scheduler)

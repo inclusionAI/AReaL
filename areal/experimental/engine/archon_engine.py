@@ -8,7 +8,7 @@ import math
 import os
 import time
 from collections.abc import Callable
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -35,7 +35,10 @@ from areal.api import (
 )
 from areal.api.cli_args import MicroBatchSpec
 from areal.api.io_struct import DeviceRuntimeInfo
-from areal.engine.core.distributed import patch_dist_group_timeout
+from areal.engine.core.distributed import (
+    patch_dist_group_timeout,
+    warmup_process_groups,
+)
 from areal.engine.core.train_engine import (
     aggregate_eval_losses,
     compute_total_loss_weight,
@@ -113,7 +116,7 @@ if TYPE_CHECKING:
     from torchdata.stateful_dataloader import StatefulDataLoader
 
     from areal.api import InferenceEngine, Scheduler, WorkflowLike
-    from areal.api.cli_args import PerfTracerConfig, TrainEngineConfig
+    from areal.api.cli_args import DPOEngineConfig, PerfTracerConfig, TrainEngineConfig
     from areal.experimental.engine.archon_runner import ForwardBackwardRunner
 
 
@@ -193,6 +196,7 @@ class ArchonEngine(TrainEngine):
         self._version: int = 0
         self._initialized = False
         self.is_offload = False
+        self._offload_depth: int = 0
 
     def create_process_group(
         self,
@@ -281,6 +285,15 @@ class ArchonEngine(TrainEngine):
             f"pp={self.parallel_dims.pp}, dp_shard={self.parallel_dims.dp_shard}, "
             f"tp={self.parallel_dims.tp}, cp={self.parallel_dims.cp} (Ulysses SP), "
             f"ep={self.parallel_dims.ep}, etp={self.parallel_dims.etp}"
+        )
+
+        # Eagerly initialize HCCL/NCCL communicators for the subgroups so
+        # that lazy init doesn't race with colocated engines (issue #1099).
+        warmup_process_groups(
+            self.parallel_dims.world_mesh["dp"].get_group(),
+            self._pp_cp_tp_group,
+            self._tp_group,
+            self._cp_group,
         )
 
     def initialize(self, addr: str | None, ft_spec: FinetuneSpec, *args, **kwargs):
@@ -427,7 +440,25 @@ class ArchonEngine(TrainEngine):
         gc.collect()
 
         if dist.is_initialized() and self.own_global_group:
+            # Pre-destroy synchronization on a CPU (gloo) group so that all
+            # ranks leave the NCCL collective phase together. Without this
+            # barrier, rank-0 (which owns the TCPStore server) may exit
+            # before peers finish their final NCCL abort, causing
+            # HeartbeatMonitor background threads on other ranks to observe
+            # "recvValue failed" on the already-closed store. This is
+            # harmless but produces a noisy stderr backtrace at teardown.
+            if getattr(self, "_cpu_group", None) is not None:
+                try:
+                    dist.barrier(group=self._cpu_group)
+                except Exception as e:
+                    self.logger.warning(
+                        f"pre-destroy CPU barrier failed (ignored): {e}"
+                    )
             dist.destroy_process_group()
+            # Make destroy() idempotent: if the controller calls destroy
+            # more than once (e.g. via cleanup hooks), the second call
+            # must not try to destroy already-destroyed groups.
+            self.own_global_group = False
         self._initialized = False
 
     def train(self, mode: bool = True):
@@ -737,17 +768,24 @@ class ArchonEngine(TrainEngine):
 
     @contextmanager
     def _offload_aware_context(self):
-        """Temporarily onload parameters for offload-unsafe operations."""
+        """Temporarily onload parameters for offload-unsafe operations.
+
+        Reentrant: nested calls increment depth; only the outermost
+        call performs actual onload/offload transitions.
+        """
         if not self.is_offload:
-            with nullcontext():
-                yield
+            yield
             return
 
-        self.onload()
+        self._offload_depth += 1
+        if self._offload_depth == 1:
+            self.onload()
         try:
             yield
         finally:
-            self.offload()
+            self._offload_depth -= 1
+            if self._offload_depth == 0:
+                self.offload()
 
     def offload(self) -> None:
         """Offload model memory to CPU using torch_memory_saver."""
@@ -1468,3 +1506,44 @@ class ArchonRWEngine(ArchonEngine):
         from areal.trainer.rw.rw_engine import RWController
 
         return RWController(train_engine=cls, config=config, scheduler=scheduler)
+
+
+class ArchonDPOEngine(ArchonEngine):
+    """Archon-based DPO Engine for direct preference optimization."""
+
+    def __init__(self, config: DPOEngineConfig):
+        from copy import deepcopy
+
+        from areal.trainer.dpo.dpo_engine import DPOEngine
+
+        super().__init__(config)
+        self.dpo_engine = DPOEngine(self)
+        if self.config.mb_spec.granularity != 2:
+            dpo_logger = logging.getLogger("DPOEngine")
+            dpo_logger.warning("mb_spec.granularity must be 2 for DPO training")
+            self.config = deepcopy(self.config)
+            self.config.mb_spec.granularity = 2
+
+    def train_dpo(self, data):
+        return self.dpo_engine.train_dpo(data)
+
+    def evaluate_dpo(self, data):
+        return self.dpo_engine.evaluate_dpo(data)
+
+    def compute_logp(self, data: list[dict[str, Any]]) -> list[torch.Tensor] | None:
+        return self.dpo_engine.compute_logp(data)
+
+    @classmethod
+    def as_controller(
+        cls,
+        config: DPOEngineConfig,
+        scheduler: Scheduler,
+    ):
+        if config._version == "v2":
+            from areal.trainer.dpo.dpo_engine import DPOControllerV2
+
+            return DPOControllerV2(train_engine=cls, config=config, scheduler=scheduler)
+
+        from areal.trainer.dpo.dpo_engine import DPOController
+
+        return DPOController(train_engine=cls, config=config, scheduler=scheduler)

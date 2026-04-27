@@ -106,13 +106,22 @@ class Scheduler(abc.ABC):
         raise NotImplementedError()
 
     @abc.abstractmethod
-    def delete_workers(self, role: str | None = None):
+    def delete_workers(self, role: str | None = None, reverse_order: bool = False):
         """Stop and clean up worker processes.
 
         Parameters
         ----------
         role : str, optional
             Specific role to delete. If None, all workers are deleted
+        reverse_order : bool, optional
+            If True, terminate workers in reverse order of their IDs so that
+            rank-0 (which typically owns the global TCPStore server) is the
+            last one to be killed. This helps avoid a noisy
+            ``TCPStore.recvValue failed`` warning emitted by NCCL's
+            HeartbeatMonitor background thread on non-zero ranks during
+            teardown. Implementations that tear down all workers as a single
+            atomic operation (e.g. ``scancel`` for Slurm) may safely ignore
+            this argument. Defaults to False for backward compatibility.
 
         Raises
         ------

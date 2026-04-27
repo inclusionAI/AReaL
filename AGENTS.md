@@ -232,8 +232,8 @@ ______________________________________________________________________
 ## Collaboration & review
 
 - **Branches**: kebab-case (`feature/multi-turn-metrics`, `bugfix/fsdp-weight-sync`).
-- **Commits**: Conventional Commits (`feat:`, `fix:`, `docs:`), ~72 char subject,
-  imperative voice. Squash WIP before PR.
+- **Commits**: Conventional Commits (e.g., `feat:`, `fix:`, `docs:`, `gov:`), ~72 char
+  subject, imperative voice. Squash WIP before PR.
 - **Pre-merge**: full pre-commit stack; doc-only edits need at least `mdformat --check`.
 - **PRs**: tie to issue, highlight risk areas, list test commands executed, note skipped
   suites with reasons.

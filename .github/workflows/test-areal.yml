@@ -305,14 +305,14 @@ jobs:
     timeout-minutes: 120
     env:
       # Activate the venv created in the Docker image
-      VIRTUAL_ENV: /AReaL/.venv
+      VIRTUAL_ENV: /opt/.venv
       EXCLUDE_BACKEND: ${{ matrix.variant == 'sglang' && 'vllm' || 'sglang' }}
     steps:
       - uses: actions/checkout@v6
 
       - name: Validate Docker installation
         run: |
-          export PATH="/AReaL/.venv/bin:$PATH"
+          export PATH="/opt/.venv/bin:$PATH"
           python areal/tools/validate_docker_installation.py
 
       - name: Run unit tests
@@ -323,9 +323,9 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
           TOKENIZERS_PARALLELISM: false
           AREAL_IS_IN_CI: 1
-          VIRTUAL_ENV: /AReaL/.venv
+          VIRTUAL_ENV: /opt/.venv
         run: |
-          export PATH="/AReaL/.venv/bin:$PATH"
+          export PATH="/opt/.venv/bin:$PATH"
           pytest -m "(not slow or ci) and not ${EXCLUDE_BACKEND}" --durations=20 -s -vv tests/test_*.py tests/experimental/ tests/infra/
 
       - name: Run SFT integration tests
@@ -335,9 +335,9 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           PYTHONPATH: ${{ github.workspace }}
           TOKENIZERS_PARALLELISM: false
-          VIRTUAL_ENV: /AReaL/.venv
+          VIRTUAL_ENV: /opt/.venv
         run: |
-          export PATH="/AReaL/.venv/bin:$PATH"
+          export PATH="/opt/.venv/bin:$PATH"
           pytest -m "not ${EXCLUDE_BACKEND}" -s -vv tests/sft/
 
       - name: Run GRPO integration tests
@@ -347,9 +347,9 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           PYTHONPATH: ${{ github.workspace }}
           TOKENIZERS_PARALLELISM: false
-          VIRTUAL_ENV: /AReaL/.venv
+          VIRTUAL_ENV: /opt/.venv
         run: |
-          export PATH="/AReaL/.venv/bin:$PATH"
+          export PATH="/opt/.venv/bin:$PATH"
           pytest -m "not ${EXCLUDE_BACKEND}" -s -vv tests/grpo/
 
   cleanup:

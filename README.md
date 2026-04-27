@@ -40,6 +40,16 @@ cost-effective** for a broad community of developers and researchers.
 
 ## 📰 News
 
+**\[2026/04/23\]** 🚀 We’re excited to release our integration with
+[Scaffoldings](https://github.com/NVIDIA/TensorRT-LLM/tree/main/tensorrt_llm/scaffolding)
+for agentic RL training - now live in our
+[examples](https://github.com/inclusionAI/AReaL/tree/main/examples/scaffolding)! Huge
+shoutout to @narutolhy and @WeiHaocheng for making this happen 🙌. The modular design of
+the Scaffoldings enables it to achieve a thorough decoupling of agent execution, reward
+calculation, and trajectory acquisition. This enables developers to reuse existing
+modules when implementing an agentic RL method, allowing them to focus on their own
+innovative modules.
+
 **\[2026/04/18\]** We are thrilled to announce that **AReaL's first Community Biweekly
 Meeting** was successfully held! Thank you to everyone who joined us. Meeting materials
 are now available
@@ -52,6 +62,9 @@ participate! See [Community](./assets/community/README.md) for more details.
 own 🦞 OpenClaw agent by simply replacing the `base_url` and `api_key` with AReaL's RL
 service - no complicated dependencies, no code changes, works with any agentic runtime!
 
+<details>
+<summary><b>📋 Previous Releases</b></summary>
+
 **\[2026/02/06\]** We are delighted to introduce **AReaL-SEA**, a self-evolving data
 synthesis engine. Combined with RL training on AReaL, the 235B MoE model surpasses GPT 5
 and achieves comparable performance with Gemini 3.0 Pro on $\\tau^2$-bench! Check out
@@ -59,9 +72,6 @@ the [paper](https://arxiv.org/pdf/2601.22607),
 [model](https://huggingface.co/inclusionAI/AReaL-SEA-235B-A22B),
 [data](https://huggingface.co/datasets/inclusionAI/AReaL-tau2-data), and
 [code](https://github.com/inclusionAI/AReaL/tree/main/examples/tau2).
-
-<details>
-<summary><b>📋 Previous Releases</b></summary>
 
 **\[2026/01/15\]** Congrats to our friends at [CAMEL-AI](https://www.camel-ai.org/) for
 open-sourcing [SETA](https://github.com/camel-ai/seta), their terminal agent RL project
@@ -197,7 +207,8 @@ All RL algorithms support both asynchronous and synchronous versions by setting
 | **RLOO**                 | [📖 Docs](docs/en/algorithms/grpo_series.md)  | [📄 Paper](https://arxiv.org/pdf/2402.14740v1) | [🔗 GSM8K Example](examples/math/gsm8k_rloo.yaml)                 |
 | **SAPO**                 | [📖 Docs](docs/en/algorithms/grpo_series.md)  | [📄 Paper](https://arxiv.org/abs/2511.20347)   | [🔗 GSM8K Example](examples/math/gsm8k_sapo.yaml)                 |
 | **M2PO**                 | [📖 Docs](docs/algorithms/m2po.md)            | [📄 Paper](https://arxiv.org/abs/2510.01161)   | [🔗 GSM8K Example](examples/math/gsm8k_m2po.yaml)                 |
-| **RLHF Reward Modeling** | -                                             | -                                              | [🔗 RLHF Example](examples/alignment/)                            |
+| **DPO**                  | [📖 Docs](docs/en/algorithms/dpo.md)          | [📄 Paper](https://arxiv.org/abs/2305.18290)   | [🔗 HH-RLHF Example](examples/alignment/hhrlhf_dpo.yaml)          |
+| **RLHF Reward Modeling** | -                                             | -                                              | [🔗 RLHF Example](examples/alignment/hhrlhf_rw.yaml)              |
 | **SFT**                  | -                                             | -                                              | [🔗 GSM8K Example](examples/math/gsm8k_sft.py)                    |
 | **Distillation**         | [📖 Docs](docs/en/algorithms/distillation.md) | [📄 Paper](https://arxiv.org/pdf/2506.02208)   | [🔗 GSM8K Example](examples/distillation/gsm8k_grpo_distill.yaml) |
 
