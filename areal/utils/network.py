@@ -17,6 +17,9 @@ def gethostip(probe_host: str = "8.8.8.8", probe_port: int = 80) -> str:
 
     Returns:
         The selected local IP address as a string. Supports both IPv4 and IPv6.
+        Falls back to ``127.0.0.1`` if the detected IP cannot be bound
+        (e.g. inside a Docker container where the external IP is not assigned
+        to any local interface).
 
     Raises:
         RuntimeError: If no suitable address can be determined
@@ -28,27 +31,45 @@ def gethostip(probe_host: str = "8.8.8.8", probe_port: int = 80) -> str:
             if family == socket.AF_INET:
                 ip = sockaddr[0]
                 if ip and not ip.startswith("127."):
-                    return ip
+                    if _can_bind(ip):
+                        return ip
             elif family == socket.AF_INET6:
                 ip = sockaddr[0]
                 if ip and ip != "::1":
-                    return ip
+                    if _can_bind(ip):
+                        return ip
     except socket.gaierror:
         pass
 
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.connect((probe_host, probe_port))
-            return sock.getsockname()[0]
-    except OSError as e:
-        try:
-            with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as sock:
-                sock.connect(("2001:4860:4860::8888", probe_port))
-                ip6 = sock.getsockname()[0]
-                if ip6 and ip6 != "::1":
-                    return ip6
-        except OSError:
-            raise RuntimeError("Could not determine host IP") from e
+            ip = sock.getsockname()[0]
+            if _can_bind(ip):
+                return ip
+    except OSError:
+        pass
+
+    try:
+        with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as sock:
+            sock.connect(("2001:4860:4860::8888", probe_port))
+            ip6 = sock.getsockname()[0]
+            if ip6 and ip6 != "::1" and _can_bind(ip6):
+                return ip6
+    except OSError:
+        pass
+
+    return "127.0.0.1"
+
+
+def _can_bind(ip: str) -> bool:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind((ip, 0))
+        return True
+    except OSError:
+        return False
 
 
 def get_loopback_ip() -> str:
