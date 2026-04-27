@@ -122,6 +122,19 @@ class VLLMBridgeBackend:
     def get_resume_request(self) -> HttpRequest:
         return HttpRequest(endpoint="/areal_continue_generation", payload={})
 
+    def get_offload_request(self) -> HttpRequest:
+        return HttpRequest(endpoint="/sleep", payload={}, method="POST")
+
+    def get_onload_request(self, tags: list[str] | None = None) -> HttpRequest:
+        if tags is not None:
+            from urllib.parse import urlencode
+
+            tags_query = urlencode({"tags": tags}, doseq=True)
+            endpoint = f"/wake_up?{tags_query}"
+        else:
+            endpoint = "/wake_up"
+        return HttpRequest(endpoint=endpoint, payload={}, method="POST")
+
     def get_generation_max_new_tokens(self, http_req: HttpRequest) -> int:
         return int(http_req.payload["max_tokens"])
 

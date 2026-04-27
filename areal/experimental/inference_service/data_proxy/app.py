@@ -400,6 +400,30 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         await inf_bridge.resume()
         return PauseGenerationResponse(status="ok", paused=False)
 
+    @app.post("/release_memory_occupation")
+    async def release_memory_occupation():
+        inf_bridge: InfBridge | None = app.state.inf_bridge
+        if inf_bridge is None:
+            raise HTTPException(
+                status_code=503,
+                detail="No inference backend configured (external model mode).",
+            )
+        await inf_bridge.offload()
+        return {"status": "ok"}
+
+    @app.post("/resume_memory_occupation")
+    async def resume_memory_occupation(request: Request):
+        inf_bridge: InfBridge | None = app.state.inf_bridge
+        if inf_bridge is None:
+            raise HTTPException(
+                status_code=503,
+                detail="No inference backend configured (external model mode).",
+            )
+        body = await request.json() if await request.body() else {}
+        tags = body.get("tags")
+        await inf_bridge.onload(tags=tags)
+        return {"status": "ok"}
+
     # =========================================================================
     # Version management — internal control plane (no auth at data proxy level)
     # =========================================================================
