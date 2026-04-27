@@ -21,7 +21,7 @@ def main():
     parser.add_argument("--request-timeout", type=float, default=600.0)
     parser.add_argument(
         "--log-level",
-        default="info",
+        default="warning",
         choices=["debug", "info", "warning", "error"],
     )
     args, _ = parser.parse_known_args()

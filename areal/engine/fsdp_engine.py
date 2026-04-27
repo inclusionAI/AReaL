@@ -48,6 +48,7 @@ from areal.api import (
     FinetuneSpec,
     FSDPParallelStrategy,
     InferenceEngine,
+    ModelAllocation,
     ParallelStrategy,
     ParamSpec,
     SaveLoadMeta,
@@ -55,7 +56,7 @@ from areal.api import (
     WeightUpdateMeta,
     WorkflowLike,
 )
-from areal.api.cli_args import PerfTracerConfig, TrainEngineConfig
+from areal.api.cli_args import OptimizerConfig, PerfTracerConfig, TrainEngineConfig
 from areal.api.io_struct import DeviceRuntimeInfo
 from areal.engine.core import (
     aggregate_eval_losses,
@@ -118,6 +119,7 @@ from areal.utils.data import (
     MicroBatchList,
     amend_position_ids,
     concat_batch,
+    is_multi_modal_key,
     pack_tensor_dict,
     pad_mb_list,
     split_batch,
@@ -175,6 +177,45 @@ class _PendingWeightUpdateBucket:
     stream: torch.cuda.Stream | None = None
 
 
+_MULTIMODAL_FORWARD_KEYS = ("image_grid_thw", "pixel_values", "video_grid_thw")
+
+
+def _is_multimodal_payload_key(key: str) -> bool:
+    return is_multi_modal_key(key) or key in _MULTIMODAL_FORWARD_KEYS
+
+
+def _drop_multimodal_payloads(data: dict[str, Any]) -> None:
+    for key in list(data.keys()):
+        if _is_multimodal_payload_key(key):
+            data.pop(key, None)
+
+
+def _prepare_multimodal_forward_inputs(
+    mb: dict[str, Any],
+    padded_mb: dict[str, Any],
+) -> None:
+    """Keep multimodal tensors only in the forward micro-batch.
+
+    ``mb`` is used by loss and bookkeeping callbacks, while ``padded_mb`` is
+    passed to the model forward. Large multimodal tensors such as
+    ``pixel_values`` should not be duplicated on both sides.
+    """
+
+    multi_modal_input = mb.pop("multi_modal_input", None)
+    if multi_modal_input is None:
+        multi_modal_input = padded_mb.pop("multi_modal_input", None)
+    else:
+        padded_mb.pop("multi_modal_input", None)
+
+    if multi_modal_input is not None:
+        for key in _MULTIMODAL_FORWARD_KEYS:
+            values = [item[key] for item in multi_modal_input if key in item]
+            if values:
+                padded_mb[key] = torch.cat(values, dim=0)
+
+    _drop_multimodal_payloads(mb)
+
+
 class FSDPEngine(TrainEngine):
     def __init__(self, config: TrainEngineConfig):
         self.config = config
@@ -225,6 +266,57 @@ class FSDPEngine(TrainEngine):
         self._per_layer_optim_wrapper: PerLayerOptimWrapper | None = None
         self.enable_tree_training: bool = self.config.enable_tree_training
 
+    @classmethod
+    def from_pretrained(
+        cls,
+        model: str,
+        experiment_name: str,
+        trial_name: str,
+        dp_size: int = 1,
+        tp_size: int = 1,
+        dtype: str = "bfloat16",
+        learning_rate: float | None = None,
+        use_lora: bool = False,
+        lora_rank: int = 32,
+        lora_alpha: int = 16,
+        **kwargs,
+    ) -> FSDPEngine:
+        """Construct an FSDPEngine directly without assembling a TrainEngineConfig.
+
+        Parameters
+        ----------
+        model : str
+            Path to HuggingFace checkpoint or model.
+        experiment_name: str
+        trial_name: str
+        dp_size: int
+            Data parallel size, default 1.
+        tp_size: int
+            Tensor parallel size, default 1.
+        dtype : str
+            Parameter data type, default 'bfloat16'.
+        learning_rate : float | None
+            Learning rate. If None, no optimizer is created (inference-only).
+        use_lora : bool
+            Whether to use LoRA.
+        """
+        optimizer_config = (
+            OptimizerConfig(lr=learning_rate) if learning_rate is not None else None
+        )
+        config = TrainEngineConfig(
+            path=model,
+            experiment_name=experiment_name,
+            trial_name=trial_name,
+            backend=f"fsdp:d{dp_size}t{tp_size}",
+            dtype=dtype,
+            optimizer=optimizer_config,
+            use_lora=use_lora,
+            lora_rank=lora_rank,
+            lora_alpha=lora_alpha,
+            **kwargs,
+        )
+        return cls(config)
+
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         patch_dist_group_timeout(DIST_GROUP_DEFAULT_TIMEOUT)
 
@@ -242,7 +334,12 @@ class FSDPEngine(TrainEngine):
 
         # FSDP-specific process group setup
         if parallel_strategy is None:
-            parallel_strategy = ParallelStrategy()
+            if self.config.backend:
+                parallel_strategy = ModelAllocation.from_str(
+                    self.config.backend
+                ).parallel
+            else:
+                parallel_strategy = ParallelStrategy()
 
         self.logger = logging.getLogger(f"[FSDPEngine Rank {dist.get_rank()}]")
 
@@ -1707,31 +1804,8 @@ class FSDPEngine(TrainEngine):
                 padded_mb["attention_mask"] = dict(
                     full_attention=None, sliding_attention=None
                 )
-            if "multi_modal_input" in mb:
-                image_grid_thw_list = [
-                    item["image_grid_thw"]
-                    for item in mb["multi_modal_input"]
-                    if "image_grid_thw" in item
-                ]
-                if image_grid_thw_list:
-                    mb["image_grid_thw"] = torch.cat(image_grid_thw_list, dim=0)
-                    padded_mb["image_grid_thw"] = torch.cat(image_grid_thw_list, dim=0)
-                pixel_values_list = [
-                    item["pixel_values"]
-                    for item in mb["multi_modal_input"]
-                    if "pixel_values" in item
-                ]
-                if pixel_values_list:
-                    mb["pixel_values"] = torch.cat(pixel_values_list, dim=0)
-                    padded_mb["pixel_values"] = torch.cat(pixel_values_list, dim=0)
-                video_grid_thw_list = [
-                    item["video_grid_thw"]
-                    for item in mb["multi_modal_input"]
-                    if "video_grid_thw" in item
-                ]
-                if video_grid_thw_list:
-                    mb["video_grid_thw"] = torch.cat(video_grid_thw_list, dim=0)
-                    padded_mb["video_grid_thw"] = torch.cat(video_grid_thw_list, dim=0)
+            _prepare_multimodal_forward_inputs(mb, padded_mb)
+        _drop_multimodal_payloads(mb_list.data)
         return mb_list
 
     def _prepare_mb_inputs(

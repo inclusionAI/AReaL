@@ -18,7 +18,7 @@ def main() -> None:
     parser.add_argument("--request-timeout", type=float, default=600.0)
     parser.add_argument("--session-timeout", type=int, default=3600)
     parser.add_argument(
-        "--log-level", choices=["debug", "info", "warning", "error"], default="info"
+        "--log-level", choices=["debug", "info", "warning", "error"], default="warning"
     )
     args = parser.parse_args()
 
