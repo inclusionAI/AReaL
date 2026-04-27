@@ -29,7 +29,7 @@ def main():
     )
     parser.add_argument(
         "--log-level",
-        default="info",
+        default="warning",
         choices=["debug", "info", "warning", "error"],
         help="Log level",
     )

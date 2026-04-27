@@ -10,7 +10,7 @@ class DataProxyConfig:
     backend_addr: str = "http://localhost:30000"  # co-located SGLang/vLLM
     backend_type: str = "sglang"
     tokenizer_path: str = ""
-    log_level: str = "info"
+    log_level: str = "warning"
     request_timeout: float = 120.0  # seconds per SGLang call
     set_reward_finish_timeout: float = 0.0
     max_resubmit_retries: int = 20  # max abort/resubmit cycles before giving up
