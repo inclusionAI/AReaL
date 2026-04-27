@@ -834,41 +834,16 @@ class LocalScheduler(Scheduler):
         return worker_ids
 
     def get_workers(self, role: str, timeout: float | None = None) -> list[Worker]:
-        """Get workers and wait for them to be ready.
+        logger.info(f"[DiagInit] get_workers ENTERED for role='{role}'")
 
-        Parameters
-        ----------
-        role : str
-            Worker role name
-        timeout : float, optional
-            Maximum time to wait for workers to be ready (None = use default)
-
-        Returns
-        -------
-        list[Worker]
-            List of Worker objects
-
-        Raises
-        ------
-        WorkerNotFoundError
-            If role doesn't exist
-        WorkerFailedError
-            If any worker process failed
-        WorkerTimeoutError
-            If timeout exceeded waiting for workers
-        """
-        # Handle colocated/forked roles
         if role in self._colocated_roles:
-            # Forked roles have their own workers in _workers
             if role not in self._workers:
-                # Colocated roles delegate to target role's workers
                 target_role = self._colocated_roles[role]
                 logger.debug(
                     f"Role '{role}' is colocated with '{target_role}', "
                     "returning target role's workers"
                 )
                 return self.get_workers(target_role, timeout)
-            # Forked roles fall through to normal worker handling below
 
         if role not in self._workers:
             raise WorkerNotFoundError(role)
@@ -876,6 +851,10 @@ class LocalScheduler(Scheduler):
         workers = self._workers[role]
         timeout = timeout if timeout is not None else self.startup_timeout
 
+        logger.info(
+            f"[DiagInit] get_workers role='{role}': checking health of "
+            f"{len(workers)} workers (timeout={timeout}s)..."
+        )
         self._check_worker_health(role)
 
         start_time = time.time()
@@ -883,6 +862,11 @@ class LocalScheduler(Scheduler):
 
         while len(ready_workers) < len(workers):
             if time.time() - start_time > timeout:
+                not_ready = [w.worker.id for w in workers if w.worker.id not in ready_workers]
+                logger.error(
+                    f"[DiagInit] get_workers role='{role}': TIMEOUT after {timeout}s. "
+                    f"Ready: {ready_workers}, NOT ready: {not_ready}"
+                )
                 raise WorkerTimeoutError(
                     role,
                     timeout,
@@ -892,7 +876,6 @@ class LocalScheduler(Scheduler):
                 if worker_info.worker.id in ready_workers:
                     continue
 
-                # Forked workers have process=None - skip process check for them
                 if (
                     worker_info.process is not None
                     and worker_info.process.poll() is not None
@@ -911,7 +894,10 @@ class LocalScheduler(Scheduler):
             if len(ready_workers) < len(workers):
                 time.sleep(self.health_check_interval)
 
-        logger.info(f"All {len(workers)} workers for role '{role}' are ready")
+        logger.info(
+            f"[DiagInit] get_workers role='{role}': all {len(workers)} workers ready "
+            f"in {time.time() - start_time:.2f}s"
+        )
         return [w.worker for w in workers]
 
     def _is_worker_ready(self, worker_info: WorkerInfo) -> bool:
@@ -925,31 +911,55 @@ class LocalScheduler(Scheduler):
             return False
 
     def _configure_worker(self, worker_info: WorkerInfo, worker_rank: int):
+        worker_id = worker_info.worker.id
+        logger.info(f"[DiagInit] _configure_worker ENTERED for {worker_id} (rank={worker_rank})")
+
+        logger.info(f"[DiagInit] _configure_worker {worker_id}: waiting for /health endpoint...")
+        _t0 = time.time()
         while not self._is_worker_ready(worker_info):
             time.sleep(0.1)
+        logger.info(
+            f"[DiagInit] _configure_worker {worker_id}: /health ready in {time.time() - _t0:.2f}s"
+        )
 
-        worker_id = worker_info.worker.id
         port = int(worker_info.worker.worker_ports[0])
         url = f"http://{format_hostport(worker_info.worker.ip, port)}/configure"
 
         try:
+            logger.info(f"[DiagInit] _configure_worker {worker_id}: serializing config payload...")
+            _t1 = time.time()
+            payload_data = orjson.dumps(
+                serialize_value(
+                    dict(
+                        config=self.exp_config,
+                        role=worker_info.role,
+                        rank=worker_rank,
+                    )
+                )
+            )
+            logger.info(
+                f"[DiagInit] _configure_worker {worker_id}: config serialized in "
+                f"{time.time() - _t1:.2f}s, payload_size={len(payload_data)} bytes"
+            )
+
+            logger.info(
+                f"[DiagInit] _configure_worker {worker_id}: sending POST /configure "
+                f"to {url} (timeout=300s)..."
+            )
+            _t2 = time.time()
             response = requests.post(
                 url,
-                data=orjson.dumps(
-                    serialize_value(
-                        dict(
-                            config=self.exp_config,
-                            role=worker_info.role,
-                            rank=worker_rank,
-                        )
-                    )
-                ),
+                data=payload_data,
                 headers={"Content-Type": "application/json"},
                 timeout=300.0,
             )
+            logger.info(
+                f"[DiagInit] _configure_worker {worker_id}: POST /configure responded "
+                f"in {time.time() - _t2:.2f}s with status={response.status_code}"
+            )
 
             if response.status_code == 200:
-                logger.info(f"Configuration successfully on worker '{worker_id}'")
+                logger.info(f"[DiagInit] _configure_worker {worker_id}: Configuration successful")
                 return
             elif response.status_code == 400:
                 error_detail = response.json().get("error", "Unknown error")
@@ -1180,9 +1190,11 @@ class LocalScheduler(Scheduler):
         url = f"http://{format_hostport(worker_info.worker.ip, port)}/create_engine"
 
         try:
-            logger.debug(
-                f"Creating engine '{engine_name}' (class: {engine}) on worker '{worker_id}'"
+            logger.info(
+                f"[DiagInit] create_engine: sending POST /create_engine to "
+                f"worker '{worker_id}' (engine={engine}, engine_name={engine_name})..."
             )
+            _t0 = time.time()
 
             timeout = aiohttp.ClientTimeout(total=300.0)
             async with aiohttp.ClientSession(
@@ -1197,8 +1209,9 @@ class LocalScheduler(Scheduler):
                 ) as response:
                     if response.status == 200:
                         result = await response.json()
-                        logger.debug(
-                            f"Engine '{engine_name}' created successfully on worker '{worker_id}'"
+                        logger.info(
+                            f"[DiagInit] create_engine: engine '{engine_name}' "
+                            f"created on worker '{worker_id}' in {time.time() - _t0:.2f}s"
                         )
                         return result.get("result")
                     elif response.status == 400:
@@ -1455,6 +1468,18 @@ class LocalScheduler(Scheduler):
                 )
 
             try:
+                _is_init_method = method in (
+                    "create_process_group",
+                    "initialize",
+                    "connect_engine",
+                )
+                if _is_init_method:
+                    logger.info(
+                        f"[DiagInit] async_call_engine: sending POST /call "
+                        f"(method={method}, worker={worker_id}, engine={engine_name})..."
+                    )
+                    _t0 = time.time()
+
                 logger.debug(
                     f"Async calling method '{method}' on worker '{worker_id}' (attempt {attempt})"
                 )
@@ -1476,6 +1501,12 @@ class LocalScheduler(Scheduler):
                         if response.status == 200:
                             result_data = (await response.json()).get("result")
                             deserialized_result = deserialize_value(result_data)
+                            if _is_init_method:
+                                logger.info(
+                                    f"[DiagInit] async_call_engine: POST /call "
+                                    f"(method={method}, worker={worker_id}) "
+                                    f"completed in {time.time() - _t0:.2f}s"
+                                )
                             if attempt > 1:
                                 logger.debug(
                                     f"Method '{method}' succeeded on worker '{worker_id}' "

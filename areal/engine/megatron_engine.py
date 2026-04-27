@@ -211,20 +211,41 @@ class MegatronEngine(TrainEngine):
                 )
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
+        import time as _time
+
+        _t0 = _time.time()
         if parallel_strategy is None:
             parallel_strategy = ParallelStrategy()
         self.parallel_strategy = self._make_parallel_strategy(parallel_strategy)
         backend = current_platform.communication_backend
+
         if not dist.is_initialized():
-            # NOTE: device_id **SHOULD NOT** be passed into init_process_group,
-            # otherwise initializing the NCCL weight update group will be wrong!
+            self.logger.info(
+                "[DiagInit] create_process_group: calling dist.init_process_group "
+                f"(backend={backend}, RANK={os.environ.get('RANK')}, "
+                f"WORLD_SIZE={os.environ.get('WORLD_SIZE')})..."
+            )
+            _t1 = _time.time()
             dist.init_process_group(
                 backend=backend,
                 timeout=DIST_GROUP_DEFAULT_TIMEOUT,
             )
-            # Initialize Megatron parallel states
-            # NOTE: we assume all MegatronEngine has the same parallel strategy.
+            self.logger.info(
+                f"[DiagInit] create_process_group: dist.init_process_group done in "
+                f"{_time.time() - _t1:.2f}s"
+            )
+
             vpp_size = self.parallel_strategy.virtual_pipeline_parallel_size
+            self.logger.info(
+                f"[DiagInit] create_process_group: calling mpu.initialize_model_parallel "
+                f"(tp={self.parallel_strategy.tensor_parallel_size}, "
+                f"pp={self.parallel_strategy.pipeline_parallel_size}, "
+                f"cp={self.parallel_strategy.context_parallel_size}, "
+                f"ep={self.parallel_strategy.expert_parallel_size}, "
+                f"etp={self.parallel_strategy.expert_tensor_parallel_size}, "
+                f"vpp={vpp_size})..."
+            )
+            _t2 = _time.time()
             mpu.initialize_model_parallel(
                 tensor_model_parallel_size=self.parallel_strategy.tensor_parallel_size,
                 pipeline_model_parallel_size=self.parallel_strategy.pipeline_parallel_size,
@@ -238,17 +259,28 @@ class MegatronEngine(TrainEngine):
                     DIST_GROUP_DEFAULT_TIMEOUT.seconds / 60
                 ),
             )
-            # Set megatron model parallel seed
+            self.logger.info(
+                f"[DiagInit] create_process_group: mpu.initialize_model_parallel done in "
+                f"{_time.time() - _t2:.2f}s"
+            )
+
             tensor_parallel.model_parallel_cuda_manual_seed(self.seed)
             self.own_global_group = True
+        else:
+            self.logger.info(
+                "[DiagInit] create_process_group: dist already initialized, skipping init_process_group"
+            )
+
         self.logger = logging.getLogger(f"[MegatronEngine Rank {dist.get_rank()}]")
         self._context_and_model_parallel_group = None
         self._init_context_and_model_parallel_group()
-        # This is needed for barrier synchronization when models are moved to CPU
         self._cpu_group = dist.new_group(
             timeout=DIST_GROUP_DEFAULT_TIMEOUT, backend="gloo"
         )
         self.process_group_initialized = True
+        self.logger.info(
+            f"[DiagInit] create_process_group: COMPLETED in {_time.time() - _t0:.2f}s"
+        )
 
     def _apply_megatron_bridge_lora(self) -> None:
         assert self.model is not None, "Model must be initialized before applying LoRA."
@@ -287,6 +319,11 @@ class MegatronEngine(TrainEngine):
         )
 
     def initialize(self, addr: str | None, ft_spec: FinetuneSpec, *args, **kwargs):
+        import time as _time
+
+        _t0 = _time.time()
+        self.logger.info("[DiagInit] initialize: ENTERED")
+
         try:
             self.seed = get_seed()
         except ValueError:
@@ -313,6 +350,10 @@ class MegatronEngine(TrainEngine):
             f"update_weight_group_{mpu.get_pipeline_model_parallel_rank()}"
         )
         self.engine_lock = DistributedLock("train_engine_lock")
+        self.logger.info(
+            f"[DiagInit] initialize: rank={self.rank}, world_size={self.world_size}, "
+            f"device={self.device}, is_pp_head={self.is_pp_head}"
+        )
 
         if self.config.use_lora and self.bridge_cls != "megatron-bridge":
             raise NotImplementedError(
@@ -320,13 +361,21 @@ class MegatronEngine(TrainEngine):
                 "mbridge does not support LoRA in this path."
             )
 
+        self.logger.info("[DiagInit] initialize: loading tokenizer...")
+        _t1 = _time.time()
         self.tokenizer = load_hf_tokenizer(self.config.path)
+        self.logger.info(f"[DiagInit] initialize: tokenizer loaded in {_time.time() - _t1:.2f}s")
 
+        self.logger.info("[DiagInit] initialize: building HF/Megatron bridge...")
+        _t2 = _time.time()
         with patch_bridge_for_tree_training(
             self.enable_tree_training and self.bridge_cls == "mbridge"
         ):
             self.bridge = self._build_hf_mcore_bridge()
+            self.logger.info(f"[DiagInit] initialize: bridge built in {_time.time() - _t2:.2f}s")
 
+            self.logger.info("[DiagInit] initialize: making HF and mcore config...")
+            _t3 = _time.time()
             self.hf_config, self.tf_config = make_hf_and_mcore_config(
                 self.config.path,
                 dtype=self.dtype,
@@ -336,6 +385,7 @@ class MegatronEngine(TrainEngine):
             self.tf_config = configure_pipeline_layer_splits(
                 self.parallel_strategy, self.hf_config, self.tf_config
             )
+            self.logger.info(f"[DiagInit] initialize: configs made in {_time.time() - _t3:.2f}s")
 
             self.quantization_config = getattr(
                 self.hf_config, "quantization_config", None
@@ -344,7 +394,6 @@ class MegatronEngine(TrainEngine):
             self._check_and_apply_fp8_config()
             self._validate_fp8_consistency()
 
-            # Propagate MTP config to tf_config (TransformerConfig) for model creation
             if self.enable_mtp_training:
                 self.tf_config.mtp_num_layers = self.mtp_num_layers
                 self.tf_config.mtp_loss_scaling_factor = self.mtp_loss_scaling_factor
@@ -357,13 +406,6 @@ class MegatronEngine(TrainEngine):
                     f"mtp_detach_heads={self.mtp_detach_heads}"
                 )
             else:
-                # When MTP training is disabled, clear mtp_num_layers to
-                # prevent mbridge from creating MTP layers.  Without this,
-                # models like MiMo whose HF config contains
-                # num_nextn_predict_layers>0 would still create MTP layers
-                # through mbridge, causing _postprocess() to enter the MTP
-                # loss path and crash on labels.clone() when labels is None
-                # during inference.
                 _orig_mtp = getattr(self.tf_config, "mtp_num_layers", None)
                 if _orig_mtp is not None and _orig_mtp > 0:
                     self.tf_config.mtp_num_layers = None
@@ -373,6 +415,8 @@ class MegatronEngine(TrainEngine):
                         f"MTP layers will NOT be created in GPTModel."
                     )
 
+            self.logger.info("[DiagInit] initialize: creating Megatron model...")
+            _t4 = _time.time()
             with self.device:
                 models = make_mcore_model(
                     hf_config=self.hf_config,
@@ -384,14 +428,21 @@ class MegatronEngine(TrainEngine):
                     use_lora=self.config.use_lora,
                     enable_mtp=self.enable_mtp_training,
                 )
+            self.logger.info(f"[DiagInit] initialize: Megatron model created in {_time.time() - _t4:.2f}s")
 
         self.model = _MegatronModelList(models)
 
         if self.config.use_lora:
+            self.logger.info("[DiagInit] initialize: applying Megatron Bridge LoRA...")
+            _t_lora = _time.time()
             self._apply_megatron_bridge_lora()
+            self.logger.info(f"[DiagInit] initialize: LoRA applied in {_time.time() - _t_lora:.2f}s")
 
+        self.logger.info("[DiagInit] initialize: loading model weights from HF...")
+        _t5 = _time.time()
         with self.device:
             self._load_model_from_hf(self.config.path)
+        self.logger.info(f"[DiagInit] initialize: HF weights loaded in {_time.time() - _t5:.2f}s")
 
         # NOTE: Clear high_precision_init_val for FP8 parameters.
         #
@@ -464,7 +515,10 @@ class MegatronEngine(TrainEngine):
             if len(self.model) == 1:
                 model_config.param_sync_func = model_config.param_sync_func[0]
         model_config.finalize_model_grads_func = finalize_model_grads
+        self.logger.info("[DiagInit] initialize: creating optimizer...")
+        _t6 = _time.time()
         self._create_optimizer(ft_spec)
+        self.logger.info(f"[DiagInit] initialize: optimizer created in {_time.time() - _t6:.2f}s")
 
         if self.enable_mtp_training and not self._mtp_layers_verified:
             mtp_param_count = 0
@@ -514,6 +568,9 @@ class MegatronEngine(TrainEngine):
                 )
 
         self._initialized = True
+        self.logger.info(
+            f"[DiagInit] initialize: COMPLETED in {_time.time() - _t0:.2f}s total"
+        )
 
     def _build_hf_mcore_bridge(self):
         if self.bridge_cls == "mbridge":

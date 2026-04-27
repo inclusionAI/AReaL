@@ -255,25 +255,12 @@ class TrainController:
         ft_spec: FinetuneSpec,
         **kwargs,
     ):
-        """Initialize environments for distributed training and load models.
+        import time as _time
 
-        Parameters
-        ----------
-        role : str
-            Role identifier for the workers
-        ft_spec : FinetuneSpec
-            Finetune specification for model initialization
-        **kwargs
-            Additional keyword arguments passed to engine initialization
-        """
-        # Store configuration
         self._worker_role = role
 
         world_size = self.train_alloc.parallel.world_size
 
-        # Create job specification for scheduler
-        # Convert scheduling_spec tuple to list for scheduler compatibility
-        # The scheduler will handle task replication across workers if needed
         job = Job(
             replicas=world_size,
             tasks=list(self.config.scheduling_spec),
@@ -281,19 +268,16 @@ class TrainController:
             role=self._worker_role,
         )
 
-        # Create workers via scheduler
         logger.info("Creating workers via scheduler...")
+        _t0 = _time.time()
         worker_ids = self.scheduler.create_workers(job=job)
-        logger.info(f"Workers created: {worker_ids}")
+        logger.info(f"Workers created: {worker_ids} in {_time.time() - _t0:.2f}s")
 
-        # Wait for workers to be ready
         logger.info("Waiting for workers to be ready...")
+        _t1 = _time.time()
         self.workers = self.scheduler.get_workers(role=job.role)
-        logger.info(f"Workers ready: {[w.id for w in self.workers]}")
+        logger.info(f"Workers ready: {[w.id for w in self.workers]} in {_time.time() - _t1:.2f}s")
 
-        # Determine distributed training master address and port from rank 0 worker
-        # These are used for PyTorch distributed initialization across workers
-        # Prefer engine_ports[1] if available, fallback to worker_ports[1]
         rank0_worker = self.workers[0]
         if rank0_worker.engine_ports:
             self._master_port = int(rank0_worker.engine_ports[1])
@@ -305,20 +289,26 @@ class TrainController:
             f"Distributed training: MASTER_ADDR={self._master_addr}, MASTER_PORT={self._master_port}"
         )
 
-        # Construct engine class import path for dynamic loading on workers
-        # Workers will import and instantiate the engine class using this path
         engine_class = self.train_engine
+        engine_path = f"{engine_class.__module__}.{engine_class.__name__}"
 
-        # Create and initialize engines on workers
+        logger.info(f"Creating engines on workers (class={engine_path})...")
+        _t2 = _time.time()
         run_async_task(
             self._async_create_engines,
-            f"{engine_class.__module__}.{engine_class.__name__}",
+            engine_path,
         )
-        run_async_task(self._async_initialize_engines, ft_spec, **kwargs)
+        logger.info(f"Engines created on all workers in {_time.time() - _t2:.2f}s")
 
-        # Identify DP head workers
+        logger.info("Initializing engines on workers...")
+        _t3 = _time.time()
+        run_async_task(self._async_initialize_engines, ft_spec, **kwargs)
+        logger.info(f"All engines initialized in {_time.time() - _t3:.2f}s")
+
         self._identify_dp_heads()
-        logger.info("TrainController initialization complete")
+        logger.info(
+            f"TrainController initialization complete (total: {_time.time() - _t0:.2f}s)"
+        )
 
     def _engine_name(self, rank: int) -> str:
         """Generate engine name for a worker rank.
@@ -328,35 +318,53 @@ class TrainController:
         return f"{self._worker_role}/{rank}"
 
     async def _async_create_engines(self, engine: str):
-        """Create engine instances on all workers. Sets distributed env vars before creation."""
+        import time as _time
+
         logger.info("Creating engines on workers...")
 
         async def _setup_worker(worker: Worker, rank: int):
+            _wt0 = _time.time()
             env = {
                 "RANK": str(rank),
                 "WORLD_SIZE": str(len(self.workers)),
                 "MASTER_ADDR": str(self._master_addr),
                 "MASTER_PORT": str(self._master_port),
-                "LOCAL_RANK": "0",  # NOTE: local rank is always 0 while each process use only one GPU
+                "LOCAL_RANK": "0",
             }
+            logger.info(
+                f"[DiagInit] _setup_worker {worker.id}: sending /set_env "
+                f"(RANK={rank}, WORLD_SIZE={len(self.workers)})..."
+            )
             await self.scheduler.set_worker_env(worker.id, env)
+            logger.info(
+                f"[DiagInit] _setup_worker {worker.id}: /set_env done in "
+                f"{_time.time() - _wt0:.2f}s, creating engine..."
+            )
             await self.scheduler.create_engine(
                 worker_id=worker.id,
                 engine=engine,
                 engine_name=self._engine_name(rank),
                 config=self.config,
             )
+            logger.info(
+                f"[DiagInit] _setup_worker {worker.id}: engine created in "
+                f"{_time.time() - _wt0:.2f}s total"
+            )
 
+        _t0 = _time.time()
         tasks = [
             _setup_worker(worker, rank) for rank, worker in enumerate(self.workers)
         ]
         await asyncio.gather(*tasks)
-        logger.info("Engines created on all workers!")
+        logger.info(f"Engines created on all workers in {_time.time() - _t0:.2f}s!")
 
     async def _async_initialize_engines(self, ft_spec: FinetuneSpec, **kwargs):
-        """Initialize engines: create process groups, then load models and setup optimizers."""
+        import time as _time
+
         logger.info("Calling engine initialization...")
-        # Phase 1: Create process groups for distributed training
+        _t0 = _time.time()
+
+        logger.info("[DiagInit] Phase 1: create_process_group on all workers...")
         tasks = [
             self.scheduler.async_call_engine(
                 worker_id=worker.id,
@@ -367,7 +375,13 @@ class TrainController:
             for rank, worker in enumerate(self.workers)
         ]
         await asyncio.gather(*tasks)
-        # Phase 2: Initialize engines (load models, setup optimizers, etc.)
+        logger.info(
+            f"[DiagInit] Phase 1 done: create_process_group completed in "
+            f"{_time.time() - _t0:.2f}s"
+        )
+
+        logger.info("[DiagInit] Phase 2: initialize (load models, setup optimizers) on all workers...")
+        _t1 = _time.time()
         tasks = [
             self.scheduler.async_call_engine(
                 worker_id=worker.id,
@@ -379,6 +393,10 @@ class TrainController:
             for rank, worker in enumerate(self.workers)
         ]
         await asyncio.gather(*tasks)
+        logger.info(
+            f"[DiagInit] Phase 2 done: initialize completed in "
+            f"{_time.time() - _t1:.2f}s (total: {_time.time() - _t0:.2f}s)"
+        )
         logger.info("All engines are initialized!")
 
     def _identify_dp_heads(self):

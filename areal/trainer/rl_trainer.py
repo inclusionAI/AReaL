@@ -100,54 +100,63 @@ class PPOTrainer:
         train_dataset: Dataset | None = None,
         valid_dataset: Dataset | None = None,
     ):
+        import time as _time
+
+        _t0 = _time.time()
         rank = int(os.getenv("RANK", "0"))
         if is_single_controller():
-            # Set up file logging for controller process
             logging.setup_file_logging(StatsLogger.get_log_path(config.stats_logger))
 
         self.config = config
+        logger.info("[DiagInit] PPOTrainer.__init__: loading tokenizer...")
+        _t1 = _time.time()
         self.processor, self.tokenizer = load_hf_processor_and_tokenizer(
             config.tokenizer_path
         )
+        logger.info(f"[DiagInit] PPOTrainer.__init__: tokenizer loaded in {_time.time() - _t1:.2f}s")
+
         self.scheduler = None
         if is_single_controller():
+            logger.info("[DiagInit] PPOTrainer.__init__: initializing scheduler...")
             self.scheduler = self._init_scheduler()
 
-        # Set seed.
         seeding.set_random_seed(config.seed, key=f"trainer{rank}")
 
-        # Parse per-engine allocations from config.
         self.actor_alloc = ModelAllocation.from_str(config.actor.backend, name="actor")
         self.rollout_alloc = ModelAllocation.from_str(
             config.rollout.backend, name="rollout"
         )
 
-        # Validate config before proceeding with weight initialization
         self._validate_cfg()
-
         self._amend_xccl_weight_update_envvar()
 
-        # Create models: actor, critic, ref — each with its own allocation.
+        logger.info("[DiagInit] PPOTrainer.__init__: creating actor engine...")
+        _t2 = _time.time()
         self.actor = self._create_train_engine(config.actor, self.actor_alloc)
+        logger.info(f"[DiagInit] PPOTrainer.__init__: actor engine created in {_time.time() - _t2:.2f}s")
+
         self.critic = None
         if config.critic is not None:
             critic_alloc = ModelAllocation.from_str(
                 config.critic.backend, name="critic"
             )
+            logger.info("[DiagInit] PPOTrainer.__init__: creating critic engine...")
+            _t_crit = _time.time()
             self.critic = self._create_critic(config.critic, critic_alloc)
+            logger.info(f"[DiagInit] PPOTrainer.__init__: critic engine created in {_time.time() - _t_crit:.2f}s")
         self.ref = None
         if config.actor.kl_ctl > 0 and config.ref is not None:
             ref_alloc = ModelAllocation.from_str(config.ref.backend, name="ref")
+            logger.info("[DiagInit] PPOTrainer.__init__: creating ref engine...")
+            _t_ref = _time.time()
             self.ref = self._create_train_engine(config.ref, ref_alloc)
+            logger.info(f"[DiagInit] PPOTrainer.__init__: ref engine created in {_time.time() - _t_ref:.2f}s")
 
-        # Create dataloaders
+        logger.info("[DiagInit] PPOTrainer.__init__: creating dataloaders...")
+        _t3 = _time.time()
         self.train_dataset = train_dataset
         self.valid_dataset = valid_dataset
         if train_dataset is None:
-            # Online mode: require total_train_steps to compute steps_per_epoch.
-            # Without this, __len__()=1 causes every step to be treated as an
-            # epoch boundary, making Saver/RecoverHandler fire every step and
-            # corrupting the LR schedule.
             if config.total_train_steps is None:
                 raise ValueError(
                     "total_train_steps must be set for online mode "
@@ -180,6 +189,7 @@ class PPOTrainer:
                 rank=self.actor.data_parallel_rank,
                 world_size=self.actor.data_parallel_world_size,
             )
+        logger.info(f"[DiagInit] PPOTrainer.__init__: dataloaders created in {_time.time() - _t3:.2f}s")
 
         ft_spec = FinetuneSpec(
             total_train_epochs=config.total_train_epochs,
@@ -187,12 +197,22 @@ class PPOTrainer:
             train_batch_size=config.train_dataset.batch_size,
         )
 
+        logger.info("[DiagInit] PPOTrainer.__init__: initializing actor engine (workers, model loading)...")
+        _t4 = _time.time()
         engine_init_kwargs = {"addr": None, "ft_spec": ft_spec}
         self.actor.initialize(**engine_init_kwargs, role="actor")
+        logger.info(f"[DiagInit] PPOTrainer.__init__: actor engine initialized in {_time.time() - _t4:.2f}s")
+
         if self.critic is not None:
+            logger.info("[DiagInit] PPOTrainer.__init__: initializing critic engine...")
+            _t_crit2 = _time.time()
             self.critic.initialize(**engine_init_kwargs, role="critic")
+            logger.info(f"[DiagInit] PPOTrainer.__init__: critic engine initialized in {_time.time() - _t_crit2:.2f}s")
         if self.ref is not None:
+            logger.info("[DiagInit] PPOTrainer.__init__: initializing ref engine...")
+            _t_ref2 = _time.time()
             self.ref.initialize(**engine_init_kwargs, role="ref")
+            logger.info(f"[DiagInit] PPOTrainer.__init__: ref engine initialized in {_time.time() - _t_ref2:.2f}s")
 
         self.teacher = None
         if config.teacher is not None:
@@ -202,14 +222,18 @@ class PPOTrainer:
             self.teacher = self._create_train_engine(config.teacher, teacher_alloc)
             self.teacher.initialize(**engine_init_kwargs, role="teacher")
 
-        # Save initial LoRA weights if enabled (for inference server pre-loading)
+        logger.info("[DiagInit] PPOTrainer.__init__: saving initial LoRA weights...")
+        _t5 = _time.time()
         initial_lora_path = self._save_initial_lora_weights()
+        logger.info(f"[DiagInit] PPOTrainer.__init__: LoRA weights saved in {_time.time() - _t5:.2f}s")
 
-        # Initialize inference with LoRA path
+        logger.info("[DiagInit] PPOTrainer.__init__: initializing rollout engine...")
+        _t6 = _time.time()
         self.rollout = self._init_rollout(
             config.rollout, is_eval=False, lora_path=initial_lora_path
         )
-        # Online mode detection: skip eval rollout for efficiency.
+        logger.info(f"[DiagInit] PPOTrainer.__init__: rollout engine initialized in {_time.time() - _t6:.2f}s")
+
         openai_cfg = config.rollout.openai
         self._online_mode = train_dataset is None or (
             openai_cfg is not None and openai_cfg.mode == "online"
@@ -217,14 +241,17 @@ class PPOTrainer:
 
         self.eval_rollout = None
         if not self._online_mode:
+            logger.info("[DiagInit] PPOTrainer.__init__: initializing eval rollout...")
+            _t_eval = _time.time()
             self.eval_rollout = self._init_rollout(
                 config.rollout, is_eval=True, lora_path=initial_lora_path
             )
+            logger.info(f"[DiagInit] PPOTrainer.__init__: eval rollout initialized in {_time.time() - _t_eval:.2f}s")
 
-        # Proxy worker initialization (lazy, for AgentWorkflow support)
         self._proxy_started = False
 
-        # Prepare weight update meta and connect to inference engine
+        logger.info("[DiagInit] PPOTrainer.__init__: preparing weight update meta...")
+        _t7 = _time.time()
         if self.config.actor.weight_update_mode == "disk":
             disk_kwargs = {
                 "experiment_name": config.experiment_name,
@@ -243,7 +270,6 @@ class PPOTrainer:
                 )
             self.weight_update_meta = WeightUpdateMeta.from_disk(**disk_kwargs)
         elif self.config.actor.weight_update_mode == "xccl":
-            # NCCL/XCCL weight update
             xccl_kwargs: dict[str, Any] = {
                 "gen_allocation": self.rollout_alloc,
             }
@@ -267,20 +293,20 @@ class PPOTrainer:
             raise ValueError(
                 f"Invalid weight update mode: {self.config.actor.weight_update_mode}"
             )
+        logger.info(f"[DiagInit] PPOTrainer.__init__: weight update meta prepared in {_time.time() - _t7:.2f}s")
 
+        logger.info("[DiagInit] PPOTrainer.__init__: connecting actor to rollout engine...")
+        _t8 = _time.time()
         self.actor.connect_engine(self.rollout, self.weight_update_meta)
+        logger.info(f"[DiagInit] PPOTrainer.__init__: actor connected to rollout in {_time.time() - _t8:.2f}s")
 
-        # Set up evaluation (skip in online mode)
         self.evaluator = Evaluator(config.evaluator, ft_spec)
-
-        # Set up save as HF model
         self.saver = Saver(config.saver, ft_spec)
         self.recover_handler = RecoverHandler(config.recover, ft_spec)
-
-        # Set up statistics logging (wandb, tensoboard, etc.)
         self.stats_logger = StatsLogger(config, ft_spec)
 
-        # Set up checkpointing for recover
+        logger.info("[DiagInit] PPOTrainer.__init__: loading recover checkpoint...")
+        _t9 = _time.time()
         self.recover_info = self.recover_handler.load(
             self.actor,
             self.saver,
@@ -290,8 +316,13 @@ class PPOTrainer:
             inference_engine=self.rollout,
             weight_update_meta=self.weight_update_meta,
         )
+        logger.info(f"[DiagInit] PPOTrainer.__init__: recover checkpoint loaded in {_time.time() - _t9:.2f}s")
 
         self._config_perf_tracer()
+
+        logger.info(
+            f"[DiagInit] PPOTrainer.__init__: COMPLETED in {_time.time() - _t0:.2f}s total"
+        )
 
     def train(
         self,

@@ -105,14 +105,28 @@ def _init_engine_thread() -> None:
 def _submit_to_engine_thread(
     func_name: str, func: Callable, *args: Any, **kwargs: Any
 ) -> Any:
-    """Submit work to the engine thread and block until result is available."""
     global _engine_work_queue
 
     _init_engine_thread()
 
+    _is_init_op = func_name in (
+        "configure",
+        "create_engine",
+        "call_create_process_group",
+        "call_initialize",
+        "call_connect_engine",
+    )
+    if _is_init_op:
+        logger.info(f"[DiagInit] _submit_to_engine_thread: submitting '{func_name}'...")
+
     future: Future = Future()
     _engine_work_queue.put((func, args, kwargs, future, func_name))
-    return future.result()  # Block until result is available
+    result = future.result()
+
+    if _is_init_op:
+        logger.info(f"[DiagInit] _submit_to_engine_thread: '{func_name}' completed")
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -142,13 +156,9 @@ def _engine_health_hook() -> dict[str, Any]:
 
 
 def _engine_configure_hook(data: dict) -> dict:
-    """Handle /configure by setting random seeds in the engine thread.
+    import time as _time
 
-    Raises
-    ------
-    ValueError
-        If required fields (``config``, ``rank``) are missing.
-    """
+    _t0 = _time.time()
     config_data = data.get("config")
     if config_data is None:
         raise ValueError("Missing 'config' field in request")
@@ -157,21 +167,36 @@ def _engine_configure_hook(data: dict) -> dict:
     if rank is None:
         raise ValueError("Missing 'rank' field in request")
 
-    config = deserialize_value(config_data)
+    logger.info(f"[DiagInit] _engine_configure_hook ENTERED (rank={rank})")
 
-    # Capture role from GuardState (we're in a request context)
+    logger.info(f"[DiagInit] _engine_configure_hook rank={rank}: deserializing config...")
+    _t1 = _time.time()
+    config = deserialize_value(config_data)
+    logger.info(
+        f"[DiagInit] _engine_configure_hook rank={rank}: config deserialized in "
+        f"{_time.time() - _t1:.2f}s"
+    )
+
     state = get_state()
     role = state.role
 
     def execute_configure():
+        logger.info(f"[DiagInit] execute_configure rank={rank}: setting random seed...")
         seeding.set_random_seed(config.seed, key=f"{role}{rank}")
+        logger.info(f"[DiagInit] execute_configure rank={rank}: seed set successfully")
         return {
             "status": "success",
             "message": "Worker configured successful.",
             "result": None,
         }
 
-    return _submit_to_engine_thread("configure", execute_configure)
+    logger.info(f"[DiagInit] _engine_configure_hook rank={rank}: submitting to engine thread...")
+    result = _submit_to_engine_thread("configure", execute_configure)
+    logger.info(
+        f"[DiagInit] _engine_configure_hook rank={rank}: COMPLETED in "
+        f"{_time.time() - _t0:.2f}s"
+    )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -262,31 +287,19 @@ def set_env():
 
 @engine_bp.route("/create_engine", methods=["POST"])
 def create_engine():
-    """Create and initialize an engine instance on this worker.
-
-    This endpoint is routed to the engine thread for serial execution.
-    Supports multiple engines per worker, keyed by ``engine_name``.
-
-    Expected JSON payload::
-
-        {
-            "engine": "areal.engine.fsdp_engine.FSDPPPOActor",
-            "engine_name": "actor/0",
-            "init_args": [...],
-            "init_kwargs": {"config": ...}
-        }
-    """
     global _engines
 
+    import time as _time
+
+    _t0 = _time.time()
+
     try:
-        # Parse request in main thread (has Flask request context)
         data = request.get_json()
         if data is None:
             return jsonify({"error": "Invalid JSON in request body"}), 400
 
         engine = data.get("engine")
         engine_name = data.get("engine_name")
-        # Deserialize init_args and init_kwargs (may contain tensors/dataclasses)
         init_args = deserialize_value(data.get("init_args", []))
         init_kwargs = deserialize_value(data.get("init_kwargs", {}))
 
@@ -314,11 +327,16 @@ def create_engine():
                 400,
             )
 
-        # Dynamic import (can be done in main thread)
+        logger.info(
+            f"[DiagInit] /create_engine ENTERED: engine={engine}, "
+            f"engine_name={engine_name}"
+        )
+
         try:
+            logger.info(f"[DiagInit] /create_engine {engine_name}: importing engine class...")
+            _t1 = _time.time()
             engine_class = import_from_string(engine)
 
-            # Validate that the class is a TrainEngine or InferenceEngine
             if not issubclass(engine_class, TrainEngine) and not issubclass(
                 engine_class, InferenceEngine
             ):
@@ -326,6 +344,10 @@ def create_engine():
                     "Engine class must be a subclass of TrainEngine or "
                     f"InferenceEngine, got {engine_class}.."
                 )
+            logger.info(
+                f"[DiagInit] /create_engine {engine_name}: engine class imported in "
+                f"{_time.time() - _t1:.2f}s"
+            )
         except (ValueError, ImportError, AttributeError) as e:
             logger.error(f"Failed to import engine '{engine}': {e}")
             return (
@@ -336,14 +358,17 @@ def create_engine():
             logger.error(f"Invalid engine type: {e}")
             return jsonify({"error": str(e)}), 400
 
-        # Instantiate engine in engine thread (may involve NCCL init)
         def create_engine_in_engine_thread():
-            """Create engine in engine thread."""
             try:
+                logger.info(
+                    f"[DiagInit] /create_engine {engine_name}: instantiating "
+                    f"{engine} in engine thread..."
+                )
+                _t2 = _time.time()
                 engine_obj = engine_class(*init_args, **init_kwargs)
                 logger.info(
-                    f"Engine '{engine_name}' (class: {engine}) "
-                    "instantiated successfully"
+                    f"[DiagInit] /create_engine {engine_name}: instantiated in "
+                    f"{_time.time() - _t2:.2f}s"
                 )
                 return engine_obj
             except Exception as e:
@@ -353,10 +378,17 @@ def create_engine():
                 raise
 
         try:
+            logger.info(
+                f"[DiagInit] /create_engine {engine_name}: submitting to engine thread..."
+            )
             engine_obj = _submit_to_engine_thread(
                 "create_engine", create_engine_in_engine_thread
             )
             _engines[engine_name] = engine_obj
+            logger.info(
+                f"[DiagInit] /create_engine {engine_name}: COMPLETED in "
+                f"{_time.time() - _t0:.2f}s total"
+            )
             return jsonify(
                 {
                     "status": "success",
@@ -380,21 +412,11 @@ def create_engine():
 
 @engine_bp.route("/call", methods=["POST"])
 def call_engine_method():
-    """Call a method on an engine instance.
-
-    This endpoint is routed to the engine thread to ensure all engine
-    operations run serially in the same thread, preventing NCCL conflicts.
-
-    Expected JSON payload::
-
-        {
-            "method": "train_batch",
-            "engine_name": "actor/0",
-            "args": [...],
-            "kwargs": {...}
-        }
-    """
     global _engines
+
+    import time as _time
+
+    _t0 = _time.time()
 
     try:
         data = request.get_json()
@@ -429,19 +451,26 @@ def call_engine_method():
                 404,
             )
 
-        # Get the specific engine to call
         engine = _engines[engine_name]
 
-        # Deserialize data
         raw_args = deserialize_value(raw_args)
         raw_kwargs = deserialize_value(raw_kwargs)
-        # Fetch remote tensors
         args = RTensor.localize(raw_args)
         kwargs = RTensor.localize(raw_kwargs)
 
+        _is_init_method = method_name in (
+            "create_process_group",
+            "initialize",
+            "connect_engine",
+        )
+        if _is_init_method:
+            logger.info(
+                f"[DiagInit] /call ENTERED: method={method_name}, "
+                f"engine={engine_name}"
+            )
+
         def execute_in_engine_thread():
             try:
-                # Broadcast args when engine is a TrainEngine and initialized
                 if isinstance(engine, TrainEngine) and engine.initialized:
                     logger.debug(
                         f"Broadcasting data for TrainEngine method: {method_name}"
@@ -463,19 +492,17 @@ def call_engine_method():
                         group=engine.context_and_model_parallel_group,
                     )
 
-                    args_bcast = tensor_container_to(
-                        args, current_platform.current_device()
-                    )
                     args_bcast = broadcast_tensor_container(
-                        args_bcast,
+                        tensor_container_to(
+                            args, current_platform.current_device()
+                        ),
                         src_rank=engine.current_data_parallel_head(),
                         group=engine.context_and_model_parallel_group,
                     )
-                    kwargs_bcast = tensor_container_to(
-                        kwargs, current_platform.current_device()
-                    )
                     kwargs_bcast = broadcast_tensor_container(
-                        kwargs_bcast,
+                        tensor_container_to(
+                            kwargs, current_platform.current_device()
+                        ),
                         src_rank=engine.current_data_parallel_head(),
                         group=engine.context_and_model_parallel_group,
                     )
@@ -484,10 +511,16 @@ def call_engine_method():
                     args_bcast = args
                     kwargs_bcast = kwargs
 
+                if _is_init_method:
+                    logger.info(
+                        f"[DiagInit] /call {engine_name}.{method_name}: "
+                        f"executing in engine thread..."
+                    )
+                    _et0 = _time.time()
+
                 logger.debug(f"Calling engine '{engine_name}' method: {method_name}")
 
-                # Determine trace category based on method name
-                category = "misc"  # Default category
+                category = "misc"
                 method_lower = method_name.lower()
                 if any(keyword in method_lower for keyword in ["submit", "wait"]):
                     category = "scheduler"
@@ -514,7 +547,6 @@ def call_engine_method():
                 ):
                     category = "compute"
 
-                # Wrap engine method call with perf_tracer
                 with perf_tracer.trace_scope(
                     f"rpc.{method_name}",
                     category=category,
@@ -523,11 +555,16 @@ def call_engine_method():
                     method = getattr(engine, method_name)
                     result = method(*args_bcast, **kwargs_bcast)
 
-                    # Handle update weights future
                     if isinstance(result, Future):
                         logger.debug("Waiting for update weights future")
                         result = result.result()
                         logger.debug("Update weights future done")
+
+                if _is_init_method:
+                    logger.info(
+                        f"[DiagInit] /call {engine_name}.{method_name}: "
+                        f"COMPLETED in {_time.time() - _et0:.2f}s"
+                    )
 
                 return result
             except AttributeError as e:
@@ -558,7 +595,12 @@ def call_engine_method():
                 500,
             )
 
-        # Convert all tensors to RTensors and store locally
+        if _is_init_method:
+            logger.info(
+                f"[DiagInit] /call {engine_name}.{method_name}: total "
+                f"{_time.time() - _t0:.2f}s (including RPC overhead)"
+            )
+
         state = get_state()
         result = RTensor.remotize(result, node_addr=state.node_addr)
         serialized_result = serialize_value(result)
