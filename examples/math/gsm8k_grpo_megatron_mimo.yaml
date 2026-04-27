@@ -19,7 +19,7 @@ scheduler:
   type: null
 
 rollout:
-  backend: "sglang:d1p1t2"
+  backend: "sglang:d1p1t1"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   max_concurrent_rollouts: 256
@@ -40,7 +40,7 @@ gconfig:
   temperature: 1.0
 
 actor:
-  backend: "megatron:d1p1t4"
+  backend: "megatron:d2p1t2"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   path: /workspace/models/MiMo-7B-RL
@@ -51,7 +51,7 @@ actor:
   mb_spec:
     max_tokens_per_mb: 2048
   optimizer:
-    type: adam_bf16
+    type: adam
     lr: 3e-6
     weight_decay: 0.003
     beta1: 0.9
