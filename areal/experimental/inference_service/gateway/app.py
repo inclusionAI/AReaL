@@ -422,6 +422,54 @@ def create_app(config: GatewayConfig) -> FastAPI:
         return BroadcastResponse(results=[BroadcastResultItem(**r) for r in results])
 
     # =========================================================================
+    # POST /release_memory_occupation/{worker_id} — admin key ONLY
+    # =========================================================================
+
+    @app.post("/release_memory_occupation/{worker_id}")
+    async def release_memory_occupation(worker_id: str, request: Request):
+        require_admin_key(request, config.admin_api_key)
+        try:
+            worker_addr = await resolve_worker_addr(
+                config.router_addr,
+                config.admin_api_key,
+                worker_id,
+                config.router_timeout,
+            )
+        except (RouterUnreachableError, RouterKeyRejectedError) as exc:
+            return _router_error_response(exc)
+
+        body = await request.body()
+        headers = _forwarding_headers(dict(request.headers))
+        results = await broadcast_to_workers(
+            [worker_addr], "/release_memory_occupation", body, headers
+        )
+        return {"results": results}
+
+    # =========================================================================
+    # POST /resume_memory_occupation/{worker_id} — admin key ONLY
+    # =========================================================================
+
+    @app.post("/resume_memory_occupation/{worker_id}")
+    async def resume_memory_occupation(worker_id: str, request: Request):
+        require_admin_key(request, config.admin_api_key)
+        try:
+            worker_addr = await resolve_worker_addr(
+                config.router_addr,
+                config.admin_api_key,
+                worker_id,
+                config.router_timeout,
+            )
+        except (RouterUnreachableError, RouterKeyRejectedError) as exc:
+            return _router_error_response(exc)
+
+        body = await request.body()
+        headers = _forwarding_headers(dict(request.headers))
+        results = await broadcast_to_workers(
+            [worker_addr], "/resume_memory_occupation", body, headers
+        )
+        return {"results": results}
+
+    # =========================================================================
     # POST /export_trajectories — admin key ONLY, route by session_id or model field
     # =========================================================================
 

@@ -1284,7 +1284,7 @@ class GatewayInferenceController:
         finally:
             await session.close()
 
-    # -- Pause / Resume ----------------------------------------------------
+    # -- Pause / Resume / Offload -------------------------------------------
 
     def pause(self) -> None:
         """Pause dispatcher + pause all workers."""
@@ -1301,6 +1301,41 @@ class GatewayInferenceController:
         run_async_task(self.continue_generation)
         if self._workflow_executor is not None:
             self._workflow_executor.resume()
+
+    def offload(self) -> None:
+        """Offload model memory on all inference workers."""
+        from areal.infra.utils.concurrent import run_async_task
+
+        run_async_task(self._async_offload)
+
+    async def _async_offload(self) -> None:
+        if not self._gateway_addr:
+            return
+        await asyncio.gather(
+            *(
+                self._async_gateway_http_post(f"/release_memory_occupation/{wid}", {})
+                for wid in self._worker_ids.values()
+            )
+        )
+
+    def onload(self, tags: list[str] | None = None) -> None:
+        """Reload model memory on all inference workers."""
+        from areal.infra.utils.concurrent import run_async_task
+
+        run_async_task(self._async_onload, tags)
+
+    async def _async_onload(self, tags: list[str] | None = None) -> None:
+        if not self._gateway_addr:
+            return
+        payload: dict = {"tags": tags} if tags is not None else {}
+        await asyncio.gather(
+            *(
+                self._async_gateway_http_post(
+                    f"/resume_memory_occupation/{wid}", payload
+                )
+                for wid in self._worker_ids.values()
+            )
+        )
 
     async def pause_generation(self, worker_id: str | None = None) -> None:
         """Pause generation on a specific worker, or all workers if worker_id is None."""
