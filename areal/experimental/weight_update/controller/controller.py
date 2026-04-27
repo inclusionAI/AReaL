@@ -108,6 +108,10 @@ class WeightUpdateController:
         pair_name: str,
         train_worker_urls: list[str],
         inference_worker_urls: list[str],
+        mode: str = "awex",
+        save_path: str = "",
+        use_lora: bool = False,
+        lora_name: str = "",
     ) -> None:
         self._pair_name = pair_name
         resp = self._http.post(
@@ -116,11 +120,15 @@ class WeightUpdateController:
                 "pair_name": pair_name,
                 "train_worker_urls": train_worker_urls,
                 "inference_worker_urls": inference_worker_urls,
+                "mode": mode,
+                "save_path": save_path,
+                "use_lora": use_lora,
+                "lora_name": lora_name,
             },
             timeout=self.config.request_timeout,
         )
         resp.raise_for_status()
-        logger.info("Connected pair '%s'", pair_name)
+        logger.info("Connected pair '%s' (mode=%s)", pair_name, mode)
 
     def update_weights(self, version: int) -> WeightUpdateResult:
         if self._pair_name is None:

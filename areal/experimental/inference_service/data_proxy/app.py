@@ -14,6 +14,7 @@ from fastapi.middleware.wsgi import WSGIMiddleware
 from fastapi.responses import Response as RawResponse
 from fastapi.responses import StreamingResponse
 from flask import Flask
+from pydantic import BaseModel
 
 from areal.experimental.inference_service.data_proxy.config import DataProxyConfig
 from areal.experimental.inference_service.data_proxy.pause import PauseState
@@ -41,6 +42,56 @@ from areal.infra.rpc.guard.data_blueprint import (
 from areal.utils import logging
 
 logger = logging.getLogger("InferenceDataProxy")
+
+
+# =============================================================================
+# Response models
+# =============================================================================
+
+
+class DataProxyHealthResponse(BaseModel):
+    status: str
+    backend: str | None
+    sessions: int
+    paused: bool
+    version: int
+
+
+class DataProxyStatusResponse(BaseModel):
+    status: str
+
+
+class PauseGenerationResponse(BaseModel):
+    status: str
+    paused: bool
+
+
+class SetVersionResponse(BaseModel):
+    status: str
+    version: int
+
+
+class GetVersionResponse(BaseModel):
+    version: int
+
+
+class SetRewardResponse(BaseModel):
+    message: str
+    interaction_count: int
+    session_id: str
+    trajectory_id: int | None
+    trajectory_ready: bool
+    ready_transition: bool
+
+
+class RegisterModelResponse(BaseModel):
+    status: str
+    name: str
+
+
+class ConfigureBackendResponse(BaseModel):
+    status: str
+    backend_addr: str
 
 
 # =============================================================================
@@ -156,21 +207,32 @@ async def _post_online_ready_callback(
     admin_api_key: str,
     notification: ReadyNotification,
     timeout: float,
+    *,
+    client: httpx.AsyncClient | None = None,
 ) -> bool:
     if not callback_server_addr:
         return False
 
     callback_base = callback_server_addr.rstrip("/")
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(
+
+        async def _do(c: httpx.AsyncClient) -> httpx.Response:
+            return await c.post(
                 f"{callback_base}/callback/online_ready",
                 json={
                     "session_id": notification.session_id,
                     "trajectory_id": notification.trajectory_id,
                 },
                 headers={"Authorization": f"Bearer {admin_api_key}"},
+                timeout=timeout,
             )
+
+        if client is not None:
+            resp = await _do(client)
+        else:
+            async with httpx.AsyncClient(timeout=timeout) as c:
+                resp = await _do(c)
+
         if resp.status_code >= 400:
             logger.warning(
                 "Online ready callback failed for %s/%s with %d: %s",
@@ -194,6 +256,7 @@ async def _post_online_ready_callback(
 async def _flush_ready_trajectories(app: FastAPI) -> None:
     store: SessionStore = app.state.session_store
     config: DataProxyConfig = app.state.config
+    http_client: httpx.AsyncClient | None = getattr(app.state, "http_client", None)
 
     for ready_result in store.finalize_rewarded_trajectories():
         logger.info(
@@ -204,13 +267,30 @@ async def _flush_ready_trajectories(app: FastAPI) -> None:
         )
 
     pending_notifications = store.pending_online_callbacks()
-    for notification in pending_notifications:
-        delivered = await _post_online_ready_callback(
-            config.callback_server_addr,
-            config.admin_api_key,
-            notification,
-            config.request_timeout,
-        )
+
+    async def _deliver(
+        notification: ReadyNotification,
+    ) -> tuple[ReadyNotification, bool]:
+        try:
+            delivered = await _post_online_ready_callback(
+                config.callback_server_addr,
+                config.admin_api_key,
+                notification,
+                config.request_timeout,
+                client=http_client,
+            )
+        except BaseException as exc:
+            logger.warning(
+                "Callback delivery failed for %s/%s: %s",
+                notification.session_id,
+                notification.trajectory_id,
+                exc,
+            )
+            delivered = False
+        return notification, delivered
+
+    results = await asyncio.gather(*[_deliver(n) for n in pending_notifications])
+    for notification, delivered in results:
         if delivered:
             store.mark_online_callback_delivered(
                 notification.session_id,
@@ -243,6 +323,7 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         )
         app.state.session_store.set_admin_key(config.admin_api_key)
         app.state.version = 0
+        app.state.http_client = httpx.AsyncClient(timeout=config.request_timeout)
 
         if not config.backend_addr:
             app.state.tokenizer = None
@@ -265,6 +346,9 @@ def create_app(config: DataProxyConfig) -> FastAPI:
                 await ready_task
             except asyncio.CancelledError:
                 pass
+            if app.state.inf_bridge is not None:
+                await app.state.inf_bridge.aclose()
+            await app.state.http_client.aclose()
         logger.info("Data proxy shutting down")
 
     app = FastAPI(title="AReaL Data Proxy", lifespan=lifespan)
@@ -274,27 +358,27 @@ def create_app(config: DataProxyConfig) -> FastAPI:
     # Health
     # =========================================================================
 
-    @app.get("/health")
+    @app.get("/health", response_model=DataProxyHealthResponse)
     async def health():
         store: SessionStore = app.state.session_store
         pause_state: PauseState = app.state.pause_state
-        return {
-            "status": "ok",
-            "backend": config.backend_addr,
-            "sessions": store.session_count,
-            "paused": await pause_state.is_paused(),
-            "version": app.state.version,
-        }
+        return DataProxyHealthResponse(
+            status="ok",
+            backend=config.backend_addr,
+            sessions=store.session_count,
+            paused=await pause_state.is_paused(),
+            version=app.state.version,
+        )
 
-    @app.post("/configure")
+    @app.post("/configure", response_model=DataProxyStatusResponse)
     async def configure():
-        return {"status": "ok"}
+        return DataProxyStatusResponse(status="ok")
 
     # =========================================================================
     # Pause/Resume — internal control plane (no auth at data proxy level)
     # =========================================================================
 
-    @app.post("/pause_generation")
+    @app.post("/pause_generation", response_model=PauseGenerationResponse)
     async def pause_generation():
         inf_bridge: InfBridge | None = app.state.inf_bridge
         if inf_bridge is None:
@@ -303,9 +387,9 @@ def create_app(config: DataProxyConfig) -> FastAPI:
                 detail="No inference backend configured (external model mode).",
             )
         await inf_bridge.pause()
-        return {"status": "ok", "paused": True}
+        return PauseGenerationResponse(status="ok", paused=True)
 
-    @app.post("/continue_generation")
+    @app.post("/continue_generation", response_model=PauseGenerationResponse)
     async def continue_generation():
         inf_bridge: InfBridge | None = app.state.inf_bridge
         if inf_bridge is None:
@@ -314,24 +398,24 @@ def create_app(config: DataProxyConfig) -> FastAPI:
                 detail="No inference backend configured (external model mode).",
             )
         await inf_bridge.resume()
-        return {"status": "ok", "paused": False}
+        return PauseGenerationResponse(status="ok", paused=False)
 
     # =========================================================================
     # Version management — internal control plane (no auth at data proxy level)
     # =========================================================================
 
-    @app.post("/set_version")
+    @app.post("/set_version", response_model=SetVersionResponse)
     async def set_version(request: Request):
         body = await request.json()
         version = body.get("version")
         if version is None or not isinstance(version, int):
             raise HTTPException(status_code=400, detail="'version' (int) is required")
         app.state.version = version
-        return {"status": "ok", "version": version}
+        return SetVersionResponse(status="ok", version=version)
 
-    @app.get("/get_version")
+    @app.get("/get_version", response_model=GetVersionResponse)
     async def get_version():
-        return {"version": app.state.version}
+        return GetVersionResponse(version=app.state.version)
 
     # =========================================================================
     # Session management (admin key / session key required)
@@ -351,7 +435,7 @@ def create_app(config: DataProxyConfig) -> FastAPI:
             raise HTTPException(status_code=409, detail=str(e))
         return StartSessionResponse(session_id=session_id, api_key=session_api_key)
 
-    @app.post("/rl/set_reward")
+    @app.post("/rl/set_reward", response_model=SetRewardResponse)
     async def set_reward(body: SetRewardRequest, request: Request):
         store: SessionStore = app.state.session_store
         token = _extract_bearer_token(request)
@@ -369,14 +453,14 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        return {
-            "message": "success",
-            "interaction_count": reward_result.interaction_count,
-            "session_id": reward_result.session_id,
-            "trajectory_id": reward_result.trajectory_id,
-            "trajectory_ready": reward_result.trajectory_id is not None,
-            "ready_transition": reward_result.ready_transition,
-        }
+        return SetRewardResponse(
+            message="success",
+            interaction_count=reward_result.interaction_count,
+            session_id=reward_result.session_id,
+            trajectory_id=reward_result.trajectory_id,
+            trajectory_ready=reward_result.trajectory_id is not None,
+            ready_transition=reward_result.ready_transition,
+        )
 
     # =========================================================================
     # Chat completions — OpenAI-compatible
@@ -435,8 +519,8 @@ def create_app(config: DataProxyConfig) -> FastAPI:
                     try:
                         async with httpx.AsyncClient(
                             timeout=httpx.Timeout(config.request_timeout)
-                        ) as client:
-                            async with client.stream(
+                        ) as stream_client:
+                            async with stream_client.stream(
                                 "POST",
                                 f"{ext_url}/chat/completions",
                                 json=forward_body,
@@ -476,12 +560,11 @@ def create_app(config: DataProxyConfig) -> FastAPI:
 
             full_url = f"{ext_url}/chat/completions"
             try:
-                async with httpx.AsyncClient(timeout=config.request_timeout) as client:
-                    resp = await client.post(
-                        full_url,
-                        json=forward_body,
-                        headers=forward_headers,
-                    )
+                resp = await app.state.http_client.post(
+                    full_url,
+                    json=forward_body,
+                    headers=forward_headers,
+                )
             except Exception as exc:
                 raise HTTPException(
                     status_code=502, detail=f"External API error: {exc}"
@@ -562,7 +645,7 @@ def create_app(config: DataProxyConfig) -> FastAPI:
 
         return result
 
-    @app.post("/register_model")
+    @app.post("/register_model", response_model=RegisterModelResponse)
     async def register_model(request: Request):
         body = await request.json()
         name = body.get("name") or body.get("model")
@@ -573,7 +656,7 @@ def create_app(config: DataProxyConfig) -> FastAPI:
             raise HTTPException(status_code=400, detail="model name is required")
         _registered_models[name] = {"url": url, "model": model, "api_key": api_key}
         logger.info("Model registered: name=%s url=%s", name, url or "(internal)")
-        return {"status": "ok", "name": name}
+        return RegisterModelResponse(status="ok", name=name)
 
     # =========================================================================
     # Trajectory export (admin key required)
@@ -631,13 +714,9 @@ def create_app(config: DataProxyConfig) -> FastAPI:
     # Runtime backend reconfiguration (for fork-based deployment)
     # =========================================================================
 
-    @app.post("/configure_backend")
+    @app.post("/configure_backend", response_model=ConfigureBackendResponse)
     async def configure_backend(request: Request):
-        """Reconfigure the inference backend address after process start.
-
-        Administrative endpoint to dynamically change which SGLang server
-        this data proxy connects to.
-        """
+        """Reconfigure the inference backend address after process start."""
         store: SessionStore = app.state.session_store
         _require_admin_key(request, store)
         body = await request.json()
@@ -647,13 +726,20 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         pause_state: PauseState = app.state.pause_state
         tok: TokenizerProxy = app.state.tokenizer
 
+        old_inf_bridge: InfBridge | None = app.state.inf_bridge
+
         # Recreate InfBridge + ArealOpenAI with new backend address
         new_inf_bridge = _create_inf_bridge(new_addr, pause_state, app.state.config)
-        new_areal_client = _create_areal_client(new_inf_bridge, tok, app.state.config)
+        try:
+            new_areal_client = _create_areal_client(
+                new_inf_bridge, tok, app.state.config
+            )
+        except Exception:
+            await new_inf_bridge.aclose()
+            raise
 
         # Build updated config copy, then swap all three state fields.
-        # Concurrent requests already hold their own references so they
-        # finish with the old backend; new requests see the new one.
+        # Swap references first so new requests immediately use the new bridge.
         from dataclasses import replace as _dc_replace
 
         new_config = _dc_replace(app.state.config, backend_addr=new_addr)
@@ -661,8 +747,13 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         app.state.inf_bridge = new_inf_bridge
         app.state.areal_client = new_areal_client
 
+        # Close old InfBridge after the swap so in-flight requests that already
+        # hold a reference to the old bridge can still finish their HTTP calls.
+        if old_inf_bridge is not None:
+            await old_inf_bridge.aclose()
+
         logger.info("Backend reconfigured to %s", new_addr)
-        return {"status": "ok", "backend_addr": new_addr}
+        return ConfigureBackendResponse(status="ok", backend_addr=new_addr)
 
     # =========================================================================
     # RTensor data storage endpoints

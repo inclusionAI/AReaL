@@ -24,7 +24,7 @@ from awex.transfer.transfer_plan import TransferPlan, TransferPlanBuilder
 
 from areal.experimental.weight_update.awex import fetch_kv_metadata
 from areal.experimental.weight_update.inference_adapter import (
-    WeightUpdateInferenceAdapter,
+    AwexInferenceAdapter,
 )
 from areal.experimental.weight_update.nccl_group import (
     init_weights_update_group,
@@ -35,7 +35,7 @@ from areal.utils import logging
 logger = logging.getLogger("AwexSGLangAdapter")
 
 
-class AwexSGLangAdapter(WeightUpdateInferenceAdapter):
+class AwexSGLangAdapter(AwexInferenceAdapter):
     """Awex inference adapter for in-process SGLang schedulers."""
 
     def __init__(self, scheduler: Any):
@@ -115,9 +115,9 @@ class AwexSGLangAdapter(WeightUpdateInferenceAdapter):
         """Split SGLang fused parameters into HuggingFace-style unfused pairs.
 
         SGLang fuses Q/K/V into ``qkv_proj`` and gate/up into ``gate_up_proj``
-        for efficiency.  The training side (FSDP) keeps the original HF names,
-        so we need to report the same unfused names for the transfer plan
-        builder to match them.
+        for efficiency.  For MoE models, SGLang also fuses all routed experts
+        into ``experts.w13_weight`` (gate+up) and ``experts.w2_weight`` (down).
+        The training side keeps per-expert HF names, so we unfuse here to match.
         """
         if "qkv_proj" in name:
             cfg = self._get_model().config
@@ -144,6 +144,69 @@ class AwexSGLangAdapter(WeightUpdateInferenceAdapter):
                 (name.replace("gate_up_proj", "gate_proj"), tensor.narrow(0, 0, half)),
                 (name.replace("gate_up_proj", "up_proj"), tensor.narrow(0, half, half)),
             ]
+        if "shared_experts" in name and "gate_up_weight" in name:
+            half = tensor.shape[0] // 2
+            return [
+                (
+                    name.replace("gate_up_weight", "gate_proj.weight"),
+                    tensor.narrow(0, 0, half),
+                ),
+                (
+                    name.replace("gate_up_weight", "up_proj.weight"),
+                    tensor.narrow(0, half, half),
+                ),
+            ]
+        if "shared_experts" in name and name.endswith("down_weight"):
+            return [(name.replace("down_weight", "down_proj.weight"), tensor)]
+        if ".experts.w13_weight" in name:
+            # w13_weight shape: [num_total_experts, 2*ffn_hidden, hidden]
+            # num_total_experts may include shared experts appended after
+            # routed experts (e.g. 128 routed + 1 shared = 129 total).
+            cfg = self._get_model().config
+            num_routed = getattr(cfg, "num_experts", None) or cfg.n_routed_experts
+            prefix = name.replace(".w13_weight", "")
+            result = []
+            ffn_hidden = tensor.shape[1] // 2
+            for i in range(tensor.shape[0]):
+                expert_tensor = tensor[i]
+                if i < num_routed:
+                    expert_prefix = f"{prefix}.{i}"
+                else:
+                    shared_idx = i - num_routed
+                    num_shared = tensor.shape[0] - num_routed
+                    if num_shared > 1:
+                        expert_prefix = prefix.replace(
+                            "experts", f"shared_experts.{shared_idx}"
+                        )
+                    else:
+                        expert_prefix = prefix.replace("experts", "shared_experts")
+                result.append(
+                    (f"{expert_prefix}.gate_proj.weight", expert_tensor[:ffn_hidden])
+                )
+                result.append(
+                    (f"{expert_prefix}.up_proj.weight", expert_tensor[ffn_hidden:])
+                )
+            return result
+        if ".experts.w2_weight" in name:
+            # w2_weight shape: [num_total_experts, hidden, ffn_hidden]
+            cfg = self._get_model().config
+            num_routed = getattr(cfg, "num_experts", None) or cfg.n_routed_experts
+            prefix = name.replace(".w2_weight", "")
+            result = []
+            for i in range(tensor.shape[0]):
+                if i < num_routed:
+                    expert_prefix = f"{prefix}.{i}"
+                else:
+                    shared_idx = i - num_routed
+                    num_shared = tensor.shape[0] - num_routed
+                    if num_shared > 1:
+                        expert_prefix = prefix.replace(
+                            "experts", f"shared_experts.{shared_idx}"
+                        )
+                    else:
+                        expert_prefix = prefix.replace("experts", "shared_experts")
+                result.append((f"{expert_prefix}.down_proj.weight", tensor[i]))
+            return result
         return [(name, tensor)]
 
     def _build_rank_info(self) -> RankInfo:

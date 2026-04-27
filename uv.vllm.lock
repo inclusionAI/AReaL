@@ -479,7 +479,7 @@ requires-dist = [
     { name = "math-verify", specifier = "==0.8.0" },
     { name = "mathruler", specifier = "==0.1.0" },
     { name = "matplotlib" },
-    { name = "mbridge", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'megatron'", specifier = "==0.15.1" },
+    { name = "mbridge", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'megatron'", git = "https://github.com/ISEEKYAN/mbridge.git?rev=310e8fb" },
     { name = "megatron-bridge", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'megatron'", specifier = "==0.3.0" },
     { name = "megatron-core", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'megatron'", specifier = "==0.16.0" },
     { name = "msgspec" },
@@ -3053,11 +3053,7 @@ wheels = [
 [[package]]
 name = "mbridge"
 version = "0.15.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/65/3f/04534fb2b4ddf6b293ee41f839de8ae6542ef2dc1b32c7d25a4b5b18c1bb/mbridge-0.15.1.tar.gz", hash = "sha256:26028dbe7dc9193c6c6b3de56e82691c9a484f46ded1ed18a41f2747a08e8104", size = 99287, upload-time = "2025-09-22T09:48:30.141Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/51/dc/8208746f41ff08d0b6eb8c261569d57af97648ee0d1631ea273e68c627dc/mbridge-0.15.1-py3-none-any.whl", hash = "sha256:5c7c007c2eb13bb2d0ce9bd6b313537024d0a7fad52179ff367635eafe5cd4cd", size = 122168, upload-time = "2025-09-22T09:48:28.384Z" },
-]
+source = { git = "https://github.com/ISEEKYAN/mbridge.git?rev=310e8fb#310e8fb35ccf4fcd4419d32973e563a6d43ee5fb" }
 
 [[package]]
 name = "mcp"
@@ -6387,8 +6383,8 @@ dependencies = [
     { name = "typing-extensions", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
 ]
 wheels = [
-    { url = "https://download-r2.pytorch.org/whl/cu129/torch-2.10.0%2Bcu129-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:ef82198b7b2f271cda50fa1d7ccd69643ac60dc48c7f38a91510c872b9722028" },
-    { url = "https://download-r2.pytorch.org/whl/cu129/torch-2.10.0%2Bcu129-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:a3c703e74a88cccfeb4b1807c49d563a0a73793ba72d4fa035d4ac5885f3aefd" },
+    { url = "https://download-r2.pytorch.org/whl/cu129/torch-2.10.0%2Bcu129-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:ef82198b7b2f271cda50fa1d7ccd69643ac60dc48c7f38a91510c872b9722028", upload-time = "2026-01-21T18:56:56Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu129/torch-2.10.0%2Bcu129-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:a3c703e74a88cccfeb4b1807c49d563a0a73793ba72d4fa035d4ac5885f3aefd", upload-time = "2026-01-21T18:56:27Z" },
 ]
 
 [[package]]
@@ -6470,8 +6466,8 @@ dependencies = [
     { name = "torch", version = "2.10.0+cu129", source = { registry = "https://download.pytorch.org/whl/cu129" }, marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
 ]
 wheels = [
-    { url = "https://download-r2.pytorch.org/whl/cu129/torchaudio-2.10.0%2Bcu129-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:c24e7a2389276208d85077f6663735d406532214d5365bf2e5c15ae91a894415" },
-    { url = "https://download-r2.pytorch.org/whl/cu129/torchaudio-2.10.0%2Bcu129-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:5072f6c901ddc234b8d5d472d42fbe97445c6bb3433337c3945d00b012642969" },
+    { url = "https://download-r2.pytorch.org/whl/cu129/torchaudio-2.10.0%2Bcu129-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:c24e7a2389276208d85077f6663735d406532214d5365bf2e5c15ae91a894415", upload-time = "2026-01-21T15:05:50Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu129/torchaudio-2.10.0%2Bcu129-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:5072f6c901ddc234b8d5d472d42fbe97445c6bb3433337c3945d00b012642969", upload-time = "2026-01-21T15:05:50Z" },
 ]
 
 [[package]]
@@ -6543,8 +6539,8 @@ dependencies = [
     { name = "torch", version = "2.10.0+cu129", source = { registry = "https://download.pytorch.org/whl/cu129" }, marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
 ]
 wheels = [
-    { url = "https://download-r2.pytorch.org/whl/cu129/torchvision-0.25.0%2Bcu129-cp311-cp311-manylinux_2_28_x86_64.whl" },
-    { url = "https://download-r2.pytorch.org/whl/cu129/torchvision-0.25.0%2Bcu129-cp312-cp312-manylinux_2_28_x86_64.whl" },
+    { url = "https://download-r2.pytorch.org/whl/cu129/torchvision-0.25.0%2Bcu129-cp311-cp311-manylinux_2_28_x86_64.whl", upload-time = "2026-01-20T18:32:45Z" },
+    { url = "https://download-r2.pytorch.org/whl/cu129/torchvision-0.25.0%2Bcu129-cp312-cp312-manylinux_2_28_x86_64.whl", upload-time = "2026-01-20T18:32:46Z" },
 ]
 
 [[package]]

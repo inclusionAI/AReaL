@@ -8,11 +8,14 @@ session pinning, and routing strategies live in the Router service.
 
 from __future__ import annotations
 
+import asyncio
 import json
+from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
+from pydantic import BaseModel
 
 from areal.experimental.inference_service.gateway.auth import (
     extract_bearer_token,
@@ -40,6 +43,31 @@ from areal.utils import logging
 logger = logging.getLogger("InferenceGateway")
 
 
+# =============================================================================
+# Response models
+# =============================================================================
+
+
+class GatewayHealthResponse(BaseModel):
+    status: str
+    router_addr: str
+
+
+class GatewayModelsResponse(BaseModel):
+    models: list[str]
+
+
+class BroadcastResultItem(BaseModel):
+    worker_addr: str
+    status: int
+    ok: bool
+    error: str | None = None
+
+
+class BroadcastResponse(BaseModel):
+    results: list[BroadcastResultItem]
+
+
 def _router_error_response(exc: Exception) -> JSONResponse:
     """Convert router exceptions to HTTP responses."""
     if isinstance(exc, RouterUnreachableError):
@@ -53,15 +81,41 @@ def _router_error_response(exc: Exception) -> JSONResponse:
 def create_app(config: GatewayConfig) -> FastAPI:
     """Factory that creates the inference gateway FastAPI app."""
 
-    app = FastAPI(title="AReaL Inference Gateway")
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        app.state.http_client = httpx.AsyncClient(timeout=config.router_timeout)
+        try:
+            yield
+        finally:
+            await app.state.http_client.aclose()
+            if _fallback_client is not None:
+                await _fallback_client.aclose()
+
+    app = FastAPI(title="AReaL Inference Gateway", lifespan=lifespan)
+
+    # Fallback client for tests that bypass the lifespan.
+    # NOTE: When testing without ASGI transport (which runs the lifespan),
+    # this client will NOT be cleaned up automatically. Tests should prefer
+    # using httpx.AsyncClient(transport=ASGITransport(app=app)) to ensure
+    # proper lifespan management and client cleanup.
+    _fallback_client: httpx.AsyncClient | None = None
+
+    def _client() -> httpx.AsyncClient:
+        nonlocal _fallback_client
+        try:
+            return app.state.http_client
+        except AttributeError:
+            if _fallback_client is None:
+                _fallback_client = httpx.AsyncClient(timeout=config.router_timeout)
+            return _fallback_client
 
     # =========================================================================
     # Health
     # =========================================================================
 
-    @app.get("/health")
+    @app.get("/health", response_model=GatewayHealthResponse)
     async def health():
-        return {"status": "ok", "router_addr": config.router_addr}
+        return GatewayHealthResponse(status="ok", router_addr=config.router_addr)
 
     # =========================================================================
     # POST /chat/completions — admin OR session key, streaming or non-streaming
@@ -90,6 +144,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
                 config.router_timeout,
                 admin_api_key=config.admin_api_key,
                 model=model_name,
+                client=_client(),
             )
         except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)
@@ -107,7 +162,11 @@ def create_app(config: GatewayConfig) -> FastAPI:
             )
 
         resp = await forward_request(
-            f"{worker_addr}/chat/completions", body, headers, config.forward_timeout
+            f"{worker_addr}/chat/completions",
+            body,
+            headers,
+            config.forward_timeout,
+            client=_client(),
         )
         return Response(
             content=resp.content,
@@ -134,6 +193,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
                 data_proxy_addrs,
                 config.admin_api_key,
                 config.router_timeout,
+                client=_client(),
             )
         except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)
@@ -141,8 +201,9 @@ def create_app(config: GatewayConfig) -> FastAPI:
         resolved_addrs = result.get("data_proxy_addrs", data_proxy_addrs)
         headers = _forwarding_headers(dict(request.headers))
 
-        for addr in resolved_addrs:
-            resp = await forward_request(
+        # Phase 3: parallelize data proxy registration
+        async def _register_one(addr: str) -> httpx.Response:
+            return await forward_request(
                 f"{addr}/register_model",
                 json.dumps(
                     {
@@ -154,18 +215,41 @@ def create_app(config: GatewayConfig) -> FastAPI:
                 ).encode(),
                 headers,
                 config.forward_timeout,
+                client=_client(),
             )
-            if resp.status_code != 200:
-                await remove_model_from_router(
-                    config.router_addr,
-                    model,
-                    config.admin_api_key,
-                    config.router_timeout,
+
+        responses = await asyncio.gather(
+            *[_register_one(addr) for addr in resolved_addrs],
+            return_exceptions=True,
+        )
+        # Check for failures after all tasks have completed
+        failed = False
+        errors = []
+        for resp in responses:
+            if isinstance(resp, Exception):
+                logger.error("Data proxy registration raised: %s", resp)
+                errors.append(str(resp))
+                failed = True
+            elif resp.status_code != 200:
+                logger.error(
+                    "Data proxy registration failed with status %d: %s",
+                    resp.status_code,
+                    resp.text,
                 )
-                return JSONResponse(
-                    {"error": f"Data proxy registration failed: {resp.text}"},
-                    status_code=502,
-                )
+                errors.append(f"status {resp.status_code}: {resp.text}")
+                failed = True
+        if failed:
+            await remove_model_from_router(
+                config.router_addr,
+                model,
+                config.admin_api_key,
+                config.router_timeout,
+                client=_client(),
+            )
+            return JSONResponse(
+                {"error": "Data proxy registration failed", "details": errors},
+                status_code=502,
+            )
         return result
 
     @app.get("/models")
@@ -176,10 +260,11 @@ def create_app(config: GatewayConfig) -> FastAPI:
                 config.router_addr,
                 config.admin_api_key,
                 config.router_timeout,
+                client=_client(),
             )
         except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)
-        return {"models": names}
+        return GatewayModelsResponse(models=names)
 
     # =========================================================================
     # POST /rl/start_session — admin key ONLY, intercept response
@@ -196,6 +281,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
                 "/rl/start_session",
                 config.router_timeout,
                 admin_api_key=config.admin_api_key,
+                client=_client(),
             )
         except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)
@@ -208,6 +294,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
             body,
             headers,
             config.forward_timeout,
+            client=_client(),
         )
 
         # Intercept: if data proxy returned 201, extract session info and register
@@ -224,6 +311,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
                         worker_addr,
                         config.router_timeout,
                         admin_api_key=config.admin_api_key,
+                        client=_client(),
                     )
             except Exception as exc:
                 logger.error("Failed to register session in router: %s", exc)
@@ -265,12 +353,17 @@ def create_app(config: GatewayConfig) -> FastAPI:
                 config.router_timeout,
                 admin_api_key=config.admin_api_key,
                 model=model,
+                client=_client(),
             )
         except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)
 
         resp = await forward_request(
-            f"{worker_addr}/rl/set_reward", body, headers, config.forward_timeout
+            f"{worker_addr}/rl/set_reward",
+            body,
+            headers,
+            config.forward_timeout,
+            client=_client(),
         )
         return Response(
             content=resp.content,
@@ -282,7 +375,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
     # POST /pause_generation/{worker_id} — admin key ONLY, target single worker
     # =========================================================================
 
-    @app.post("/pause_generation/{worker_id}")
+    @app.post("/pause_generation/{worker_id}", response_model=BroadcastResponse)
     async def pause_generation(worker_id: str, request: Request):
         require_admin_key(request, config.admin_api_key)
         try:
@@ -291,6 +384,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
                 config.admin_api_key,
                 worker_id,
                 config.router_timeout,
+                client=_client(),
             )
         except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)
@@ -298,15 +392,15 @@ def create_app(config: GatewayConfig) -> FastAPI:
         body = await request.body()
         headers = _forwarding_headers(dict(request.headers))
         results = await broadcast_to_workers(
-            [worker_addr], "/pause_generation", body, headers
+            [worker_addr], "/pause_generation", body, headers, client=_client()
         )
-        return {"results": results}
+        return BroadcastResponse(results=[BroadcastResultItem(**r) for r in results])
 
     # =========================================================================
     # POST /continue_generation/{worker_id} — admin key ONLY, target single worker
     # =========================================================================
 
-    @app.post("/continue_generation/{worker_id}")
+    @app.post("/continue_generation/{worker_id}", response_model=BroadcastResponse)
     async def continue_generation(worker_id: str, request: Request):
         require_admin_key(request, config.admin_api_key)
         try:
@@ -315,6 +409,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
                 config.admin_api_key,
                 worker_id,
                 config.router_timeout,
+                client=_client(),
             )
         except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)
@@ -322,9 +417,9 @@ def create_app(config: GatewayConfig) -> FastAPI:
         body = await request.body()
         headers = _forwarding_headers(dict(request.headers))
         results = await broadcast_to_workers(
-            [worker_addr], "/continue_generation", body, headers
+            [worker_addr], "/continue_generation", body, headers, client=_client()
         )
-        return {"results": results}
+        return BroadcastResponse(results=[BroadcastResultItem(**r) for r in results])
 
     # =========================================================================
     # POST /export_trajectories — admin key ONLY, route by session_id or model field
@@ -358,6 +453,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
                 session_id=session_id,
                 admin_api_key=config.admin_api_key,
                 model=model,
+                client=_client(),
             )
         except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)
@@ -368,6 +464,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
             body,
             headers,
             config.forward_timeout,
+            client=_client(),
         )
 
         if resp.status_code == 200:
@@ -376,6 +473,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
                 config.admin_api_key,
                 session_id,
                 config.router_timeout,
+                client=_client(),
             )
 
         return Response(
@@ -397,6 +495,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
                 config.admin_api_key,
                 worker_id,
                 config.router_timeout,
+                client=_client(),
             )
         except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)
@@ -404,7 +503,11 @@ def create_app(config: GatewayConfig) -> FastAPI:
         body = await request.body()
         headers = _forwarding_headers(dict(request.headers))
         resp = await forward_request(
-            f"{worker_addr}/set_version", body, headers, config.forward_timeout
+            f"{worker_addr}/set_version",
+            body,
+            headers,
+            config.forward_timeout,
+            client=_client(),
         )
         return Response(
             content=resp.content,
@@ -425,16 +528,17 @@ def create_app(config: GatewayConfig) -> FastAPI:
                 config.admin_api_key,
                 worker_id,
                 config.router_timeout,
+                client=_client(),
             )
         except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)
 
         try:
-            async with httpx.AsyncClient(timeout=config.forward_timeout) as client:
-                resp = await client.get(
-                    f"{worker_addr}/get_version",
-                    headers=_forwarding_headers(dict(request.headers)),
-                )
+            resp = await _client().get(
+                f"{worker_addr}/get_version",
+                headers=_forwarding_headers(dict(request.headers)),
+                timeout=config.forward_timeout,
+            )
             return Response(
                 content=resp.content,
                 status_code=resp.status_code,
@@ -453,7 +557,10 @@ def create_app(config: GatewayConfig) -> FastAPI:
         require_admin_key(request, config.admin_api_key)
         try:
             result = await grant_capacity_in_router(
-                config.router_addr, config.admin_api_key, config.router_timeout
+                config.router_addr,
+                config.admin_api_key,
+                config.router_timeout,
+                client=_client(),
             )
         except RouterUnreachableError as exc:
             return _router_error_response(exc)

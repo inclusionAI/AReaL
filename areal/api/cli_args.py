@@ -2119,6 +2119,13 @@ class _Timer:
 class EvaluatorConfig(_Timer):
     """Configuration for model evaluation scheduling and timing."""
 
+    eval_before_train: bool = field(
+        default=False,
+        metadata={
+            "help": "Run one evaluation before training begins, then continue with the configured evaluation frequency.",
+        },
+    )
+
 
 @dataclass
 class SaverConfig(_Timer):
@@ -2335,6 +2342,25 @@ class SessionTracerConfig:
 
 
 @dataclass
+class MemoryProfilerConfig:
+    """CUDA memory snapshot profiling configuration.
+
+    Attributes:
+        profile_steps: Steps at which to record memory snapshots.
+        max_entries: Max entries for torch.cuda.memory._record_memory_history.
+    """
+
+    profile_steps: list[int] = field(
+        default_factory=lambda: [0, 1],
+        metadata={"help": "List of global steps to capture memory snapshots."},
+    )
+    max_entries: int = field(
+        default=100000,
+        metadata={"help": "Max entries for memory history ring buffer."},
+    )
+
+
+@dataclass
 class PerfTracerConfig:
     """Configuration for perf tracer emission."""
 
@@ -2506,6 +2532,14 @@ class _DatasetConfig:
             "If set, dataset loading will be offloaded to a data service with remote workers."
         },
     )
+    setup_timeout: float = field(
+        default=120.0,
+        metadata={
+            "help": "Timeout in seconds for the data service to load and register a dataset. "
+            "Increase this value when loading large datasets for the first time "
+            "(e.g. HuggingFace datasets that require downloading and preprocessing)."
+        },
+    )
 
 
 @dataclass
@@ -2600,6 +2634,12 @@ class BaseExperimentConfig:
         default=None,
         metadata={"help": "Performance tracer configuration. None means disabled."},
     )
+    memory_profiler: MemoryProfilerConfig | None = field(
+        default=None,
+        metadata={
+            "help": "Memory snapshot profiler configuration. None means disabled."
+        },
+    )
     recover: RecoverConfig = field(default_factory=RecoverConfig)
 
     sglang: SGLangConfig = field(default_factory=SGLangConfig)
@@ -2634,6 +2674,52 @@ class RWConfig(BaseExperimentConfig):
             raise ValueError(
                 "RWConfig requires actor.is_critic=True for reward modeling. "
                 "Set 'actor.is_critic: true' in your YAML config."
+            )
+
+
+@dataclass
+class DPOEngineConfig(TrainEngineConfig):
+    """Engine configuration for DPO training, extending TrainEngineConfig with DPO-specific fields."""
+
+    beta: float = field(
+        default=0.1,
+        metadata={"help": "KL penalty coefficient for DPO loss."},
+    )
+
+    loss_type: str = field(
+        default="sigmoid",
+        metadata={
+            "help": "DPO loss variant. "
+            "'sigmoid': original DPO loss (Rafailov et al. 2023). "
+            "'ipo': Identity Preference Optimization with per-token length normalization (Azar et al. 2023).",
+            "choices": ["sigmoid", "ipo"],
+        },
+    )
+
+    def __post_init__(self):
+        super().__post_init__()
+        _valid = {"sigmoid", "ipo"}
+        if self.loss_type not in _valid:
+            raise ValueError(
+                f"Unsupported DPO loss_type '{self.loss_type}'. "
+                f"Must be one of {sorted(_valid)}."
+            )
+
+
+@dataclass
+class DPOConfig(BaseExperimentConfig):
+    """Configuration for Direct Preference Optimization (DPO) experiments."""
+
+    actor: DPOEngineConfig = field(default_factory=DPOEngineConfig)
+
+    ref: DPOEngineConfig = field(default_factory=DPOEngineConfig)
+
+    def __post_init__(self):
+        super().__post_init__()
+        if getattr(self.actor, "is_critic", False):
+            raise ValueError(
+                "DPOConfig requires a language model (is_critic=False). "
+                "Remove 'actor.is_critic: true' from your YAML config."
             )
 
 

@@ -199,7 +199,7 @@ class DataController:
                             "--router-addr",
                             self._router_addr,
                             "--forward-timeout",
-                            str(60.0),
+                            str(cfg.setup_timeout),
                         ],
                     ),
                     _register_workers(),

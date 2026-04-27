@@ -22,6 +22,11 @@ jobs:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.9.18'
+
       - name: Run pre-commit hooks
         run: |
           pip install pre-commit

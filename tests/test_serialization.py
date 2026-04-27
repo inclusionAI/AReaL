@@ -140,7 +140,7 @@ class TestSerializationRoundTrip:
         original = AutoProcessor.from_pretrained(
             get_model_path(
                 "/storage/openpsi/models/Qwen__Qwen2.5-VL-3B-Instruct",
-                "Qwen2.5-VL-3B-Instruct",
+                "Qwen/Qwen2.5-VL-3B-Instruct",
             )
         )
 
