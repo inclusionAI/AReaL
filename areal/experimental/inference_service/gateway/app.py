@@ -425,7 +425,9 @@ def create_app(config: GatewayConfig) -> FastAPI:
     # POST /release_memory_occupation/{worker_id} — admin key ONLY
     # =========================================================================
 
-    @app.post("/release_memory_occupation/{worker_id}")
+    @app.post(
+        "/release_memory_occupation/{worker_id}", response_model=BroadcastResponse
+    )
     async def release_memory_occupation(worker_id: str, request: Request):
         require_admin_key(request, config.admin_api_key)
         try:
@@ -434,6 +436,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
                 config.admin_api_key,
                 worker_id,
                 config.router_timeout,
+                client=_client(),
             )
         except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)
@@ -441,15 +444,15 @@ def create_app(config: GatewayConfig) -> FastAPI:
         body = await request.body()
         headers = _forwarding_headers(dict(request.headers))
         results = await broadcast_to_workers(
-            [worker_addr], "/release_memory_occupation", body, headers
+            [worker_addr], "/release_memory_occupation", body, headers, client=_client()
         )
-        return {"results": results}
+        return BroadcastResponse(results=[BroadcastResultItem(**r) for r in results])
 
     # =========================================================================
     # POST /resume_memory_occupation/{worker_id} — admin key ONLY
     # =========================================================================
 
-    @app.post("/resume_memory_occupation/{worker_id}")
+    @app.post("/resume_memory_occupation/{worker_id}", response_model=BroadcastResponse)
     async def resume_memory_occupation(worker_id: str, request: Request):
         require_admin_key(request, config.admin_api_key)
         try:
@@ -458,6 +461,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
                 config.admin_api_key,
                 worker_id,
                 config.router_timeout,
+                client=_client(),
             )
         except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)
@@ -465,9 +469,9 @@ def create_app(config: GatewayConfig) -> FastAPI:
         body = await request.body()
         headers = _forwarding_headers(dict(request.headers))
         results = await broadcast_to_workers(
-            [worker_addr], "/resume_memory_occupation", body, headers
+            [worker_addr], "/resume_memory_occupation", body, headers, client=_client()
         )
-        return {"results": results}
+        return BroadcastResponse(results=[BroadcastResultItem(**r) for r in results])
 
     # =========================================================================
     # POST /export_trajectories — admin key ONLY, route by session_id or model field

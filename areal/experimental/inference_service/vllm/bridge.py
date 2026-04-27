@@ -127,7 +127,9 @@ class VLLMBridgeBackend:
 
     def get_onload_request(self, tags: list[str] | None = None) -> HttpRequest:
         if tags is not None:
-            tags_query = "&".join([f"tags={tag}" for tag in tags])
+            from urllib.parse import urlencode
+
+            tags_query = urlencode({"tags": tags}, doseq=True)
             endpoint = f"/wake_up?{tags_query}"
         else:
             endpoint = "/wake_up"

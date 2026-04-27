@@ -1311,12 +1311,18 @@ class GatewayInferenceController:
     async def _async_offload(self) -> None:
         if not self._gateway_addr:
             return
-        await asyncio.gather(
+        results = await asyncio.gather(
             *(
                 self._async_gateway_http_post(f"/release_memory_occupation/{wid}", {})
                 for wid in self._worker_ids.values()
-            )
+            ),
+            return_exceptions=True,
         )
+        failed = [r for r in results if isinstance(r, Exception)]
+        for r in failed:
+            logger.error("Failed to offload a worker: %s", r)
+        if failed and len(failed) == len(results):
+            raise RuntimeError(f"offload failed on ALL {len(failed)} workers")
 
     def onload(self, tags: list[str] | None = None) -> None:
         """Reload model memory on all inference workers."""
@@ -1328,14 +1334,20 @@ class GatewayInferenceController:
         if not self._gateway_addr:
             return
         payload: dict = {"tags": tags} if tags is not None else {}
-        await asyncio.gather(
+        results = await asyncio.gather(
             *(
                 self._async_gateway_http_post(
                     f"/resume_memory_occupation/{wid}", payload
                 )
                 for wid in self._worker_ids.values()
-            )
+            ),
+            return_exceptions=True,
         )
+        failed = [r for r in results if isinstance(r, Exception)]
+        for r in failed:
+            logger.error("Failed to onload a worker: %s", r)
+        if failed and len(failed) == len(results):
+            raise RuntimeError(f"onload failed on ALL {len(failed)} workers")
 
     async def pause_generation(self, worker_id: str | None = None) -> None:
         """Pause generation on a specific worker, or all workers if worker_id is None."""
