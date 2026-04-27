@@ -24,7 +24,7 @@ from awex.transfer.transfer_plan import TransferPlan, TransferPlanBuilder
 
 from areal.experimental.weight_update.awex import fetch_kv_metadata
 from areal.experimental.weight_update.inference_adapter import (
-    WeightUpdateInferenceAdapter,
+    AwexInferenceAdapter,
 )
 from areal.experimental.weight_update.nccl_group import (
     init_weights_update_group,
@@ -35,7 +35,7 @@ from areal.utils import logging
 logger = logging.getLogger("AwexSGLangAdapter")
 
 
-class AwexSGLangAdapter(WeightUpdateInferenceAdapter):
+class AwexSGLangAdapter(AwexInferenceAdapter):
     """Awex inference adapter for in-process SGLang schedulers."""
 
     def __init__(self, scheduler: Any):

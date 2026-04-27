@@ -22,7 +22,7 @@ from areal.experimental.weight_update.nccl_group import (
     setup_batch_isend_irecv,
 )
 from areal.experimental.weight_update.training_adapter import (
-    WeightUpdateTrainingAdapter,
+    AwexTrainingAdapter,
 )
 from areal.utils import logging
 
@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("AwexMegatronAdapter")
 
 
-class AwexMegatronAdapter(WeightUpdateTrainingAdapter):
+class AwexMegatronAdapter(AwexTrainingAdapter):
     """Awex training adapter for MegatronEngine supporting DP, TP, and PP.
 
     PP: get_named_parameters already yields only the current stage's layers

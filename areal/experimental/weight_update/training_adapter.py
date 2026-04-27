@@ -7,7 +7,7 @@ import torch
 
 
 @runtime_checkable
-class WeightUpdateTrainingAdapter(Protocol):
+class AwexTrainingAdapter(Protocol):
     """Protocol for training-side weight update adapters."""
 
     @property

@@ -25,7 +25,7 @@ from areal.experimental.weight_update.nccl_group import (
     setup_batch_isend_irecv,
 )
 from areal.experimental.weight_update.training_adapter import (
-    WeightUpdateTrainingAdapter,
+    AwexTrainingAdapter,
 )
 from areal.utils import logging
 
@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("AwexFSDPAdapter")
 
 
-class AwexFSDPAdapter(WeightUpdateTrainingAdapter):
+class AwexFSDPAdapter(AwexTrainingAdapter):
     """Awex training adapter wrapping FSDPEngine for shard-direct NCCL P2P updates."""
 
     def __init__(self, engine: FSDPEngine):

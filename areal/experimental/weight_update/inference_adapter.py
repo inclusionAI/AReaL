@@ -7,7 +7,7 @@ import torch
 
 
 @runtime_checkable
-class WeightUpdateInferenceAdapter(Protocol):
+class AwexInferenceAdapter(Protocol):
     """Protocol for inference-side weight update adapters."""
 
     @property
