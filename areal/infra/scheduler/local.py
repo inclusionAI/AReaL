@@ -907,7 +907,7 @@ class LocalScheduler(Scheduler):
         try:
             response = requests.get(url, timeout=2.0)
             return response.status_code == 200
-        except Exception:
+        except Exception as e:
             return False
 
     def _configure_worker(self, worker_info: WorkerInfo, worker_rank: int):
@@ -916,7 +916,29 @@ class LocalScheduler(Scheduler):
 
         logger.info(f"[DiagInit] _configure_worker {worker_id}: waiting for /health endpoint...")
         _t0 = time.time()
+        _health_check_count = 0
         while not self._is_worker_ready(worker_info):
+            _health_check_count += 1
+            if _health_check_count % 50 == 1:
+                port = int(worker_info.worker.worker_ports[0])
+                url = f"http://{format_hostport(worker_info.worker.ip, port)}/health"
+                elapsed = time.time() - _t0
+                logger.info(
+                    f"[DiagInit] _configure_worker {worker_id}: /health still not ready "
+                    f"after {elapsed:.1f}s (url={url}, checks={_health_check_count}). "
+                    f"Probing with detailed error..."
+                )
+                try:
+                    resp = requests.get(url, timeout=2.0)
+                    logger.info(
+                        f"[DiagInit] _configure_worker {worker_id}: probe got "
+                        f"status={resp.status_code}, body={resp.text[:200]}"
+                    )
+                except Exception as probe_err:
+                    logger.warning(
+                        f"[DiagInit] _configure_worker {worker_id}: probe failed: "
+                        f"{type(probe_err).__name__}: {probe_err}"
+                    )
             time.sleep(0.1)
         logger.info(
             f"[DiagInit] _configure_worker {worker_id}: /health ready in {time.time() - _t0:.2f}s"
