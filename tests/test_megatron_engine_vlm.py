@@ -111,7 +111,7 @@ class TestExtractVisionFromMultiModal:
     """Test _extract_vision_from_multi_modal helper."""
 
     def test_extracts_pixel_values_and_grid(self):
-        """Should extract and concatenate pixel_values and image_grid_thw."""
+        """Vision tensors should land on padded_mb only, not duplicated on mb."""
         from areal.engine.megatron_utils.packed_context_parallel import (
             extract_vision_from_multi_modal,
         )
@@ -132,16 +132,18 @@ class TestExtractVisionFromMultiModal:
 
         extract_vision_from_multi_modal(mb, padded_mb)
 
-        assert "pixel_values" in mb
-        assert mb["pixel_values"].shape[0] == 15  # 10 + 5
-        assert "image_grid_thw" in mb
-        assert mb["image_grid_thw"].shape[0] == 2  # 2 grids
-        # Same values in padded_mb
-        assert torch.equal(mb["pixel_values"], padded_mb["pixel_values"])
-        assert torch.equal(mb["image_grid_thw"], padded_mb["image_grid_thw"])
+        # Forward side (padded_mb) gets the concatenated vision tensors.
+        assert padded_mb["pixel_values"].shape[0] == 15  # 10 + 5
+        assert padded_mb["image_grid_thw"].shape[0] == 2  # 2 grids
+        # Loss side (mb) does not carry them.
+        assert "pixel_values" not in mb
+        assert "image_grid_thw" not in mb
+        # multi_modal_input is consumed and removed from both sides.
+        assert "multi_modal_input" not in mb
+        assert "multi_modal_input" not in padded_mb
 
     def test_handles_video_grid_thw(self):
-        """Should extract video_grid_thw when present."""
+        """Should extract video_grid_thw onto padded_mb."""
         from areal.engine.megatron_utils.packed_context_parallel import (
             extract_vision_from_multi_modal,
         )
@@ -159,8 +161,8 @@ class TestExtractVisionFromMultiModal:
 
         extract_vision_from_multi_modal(mb, padded_mb)
 
-        assert "video_grid_thw" in mb
-        assert mb["video_grid_thw"].shape[0] == 1
+        assert padded_mb["video_grid_thw"].shape[0] == 1
+        assert "video_grid_thw" not in mb
 
     def test_no_multi_modal_input_is_noop(self):
         """Should do nothing if multi_modal_input not in dict."""
@@ -177,7 +179,8 @@ class TestExtractVisionFromMultiModal:
         assert "image_grid_thw" not in mb
 
     def test_empty_multi_modal_input_is_noop(self):
-        """Should not add keys if multi_modal_input items have no vision data."""
+        """Should not add keys if multi_modal_input items have no vision data,
+        but should still pop multi_modal_input itself."""
         from areal.engine.megatron_utils.packed_context_parallel import (
             extract_vision_from_multi_modal,
         )
@@ -188,6 +191,9 @@ class TestExtractVisionFromMultiModal:
         extract_vision_from_multi_modal(mb, padded_mb)
 
         assert "pixel_values" not in mb
+        assert "pixel_values" not in padded_mb
+        assert "multi_modal_input" not in mb
+        assert "multi_modal_input" not in padded_mb
 
 
 class TestVisionModelDetection:
