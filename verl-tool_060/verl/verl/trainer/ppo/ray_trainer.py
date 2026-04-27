@@ -892,6 +892,12 @@ class RayPPOTrainer:
         dataloader_state_dict = self.train_dataloader.state_dict()
         torch.save(dataloader_state_dict, dataloader_local_path)
 
+        # save sampler state if it supports it
+        sampler = self.train_dataloader.sampler
+        if hasattr(sampler, "state_dict"):
+            sampler_local_path = os.path.join(local_global_step_folder, "sampler.pt")
+            torch.save(sampler.state_dict(), sampler_local_path)
+
         # latest checkpointed iteration tracker (for atomic usage)
         local_latest_checkpointed_iteration = os.path.join(
             self.config.trainer.default_local_dir, "latest_checkpointed_iteration.txt"
@@ -958,6 +964,14 @@ class RayPPOTrainer:
             self.train_dataloader.load_state_dict(dataloader_state_dict)
         else:
             print(f"Warning: No dataloader state found at {dataloader_local_path}, will start from scratch")
+
+        # load sampler state
+        sampler_local_path = os.path.join(global_step_folder, "sampler.pt")
+        sampler = self.train_dataloader.sampler
+        if os.path.exists(sampler_local_path) and hasattr(sampler, "load_state_dict"):
+            sampler_state = torch.load(sampler_local_path, weights_only=False)
+            sampler.load_state_dict(sampler_state)
+            print(f"Loaded sampler state from {sampler_local_path}")
 
     def _start_profiling(self, do_profile: bool) -> None:
         """Start profiling for all worker groups if profiling is enabled."""

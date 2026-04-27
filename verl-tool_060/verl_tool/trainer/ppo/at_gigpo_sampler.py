@@ -54,8 +54,17 @@ class ATGiGPOSampler(AbstractCurriculumSampler):
         self._step_count = 0
 
         K = max(len(self.task_types), 1)
-        self.sampling_probs: dict[str, float] = {t: 1.0 / K for t in self.task_types}
+        total_samples = sum(self.dataset_sizes.values())
+        self.base_probs: dict[str, float] = {t: self.dataset_sizes[t] / total_samples for t in self.task_types}
+        self.sampling_probs: dict[str, float] = dict(self.base_probs)
         self._rng = np.random.default_rng(seed=42)
+
+        self._index_pools: dict[str, list[int]] = {}
+        for t in self.task_types:
+            pool = list(self.task2indices[t])
+            self._rng.shuffle(pool)
+            self._index_pools[t] = pool
+        self._pool_cursors: dict[str, int] = {t: 0 for t in self.task_types}
 
     def update(self, batch: DataProto) -> None:
         if "episode_advantages" not in batch.batch:
@@ -117,10 +126,10 @@ class ATGiGPOSampler(AbstractCurriculumSampler):
 
             if self.v2:
                 exploit = 1.0 - 0.5 * self.acc_ema[d_j]
+                scores.append(self.base_probs[d_j] * (exploit + explore) * decay)
             else:
                 exploit = self.L_hat_ema[d_j]
-
-            scores.append((exploit + explore) * decay)
+                scores.append((exploit + explore) * decay)
 
         scores_t = torch.tensor(scores, dtype=torch.float32)
         probs = F.softmax(scores_t / self.tau, dim=0).numpy()
@@ -133,6 +142,7 @@ class ATGiGPOSampler(AbstractCurriculumSampler):
             metrics[f"at_gigpo/{d_j}/L_hat_ema"] = self.L_hat_ema[d_j]
             metrics[f"at_gigpo/{d_j}/acc_ema"] = self.acc_ema[d_j]
             metrics[f"at_gigpo/{d_j}/acc_raw"] = float(np.mean(self.acc_buffer[d_j])) if self.acc_buffer[d_j] else self.acc_ema[d_j]
+            metrics[f"at_gigpo/{d_j}/base_prob"] = self.base_probs[d_j]
             metrics[f"at_gigpo/{d_j}/sampling_prob"] = self.sampling_probs[d_j]
             metrics[f"at_gigpo/{d_j}/epoch_count"] = self.n_samples[d_j] / (max(self.dataset_sizes[d_j], 1) * rollout_n)
             metrics[f"at_gigpo/{d_j}/period_buffer_size"] = len(self.period_buffer[d_j])
@@ -140,6 +150,23 @@ class ATGiGPOSampler(AbstractCurriculumSampler):
         probs = list(self.sampling_probs.values())
         metrics["at_gigpo/task_weight_entropy"] = -sum(p * math.log(p + 1e-8) for p in probs)
         return metrics
+
+    def _draw_from_pool(self, task: str, n: int) -> list[int]:
+        pool = self._index_pools[task]
+        cursor = self._pool_cursors[task]
+        result = []
+        remaining = n
+        while remaining > 0:
+            available = len(pool) - cursor
+            if available <= 0:
+                self._rng.shuffle(pool)
+                cursor = 0
+            take = min(remaining, len(pool) - cursor)
+            result.extend(pool[cursor:cursor + take])
+            cursor += take
+            remaining -= take
+        self._pool_cursors[task] = cursor
+        return result
 
     def __iter__(self):
         probs = np.array([self.sampling_probs[t] for t in self.task_types])
@@ -150,12 +177,45 @@ class ATGiGPOSampler(AbstractCurriculumSampler):
             n_k = int(counts[i])
             if n_k == 0:
                 continue
-            pool = self.task2indices[task]
-            chosen = self._rng.choice(pool, size=n_k, replace=(n_k > len(pool)))
-            indices.extend(chosen.tolist())
+            indices.extend(self._draw_from_pool(task, n_k))
 
         self._rng.shuffle(indices)
         return iter(indices)
+
+    def state_dict(self) -> dict:
+        return {
+            "L_hat_ema": dict(self.L_hat_ema),
+            "acc_ema": dict(self.acc_ema),
+            "acc_ema_prev": dict(self.acc_ema_prev),
+            "n_samples": dict(self.n_samples),
+            "n_total": self.n_total,
+            "_step_count": self._step_count,
+            "sampling_probs": dict(self.sampling_probs),
+            "_pool_cursors": dict(self._pool_cursors),
+            "_index_pools": {t: list(p) for t, p in self._index_pools.items()},
+            "_rng_state": self._rng.bit_generator.state,
+        }
+
+    def load_state_dict(self, state: dict) -> None:
+        for t in self.task_types:
+            if t in state.get("L_hat_ema", {}):
+                self.L_hat_ema[t] = state["L_hat_ema"][t]
+            if t in state.get("acc_ema", {}):
+                self.acc_ema[t] = state["acc_ema"][t]
+            if t in state.get("acc_ema_prev", {}):
+                self.acc_ema_prev[t] = state["acc_ema_prev"][t]
+            if t in state.get("n_samples", {}):
+                self.n_samples[t] = state["n_samples"][t]
+            if t in state.get("sampling_probs", {}):
+                self.sampling_probs[t] = state["sampling_probs"][t]
+            if t in state.get("_pool_cursors", {}):
+                self._pool_cursors[t] = state["_pool_cursors"][t]
+            if t in state.get("_index_pools", {}):
+                self._index_pools[t] = state["_index_pools"][t]
+        self.n_total = state.get("n_total", self.n_total)
+        self._step_count = state.get("_step_count", self._step_count)
+        if "_rng_state" in state:
+            self._rng.bit_generator.state = state["_rng_state"]
 
     def __len__(self):
         return self.batch_size
