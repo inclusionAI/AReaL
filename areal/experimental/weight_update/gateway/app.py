@@ -34,6 +34,8 @@ class ConnectRequest(BaseModel):
     save_path: str = ""
     use_lora: bool = False
     lora_name: str = ""
+    nccl_master_addr: str = ""
+    nccl_master_port: int = 0
 
 
 class UpdateWeightsRequest(BaseModel):
@@ -171,7 +173,6 @@ def create_app(config: WeightUpdateConfig | None = None) -> FastAPI:
 
     kv_store = WeightMetaStore()
     registry = PairRegistry()
-    next_port = [29500]
 
     app.state.kv_store = kv_store
     app.state.registry = registry
@@ -179,11 +180,6 @@ def create_app(config: WeightUpdateConfig | None = None) -> FastAPI:
 
     def _auth(request: Request) -> None:
         require_admin_key(request, config.admin_api_key)
-
-    def _allocate_port() -> int:
-        port = next_port[0]
-        next_port[0] += 1
-        return port
 
     @app.get("/health")
     async def health() -> HealthResponse:
@@ -294,8 +290,8 @@ def create_app(config: WeightUpdateConfig | None = None) -> FastAPI:
         kv_store.put(pair_name, "training_params_meta", training_params_meta)
         kv_store.put(pair_name, "infer_params_meta", infer_params_meta)
 
-        master_addr = _get_own_ip()
-        master_port = _allocate_port()
+        master_addr = body.nccl_master_addr
+        master_port = body.nccl_master_port
 
         # Use the bound host for kv_store_url so workers can reach the
         # gateway.  When bound to 0.0.0.0 any interface works, so fall

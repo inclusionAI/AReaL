@@ -37,7 +37,7 @@ def get_executor() -> concurrent.futures.ThreadPoolExecutor:
         with _executor_lock:
             if _shared_executor is None:
                 _shared_executor = concurrent.futures.ThreadPoolExecutor(
-                    max_workers=4, thread_name_prefix="shared_executor"
+                    max_workers=8, thread_name_prefix="shared_executor"
                 )
                 # Register cleanup on process exit
                 atexit.register(_shutdown_executor)

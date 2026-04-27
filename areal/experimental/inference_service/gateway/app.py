@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import traceback
 from contextlib import asynccontextmanager
 
 import httpx
@@ -314,6 +315,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
                         client=_client(),
                     )
             except Exception as exc:
+                traceback.print_exc()
                 logger.error("Failed to register session in router: %s", exc)
                 return JSONResponse(
                     {

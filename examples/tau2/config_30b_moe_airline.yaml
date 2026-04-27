@@ -183,7 +183,7 @@ sglang:
   context_length: 32768
   mem_fraction_static: 0.8
   max_prefill_tokens: 32768
-  schedule_policy: lpm
+  routing_strategy: lpm
   attention_backend: fa3
   log_level: warning
 
