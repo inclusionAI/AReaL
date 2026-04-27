@@ -3592,6 +3592,23 @@ class MegatronEngine(TrainEngine):
                     loss_scale,
                 )
 
+        if _mtp_loss_for_this_mb is not None and abs(loss_scale) > 0:
+            _inv = 1.0 / loss_scale
+            # Subtract the already-added mtp and re-add with inverse scaling
+            # so `(loss) * loss_scale == loss_rl * loss_scale + mtp`.
+            loss = (loss - _mtp_contribution) + _mtp_contribution * _inv
+            _n_ds = self._mtp_loss_total_count
+            if _n_ds <= 4 or _n_ds % 100 == 0:
+                self.logger.info(
+                    "[MTPFix-DoubleScale] Inverse-loss_scale applied: "
+                    "loss_scale=%.6f, inv=%.4f, mtp_contribution=%.6f, "
+                    "effective_mtp_in_final_loss=%.6f (verl-equivalent, "
+                    "single mtp_loss_scaling_factor application)",
+                    loss_scale, _inv,
+                    _mtp_contribution.detach().item(),
+                    _mtp_contribution.detach().item(),
+                )
+
         return loss * loss_scale
 
     def _compute_forward_result(
