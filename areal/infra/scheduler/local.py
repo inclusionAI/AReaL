@@ -53,6 +53,9 @@ from areal.utils.network import (
 
 logger = logging.getLogger("LocalScheduler")
 
+_NO_PROXY = {"http": None, "https": None}
+_NO_PROXY_TRUST_ENV = False
+
 
 @dataclass
 class WorkerInfo:
@@ -466,6 +469,7 @@ class LocalScheduler(Scheduler):
         timeout = aiohttp.ClientTimeout(total=30.0)
         async with aiohttp.ClientSession(
             timeout=timeout,
+            trust_env=False,
             connector=get_default_connector(),
         ) as session:
             tasks = []
@@ -497,6 +501,7 @@ class LocalScheduler(Scheduler):
         timeout = aiohttp.ClientTimeout(total=120.0)
         async with aiohttp.ClientSession(
             timeout=timeout,
+            trust_env=False,
             connector=get_default_connector(),
         ) as session:
             # Launch all fork requests concurrently with exception handling
@@ -905,7 +910,9 @@ class LocalScheduler(Scheduler):
         url = f"http://{format_hostport(worker_info.worker.ip, port)}/health"
 
         try:
-            response = requests.get(url, timeout=2.0)
+            response = requests.get(
+                url, timeout=2.0, proxies=_NO_PROXY, verify=False
+            )
             return response.status_code == 200
         except Exception as e:
             return False
@@ -929,7 +936,9 @@ class LocalScheduler(Scheduler):
                     f"Probing with detailed error..."
                 )
                 try:
-                    resp = requests.get(url, timeout=2.0)
+                    resp = requests.get(
+                        url, timeout=2.0, proxies=_NO_PROXY, verify=False
+                    )
                     logger.info(
                         f"[DiagInit] _configure_worker {worker_id}: probe got "
                         f"status={resp.status_code}, body={resp.text[:200]}"
@@ -974,6 +983,8 @@ class LocalScheduler(Scheduler):
                 data=payload_data,
                 headers={"Content-Type": "application/json"},
                 timeout=300.0,
+                proxies=_NO_PROXY,
+                verify=False,
             )
             logger.info(
                 f"[DiagInit] _configure_worker {worker_id}: POST /configure responded "
@@ -1124,6 +1135,7 @@ class LocalScheduler(Scheduler):
             timeout = aiohttp.ClientTimeout(total=30.0)
             async with aiohttp.ClientSession(
                 timeout=timeout,
+                trust_env=False,
                 connector=get_default_connector(),
             ) as session:
                 async with session.post(
@@ -1222,6 +1234,7 @@ class LocalScheduler(Scheduler):
             async with aiohttp.ClientSession(
                 timeout=timeout,
                 read_bufsize=1024 * 1024 * 10,
+                trust_env=False,
                 connector=get_default_connector(),
             ) as session:
                 async with session.post(
@@ -1512,6 +1525,7 @@ class LocalScheduler(Scheduler):
                 async with aiohttp.ClientSession(
                     timeout=timeo,
                     read_bufsize=1024 * 1024 * 10,
+                    trust_env=False,
                     connector=get_default_connector(),
                 ) as session:
                     async with session.post(

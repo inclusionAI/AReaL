@@ -53,6 +53,8 @@ from areal.utils.offload import get_tms_env_vars
 
 logger = logging.getLogger("SlurmScheduler")
 
+_NO_PROXY = {"http": None, "https": None}
+
 
 @dataclass
 class SlurmWorkerInfo:
@@ -277,7 +279,7 @@ class SlurmScheduler(Scheduler):
         url = f"http://{format_hostport(worker_info.worker.ip, port)}/health"
 
         try:
-            response = requests.get(url, timeout=2.0)
+            response = requests.get(url, timeout=2.0, proxies=_NO_PROXY, verify=False)
             return response.status_code == 200
         except Exception:
             return False
@@ -305,6 +307,8 @@ class SlurmScheduler(Scheduler):
                 ),
                 headers={"Content-Type": "application/json"},
                 timeout=300.0,
+                proxies=_NO_PROXY,
+                verify=False,
             )
 
             if response.status_code == 200:
@@ -367,8 +371,10 @@ class SlurmScheduler(Scheduler):
             # Allocate new ports from the worker
             if worker_info.spec.port_count > 1:
                 resp = requests.post(
-                    f"http://{format_hostport(ip, port)}/alloc_ports",
+                f"http://{format_hostport(ip, port)}/alloc_ports",
                     json=dict(count=worker_info.spec.port_count - 1),
+                    proxies=_NO_PROXY,
+                    verify=False,
                 )
                 resp.raise_for_status()
                 worker_ports += list(map(str, resp.json()["ports"]))
@@ -657,6 +663,7 @@ class SlurmScheduler(Scheduler):
         timeout = aiohttp.ClientTimeout(total=30.0)
         async with aiohttp.ClientSession(
             timeout=timeout,
+            trust_env=False,
             connector=get_default_connector(),
         ) as session:
             tasks = []
@@ -688,6 +695,7 @@ class SlurmScheduler(Scheduler):
         timeout = aiohttp.ClientTimeout(total=120.0)
         async with aiohttp.ClientSession(
             timeout=timeout,
+            trust_env=False,
             connector=get_default_connector(),
         ) as session:
             # Launch all fork requests concurrently with exception handling
@@ -1307,6 +1315,7 @@ class SlurmScheduler(Scheduler):
             timeout = aiohttp.ClientTimeout(total=30.0)
             async with aiohttp.ClientSession(
                 timeout=timeout,
+                trust_env=False,
                 connector=get_default_connector(),
             ) as session:
                 async with session.post(
@@ -1397,6 +1406,7 @@ class SlurmScheduler(Scheduler):
             async with aiohttp.ClientSession(
                 timeout=timeout,
                 read_bufsize=1024 * 1024 * 10,
+                trust_env=False,
                 connector=get_default_connector(),
             ) as session:
                 async with session.post(
@@ -1516,7 +1526,10 @@ class SlurmScheduler(Scheduler):
                 raise
 
             try:
-                response = requests.post(url, json=payload, timeout=http_timeout)
+                response = requests.post(
+                    url, json=payload, timeout=http_timeout,
+                    proxies=_NO_PROXY, verify=False,
+                )
 
                 if response.status_code == 200:
                     result = response.json()
@@ -1651,6 +1664,7 @@ class SlurmScheduler(Scheduler):
                 async with aiohttp.ClientSession(
                     timeout=timeout,
                     read_bufsize=1024 * 1024 * 10,
+                    trust_env=False,
                     connector=get_default_connector(),
                 ) as session:
                     async with session.post(

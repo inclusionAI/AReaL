@@ -344,6 +344,8 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
                     addr,
                     json={"task_id": task_id},
                     timeout=30,
+                    proxies={"http": None, "https": None},
+                    verify=False,
                 )
                 resp.raise_for_status()
             except requests.RequestException as e:

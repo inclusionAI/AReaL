@@ -72,6 +72,8 @@ def wait_for_server(base_url: str, timeout: int | None = None) -> None:
             response = requests.get(
                 f"{base_url}/v1/models",
                 headers={"Authorization": "Bearer None"},
+                proxies={"http": None, "https": None},
+                verify=False,
             )
             if response.status_code == 200:
                 time.sleep(5)

@@ -128,6 +128,7 @@ class HttpClientManager:
             self._aiohttp_session = aiohttp.ClientSession(
                 timeout=timeout,
                 read_bufsize=1024 * 1024 * 10,
+                trust_env=False,
                 connector=get_default_connector(),
             )
             # Track which event loop this session belongs to

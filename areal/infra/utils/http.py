@@ -15,7 +15,17 @@ logger = logging.getLogger("HTTPUtils")
 
 
 def get_default_connector():
-    return aiohttp.TCPConnector(limit=0, use_dns_cache=False, force_close=True)
+    return aiohttp.TCPConnector(
+        limit=0, use_dns_cache=False, force_close=True
+    )
+
+
+def get_default_session_kwargs(**overrides):
+    return {
+        "trust_env": False,
+        "connector": get_default_connector(),
+        **overrides,
+    }
 
 
 async def arequest_with_retry(
@@ -49,6 +59,7 @@ async def arequest_with_retry(
         _session = aiohttp.ClientSession(
             timeout=timeo,
             read_bufsize=1024 * 1024 * 10,
+            trust_env=False,
             connector=get_default_connector(),
         )
     else:
