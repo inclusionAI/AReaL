@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -12,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from areal.utils import logging
 
 from ._client import DaytonaClientManager
+from ._client import _load_daytona_sdk as _load_daytona_client_sdk
 
 if TYPE_CHECKING:
     from daytona import Chart, Image, Resources
@@ -80,10 +82,6 @@ def _load_daytona_sdk() -> dict[str, Any]:
     }
 
 
-def _run_sync(coro):
-    return asyncio.run(coro)
-
-
 def _last_non_empty_line(text: str) -> str | None:
     for line in reversed(text.splitlines()):
         stripped = line.strip()
@@ -135,8 +133,12 @@ class DaytonaRunner:
         self.language = language
         self.ephemeral = ephemeral
         self._sandbox_id: str | None = None
-
-        _run_sync(self._acreate())
+        self._client = None
+        self._closed = False
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
+        self._loop_lock = threading.Lock()
+        self._sandbox_lock: asyncio.Lock | None = None
 
     def _build_create_params(self):
         if self.image is not None:
@@ -159,24 +161,87 @@ class DaytonaRunner:
             ephemeral=self.ephemeral,
         )
 
-    async def _acreate(self) -> None:
-        client = await DaytonaClientManager.get_client()
-        try:
-            sandbox = await client.create(
-                self._build_create_params(),
-                timeout=self.create_timeout,
+    def _ensure_loop(self) -> asyncio.AbstractEventLoop:
+        if self._closed:
+            raise RuntimeError("DaytonaRunner is closed")
+
+        with self._loop_lock:
+            if self._loop is not None:
+                return self._loop
+
+            loop = asyncio.new_event_loop()
+            ready = threading.Event()
+
+            def run_loop() -> None:
+                asyncio.set_event_loop(loop)
+                ready.set()
+                loop.run_forever()
+                loop.run_until_complete(loop.shutdown_asyncgens())
+                loop.close()
+
+            self._loop = loop
+            self._thread = threading.Thread(
+                target=run_loop,
+                name="DaytonaRunnerLoop",
+                daemon=True,
             )
-            self._sandbox_id = sandbox.id
-            logger.debug("Created Daytona sandbox %s", self._sandbox_id)
-        finally:
-            await DaytonaClientManager.close()
+            self._thread.start()
+            ready.wait()
+            return loop
+
+    def _run(self, coro):
+        try:
+            loop = self._ensure_loop()
+        except BaseException:
+            coro.close()
+            raise
+
+        future = asyncio.run_coroutine_threadsafe(coro, loop)
+        try:
+            return future.result()
+        except BaseException:
+            future.cancel()
+            raise
+
+    async def _aget_client(self):
+        if self._client is None:
+            async_daytona_cls, daytona_config_cls = _load_daytona_client_sdk()
+            config = daytona_config_cls(
+                connection_pool_maxsize=None,
+                **DaytonaClientManager.config_overrides(),
+            )
+            self._client = async_daytona_cls(config)
+            logger.debug("Initialized DaytonaRunner AsyncDaytona client")
+        return self._client
+
+    async def _acreate(self):
+        client = await self._aget_client()
+        sandbox = await client.create(
+            self._build_create_params(),
+            timeout=self.create_timeout,
+        )
+        self._sandbox_id = sandbox.id
+        logger.debug("Created Daytona sandbox %s", self._sandbox_id)
+        return sandbox
 
     async def _aget_sandbox(self):
         if self._sandbox_id is None:
-            raise RuntimeError("DaytonaRunner sandbox is closed")
+            if self._sandbox_lock is None:
+                self._sandbox_lock = asyncio.Lock()
+            async with self._sandbox_lock:
+                if self._sandbox_id is None:
+                    return await self._acreate()
 
-        client = await DaytonaClientManager.get_client()
+        client = await self._aget_client()
         return await client.get(self._sandbox_id)
+
+    def start(self) -> DaytonaRunner:
+        try:
+            self._run(self._aget_sandbox())
+            return self
+        except BaseException:
+            self.close()
+            raise
 
     def run(
         self,
@@ -186,7 +251,7 @@ class DaytonaRunner:
         on_stdout: Callable[[str], None] | None = None,
         on_stderr: Callable[[str], None] | None = None,
     ) -> DaytonaRunResult:
-        return _run_sync(
+        return self._run(
             self._arun(code, timeout=timeout, on_stdout=on_stdout, on_stderr=on_stderr)
         )
 
@@ -227,8 +292,6 @@ class DaytonaRunner:
                     error=error,
                 )
             raise
-        finally:
-            await DaytonaClientManager.close()
 
         output = response.result or ""
         charts = (
@@ -263,26 +326,46 @@ class DaytonaRunner:
         )
 
     def close(self) -> None:
-        _run_sync(self._aclose())
-
-    async def _aclose(self) -> None:
-        if self._sandbox_id is None:
+        if self._loop is None:
+            self._closed = True
             return
 
+        try:
+            self._run(self._aclose())
+        finally:
+            self._closed = True
+            self._stop_loop()
+
+    async def _aclose(self) -> None:
         sandbox_id = self._sandbox_id
         self._sandbox_id = None
 
         try:
-            client = await DaytonaClientManager.get_client()
-            sandbox = await client.get(sandbox_id)
-            await sandbox.delete(timeout=self.create_timeout)
+            if sandbox_id is not None:
+                client = await self._aget_client()
+                sandbox = await client.get(sandbox_id)
+                await sandbox.delete(timeout=self.create_timeout)
         except self._sdk["DaytonaNotFoundError"]:
             logger.debug("Daytona sandbox already deleted")
         finally:
-            await DaytonaClientManager.close()
+            if self._client is not None:
+                client = self._client
+                self._client = None
+                await client.close()
+
+    def _stop_loop(self) -> None:
+        loop = self._loop
+        thread = self._thread
+        self._loop = None
+        self._thread = None
+
+        if loop is not None and loop.is_running():
+            loop.call_soon_threadsafe(loop.stop)
+        if thread is not None and thread.is_alive():
+            thread.join()
 
     def __enter__(self) -> DaytonaRunner:
-        return self
+        return self.start()
 
     def __exit__(self, *exc) -> None:
         self.close()

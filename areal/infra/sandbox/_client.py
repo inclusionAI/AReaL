@@ -59,6 +59,16 @@ class DaytonaClientManager:
         cls._config_overrides = dict(config_kwargs)
 
     @classmethod
+    def config_overrides(cls) -> dict[str, Any]:
+        return dict(cls._config_overrides)
+
+    @classmethod
+    def active_loop(cls) -> asyncio.AbstractEventLoop | None:
+        if cls._loop is not None and cls._loop.is_running():
+            return cls._loop
+        return None
+
+    @classmethod
     async def get_client(cls):
         current_loop = asyncio.get_running_loop()
 
@@ -71,7 +81,9 @@ class DaytonaClientManager:
             )
 
             if needs_new_client:
-                if cls._client is not None and cls._loop is not current_loop:
+                if cls._client is not None:
+                    await cls._close_client()
+                if cls._loop is not None and cls._loop is not current_loop:
                     logger.debug(
                         "Reinitializing AsyncDaytona client for a new event loop"
                     )
@@ -93,17 +105,30 @@ class DaytonaClientManager:
     @classmethod
     async def close(cls) -> None:
         async with cls._lock:
-            client = cls._client
-            if client is None:
-                return
+            await cls._close_client()
 
-            cls._client = None
-            cls._loop = None
+    @classmethod
+    async def _close_client(cls) -> None:
+        client = cls._client
+        if client is None:
+            return
 
-            try:
+        loop = cls._loop
+        cls._client = None
+        cls._loop = None
+
+        try:
+            if (
+                loop is not None
+                and loop.is_running()
+                and loop is not asyncio.get_running_loop()
+            ):
+                future = asyncio.run_coroutine_threadsafe(client.close(), loop)
+                await asyncio.wrap_future(future)
+            else:
                 await client.close()
-            finally:
-                logger.debug("Closed AsyncDaytona client")
+        finally:
+            logger.debug("Closed AsyncDaytona client")
 
     @classmethod
     def _close_sync(cls) -> None:

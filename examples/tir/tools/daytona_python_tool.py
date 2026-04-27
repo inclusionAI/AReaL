@@ -189,8 +189,6 @@ class DaytonaPythonTool(BaseTool):
             if isinstance(exc, daytona_error):
                 return str(exc), ToolCallStatus.ERROR
             raise
-        finally:
-            await DaytonaClientManager.close()
 
         if result.error is not None:
             error_lines = []
@@ -218,7 +216,6 @@ class DaytonaPythonTool(BaseTool):
 
     async def _aclose(self) -> None:
         if self._sandbox_id is None:
-            await DaytonaClientManager.close()
             return
 
         sandbox_id = self._sandbox_id
@@ -233,8 +230,6 @@ class DaytonaPythonTool(BaseTool):
             logger.debug("Daytona sandbox already deleted")
         except Exception as exc:
             logger.warning("DaytonaPythonTool cleanup error: %s", exc)
-        finally:
-            await DaytonaClientManager.close()
 
     async def aclose(self) -> None:
         await self._aclose()
@@ -246,7 +241,15 @@ class DaytonaPythonTool(BaseTool):
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            asyncio.run(self._aclose())
+            loop = DaytonaClientManager.active_loop()
+            if loop is not None:
+                asyncio.run_coroutine_threadsafe(self._aclose(), loop).result()
+                return
+
+            try:
+                asyncio.run(self._aclose())
+            finally:
+                asyncio.run(DaytonaClientManager.close())
             return
 
         logger.warning(
