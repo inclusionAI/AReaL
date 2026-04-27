@@ -1,4 +1,5 @@
 import subprocess
+import sys
 
 import pytest
 
@@ -28,7 +29,8 @@ def _run_test_with_torchrun(
                 f"--vpp_size={vpp_size}",
             ],
             check=True,
-            capture_output=True,
+            stdout=sys.stdout,
+            stderr=sys.stdout,
             text=True,
         )
     except subprocess.CalledProcessError as e:
@@ -65,7 +67,7 @@ def test_qwen3_grad_norm_mb_invariance(tmp_path_factory):
     )
     _run_test_with_torchrun(
         "qwen3",
-        "d1p1t1",
+        "megatron:d2p1t1",
         test_type="grad_norm_mb_invariance",
         output=str(output),
     )

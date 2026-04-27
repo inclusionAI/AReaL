@@ -257,6 +257,7 @@ def test_grad_norm_mb_invariance(
     max_seqlen = 128
 
     grad_norms: list[float] = []
+    engines = []
     # Two configs that yield different `num_microbatches` for the same total
     # batch. Values chosen to keep at least one mb for the smallest PP chunk
     # while still producing distinct mb counts between the two runs.
@@ -290,8 +291,10 @@ def test_grad_norm_mb_invariance(
 
         current_platform.synchronize()
         dist.barrier()
-        engine.destroy()
+        engines.append(engine)
 
+    for engine in engines:
+        engine.destroy()
     # grad_norm is reported only on the DP head; other ranks may see NaN/0 but
     # they all agree by virtue of the Megatron optimizer's internal all-reduce.
     # Tolerance: 1e-3 relative — small enough to catch the num_microbatches
@@ -542,7 +545,7 @@ def main():
     elif args.test_type == "grad_norm_mb_invariance":
         test_grad_norm_mb_invariance(
             args.model_type,
-            args.allocation_mode,
+            args.backend,
             output=args.output,
             vpp_size=args.vpp_size,
         )
