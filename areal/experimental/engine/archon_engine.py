@@ -440,7 +440,25 @@ class ArchonEngine(TrainEngine):
         gc.collect()
 
         if dist.is_initialized() and self.own_global_group:
+            # Pre-destroy synchronization on a CPU (gloo) group so that all
+            # ranks leave the NCCL collective phase together. Without this
+            # barrier, rank-0 (which owns the TCPStore server) may exit
+            # before peers finish their final NCCL abort, causing
+            # HeartbeatMonitor background threads on other ranks to observe
+            # "recvValue failed" on the already-closed store. This is
+            # harmless but produces a noisy stderr backtrace at teardown.
+            if getattr(self, "_cpu_group", None) is not None:
+                try:
+                    dist.barrier(group=self._cpu_group)
+                except Exception as e:
+                    self.logger.warning(
+                        f"pre-destroy CPU barrier failed (ignored): {e}"
+                    )
             dist.destroy_process_group()
+            # Make destroy() idempotent: if the controller calls destroy
+            # more than once (e.g. via cleanup hooks), the second call
+            # must not try to destroy already-destroyed groups.
+            self.own_global_group = False
         self._initialized = False
 
     def train(self, mode: bool = True):

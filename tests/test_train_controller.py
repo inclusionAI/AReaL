@@ -97,9 +97,10 @@ class MockScheduler:
         await asyncio.sleep(0.001)
         return None
 
-    def delete_workers(self, role):
+    def delete_workers(self, role, reverse_order: bool = False):
         """Mock worker deletion."""
         self.deleted_roles.append(role)
+        self.delete_reverse_order = reverse_order
         self.workers.clear()
 
 
@@ -259,6 +260,22 @@ class TestTrainControllerDestroy:
 
         # Workers should still be cleared
         assert len(train_controller.workers) == 0
+
+    def test_destroy_requests_reverse_order(self, train_controller, ft_spec):
+        """Workers must be torn down in reverse rank order.
+
+        This protects rank-0 (which owns the global TCPStore server) from
+        being killed before non-zero ranks finish NCCL abort, avoiding a
+        noisy ``TCPStore.recvValue failed`` warning from
+        HeartbeatMonitor.
+        """
+        train_controller.initialize(role="train_worker", ft_spec=ft_spec)
+
+        train_controller.destroy()
+
+        assert (
+            getattr(train_controller.scheduler, "delete_reverse_order", False) is True
+        )
 
 
 class TestTrainControllerMergeResults:
