@@ -18,7 +18,7 @@ class WeightUpdateConfig:
     # Authentication
     admin_api_key: str = "areal-admin-key"
 
-    log_level: str = "info"
+    log_level: str = "warning"
 
     # NCCL
     comm_backend: str = "nccl"  # "nccl" or "hccl" (NPU)

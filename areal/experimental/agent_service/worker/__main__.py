@@ -23,7 +23,7 @@ def main() -> None:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=9000)
     parser.add_argument(
-        "--log-level", choices=["debug", "info", "warning", "error"], default="info"
+        "--log-level", choices=["debug", "info", "warning", "error"], default="warning"
     )
     args = parser.parse_args()
 

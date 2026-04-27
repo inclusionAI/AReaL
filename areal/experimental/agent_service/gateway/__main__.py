@@ -21,7 +21,7 @@ def main() -> None:
     parser.add_argument("--router-timeout", type=float, default=2.0)
     parser.add_argument("--forward-timeout", type=float, default=120.0)
     parser.add_argument(
-        "--log-level", choices=["debug", "info", "warning", "error"], default="info"
+        "--log-level", choices=["debug", "info", "warning", "error"], default="warning"
     )
     args = parser.parse_args()
 

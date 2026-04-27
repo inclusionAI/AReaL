@@ -41,7 +41,7 @@ class AgentServiceControllerConfig:
     """Seconds to wait for active sessions to drain before force-killing a pair."""
 
     # -- Log level ---------------------------------------------------------
-    log_level: str = "info"
+    log_level: str = "warning"
     """Log level for spawned micro-services."""
 
     # -- Environment -------------------------------------------------------
