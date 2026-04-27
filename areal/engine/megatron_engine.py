@@ -1277,6 +1277,17 @@ class MegatronEngine(TrainEngine):
                         if getattr(module, "parallel_mode", None) == "duplicated":
                             for p_name, _ in module.named_parameters(recurse=False):
                                 full = f"{mod_name}.{p_name}" if mod_name else p_name
+                                # Normalize to match the naming convention used
+                                # by megatron_utils.megatron.get_named_parameters
+                                # (which is the source of ``name`` passed into
+                                # ``all_gather_param``). Without this, MLA
+                                # ``linear_q_down_proj`` / ``linear_kv_down_proj``
+                                # weights are never recognized as duplicated and
+                                # get all-gathered across the TP group, producing
+                                # oversized tensors that sglang rejects when
+                                # loading Moonlight / DeepSeek-V3 MLA weights.
+                                if not full.startswith("module.module."):
+                                    full = "module." + full
                                 duplicated.add(full)
             self._cached_duplicated_param_names = duplicated
         return self._cached_duplicated_param_names
@@ -1491,6 +1502,8 @@ class MegatronEngine(TrainEngine):
 
         dist.barrier(group=self.cpu_group)
 
+        torch.cuda.empty_cache()
+
         num_moe_experts = self.tf_config.num_moe_experts
         weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
 
@@ -1584,6 +1597,7 @@ class MegatronEngine(TrainEngine):
         base_model_path: str | None = None,
     ) -> None:
         assert self.model is not None, "Model is not initialized."
+        torch.cuda.empty_cache()
         os.makedirs(path, exist_ok=True)
 
         if self.bridge_cls == "megatron-bridge":
@@ -1619,9 +1633,25 @@ class MegatronEngine(TrainEngine):
 
         if dist.get_rank() == 0:
             if tokenizer is not None:
-                tokenizer.save_pretrained(path)
+                if hasattr(tokenizer, "save_pretrained"):
+                    tokenizer.save_pretrained(path)
+                else:
+                    self.logger.warning(
+                        "Tokenizer object has no save_pretrained() method "
+                        f"(got type={type(tokenizer).__name__}); skipping save. "
+                        "This usually means the tokenizer could not be "
+                        "reconstructed from its serialized form (e.g. a model "
+                        "with a custom tokenizer class requiring "
+                        "trust_remote_code=True) and was decoded as a raw dict."
+                    )
             if processor is not None:
-                processor.save_pretrained(path)
+                if hasattr(processor, "save_pretrained"):
+                    processor.save_pretrained(path)
+                else:
+                    self.logger.warning(
+                        "Processor object has no save_pretrained() method "
+                        f"(got type={type(processor).__name__}); skipping save."
+                    )
 
         current_platform.synchronize()
         dist.barrier(group=self.cpu_group)
