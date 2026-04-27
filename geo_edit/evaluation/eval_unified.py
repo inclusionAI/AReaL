@@ -39,6 +39,7 @@ _NA_VARIANTS = frozenset({"n/a", "na", "none", "not available", "not applicable"
 
 SUPPORTED_DATASETS = [
     "visual_probe", "map_trace", "reason_map", "reason_map_plus", "mm_mapqa",
+    "o3_bench",
 ]
 
 

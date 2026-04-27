@@ -83,6 +83,14 @@ from geo_edit.datasets.input_template import (
     VISULOGIC_INPUT_TEMPLATE,
     VISULOGIC_NOTOOL_INPUT_TEMPLATE,
     VISULOGIC_SEPARATED_TEMPLATE,
+    ERQA_ANSWER_FORMAT,
+    ERQA_INPUT_TEMPLATE,
+    ERQA_NOTOOL_INPUT_TEMPLATE,
+    ERQA_SEPARATED_TEMPLATE,
+    O3_BENCH_ANSWER_FORMAT,
+    O3_BENCH_INPUT_TEMPLATE,
+    O3_BENCH_NOTOOL_INPUT_TEMPLATE,
+    O3_BENCH_SEPARATED_TEMPLATE,
 )
 
 FieldSource = str | Callable[[Mapping[str, Any]], Any]
@@ -832,6 +840,41 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         },
         separated_prompt_template=VISULOGIC_SEPARATED_TEMPLATE,
         answer_format=VISULOGIC_ANSWER_FORMAT,
+    ),
+    "erqa": DatasetSpec(
+        name="erqa",
+        id_key="question_id",
+        answer_key="answer",
+        image_key="images",
+        prompt_template=ERQA_INPUT_TEMPLATE,
+        notool_prompt_template=ERQA_NOTOOL_INPUT_TEMPLATE,
+        template_fields={"question": "question"},
+        task_kwargs_fields={
+            "meta_info_extra": lambda item: {
+                "question_type": item.get("question_type", ""),
+            },
+        },
+        separated_prompt_template=ERQA_SEPARATED_TEMPLATE,
+        answer_format=ERQA_ANSWER_FORMAT,
+    ),
+    "o3_bench": DatasetSpec(
+        name="o3_bench",
+        id_key="index",
+        answer_key="answer",
+        image_key="image",
+        prompt_template=O3_BENCH_INPUT_TEMPLATE,
+        notool_prompt_template=O3_BENCH_NOTOOL_INPUT_TEMPLATE,
+        template_fields={
+            "question": "question",
+            "options_text": "options_text",
+        },
+        task_kwargs_fields={
+            "meta_info_extra": lambda item: {
+                "category": item.get("category", ""),
+            },
+        },
+        separated_prompt_template=O3_BENCH_SEPARATED_TEMPLATE,
+        answer_format=O3_BENCH_ANSWER_FORMAT,
     ),
 }
 

@@ -546,3 +546,61 @@ You MUST select one of the given options (A, B, C, or D). Do NOT provide the raw
 """
 
 VISULOGIC_ANSWER_FORMAT = "You MUST respond with only the option letter (A, B, C, or D) in <answer></answer> tags. Do NOT output the answer text itself."
+
+ERQA_INPUT_TEMPLATE = """\
+Look at the image(s) and answer the following embodied reasoning question.
+
+{question}
+
+If you need to analyze the image in detail, you can use the available tools.
+
+You MUST respond with only the option letter (A, B, C, or D) in <answer></answer> tags.
+"""
+
+ERQA_NOTOOL_INPUT_TEMPLATE = """\
+Look at the image(s) and answer the following embodied reasoning question.
+
+{question}
+
+You MUST respond with only the option letter (A, B, C, or D) in <answer></answer> tags.
+"""
+
+ERQA_SEPARATED_TEMPLATE = """\
+{question}
+
+You MUST select one of the given options (A, B, C, or D). Do NOT provide the raw answer text.
+"""
+
+ERQA_ANSWER_FORMAT = "You MUST respond with only the option letter (A, B, C, or D) in <answer></answer> tags. Do NOT output the answer text itself."
+
+O3_BENCH_INPUT_TEMPLATE = """\
+Look at the high-resolution image carefully and answer the following question. The image is large and information-dense — you may need to zoom in on specific regions to find the relevant details.
+
+Question: {question}
+
+{options_text}
+
+If you need to analyze the image in detail, you can use the available tools.
+
+You MUST respond with only the option letter (A, B, C, D, E, or F) in <answer></answer> tags.
+"""
+
+O3_BENCH_NOTOOL_INPUT_TEMPLATE = """\
+Look at the high-resolution image carefully and answer the following question. The image is large and information-dense — examine all regions carefully.
+
+Question: {question}
+
+{options_text}
+
+You MUST respond with only the option letter (A, B, C, D, E, or F) in <answer></answer> tags.
+"""
+
+O3_BENCH_SEPARATED_TEMPLATE = """\
+Question: {question}
+
+{options_text}
+
+You MUST select one of the given options (A, B, C, D, E, or F). Do NOT provide the raw answer text.
+"""
+
+O3_BENCH_ANSWER_FORMAT = "You MUST respond with only the option letter (A, B, C, D, E, or F) in <answer></answer> tags. Do NOT output the answer text itself."

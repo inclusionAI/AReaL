@@ -45,7 +45,10 @@ class ATGiGPOSampler(AbstractCurriculumSampler):
         self.dataset_sizes = {t: len(self.task2indices[t]) for t in self.task_types}
 
         self.period_buffer: dict[str, list[float]] = {t: [] for t in self.task_types}
+        self.acc_buffer: dict[str, list[float]] = {t: [] for t in self.task_types}
         self.L_hat_ema: dict[str, float] = {t: 0.0 for t in self.task_types}
+        self.acc_ema: dict[str, float] = {t: 0.5 for t in self.task_types}
+        self.acc_ema_prev: dict[str, float] = {t: 0.5 for t in self.task_types}
         self.n_samples: dict[str, int] = {t: 0 for t in self.task_types}
         self.n_total = 0
         self._step_count = 0
@@ -71,27 +74,38 @@ class ATGiGPOSampler(AbstractCurriculumSampler):
         if task_labels is None:
             return
 
+        acc_values = batch.non_tensor_batch.get("accuracy", None)
+
         for i, task in enumerate(task_labels):
             task_str = str(task)
             if task_str in self.period_buffer:
                 self.period_buffer[task_str].append(float(episode_adv_abs[i]))
+                if acc_values is not None:
+                    self.acc_buffer[task_str].append(float(acc_values[i]))
                 self.n_samples[task_str] += 1
                 self.n_total += 1
 
         self._step_count += 1
 
         if self._step_count % self.l_hat_update_interval == 0:
-            self._update_l_hat()
+            self._update_ema()
 
         self._recompute_probs()
 
-    def _update_l_hat(self):
+    def _update_ema(self):
         for d_j in self.task_types:
             buf = self.period_buffer[d_j]
             if buf:
                 period_mean = float(np.mean(buf))
                 self.L_hat_ema[d_j] = self.ema_alpha * period_mean + (1 - self.ema_alpha) * self.L_hat_ema[d_j]
             self.period_buffer[d_j] = []
+
+            acc_buf = self.acc_buffer[d_j]
+            if acc_buf:
+                acc_mean = float(np.mean(acc_buf))
+                self.acc_ema_prev[d_j] = self.acc_ema[d_j]
+                self.acc_ema[d_j] = self.ema_alpha * acc_mean + (1 - self.ema_alpha) * self.acc_ema[d_j]
+            self.acc_buffer[d_j] = []
 
     def _recompute_probs(self):
         rollout_n = self.rollout_n if self.v2 else 1
@@ -100,7 +114,13 @@ class ATGiGPOSampler(AbstractCurriculumSampler):
             explore = math.sqrt(2.0 * math.log(self.n_total + 1) / (self.n_samples[d_j] + 1))
             epoch = self.n_samples[d_j] / (max(self.dataset_sizes[d_j], 1) * rollout_n)
             decay = max(self.epoch_decay_floor, 1.0 - self.epoch_decay_slope * max(0.0, epoch - self.epoch_decay_start))
-            scores.append((self.L_hat_ema[d_j] + explore) * decay)
+
+            if self.v2:
+                exploit = 1.0 - 0.5 * self.acc_ema[d_j]
+            else:
+                exploit = self.L_hat_ema[d_j]
+
+            scores.append((exploit + explore) * decay)
 
         scores_t = torch.tensor(scores, dtype=torch.float32)
         probs = F.softmax(scores_t / self.tau, dim=0).numpy()
@@ -111,6 +131,8 @@ class ATGiGPOSampler(AbstractCurriculumSampler):
         metrics: dict[str, float] = {}
         for d_j in self.task_types:
             metrics[f"at_gigpo/{d_j}/L_hat_ema"] = self.L_hat_ema[d_j]
+            metrics[f"at_gigpo/{d_j}/acc_ema"] = self.acc_ema[d_j]
+            metrics[f"at_gigpo/{d_j}/acc_raw"] = float(np.mean(self.acc_buffer[d_j])) if self.acc_buffer[d_j] else self.acc_ema[d_j]
             metrics[f"at_gigpo/{d_j}/sampling_prob"] = self.sampling_probs[d_j]
             metrics[f"at_gigpo/{d_j}/epoch_count"] = self.n_samples[d_j] / (max(self.dataset_sizes[d_j], 1) * rollout_n)
             metrics[f"at_gigpo/{d_j}/period_buffer_size"] = len(self.period_buffer[d_j])

@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import List, Optional, Union
@@ -174,7 +175,7 @@ def _build_eval_item(record: dict, record_id: str, cfg: EvalConfig, final_pred: 
     ground_truth = record["answer"]
     if isinstance(ground_truth, list):
         ground_truth = "\n".join(ground_truth)
-    return {
+    item = {
         "id": record_id,
         "question": question,
         "image_path": record.get("image_path"),
@@ -194,6 +195,9 @@ def _build_eval_item(record: dict, record_id: str, cfg: EvalConfig, final_pred: 
         "prediction": final_pred,
         "result": result,
     }
+    if record.get("category"):
+        item["category"] = record["category"]
+    return item
 
 
 def evaluate_record(record: dict, cfg: EvalConfig, record_id: str) -> dict:
@@ -207,7 +211,7 @@ def evaluate_record(record: dict, cfg: EvalConfig, record_id: str) -> dict:
     else:
         predict_str_list = [str(output_text)]
     result = evaluate_final_answer(question, predict_str_list, ground_truth, cfg)
-    return {
+    item = {
         "id": record_id,
         "question": question,
         "image_path": record.get("image_path"),
@@ -227,6 +231,9 @@ def evaluate_record(record: dict, cfg: EvalConfig, record_id: str) -> dict:
         "prediction": get_final_prediction(predict_str_list, cfg.extract_answer_tags),
         "result": result,
     }
+    if record.get("category"):
+        item["category"] = record["category"]
+    return item
 
 
 def main(
@@ -423,6 +430,29 @@ def main(
         f.write(f"avg_output_tokens={avg_output:.2f}\n")
         f.write(f"avg_input_tokens={avg_input:.2f}\n")
         f.write(f"avg_total_tokens={avg_total:.2f}\n")
+
+        cat_stats: dict[str, dict[str, int]] = defaultdict(lambda: {"n": 0, "correct": 0})
+        for item in eval_results:
+            cat = item.get("category")
+            if not cat:
+                continue
+            result = item.get("result")
+            if isinstance(result, dict) and result.get("is_filter"):
+                continue
+            cat_stats[cat]["n"] += 1
+            if result == 1.0:
+                cat_stats[cat]["correct"] += 1
+        if cat_stats:
+            f.write("\n--- Per-Category Accuracy ---\n")
+            for cat in sorted(cat_stats):
+                s = cat_stats[cat]
+                cat_acc = s["correct"] / s["n"] if s["n"] else 0.0
+                f.write(f"  {cat}: {s['correct']}/{s['n']} ({cat_acc:.4f})\n")
+            if len(cat_stats) > 1:
+                all_n = sum(s["n"] for s in cat_stats.values())
+                all_c = sum(s["correct"] for s in cat_stats.values())
+                f.write(f"  overall: {all_c}/{all_n} ({all_c/all_n:.4f})\n")
+
         f.write(tool_stats_text)
 
     # Compare with baseline if provided

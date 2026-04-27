@@ -17,7 +17,7 @@ model_name=${MODEL_PATH:-/storage/openpsi/models/lcy_image_edit/sft_workspace/qw
 
 train_data="[/storage/openpsi/data/reasonmap_rl/combined_train_rl_only.parquet,$WORKSPACE/new_train.parquet]"
 val_data="[/storage/openpsi/data/reasonmap_rl/combined_test_10pct.parquet,$WORKSPACE/new_val.parquet,$WORKSPACE/mapqa_val_200.parquet]"
-run_name="mixed-at-gigpo-4node"
+run_name="mixed-at-gigpo-4nodev4_0426"
 rl_alg=gigpo
 
 # ---- Cluster topology ----
@@ -78,13 +78,13 @@ max_num_batched_tokens=$(expr $max_prompt_length + $max_response_length)
 rollout_mode='async'
 
 # ---- Schedule ----
-total_training_steps=200
+total_training_steps=300
 save_freq=10
 test_freq=20
 
 # ---- AT-GiGPO hyperparams ----
 at_gigpo_v2=true
-at_gigpo_tau=1.0
+at_gigpo_tau=0.3
 at_gigpo_l_hat_update_ratio=0.025
 at_gigpo_ema_alpha=0.5
 at_gigpo_epoch_decay_start=1.5
@@ -188,7 +188,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=$ppo_micro_batch_size_per_gpu \
     actor_rollout_ref.actor.use_dynamic_bsz=$use_dynamic_bsz \
     actor_rollout_ref.actor.ppo_max_token_len_per_gpu=$ppo_max_token_len_per_gpu \
-    actor_rollout_ref.actor.use_kl_loss=True \
+    actor_rollout_ref.actor.use_kl_loss=False \
     actor_rollout_ref.actor.strategy=$strategy \
     actor_rollout_ref.actor.kl_loss_coef=$kl_loss_coef \
     actor_rollout_ref.actor.kl_loss_type=$kl_loss_type \
