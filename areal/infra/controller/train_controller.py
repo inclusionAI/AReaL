@@ -20,7 +20,7 @@ from areal.api import (
 )
 from areal.api.alloc_mode import ModelAllocation
 from areal.api.cli_args import PerfTracerConfig, TrainEngineConfig
-from areal.infra.rpc.rtensor import RTensor
+from areal.infra.rpc.rtensor import RTensor, flatten_shard_ids
 from areal.infra.utils.concurrent import run_async_task
 from areal.utils import logging, stats_tracker
 from areal.utils.data import make_dummy_eval_item
@@ -793,7 +793,13 @@ class TrainController:
             )
 
     async def _async_clear_batches(self, *targets: dict[str, RTensor]):
-        """Extract shard IDs and clear tensors on each worker."""
+        """Extract shard IDs and clear tensors on each worker.
+
+        HTTP DELETEs to each storage node's ``/data/clear`` — this evicts
+        ``_storage`` (mandatory, otherwise HTTP storage grows unboundedly)
+        and, via :func:`rtensor.remove`, also pops the storage owner's own
+        ``_fetch_buffer`` (covers storage-owner-as-consumer). See #1209.
+        """
         shards_by_node = RTensor.collect_shards(targets)
 
         if not shards_by_node:
@@ -805,5 +811,58 @@ class TrainController:
         )
 
     def clear_batches(self, *targets: dict[str, RTensor]):
-        """Clear distributed batch shards from workers to free memory."""
+        """Clear distributed batch shards from workers to free memory.
+
+        Two fan-outs — see inclusionAI/AReaL#1209:
+
+        1. ``_async_clear_batches``: HTTP DELETE to each storage node,
+           dropping ``_storage`` entries (and the owner's ``_fetch_buffer``
+           via :func:`rtensor.remove`).
+        2. Replicated RPC to every DP head so cross-node consumer workers
+           drain their local ``_fetch_buffer``. Payload is a flat
+           ``list[str]`` of shard IDs — sending IDs (not RTensors)
+           side-steps the RPC's ``localize`` pass (no RTensor → no
+           re-fetch), and ``_is_tensor_like(list[str]) == False`` routes
+           dispatch through ``_replicate_inputs`` so every head sees the
+           full sid set.
+
+        After the second fan-out, a ``fetch_buffer_stats`` RPC logs the
+        drain result — WARNING on leak, DEBUG when clean.
+        """
         run_async_task(self._async_clear_batches, *targets)
+        sids = flatten_shard_ids(targets)
+        if not sids:
+            return
+        # broadcast=False → purely local per-head op (no NCCL collective).
+        # list[str] is not tensor-like → _replicate_inputs copies the full
+        # sid set to every DP head.
+        self._custom_function_call("clear_batches", sids, rpc_meta={"broadcast": False})
+        # Always observe post-drain state. _custom_function_call returns
+        # the first DP head's stats (scalar dispatch collapses via
+        # _collect_results[0]); all heads are symmetric in steady state,
+        # so head 0 is a sufficient leak signal. Best-effort: an RPC
+        # failure here is observability-only and must not break training.
+        try:
+            stats = self._custom_function_call(
+                "fetch_buffer_stats", rpc_meta={"broadcast": False}
+            )
+        except Exception as e:
+            logger.debug(
+                "fetch_buffer_stats RPC failed (observability only, role=%s): %s",
+                self._worker_role,
+                e,
+            )
+            return
+        n_entries = stats.get("num_entries", 0) if isinstance(stats, dict) else 0
+        if n_entries > 0:
+            logger.warning(
+                "clear_batches: _fetch_buffer non-empty on DP head 0 "
+                "(role=%s, num_entries=%d) — possible leak, see #1209",
+                self._worker_role,
+                n_entries,
+            )
+        else:
+            logger.debug(
+                "clear_batches: _fetch_buffer drained on DP head 0 (role=%s)",
+                self._worker_role,
+            )
