@@ -132,10 +132,11 @@ class VLLMBackend:
             if meta.version is None:
                 raise ValueError("Version is required for LoRA update.")
             lora_name = get_versioned_lora_name(meta.lora_name, meta.version)
-            endpoint = "/v1/load_lora_adapter"
+            endpoint = "/areal_update_weights_lora"
             payload = {
-                "lora_path": str(meta.path),
+                "lora_model_path": str(meta.path),
                 "lora_name": lora_name,
+                "base_model_name": meta.base_model_name,
             }
         else:
             endpoint = "/areal_update_weights"
@@ -166,7 +167,6 @@ class VLLMBackend:
             lora_name = get_versioned_lora_name(meta.lora_name, meta.version)
             lora_payload = {
                 "lora_name": lora_name,
-                "lora_int_id": meta.lora_int_id,
                 "lora_target_modules": meta.peft_config["target_modules"],
                 "lora_rank": meta.peft_config["r"],
                 "lora_alpha": meta.peft_config["lora_alpha"],
