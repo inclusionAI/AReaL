@@ -1202,18 +1202,20 @@ class MegatronEngine(TrainEngine):
                     self._mtp_loss_clip_count = 0
                     self._mtp_loss_total_count = 0
                 # [v5-F6] Hint SpecDec v2 env toggle for throughput (idempotent,
-                # rank-0 only to avoid N-rank log spam).
+                # rank-0 only to avoid N-rank log spam, print once only).
                 import os as _os_v5
                 try:
                     _rank_v5 = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
                 except Exception:
                     _rank_v5 = 0
                 if _rank_v5 == 0 and _os_v5.environ.get("SGLANG_ENABLE_SPEC_V2", "") == "":
-                    self.logger.info(
-                        "[MTPEnvHint] SGLANG_ENABLE_SPEC_V2 not set; "
-                        "consider exporting SGLANG_ENABLE_SPEC_V2=True to "
-                        "enable overlap scheduler for speculative decoding."
-                    )
+                    if not getattr(self, '_mtp_env_hint_printed', False):
+                        self._mtp_env_hint_printed = True
+                        self.logger.info(
+                            "[MTPEnvHint] SGLANG_ENABLE_SPEC_V2 not set; "
+                            "consider exporting SGLANG_ENABLE_SPEC_V2=True to "
+                            "enable overlap scheduler for speculative decoding."
+                        )
 
                 _unwrapped = model
                 while hasattr(_unwrapped, "module"):
@@ -3048,8 +3050,20 @@ class MegatronEngine(TrainEngine):
                     _d = _cur - _prev
                     _all_norms.append((_tn, _cur, _d))
                     _deltas.append(abs(_d))
-                    # Stall: weight changed by <1e-5 absolute (essentially frozen).
-                    if _cur > 0 and abs(_d) < 1e-5:
+                    # LR-adaptive STALL threshold. bf16-eps is ~7.8e-3 per
+                    # element and typical lr*grad_norm for MTP is ~1e-7..1e-6,
+                    # so the previous 1e-5 absolute threshold mis-flagged every
+                    # LN/bias tensor as "stalled"
+                    try:
+                        _mtp_lr_cur = float(
+                            getattr(self, "_last_logged_mtp_lr", 3e-6)
+                        )
+                    except Exception:
+                        _mtp_lr_cur = 3e-6
+                    # Expected per-step drift ~ lr * grad_norm; anything
+                    # <5% of that is truly frozen.
+                    _stall_thr = max(1e-9, 0.05 * _mtp_lr_cur * max(_cur, 1.0))
+                    if _cur > 0 and abs(_d) < _stall_thr:
                         _stall_tensors.append(_tn)
                 self._mtp_sync_prev_norms[_tn] = _cur
             # Compact per-tensor summary line (rank-0 only to avoid DP-spam).
@@ -3077,9 +3091,11 @@ class MegatronEngine(TrainEngine):
                     ", ".join(_fmt_parts),
                     _drift_summary,
                 )
-                # [v5-F5] Stall warning: if >50% of MTP tensors show sub-1e-5 drift,
-                # the draft model isn't learning — root cause of accept-rate collapse.
-                if _deltas and len(_stall_tensors) >= 0.5 * len(_deltas):
+                # Stall warning: require >=90% (was 50%) AND LR-adaptive
+                # threshold above. Previously bf16 noise floor mis-fired every
+                # step; the new combined criterion only fires if the MTP
+                # optimizer is truly dead.
+                if _deltas and len(_stall_tensors) >= 0.9 * len(_deltas):
                     self.logger.warning(
                         "[MTPSyncHealth] MTP training STALL detected at version=%d: "
                         "%d/%d tensors drift<1e-5. "
@@ -3598,6 +3614,17 @@ class MegatronEngine(TrainEngine):
                 )
 
         if _mtp_loss_for_this_mb is not None and abs(loss_scale) > 0:
+            # [v8] Refresh cached MTP LR from optimizer param_groups so the
+            # DoubleScale log and SyncHealth STALL threshold can use the
+            # realised LR (not a hardcoded default).
+            try:
+                for _pg in getattr(self.optimizer, "param_groups", []):
+                    _nm = str(_pg.get("name", ""))
+                    if "mtp" in _nm.lower():
+                        self._last_logged_mtp_lr = float(_pg.get("lr", 3e-6))
+                        break
+            except Exception:
+                pass
             # Match Megatron-native MTPLossAutoScaler:
             #   schedules.py sets main_loss_backward_scale = loss_scale
             #   / num_microbatches.
@@ -3612,15 +3639,28 @@ class MegatronEngine(TrainEngine):
                 _eff_per_mb = (
                     _mtp_contribution.detach().item() * _inv * loss_scale
                 )
+                # Also surface the realised per-step MTP weight update
+                # magnitude estimate (= eff_contrib * mtp_lr). This directly
+                # monitors whether the draft head is actually learning, and
+                # its drift exposes data-shape driven instability
+                try:
+                    _mtp_lr_dbg = float(
+                        getattr(self, "_last_logged_mtp_lr", 3e-6)
+                    )
+                except Exception:
+                    _mtp_lr_dbg = 3e-6
+                _eff_step_mag = _eff_per_mb * _mtp_lr_dbg
                 self.logger.info(
                     "[MTPFix-DoubleScale-v6] Inverse-(loss_scale*num_mb) "
                     "applied: loss_scale=%.6f, num_mb=%d, inv=%.4f, "
                     "mtp_contribution=%.6f, effective_mtp_contrib_per_mb="
-                    "%.6f (accumulated over num_mb MBs = mtp_loss_scale * "
-                    "mtp_loss; verl/megatron-native equivalent).",
+                    "%.6f, mtp_lr=%.3e, effective_per_step_update~=%.3e "
+                    "(warn if <1e-8; accumulated over num_mb MBs = "
+                    "mtp_loss_scale * mtp_loss; verl/megatron-native "
+                    "equivalent).",
                     loss_scale, _num_mb, _inv,
                     _mtp_contribution.detach().item(),
-                    _eff_per_mb,
+                    _eff_per_mb, _mtp_lr_dbg, _eff_step_mag,
                 )
 
         return loss * loss_scale
