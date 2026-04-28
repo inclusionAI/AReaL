@@ -404,49 +404,7 @@ class MegatronEngine(TrainEngine):
 
         assert self.model, "Megatron models failed to initialize."
 
-        # Detect which linear_fc1 params belong to GLU MLPs by comparing weight
-        # shapes: if fc1.weight.shape[0] == 2 * fc2.weight.shape[1] at the TP-local
-        # level, the MLP is gated and fc1 needs stride-2 de-interleave at TP>1.
-        # Shape-based detection is model-agnostic and doesn't rely on config flags.
-        # Names are stored with layer indices stripped so they match across PP
-        # ranks: `model.named_modules()` yields LOCAL indices (0..N_local-1) while
-        # `get_named_parameters` rewrites them to GLOBAL indices via layer_offset.
-        # Also handles TEGroupedLinear (MoE grouped experts), which exposes per-
-        # expert `weight0`/`weight1`/... in place of a single `.weight`.
-        self._glu_fc1_names: set[str] = set()
-        for model in self.model:
-            for mod_name, module in model.named_modules():
-                fc1 = getattr(module, "linear_fc1", None)
-                fc2 = getattr(module, "linear_fc2", None)
-                if fc1 is None or fc2 is None:
-                    continue
-                # Pick a representative weight: standard linear has `.weight`;
-                # TEGroupedLinear has `weight0` per local expert (all experts
-                # share the same shape).
-                fc1_w = getattr(fc1, "weight", None)
-                if fc1_w is None:
-                    fc1_w = getattr(fc1, "weight0", None)
-                fc2_w = getattr(fc2, "weight", None)
-                if fc2_w is None:
-                    fc2_w = getattr(fc2, "weight0", None)
-                if fc1_w is None or fc2_w is None:
-                    continue
-                fc1_out = fc1_w.shape[0]
-                fc2_in = fc2_w.shape[1] if fc2_w.dim() >= 2 else fc2_w.shape[0]
-                if fc1_out != 2 * fc2_in:
-                    continue
-                # Iterate fc1's direct parameters (recurse=False) and pick
-                # `weight`/`bias` plus their grouped-MoE numbered variants.
-                for p_name, _ in fc1.named_parameters(recurse=False):
-                    base = p_name.rstrip("0123456789")
-                    if base not in ("weight", "bias"):
-                        continue
-                    full_name = (
-                        f"{mod_name}.linear_fc1.{p_name}"
-                        if mod_name
-                        else f"linear_fc1.{p_name}"
-                    )
-                    self._glu_fc1_names.add(_normalize_glu_param_name(full_name))
+        self._glu_fc1_names: set[str] = self._build_glu_fc1_names()
 
         modules = [m.module if isinstance(m, DDP) else m for m in self.model]
         total_params = sum(
@@ -496,6 +454,53 @@ class MegatronEngine(TrainEngine):
         model_config.finalize_model_grads_func = finalize_model_grads
         self._create_optimizer(ft_spec)
         self._initialized = True
+
+    def _build_glu_fc1_names(self) -> set[str]:
+        """Detect which `linear_fc1` parameters belong to GLU MLPs.
+
+        Compares weight shapes: if ``fc1.weight.shape[0] == 2 * fc2.weight.shape[1]``
+        at the TP-local level, the MLP is gated and fc1 needs stride-2 de-interleave
+        at TP>1. Shape-based detection is model-agnostic and doesn't rely on config
+        flags. Names are stored with layer indices and per-expert numeric suffixes
+        stripped so they match across PP ranks (`model.named_modules()` yields LOCAL
+        indices while `get_named_parameters` rewrites to GLOBAL via `layer_offset`)
+        and across TEGroupedLinear MoE expert weights (`weight0`, `weight1`, ...).
+        """
+        glu_fc1_names: set[str] = set()
+        for model in self.model:
+            for mod_name, module in model.named_modules():
+                fc1 = getattr(module, "linear_fc1", None)
+                fc2 = getattr(module, "linear_fc2", None)
+                if fc1 is None or fc2 is None:
+                    continue
+                # Pick a representative weight: standard linear has `.weight`;
+                # TEGroupedLinear has `weight0` per local expert (all experts
+                # share the same shape).
+                fc1_w = getattr(fc1, "weight", None)
+                if fc1_w is None:
+                    fc1_w = getattr(fc1, "weight0", None)
+                fc2_w = getattr(fc2, "weight", None)
+                if fc2_w is None:
+                    fc2_w = getattr(fc2, "weight0", None)
+                if fc1_w is None or fc2_w is None:
+                    continue
+                fc1_out = fc1_w.shape[0]
+                fc2_in = fc2_w.shape[1] if fc2_w.dim() >= 2 else fc2_w.shape[0]
+                if fc1_out != 2 * fc2_in:
+                    continue
+                # Iterate fc1's direct parameters (recurse=False) and pick
+                # `weight`/`bias` plus their grouped-MoE numbered variants.
+                for p_name, _ in fc1.named_parameters(recurse=False):
+                    base = p_name.rstrip("0123456789")
+                    if base not in ("weight", "bias"):
+                        continue
+                    full_name = (
+                        f"{mod_name}.linear_fc1.{p_name}"
+                        if mod_name
+                        else f"linear_fc1.{p_name}"
+                    )
+                    glu_fc1_names.add(_normalize_glu_param_name(full_name))
+        return glu_fc1_names
 
     def _build_hf_mcore_bridge(self):
         if self.bridge_cls == "mbridge":
