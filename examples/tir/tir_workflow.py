@@ -22,6 +22,7 @@ from areal.api.cli_args import (
     field,
 )
 from areal.utils import logging, stats_tracker
+from areal.utils.hf_utils import apply_chat_template
 
 from prompts import ANSWER, SYSTEM_PROMPT, TORL_PROMPT  # isort: skip
 from tool_manager import ToolCallStatus, ToolManager  # isort: skip
@@ -123,7 +124,8 @@ class TIRWorkflow(RolloutWorkflow):
 
             # Prepare input
             if self.is_chat_model:
-                input_ids = self.tokenizer.apply_chat_template(
+                input_ids = apply_chat_template(
+                    self.tokenizer,
                     messages,
                     tokenize=True,
                     add_generation_prompt=True,

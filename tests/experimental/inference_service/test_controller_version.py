@@ -34,7 +34,7 @@ def _make_controller(
         admin_api_key="test-key",
         scheduling_spec=(SchedulingSpec(),),
     )
-    scheduler = MagicMock()
+    scheduler = MagicMock(n_gpus_per_node=8)
     ctrl = GatewayInferenceController(config=cfg, scheduler=scheduler)
     ctrl._gateway_addr = gateway_addr
     ctrl._worker_ids = worker_ids or {}

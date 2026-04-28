@@ -196,6 +196,7 @@ async def test_external_model_flow_end_to_end_gateway_router_data_proxy(router_c
     store.set_admin_key(ADMIN_KEY)
     data_proxy_app.state.session_store = store
     data_proxy_app.state.version = 0
+    data_proxy_app.state.http_client = httpx.AsyncClient(timeout=10.0)
     gateway_app = create_gateway_app(
         GatewayConfig(
             host="127.0.0.1",
@@ -240,6 +241,8 @@ async def test_external_model_flow_end_to_end_gateway_router_data_proxy(router_c
             data_proxy_addrs: list[str],
             admin_api_key: str,
             timeout: float,
+            *,
+            client: httpx.AsyncClient | None = None,
         ) -> dict:
             resp = await router_client.post(
                 "/register_model",
@@ -263,6 +266,7 @@ async def test_external_model_flow_end_to_end_gateway_router_data_proxy(router_c
             session_id: str | None = None,
             admin_api_key: str | None = None,
             model: str | None = None,
+            client: httpx.AsyncClient | None = None,
         ) -> str:
             payload: dict = {}
             if model is not None:
@@ -286,6 +290,8 @@ async def test_external_model_flow_end_to_end_gateway_router_data_proxy(router_c
             body: bytes,
             headers: dict[str, str],
             timeout: float,
+            *,
+            client: httpx.AsyncClient | None = None,
         ) -> httpx.Response:
             if upstream_url.startswith(WORKER_ADDR):
                 path = upstream_url.removeprefix(WORKER_ADDR)
@@ -328,6 +334,10 @@ async def test_external_model_flow_end_to_end_gateway_router_data_proxy(router_c
                 _ExternalClient,
             ),
         ):
+            # Set the shared HTTP client to the fake external client so
+            # non-streaming external model requests go through it.
+            data_proxy_app.state.http_client = _ExternalClient()
+
             reg = await gateway_client.post(
                 "/register_model",
                 json={

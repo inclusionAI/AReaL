@@ -408,7 +408,7 @@ def mock_areal_client():
 
 
 @pytest_asyncio.fixture
-async def data_proxy_client(data_proxy_config, mock_tokenizer, mock_areal_client):
+async def data_proxy_app(data_proxy_config, mock_tokenizer, mock_areal_client):
     from areal.experimental.inference_service.data_proxy.pause import PauseState
     from areal.experimental.inference_service.inf_bridge import InfBridge
     from areal.experimental.inference_service.sglang.bridge import SGLangBridgeBackend
@@ -432,8 +432,15 @@ async def data_proxy_client(data_proxy_config, mock_tokenizer, mock_areal_client
     store.set_admin_key(data_proxy_config.admin_api_key)
     app.state.session_store = store
     app.state.version = 0
+    http_client = httpx.AsyncClient(timeout=10.0)
+    app.state.http_client = http_client
+    yield app
+    await http_client.aclose()
 
-    transport = httpx.ASGITransport(app=app)
+
+@pytest_asyncio.fixture
+async def data_proxy_client(data_proxy_app):
+    transport = httpx.ASGITransport(app=data_proxy_app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
 
@@ -452,6 +459,7 @@ class TestDataProxyExternalEndpoints:
     async def test_external_chat_completions_non_streaming(
         self,
         data_proxy_client,
+        data_proxy_app,
         monkeypatch,
     ):
         await data_proxy_client.post(
@@ -460,24 +468,12 @@ class TestDataProxyExternalEndpoints:
         )
 
         class _FakeClient:
-            def __init__(self, *args, **kwargs):
-                pass
-
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, exc_type, exc, tb):
-                return False
-
             async def post(self, url, json=None, headers=None):
                 assert url == "http://ext-api/chat/completions"
                 assert json["model"] == "gpt-4o"
                 return httpx.Response(200, json={"id": "ext-1-response"})
 
-        monkeypatch.setattr(
-            "areal.experimental.inference_service.data_proxy.app.httpx.AsyncClient",
-            _FakeClient,
-        )
+        data_proxy_app.state.http_client = _FakeClient()
 
         resp = await data_proxy_client.post(
             "/chat/completions",
@@ -612,6 +608,7 @@ class TestDataProxyExternalEndpoints:
     async def test_external_chat_uses_stored_provider_api_key(
         self,
         data_proxy_client,
+        data_proxy_app,
         monkeypatch,
     ):
         await data_proxy_client.post(
@@ -627,24 +624,12 @@ class TestDataProxyExternalEndpoints:
         captured_headers: dict[str, str] = {}
 
         class _FakeClient:
-            def __init__(self, *args, **kwargs):
-                pass
-
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, exc_type, exc, tb):
-                return False
-
             async def post(self, url, json=None, headers=None):
                 if headers:
                     captured_headers.update(headers)
                 return httpx.Response(200, json={"id": "ext-1-response"})
 
-        monkeypatch.setattr(
-            "areal.experimental.inference_service.data_proxy.app.httpx.AsyncClient",
-            _FakeClient,
-        )
+        data_proxy_app.state.http_client = _FakeClient()
 
         resp = await data_proxy_client.post(
             "/chat/completions",
@@ -690,6 +675,8 @@ async def test_external_model_end_to_end_register_then_chat(router_config):
             data_proxy_addrs: list[str],
             admin_api_key: str,
             timeout: float,
+            *,
+            client: httpx.AsyncClient | None = None,
         ) -> dict:
             resp = await router_client.post(
                 "/register_model",
@@ -713,6 +700,7 @@ async def test_external_model_end_to_end_register_then_chat(router_config):
             session_id: str | None = None,
             admin_api_key: str | None = None,
             model: str | None = None,
+            client: httpx.AsyncClient | None = None,
         ) -> str:
             if model is not None:
                 resp = await router_client.post(
@@ -739,6 +727,8 @@ async def test_external_model_end_to_end_register_then_chat(router_config):
             body: bytes,
             headers: dict[str, str],
             timeout: float,
+            *,
+            client: httpx.AsyncClient | None = None,
         ) -> httpx.Response:
             if upstream_url == f"{WORKER_ADDR}/register_model":
                 data = json.loads(body)
