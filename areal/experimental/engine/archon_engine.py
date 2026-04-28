@@ -707,12 +707,13 @@ class ArchonEngine(TrainEngine):
         if self.tree_training_mode == "dta":
             self.logger.info("tree_training_mode='dta' in forward_batch")
             dta_out = self.dta_wrapper.run_forward(mb_list=mb_list)
-            # Build per-sequence outputs in forward microbatch order so we can reuse
-            # the standard reorder_and_pad_outputs post-processing path.
-            seq_outputs = [
-                dta_out[i, : int(output_seqlens[i])] for i in range(batch_size)
+            # DTA outputs already follow forward micro-batch order.
+            # Align seqlens to the same order and let reorder_and_pad_outputs
+            # restore original batch order via backward_indices.
+            seqlens_fwd = [output_seqlens[i] for i in mb_list.forward_indices]
+            outputs = [
+                dta_out[i, : int(seqlens_fwd[i])] for i in range(len(seqlens_fwd))
             ]
-            outputs = [seq_outputs[i] for i in mb_list.forward_indices]
         else:
 
             def process_output(

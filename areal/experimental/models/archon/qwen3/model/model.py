@@ -499,30 +499,31 @@ class Qwen3Model(BaseArchonModel):
         tree_attn_meta: TreeAttentionMeta | None = None,
         past_key_values: DynamicCache | None = None,
         use_cache: bool = False,
-    ) -> torch.Tensor:
-        hf_cache_mode = past_key_values is not None
-        if hf_cache_mode:
-            if past_key_values is None:
-                past_key_values = DynamicCache()
-            if positions is None:
-                past_len = 0
-                if len(past_key_values.layers) > 0:
-                    past_len = int(past_key_values.layers[0].keys.shape[2])
-                seq_len = tokens.shape[1]
-                positions = torch.arange(
-                    past_len,
-                    past_len + seq_len,
-                    dtype=torch.long,
-                    device=tokens.device,
-                ).unsqueeze(0)
-            if cu_seqlens is None:
-                cu_seqlens = torch.tensor(
-                    [0, tokens.shape[1]], dtype=torch.int32, device=tokens.device
+    ) -> torch.Tensor | SimpleNamespace:
+        if past_key_values is not None:
+            if (
+                positions is not None
+                or cu_seqlens is not None
+                or max_seqlen is not None
+            ):
+                raise ValueError(
+                    "When past_key_values is provided, positions/cu_seqlens/max_seqlen "
+                    "must be None and are inferred internally."
                 )
-            if max_seqlen is None:
-                max_seqlen = int(tokens.shape[1]) + int(
-                    past_key_values.layers[0].keys.shape[2]
-                )
+            past_len = 0
+            if len(past_key_values.layers) > 0:
+                past_len = int(past_key_values.layers[0].keys.shape[2])
+            seq_len = tokens.shape[1]
+            positions = torch.arange(
+                past_len,
+                past_len + seq_len,
+                dtype=torch.long,
+                device=tokens.device,
+            ).unsqueeze(0)
+            cu_seqlens = torch.tensor(
+                [0, tokens.shape[1]], dtype=torch.int32, device=tokens.device
+            )
+            max_seqlen = int(tokens.shape[1]) + past_len
 
         assert positions is not None
         assert cu_seqlens is not None
@@ -573,7 +574,7 @@ class Qwen3Model(BaseArchonModel):
             output = self.score(h) if self.score else h
         else:
             output = self.output(h) if self.output else h
-        if hf_cache_mode:
+        if use_cache:
             return SimpleNamespace(logits=output, past_key_values=next_cache)
         return output
 
