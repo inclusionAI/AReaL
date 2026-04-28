@@ -19,12 +19,12 @@ model_name=${MODEL_PATH:-/storage/openpsi/models/lcy_image_edit/sft_workspace/qw
 
 train_data="[/storage/openpsi/data/reasonmap_rl/combined_train_rl_only.parquet,$WORKSPACE/new_train.parquet]"
 val_data="[/storage/openpsi/data/reasonmap_rl/combined_test_10pct.parquet,$WORKSPACE/new_val.parquet,$WORKSPACE/mapqa_val_200.parquet]"
-run_name="mixed-gigpo-4B-4node_0427"
+run_name="mixed-gigpo-4B-4nodev2_0427"
 rl_alg=gigpo
  
 # ---- Cluster topology ----
 n_gpus_per_node=8
-n_nodes=4
+n_nodes=2
 
 # ---- Batch sizes (scaled for 4 nodes) ----
 n=4
