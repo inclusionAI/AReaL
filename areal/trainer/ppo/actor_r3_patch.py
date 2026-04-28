@@ -176,21 +176,9 @@ def split_routed_experts_for_minibatches(
     n_mbs = len(mb_list)
 
     if forward_indices is None:
-        # No reordering -- just split evenly
-        bs = routed_experts.shape[0]
-        chunk = bs // n_mbs
-        result = [routed_experts[i * chunk : (i + 1) * chunk] for i in range(n_mbs)]
-        logger.debug(
-            "[R3] split_routed_experts_for_minibatches: no forward_indices, "
-            "split %d samples evenly into %d chunks of %d.",
-            bs,
-            n_mbs,
-            chunk,
-        )
-        return result
-
-    # Reorder by forward_indices (sample-level reordering)
-    reordered = routed_experts[forward_indices]
+        reordered = routed_experts
+    else:
+        reordered = routed_experts[forward_indices]
 
     # Determine number of samples per mini-batch from mbs dicts
     result = []
@@ -204,10 +192,11 @@ def split_routed_experts_for_minibatches(
 
     logger.debug(
         "[R3] split_routed_experts_for_minibatches: split %d samples into "
-        "%d mini-batches with sizes %s.",
+        "%d mini-batches with sizes %s (forward_indices=%s).",
         routed_experts.shape[0],
         n_mbs,
         [r.shape[0] for r in result],
+        "None" if forward_indices is None else f"len={len(forward_indices)}",
     )
     return result
 

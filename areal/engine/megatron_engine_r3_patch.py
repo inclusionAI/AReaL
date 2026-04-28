@@ -210,21 +210,13 @@ def _split_routed_experts_for_mbs(
     n_mbs = len(mb_list)
 
     if forward_indices is None:
-        # No reordering -- just split evenly
-        bs = routed_experts.shape[0]
-        chunk = bs // n_mbs
-        result = [routed_experts[i * chunk : (i + 1) * chunk] for i in range(n_mbs)]
-        logger.debug(
-            "[R3] _split_routed_experts_for_mbs: no forward_indices, "
-            "split %d samples evenly into %d chunks of %d.",
-            bs, n_mbs, chunk,
-        )
-        return result
+        reordered = routed_experts
+    else:
+        reordered = routed_experts[forward_indices]
 
-    # Reorder by forward_indices (sample-level reordering)
-    reordered = routed_experts[forward_indices]
-
-    # Determine number of samples per micro-batch from mbs dicts.
+    # Always derive per-micro-batch sample counts from ``mb_list.mbs`` rather
+    # than assuming an even ``bs // n_mbs`` split -- the latter silently drops
+    # samples when ``bs`` is not divisible by ``n_mbs``.
     result = []
     offset = 0
     for i, mb_dict in enumerate(mb_list.mbs):
@@ -234,11 +226,11 @@ def _split_routed_experts_for_mbs(
 
     logger.debug(
         "[R3] _split_routed_experts_for_mbs: split %d samples into %d mbs "
-        "with sizes %s (forward_indices len=%d).",
+        "with sizes %s (forward_indices=%s).",
         routed_experts.shape[0],
         n_mbs,
         [r.shape[0] for r in result],
-        len(forward_indices),
+        "None" if forward_indices is None else f"len={len(forward_indices)}",
     )
     return result
 
@@ -492,12 +484,25 @@ def _r3_forward_backward_batch(
                     )
             return mb_item
 
-    original_class_iter = mb_list.__class__.__iter__
+    # Use a per-instance class swap instead of rebinding the shared
+    # ``mb_list.__class__.__iter__``. The latter is a global side effect
+    # that also affects any other ``MicroBatchList`` objects alive in the
+    # process (e.g. a concurrent engine). Here we create a dynamic
+    # subclass whose ``__iter__`` injects the R3 setup logic, and assign
+    # it only to *this* instance via ``__class__``. The original class
+    # remains untouched. Restoration in the ``finally`` block merely
+    # flips ``__class__`` back.
+    _r3_original_mb_list_class = mb_list.__class__
 
-    def _r3_iter(mb_list_self):
-        return _R3MicroBatchIterator(original_class_iter(mb_list_self))
+    class _R3MicroBatchListProxy(_r3_original_mb_list_class):
+        """Per-instance proxy that wraps __iter__ with R3 setup logic."""
 
-    mb_list.__class__.__iter__ = _r3_iter
+        def __iter__(self_inner):
+            return _R3MicroBatchIterator(
+                _r3_original_mb_list_class.__iter__(self_inner)
+            )
+
+    mb_list.__class__ = _R3MicroBatchListProxy
 
     # ------------------------------------------------------------------
     # 4. Register a forward hook for REPLAY_FORWARD -> REPLAY_BACKWARD toggle.
@@ -533,8 +538,9 @@ def _r3_forward_backward_batch(
         # Remove forward hooks
         for handle in hook_handles:
             handle.remove()
-        # Restore original class __iter__ and clean up R3 state
-        mb_list.__class__.__iter__ = original_class_iter
+        # Restore the original class on this instance (undo the per-instance
+        # class swap done above). The original class was never modified.
+        mb_list.__class__ = _r3_original_mb_list_class
 
         # Harvest agreement stats BEFORE clearing replay state.
         _agreement = RouterReplay.harvest_agreement_stats()
