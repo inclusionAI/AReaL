@@ -169,7 +169,8 @@ class GatewayInferenceController:
 
         # Shared HTTP clients
         self._sync_client = httpx.Client(timeout=30.0)
-        self._async_client = httpx.AsyncClient(timeout=config.request_timeout)
+        self._async_client: httpx.AsyncClient | None = None
+        self._async_client_loop: asyncio.AbstractEventLoop | None = None
         self._destroyed = False
 
         # Proxy compatibility (no-ops — gateway IS the proxy)
@@ -908,13 +909,15 @@ class GatewayInferenceController:
 
         # Close shared HTTP clients after all kill requests have been sent
         self._sync_client.close()
-        try:
-            from areal.infra.utils.concurrent import run_async_task
+        if self._async_client is not None:
+            try:
+                from areal.infra.utils.concurrent import run_async_task
 
-            run_async_task(self._async_client.aclose)
-        except Exception:
-            # Best-effort cleanup on the destroy path.
-            pass
+                run_async_task(self._async_client.aclose)
+            except Exception:
+                pass
+            self._async_client = None
+            self._async_client_loop = None
 
         # RPCGuard's shutdown `finally` block automatically kills all
         # forked children, so explicit teardown above is best-effort.
@@ -1688,6 +1691,21 @@ class GatewayInferenceController:
         except httpx.HTTPError as exc:
             raise RuntimeError(f"Failed to POST {endpoint}: {exc}") from exc
 
+    async def _get_async_client(self) -> httpx.AsyncClient:
+        """Return the shared async HTTP client, recreating it when the event loop changes.
+
+        ``run_async_task`` creates a fresh event loop per invocation via
+        ``asyncio.run()``.  TCP connections are tied to the loop that opened
+        them, so we must recreate the client when the loop changes.  Within
+        a single loop lifetime all callers (e.g. concurrent ``asyncio.gather``
+        calls) share one client and its connection pool.
+        """
+        current_loop = asyncio.get_running_loop()
+        if self._async_client is None or self._async_client_loop is not current_loop:
+            self._async_client = httpx.AsyncClient(timeout=self.config.request_timeout)
+            self._async_client_loop = current_loop
+        return self._async_client
+
     async def _async_gateway_http_post(
         self, endpoint: str, payload: dict[str, Any]
     ) -> None:
@@ -1699,7 +1717,8 @@ class GatewayInferenceController:
         """
         url = f"{self._gateway_addr}{endpoint}"
         try:
-            resp = await self._async_client.post(
+            client = await self._get_async_client()
+            resp = await client.post(
                 url,
                 json=payload,
                 headers={"Authorization": f"Bearer {self.config.admin_api_key}"},
