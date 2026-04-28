@@ -67,7 +67,11 @@ actor:
   ppo_n_minibatches: 1                                # ← 从 1 提高至 4（分批梯度累积）
   recompute_logprob: true
   use_decoupled_loss: true
-  behave_imp_weight_cap: 5.0
+  rejection_sampling:
+    level: token
+    action: mask
+    metric: ratio
+    upper: 5.0
   reward_norm:
     mean_level: group
     std_level: group
