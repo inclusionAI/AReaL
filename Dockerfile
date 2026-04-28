@@ -227,7 +227,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
       *) echo "Invalid VARIANT=$VARIANT (expected: sglang|vllm)" >&2; exit 1 ;; \
     esac \
     && uv sync --active --inexact --no-install-project --no-build-isolation \
-       --extra cuda --group dev --project "$PROJECT_DIR"
+       --extra cuda --extra sandbox --group dev --project "$PROJECT_DIR"
 
 ##############################################################
 # STAGE 4: Misc fixes and final setup

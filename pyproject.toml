@@ -180,6 +180,9 @@ cuda = [
     "torchaudio; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "torchvision; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
+sandbox = [
+    "daytona>=0.167.0",
+]
 
 [project.urls]
 "Homepage" = "https://github.com/inclusionAI/AReaL"
@@ -296,6 +299,7 @@ markers = [
     "multi_gpu: mark test that uses more than one GPU",
     "sglang: mark test that requires the SGLang inference backend",
     "vllm: mark test that requires the vLLM inference backend",
+    "integration: requires external services or credentials",
 ]
 
 # =============================================================================

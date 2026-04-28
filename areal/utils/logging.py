@@ -97,6 +97,10 @@ LOGGER_COLORS_EXACT = {
     "CUDAPlatform": "light_cyan",
     "NPUPlatform": "light_cyan",
     "UnknownPlatform": "light_cyan",
+    # Sandbox backends
+    "DaytonaClientManager": "blue",
+    "DaytonaRunner": "light_cyan",
+    "DaytonaPythonTool": "light_purple",
     # OpenAI - purple
     "OpenAIClient": "light_purple",
     "OpenAICache": "light_purple",
