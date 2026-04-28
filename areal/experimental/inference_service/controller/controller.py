@@ -167,9 +167,8 @@ class GatewayInferenceController:
         # Each entry: (guard_addr, role, worker_index) for /kill_forked_worker.
         self._forked_services: list[tuple[str, str, int]] = []
 
-        # Shared HTTP clients
+        # Shared HTTP client (sync only; async uses per-call clients)
         self._sync_client = httpx.Client(timeout=30.0)
-        self._async_client = httpx.AsyncClient(timeout=config.request_timeout)
         self._destroyed = False
 
         # Proxy compatibility (no-ops — gateway IS the proxy)
@@ -906,15 +905,8 @@ class GatewayInferenceController:
                 )
         self._forked_services.clear()
 
-        # Close shared HTTP clients after all kill requests have been sent
+        # Close shared HTTP client after all kill requests have been sent
         self._sync_client.close()
-        try:
-            from areal.infra.utils.concurrent import run_async_task
-
-            run_async_task(self._async_client.aclose)
-        except Exception:
-            # Best-effort cleanup on the destroy path.
-            pass
 
         # RPCGuard's shutdown `finally` block automatically kills all
         # forked children, so explicit teardown above is best-effort.
@@ -1693,20 +1685,27 @@ class GatewayInferenceController:
     ) -> None:
         """Make a non-blocking HTTP POST to the gateway with admin auth.
 
+        Each call creates its own ``httpx.AsyncClient`` because callers run
+        inside ``asyncio.run()`` (via ``run_async_task``), which creates and
+        closes a fresh event loop per invocation.  A persistent client's TCP
+        connections would be closed when the previous event loop terminates,
+        causing *TCPTransport closed* errors on subsequent calls.
+
         Raises ``RuntimeError`` on HTTP errors or connection failures so that
         callers (e.g. ``pause_generation()`` / ``continue_generation()``) can
         detect and handle them.
         """
         url = f"{self._gateway_addr}{endpoint}"
         try:
-            resp = await self._async_client.post(
-                url,
-                json=payload,
-                headers={"Authorization": f"Bearer {self.config.admin_api_key}"},
-            )
-            if resp.status_code >= 400:
-                raise RuntimeError(
-                    f"Gateway {endpoint} returned {resp.status_code}: {resp.text}"
+            async with httpx.AsyncClient(timeout=self.config.request_timeout) as client:
+                resp = await client.post(
+                    url,
+                    json=payload,
+                    headers={"Authorization": f"Bearer {self.config.admin_api_key}"},
                 )
+                if resp.status_code >= 400:
+                    raise RuntimeError(
+                        f"Gateway {endpoint} returned {resp.status_code}: {resp.text}"
+                    )
         except httpx.HTTPError as exc:
             raise RuntimeError(f"Failed to POST {endpoint}: {exc}") from exc
