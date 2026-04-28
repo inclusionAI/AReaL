@@ -1,16 +1,3 @@
-# Copyright 2024 Bytedance Ltd. and/or its affiliates
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
 """
 Monkey-patches for Megatron-Core MoE components to support Router Replay (R3).
 
@@ -37,7 +24,7 @@ Usage::
     from areal.engine.router_replay_patch import remove_router_replay_patch
     remove_router_replay_patch()         # optional: for test cleanup
 
-Ref some code from verl, adapted for AReaL.
+Ref some code from megatron or verl, adapted for AReaL.
 """
 
 from __future__ import annotations

@@ -291,7 +291,10 @@ def _monkey_patch_save_hf_adapter():
 
 _monkey_patch_applied = False
 
-
+# Current: This monkey patch is needed as the current megatron-bridge 0.3.0 does not have a built-in method
+# to save LoRA adapters in HuggingFace PEFT format, which is required for our use case.
+# Future: This code is however present in main branch of megatron-bridge so this patch is temporary
+# and can be removed later when we upgrade the megatron-bridge version.
 def ensure_save_hf_adapter_patched():
     global _monkey_patch_applied
     if not _monkey_patch_applied:

@@ -1,16 +1,3 @@
-# Copyright 2024 Bytedance Ltd. and/or its affiliates
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
 """
 R3 Integration Patch for MegatronEngine.
 
@@ -32,6 +19,8 @@ Usage::
 
     from areal.engine.megatron_engine_r3_patch import patch_megatron_engine_for_r3
     patch_megatron_engine_for_r3(engine, enable_router_replay=True)
+
+Ref some code from megatron or verl, adapted for AReaL.
 """
 
 from __future__ import annotations
@@ -448,7 +437,7 @@ def _r3_forward_backward_batch(
                 if cu_info is not None:
                     cu_seqlens, max_seqlen = cu_info
                     try:
-                        # CRITICAL FIX: Use cu_seqlens for alignment instead of
+                        # Use cu_seqlens for alignment instead of
                         # attention_mask. This ensures the packed token order
                         # matches Megatron's actual forward pass.
 

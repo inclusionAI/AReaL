@@ -126,11 +126,6 @@ class PPOTrainer:
 
         self._amend_xccl_weight_update_envvar()
 
-        # R3: Propagate router replay flag to actor engine config so that
-        # MegatronEngine.initialize() can apply the R3 patch.
-        # Must be set BEFORE engine creation so that Ray-serialized config
-        # carries the flag.  Uses the declared MegatronEngineConfig field
-        # (not a dynamic attribute) to survive Ray serialization.
         if getattr(config.rollout, "return_routed_experts", False):
             config.actor.megatron.enable_router_replay = True
             logger.info(
@@ -221,7 +216,6 @@ class PPOTrainer:
         )
 
         engine_init_kwargs = {"addr": None, "ft_spec": ft_spec}
-
         self.actor.initialize(**engine_init_kwargs, role="actor")
         if self.critic is not None:
             self.critic.initialize(**engine_init_kwargs, role="critic")

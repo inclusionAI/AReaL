@@ -553,7 +553,7 @@ def grpo_loss_fn(
     )
 
     # ---- R3 Logprob Diff: rollout (inference) vs training logprobs ----
-    # Following SkyRL's approach: compute |rollout_logprobs - training_logprobs|
+    # compute |rollout_logprobs - training_logprobs|
     # over response tokens only. This metric quantifies train/infer mismatch
     # caused by MoE routing divergence. With R3 enabled, this diff should be
     # smaller than without R3.

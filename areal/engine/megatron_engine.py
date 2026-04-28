@@ -1502,8 +1502,6 @@ class MegatronEngine(TrainEngine):
 
         dist.barrier(group=self.cpu_group)
 
-        torch.cuda.empty_cache()
-
         num_moe_experts = self.tf_config.num_moe_experts
         weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
 
@@ -1597,7 +1595,6 @@ class MegatronEngine(TrainEngine):
         base_model_path: str | None = None,
     ) -> None:
         assert self.model is not None, "Model is not initialized."
-        torch.cuda.empty_cache()
         os.makedirs(path, exist_ok=True)
 
         if self.bridge_cls == "megatron-bridge":
