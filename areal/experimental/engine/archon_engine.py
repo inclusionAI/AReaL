@@ -1204,9 +1204,14 @@ class ArchonEngine(TrainEngine):
         mb_list.mbs = [pack_tensor_dict(mb) for mb in mb_list.mbs]
 
         # LCM ensures page-aligned memory and exact CP slicing without extra padding.
+        model_config = (
+            self.model_config.text_config
+            if hasattr(self.model_config, "text_config")
+            else self.model_config
+        )
         page_size = max(
             DEFAULT_PAGE_SIZE_BYTES
-            // self.model_config.hidden_size
+            // model_config.hidden_size
             // torch.empty([], dtype=self.param_dtype).element_size(),
             1,
         )

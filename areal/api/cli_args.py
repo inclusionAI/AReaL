@@ -556,7 +556,7 @@ class ArchonEngineConfig:
 
     # Whether to enable torch.compile
     enable_compile: bool = field(
-        default=True,
+        default=False,
         metadata={"help": "Enable torch.compile for TransformerBlocks."},
     )
 
