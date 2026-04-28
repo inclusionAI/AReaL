@@ -200,6 +200,8 @@ stats_tracker.get("eval-rollout").scalar(reward=0.9)
 all_stats = stats_tracker.export_all(reduce_group=group)
 ```
 
+如果设置 `evaluator.eval_before_train: true`，系统会在第一个训练 step 开始前执行一次评估，以便在微调开始前估计初始模型的性能。
+
 ## 数据流
 
 从收集到记录的完整指标流程：

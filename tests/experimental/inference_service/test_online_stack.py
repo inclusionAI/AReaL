@@ -89,11 +89,9 @@ def _make_mock_areal_client():
 @pytest_asyncio.fixture
 async def online_stack(monkeypatch):
     import areal.experimental.inference_service.gateway.app as gateway_app_module
-    from areal.experimental.inference_service.data_proxy.backend import (
-        SGLangBridgeBackend,
-    )
-    from areal.experimental.inference_service.data_proxy.inf_bridge import InfBridge
     from areal.experimental.inference_service.data_proxy.pause import PauseState
+    from areal.experimental.inference_service.inf_bridge import InfBridge
+    from areal.experimental.inference_service.sglang.bridge import SGLangBridgeBackend
 
     dp_config = DataProxyConfig(
         host="127.0.0.1",
@@ -176,6 +174,8 @@ async def online_stack(monkeypatch):
             *,
             session_id: str | None = None,
             admin_api_key: str | None = None,
+            model: str | None = None,
+            client: httpx.AsyncClient | None = None,
         ) -> str:
             del router_addr, timeout
             payload: dict[str, str] = {}
@@ -198,7 +198,12 @@ async def online_stack(monkeypatch):
             return resp.json()["worker_addr"]
 
         async def _forward_request(
-            url: str, body: bytes, headers: dict[str, str], timeout: float
+            url: str,
+            body: bytes,
+            headers: dict[str, str],
+            timeout: float,
+            *,
+            client: httpx.AsyncClient | None = None,
         ):
             del timeout
             path = url.replace(DATA_PROXY_ADDR, "")
@@ -209,6 +214,8 @@ async def online_stack(monkeypatch):
             admin_api_key: str,
             session_id: str,
             timeout: float,
+            *,
+            client: httpx.AsyncClient | None = None,
         ) -> None:
             del router_addr, timeout
             resp = await router_client.post(

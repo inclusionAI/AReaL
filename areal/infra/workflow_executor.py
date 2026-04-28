@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 from __future__ import annotations  # noqa
 
 import json
@@ -28,7 +30,10 @@ from .async_task_runner import (
 from .staleness_manager import StalenessManager
 from areal.infra import workflow_context
 from .workflow_context import WorkflowContext
-from areal.experimental.openai.types import InteractionWithTokenLogpReward
+from areal.experimental.openai.types import (
+    InteractionWithTokenLogpReward,
+    concat_string_interactions,
+)
 from areal.utils import logging, perf_tracer, stats_tracker
 from areal.infra.utils.concurrent import get_executor
 from areal.utils.data import concat_padded_tensors, cycle_dataloader
@@ -1065,13 +1070,19 @@ class WorkflowExecutor:
                                 self._expected_trajectory_keys,
                             )
 
-                # Convert InteractionWithTokenLogpReward to tensor dict if needed
+                # Convert InteractionWithTokenLogpReward to tensor dict if needed.
+                # External-API interactions have no tensor data; fall back to
+                # concat_string_interactions which produces a plain dict of
+                # request/response strings instead of padded tensors.
                 if isinstance(traj, dict) and all(
                     isinstance(v, InteractionWithTokenLogpReward) for v in traj.values()
                 ):
-                    traj = concat_padded_tensors(
-                        [v.to_tensor_dict() for v in traj.values()]
-                    )
+                    if all(v.has_tensor_data for v in traj.values()):
+                        traj = concat_padded_tensors(
+                            [v.to_tensor_dict() for v in traj.values()]
+                        )
+                    else:
+                        traj = concat_string_interactions(traj)
 
                 assert traj is None or isinstance(traj, dict), traj
 

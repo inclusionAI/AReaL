@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """CLI entrypoint for the router: ``python -m areal.experimental.inference_service.router``."""
 
 from __future__ import annotations
@@ -34,7 +36,7 @@ def main():
     )
     parser.add_argument(
         "--log-level",
-        default="info",
+        default="warning",
         choices=["debug", "info", "warning", "error"],
         help="Log level",
     )
@@ -56,7 +58,7 @@ def main():
     import uvicorn
 
     app = create_app(config)
-    uvicorn.run(app, host=config.host, port=config.port)
+    uvicorn.run(app, host=config.host, port=config.port, log_level=config.log_level)
 
 
 if __name__ == "__main__":

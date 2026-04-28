@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 import asyncio
 import getpass
 import os
@@ -50,8 +52,11 @@ from areal.utils.network import (
     format_hostport,
     gethostip,
 )
+from areal.utils.offload import get_tms_env_vars
 
 logger = logging.getLogger("LocalScheduler")
+
+_MAX_STARTUP_PORT_CONFLICT_RETRIES = 3
 
 
 @dataclass
@@ -102,6 +107,7 @@ class LocalScheduler(Scheduler):
         experiment_name: str | None = None,
         trial_name: str | None = None,
         fileroot: str | None = None,
+        enable_tms_offload: bool | None = None,
         name_resolve_type: str = "nfs",
         nfs_record_root: str = "/tmp/areal/name_resolve",
         etcd3_addr: str = "localhost:2379",
@@ -113,10 +119,12 @@ class LocalScheduler(Scheduler):
         self.experiment_name = experiment_name
         self.trial_name = trial_name
         self.fileroot = fileroot
+        self.enable_tms_offload = bool(enable_tms_offload)
         if exp_config is not None:
             self.experiment_name = exp_config.experiment_name
             self.trial_name = exp_config.trial_name
             self.fileroot = exp_config.cluster.fileroot
+            self.enable_tms_offload = exp_config.enable_offload
 
         # name_resolve config (exp_config overwrites direct params)
         self.name_resolve_config = NameResolveConfig(
@@ -173,6 +181,10 @@ class LocalScheduler(Scheduler):
             f"log directory: {self.log_dir}"
         )
 
+    @property
+    def n_gpus_per_node(self) -> int:
+        return len(self.gpu_devices)
+
     def _detect_gpus(self) -> list[int]:
         cuda_visible = os.environ.get(current_platform.device_control_env_var)
         if current_platform.device_control_env_var and cuda_visible:
@@ -227,6 +239,20 @@ class LocalScheduler(Scheduler):
             return ports
         except ValueError as e:
             raise PortAllocationError(str(e)) from e
+
+    def _release_ports(self, ports: list[int]) -> None:
+        for port in ports:
+            self._allocated_ports.discard(port)
+
+    @staticmethod
+    def _is_port_conflict_error(details: str) -> bool:
+        lowered = details.lower()
+        return (
+            "address already in use" in lowered
+            or "errno 98" in lowered
+            or "errno 48" in lowered
+            or ("port " in lowered and "is in use by another program" in lowered)
+        )
 
     def _prepare_worker_specs(
         self, role: str, num_workers: int, schedulings: list[SchedulingSpec] | None
@@ -698,10 +724,8 @@ class LocalScheduler(Scheduler):
                 scheduling = schedulings[idx]
 
                 try:
-                    # Allocate GPUs and ports for this worker
                     gpu_devices = self._allocate_gpus(scheduling.gpu)
                     logger.debug(f"Worker {worker_id} allocated GPUs {gpu_devices}")
-                    ports = self._allocate_ports(scheduling.port_count)
                 except (
                     GPUAllocationError,
                     PortAllocationError,
@@ -727,6 +751,9 @@ class LocalScheduler(Scheduler):
                 )
                 env.update(thread_env)
 
+                if self.enable_tms_offload:
+                    env.update(get_tms_env_vars())
+
                 if scheduling.env_vars:
                     env.update(scheduling.env_vars)
 
@@ -747,48 +774,102 @@ class LocalScheduler(Scheduler):
                         "Custom command should not include --port argument",
                         "The scheduler automatically allocates and provides the port.",
                     )
-                cmd = shlex.split(scheduling.cmd)
-                cmd.extend(["--port", str(ports[0])])
-                # Add name_resolve and worker identity args
-                cmd.extend(["--experiment-name", str(self.experiment_name)])
-                cmd.extend(["--trial-name", str(self.trial_name)])
-                cmd.extend(["--role", role])
-                cmd.extend(["--worker-index", str(idx)])
-                cmd.extend(["--name-resolve-type", self.name_resolve_config.type])
-                cmd.extend(
-                    ["--nfs-record-root", self.name_resolve_config.nfs_record_root]
-                )
-                cmd.extend(["--etcd3-addr", self.name_resolve_config.etcd3_addr])
-                cmd.extend(["--fileroot", str(self.fileroot)])
+                cmd_prefix = shlex.split(scheduling.cmd)
+                cmd_suffix = [
+                    "--experiment-name",
+                    str(self.experiment_name),
+                    "--trial-name",
+                    str(self.trial_name),
+                    "--role",
+                    role,
+                    "--worker-index",
+                    str(idx),
+                    "--name-resolve-type",
+                    self.name_resolve_config.type,
+                    "--nfs-record-root",
+                    self.name_resolve_config.nfs_record_root,
+                    "--etcd3-addr",
+                    self.name_resolve_config.etcd3_addr,
+                    "--fileroot",
+                    str(self.fileroot),
+                ]
 
-                logger.info(f"Starting worker {worker_id}: {' '.join(cmd)}")
-                if cmd[0].startswith("python"):
-                    cmd[0] = sys.executable
+                process = None
+                ports = []
+                for attempt in range(1, _MAX_STARTUP_PORT_CONFLICT_RETRIES + 1):
+                    try:
+                        ports = self._allocate_ports(scheduling.port_count)
+                    except (
+                        PortAllocationError,
+                        WorkerNotFoundError,
+                        ValueError,
+                    ) as e:
+                        self._cleanup_workers(workers)
+                        raise WorkerCreationError(
+                            role,
+                            f"Resource allocation failed for worker {idx}",
+                            str(e),
+                        ) from e
 
-                try:
-                    process = run_with_streaming_logs(
-                        cmd,
-                        log_file,
-                        merged_log,
-                        role,
-                        env_vars_in_cmd=env,
+                    cmd = [*cmd_prefix, "--port", str(ports[0]), *cmd_suffix]
+
+                    logger.info(
+                        "Starting worker %s (attempt %s/%s): %s",
+                        worker_id,
+                        attempt,
+                        _MAX_STARTUP_PORT_CONFLICT_RETRIES,
+                        " ".join(cmd),
                     )
-                except Exception as e:
-                    self._cleanup_workers(workers)
-                    raise WorkerCreationError(
-                        role,
-                        f"Failed to spawn subprocess for worker {idx}",
-                        str(e),
-                    ) from e
+                    if cmd[0].startswith("python"):
+                        cmd[0] = sys.executable
 
-                time.sleep(0.1)
-                if process.poll() is not None:
-                    stderr = self._read_log_tail(log_file)
+                    try:
+                        process = run_with_streaming_logs(
+                            cmd,
+                            log_file,
+                            merged_log,
+                            role,
+                            env_vars_in_cmd=env,
+                        )
+                    except Exception as e:
+                        self._release_ports(ports)
+                        self._cleanup_workers(workers)
+                        raise WorkerCreationError(
+                            role,
+                            f"Failed to spawn subprocess for worker {idx}",
+                            str(e),
+                        ) from e
+
+                    time.sleep(0.1)
+                    if process.poll() is None:
+                        break
+
+                    stderr = self._read_log_tail(str(log_file))
+                    self._release_ports(ports)
+
+                    if self._is_port_conflict_error(stderr):
+                        logger.warning(
+                            "Worker %s hit port conflict on startup attempt %s/%s; retrying with new ports.",
+                            worker_id,
+                            attempt,
+                            _MAX_STARTUP_PORT_CONFLICT_RETRIES,
+                        )
+                        if attempt < _MAX_STARTUP_PORT_CONFLICT_RETRIES:
+                            time.sleep(0.1 * attempt)
+                            continue
+
                     self._cleanup_workers(workers)
                     raise WorkerCreationError(
                         role,
                         f"Worker {worker_id} exited immediately with code {process.returncode}",
                         stderr,
+                    )
+                else:
+                    self._cleanup_workers(workers)
+                    raise WorkerCreationError(
+                        role,
+                        f"Worker {worker_id} failed to start after {_MAX_STARTUP_PORT_CONFLICT_RETRIES} attempts",
+                        self._read_log_tail(str(log_file)),
                     )
 
                 worker_ip = gethostip()
@@ -1027,23 +1108,27 @@ class LocalScheduler(Scheduler):
                     stderr,
                 )
 
-    def delete_workers(self, role: str | None = None):
+    def delete_workers(self, role: str | None = None, reverse_order: bool = False):
         """Delete workers and clean up resources.
 
         Parameters
         ----------
         role : str, optional
             Specific worker role to delete, or None to delete all
+        reverse_order : bool, optional
+            If True, terminate workers in reverse rank order so that rank-0
+            (owner of the global TCPStore) is signalled last. See
+            ``Scheduler.delete_workers`` for background.
         """
         if role is None:
             # Delete colocated roles first (they don't own processes)
             colocated_roles = list(self._colocated_roles.keys())
             for r in colocated_roles:
-                self.delete_workers(r)
+                self.delete_workers(r, reverse_order=reverse_order)
             # Then delete actual worker roles
             roles = list(self._workers.keys())
             for r in roles:
-                self.delete_workers(r)
+                self.delete_workers(r, reverse_order=reverse_order)
             return
 
         # Handle colocated/forked role
@@ -1052,6 +1137,8 @@ class LocalScheduler(Scheduler):
             if role in self._workers:
                 logger.info(f"Removing forked role '{role}' (managed by parent worker)")
                 workers = self._workers[role]
+                if reverse_order:
+                    workers = list(reversed(workers))
                 self._cleanup_workers(
                     workers
                 )  # Release ports, but process=None skips kill
@@ -1069,6 +1156,8 @@ class LocalScheduler(Scheduler):
         workers = self._workers[role]
         logger.info(f"Deleting {len(workers)} workers for role '{role}'")
 
+        if reverse_order:
+            workers = list(reversed(workers))
         self._cleanup_workers(workers)
 
         del self._workers[role]
@@ -1076,20 +1165,97 @@ class LocalScheduler(Scheduler):
         logger.info(f"Successfully deleted workers for role '{role}'")
 
     def _cleanup_workers(self, workers: list[WorkerInfo]):
+        """Tear down a batch of workers with coordinated teardown semantics.
+
+        The previous implementation iterated ``workers`` serially and called
+        ``kill_process_tree(..., timeout=3, graceful=True)`` on each one.
+        Because that helper blocks for up to ``timeout`` seconds between
+        SIGTERM and the fallback SIGKILL, a 4-rank job could spend ~12 s
+        killing workers one-by-one. During that window only a single rank
+        was executing its ``engine.destroy()`` path, so the CPU barrier
+        added in ``FSDPEngine.destroy()`` could never actually synchronise
+        -- every rank timed out on its barrier and the NCCL teardown race
+        that produced ``TCPStore.recvValue failed`` / HeartbeatMonitor
+        warnings was not fixed.
+
+        The corrected behaviour is:
+
+        1. Release port allocations synchronously (cheap, no I/O).
+        2. Send SIGTERM to every worker in the order provided by the
+           caller, with no blocking waits in between. ``delete_workers``
+           passes the list in reverse rank order when
+           ``reverse_order=True``, which preserves the "rank-0 signalled
+           last" guarantee while keeping the dispatch window in the
+           millisecond range.
+        3. Wait for every worker to exit in parallel using one thread per
+           worker. Each thread re-uses ``kill_process_tree`` so the
+           existing SIGTERM -> wait -> SIGKILL escalation is preserved
+           per-worker; we just no longer serialise the waits.
+
+        With this change every rank enters ``engine.destroy()`` within the
+        same small window, the CPU ``dist.barrier`` inside can actually
+        rendezvous, and the NCCL / TCPStore teardown becomes race-free.
+        """
+        import threading
+
+        # Phase 1: always release ports, regardless of whether the worker
+        # owns a process (forked workers have ``process is None``).
+        live_workers: list[WorkerInfo] = []
         for worker_info in workers:
             try:
                 for port_str in worker_info.worker.worker_ports:
                     self._allocated_ports.discard(int(port_str))
+            except Exception as e:
+                logger.error(
+                    f"Error releasing ports for worker {worker_info.worker.id}: {e}",
+                    exc_info=True,
+                )
+            if worker_info.process is not None:
+                live_workers.append(worker_info)
+            else:
+                logger.debug(f"Cleaned up worker {worker_info.worker.id}")
 
-                # Only kill process if we own it (non-forked workers)
-                if worker_info.process is not None:
-                    kill_process_tree(worker_info.process.pid, timeout=3, graceful=True)
+        if not live_workers:
+            return
 
+        # Phase 2: dispatch SIGTERM to every worker concurrently via
+        # background threads so that all ranks reach their teardown
+        # barrier within the same window. The list order is preserved as
+        # thread start order: when the caller requests reverse_order,
+        # rank-0 is the last thread to be started, which keeps the
+        # "rank-0 dies last" property while staying non-blocking.
+        def _finalize(worker_info: WorkerInfo) -> None:
+            try:
+                kill_process_tree(worker_info.process.pid, timeout=3, graceful=True)
                 logger.debug(f"Cleaned up worker {worker_info.worker.id}")
             except Exception as e:
                 logger.error(
                     f"Error cleaning up worker {worker_info.worker.id}: {e}",
                     exc_info=True,
+                )
+
+        threads: list[threading.Thread] = []
+        for worker_info in live_workers:
+            t = threading.Thread(
+                target=_finalize,
+                args=(worker_info,),
+                name=f"cleanup-{worker_info.worker.id}",
+                daemon=True,
+            )
+            t.start()
+            threads.append(t)
+
+        # Phase 3: wait for every cleanup thread. Each ``kill_process_tree``
+        # call internally waits up to ``timeout=3`` seconds for graceful
+        # shutdown and then SIGKILLs stragglers, so a small safety margin
+        # on ``join`` is sufficient.
+        join_timeout = 10.0
+        for t in threads:
+            t.join(timeout=join_timeout)
+            if t.is_alive():
+                logger.warning(
+                    f"Cleanup thread {t.name} did not finish within "
+                    f"{join_timeout}s; leaving it as daemon."
                 )
 
     def _read_log_tail(self, log_file: str, lines: int = 50) -> str:
@@ -1266,6 +1432,7 @@ class LocalScheduler(Scheduler):
         method: str,
         engine_name: str | None = None,
         *args,
+        rpc_meta: dict[str, Any] | None = None,
         http_timeout: float = 7200.0,
         max_retries: int = 3,
         retry_delay: float = 1.0,
@@ -1323,6 +1490,7 @@ class LocalScheduler(Scheduler):
             "engine_name": engine_name,
             "args": serialized_args,
             "kwargs": serialized_kwargs,
+            "rpc_meta": rpc_meta,
         }
 
         # Retry logic with exponential backoff
@@ -1393,6 +1561,7 @@ class LocalScheduler(Scheduler):
         method: str,
         engine_name: str | None = None,
         *args,
+        rpc_meta: dict[str, Any] | None = None,
         http_timeout: float = 7200.0,
         max_retries: int = 3,
         retry_delay: float = 1.0,
@@ -1452,6 +1621,7 @@ class LocalScheduler(Scheduler):
             "engine_name": engine_name,
             "args": serialized_args,
             "kwargs": serialized_kwargs,
+            "rpc_meta": rpc_meta,
         }
 
         last_error = None

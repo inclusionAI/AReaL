@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Gateway protocol frame parsing for the Agent Service.
 
 Implements the OpenClaw-like WebSocket protocol with three frame types:

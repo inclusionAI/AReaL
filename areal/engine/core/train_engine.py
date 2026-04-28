@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Core operations for training engines.
 
 This module provides stateless utility functions that are shared across

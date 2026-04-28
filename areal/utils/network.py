@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 import random
 import socket
 from ipaddress import ip_address

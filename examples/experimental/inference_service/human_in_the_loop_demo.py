@@ -54,7 +54,12 @@ def _print_header(title: str) -> None:
 # ── Zeroclaw config helpers ────────────────────────────────────────────────
 
 
-def _patch_zeroclaw_config(config_path: Path, gateway_addr: str, api_key: str) -> Path:
+def _patch_zeroclaw_config(
+    config_path: Path,
+    gateway_addr: str,
+    api_key: str,
+    model: str | None = None,
+) -> Path:
     backup = config_path.with_suffix(".demo_bak")
     shutil.copy2(config_path, backup)
 
@@ -74,6 +79,14 @@ def _patch_zeroclaw_config(config_path: Path, gateway_addr: str, api_key: str) -
         )
     else:
         text = f'api_key = "{api_key}"\n' + text
+
+    if model is not None:
+        text = re.sub(
+            r'^default_model\s*=\s*".*"',
+            f'default_model = "{model}"',
+            text,
+            flags=re.MULTILINE,
+        )
 
     config_path.write_text(text)
     return backup
@@ -214,6 +227,21 @@ def main() -> None:
         default=DEFAULT_INFERENCE_BACKEND,
         help="Inference backend used by online_rollout.py",
     )
+    parser.add_argument(
+        "--api-url",
+        default=None,
+        help="External API URL (enables external model mode)",
+    )
+    parser.add_argument(
+        "--provider-api-key",
+        default=None,
+        help="API key for the external provider",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Model name for the gateway controller",
+    )
     args = parser.parse_args()
 
     online_rollout = (
@@ -248,17 +276,24 @@ def main() -> None:
         # ── Step 1: Launch online_rollout.py ──
         _print_header("Step 1: Launch online_rollout.py")
         log_fh = open(rollout_log, "w")
+        rollout_cmd = [
+            sys.executable,
+            str(online_rollout),
+            "--config",
+            str(config_yaml),
+            f"actor.path={args.actor_path}",
+            f"rollout.backend={args.inference_backend}:d1",
+            f"rollout.openai.admin_api_key={args.admin_key}",
+            f"rollout.request_timeout={args.request_timeout}",
+        ]
+        if args.api_url:
+            rollout_cmd.extend(["--api-url", args.api_url])
+        if args.provider_api_key:
+            rollout_cmd.extend(["--provider-api-key", args.provider_api_key])
+        if args.model:
+            rollout_cmd.extend(["--model", args.model])
         rollout_proc = subprocess.Popen(
-            [
-                sys.executable,
-                str(online_rollout),
-                "--config",
-                str(config_yaml),
-                f"actor.path={args.actor_path}",
-                f"rollout.backend={args.inference_backend}:d1",
-                f"rollout.openai.admin_api_key={args.admin_key}",
-                f"rollout.request_timeout={args.request_timeout}",
-            ],
+            rollout_cmd,
             stdout=log_fh,
             stderr=subprocess.STDOUT,
             cwd=str(REPO_ROOT),
@@ -295,7 +330,7 @@ def main() -> None:
         # ── Step 2: Patch zeroclaw config ──
         _print_header("Step 2: Update ~/.zeroclaw/config.toml")
         zeroclaw_backup = _patch_zeroclaw_config(
-            zeroclaw_config, gateway_addr, args.admin_key
+            zeroclaw_config, gateway_addr, args.admin_key, model=args.model
         )
         print("  Done.")
 

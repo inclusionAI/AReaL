@@ -1,10 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Configuration for the GatewayInferenceController."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-
-from areal.api.cli_args import OpenAIProxyConfig
 
 
 @dataclass
@@ -18,6 +18,7 @@ class GatewayControllerConfig:
     # -- Model / tokenizer -------------------------------------------------
     tokenizer_path: str = ""
     model_path: str = ""
+    model: str = "default"
 
     # -- Routing -----------------------------------------------------------
     routing_strategy: str = "round_robin"
@@ -49,6 +50,17 @@ class GatewayControllerConfig:
     backend: str = "sglang:d1"
     scheduling_spec: tuple = field(default_factory=tuple)
     pause_grace_period: float = 0.5
+    n_gpus_per_node: int | None = None  # GPUs per physical node; None = single-node
 
-    # -- OpenAI proxy configuration (for agent-like workflows) ---------------
-    openai: OpenAIProxyConfig = field(default_factory=lambda: OpenAIProxyConfig())
+    # -- Admin / workflow --------------------------------------------------
+    admin_api_key: str | None = None
+    turn_discount: float = 1.0
+    export_style: str = "individual"
+    tool_call_parser: str = "qwen"
+    reasoning_parser: str = "qwen3"
+    engine_max_tokens: int | None = None
+    chat_template_type: str = "hf"
+
+    # -- External model API ------------------------------------------------
+    api_url: str | None = None
+    provider_api_key: str | None = None

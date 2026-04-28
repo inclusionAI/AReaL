@@ -127,16 +127,14 @@ def model_path() -> str:
 def _create_data_proxy_app_with_sessions(sglang_server, model_path):
     """Create a fully-wired data proxy app with session support."""
     from areal.experimental.inference_service.data_proxy.app import create_app
-    from areal.experimental.inference_service.data_proxy.backend import (
-        SGLangBridgeBackend,
-    )
     from areal.experimental.inference_service.data_proxy.config import DataProxyConfig
-    from areal.experimental.inference_service.data_proxy.inf_bridge import InfBridge
     from areal.experimental.inference_service.data_proxy.pause import PauseState
     from areal.experimental.inference_service.data_proxy.session import SessionStore
     from areal.experimental.inference_service.data_proxy.tokenizer_proxy import (
         TokenizerProxy,
     )
+    from areal.experimental.inference_service.inf_bridge import InfBridge
+    from areal.experimental.inference_service.sglang.bridge import SGLangBridgeBackend
     from areal.experimental.openai.client import ArealOpenAI
 
     config = DataProxyConfig(
@@ -174,16 +172,14 @@ def _create_data_proxy_app_with_sessions(sglang_server, model_path):
 def _create_data_proxy_app_vllm(vllm_server, model_path):
     """Create a data proxy app backed by vLLM with session support."""
     from areal.experimental.inference_service.data_proxy.app import create_app
-    from areal.experimental.inference_service.data_proxy.backend import (
-        VLLMBridgeBackend,
-    )
     from areal.experimental.inference_service.data_proxy.config import DataProxyConfig
-    from areal.experimental.inference_service.data_proxy.inf_bridge import InfBridge
     from areal.experimental.inference_service.data_proxy.pause import PauseState
     from areal.experimental.inference_service.data_proxy.session import SessionStore
     from areal.experimental.inference_service.data_proxy.tokenizer_proxy import (
         TokenizerProxy,
     )
+    from areal.experimental.inference_service.inf_bridge import InfBridge
+    from areal.experimental.inference_service.vllm.bridge import VLLMBridgeBackend
     from areal.experimental.openai.client import ArealOpenAI
 
     config = DataProxyConfig(

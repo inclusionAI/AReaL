@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Configuration for the Inference Gateway service."""
 
 from __future__ import annotations
@@ -19,4 +21,4 @@ class GatewayConfig:
     router_addr: str = "http://localhost:8081"
     router_timeout: float = 2.0  # seconds for /route call
     forward_timeout: float = 120.0  # seconds for forwarding to data proxy
-    log_level: str = "info"
+    log_level: str = "warning"

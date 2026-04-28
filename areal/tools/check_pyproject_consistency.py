@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+
 """Check consistency between pyproject.toml and pyproject.vllm.toml.
 
 Only packages marked as "escapable" (inference-backend-specific) are allowed
@@ -38,6 +40,7 @@ ESCAPABLE_PACKAGES: frozenset[str] = frozenset(
         "nvidia-cudnn-cu12",
         "openai",
         "soundfile",
+        "peft",
     }
 )
 

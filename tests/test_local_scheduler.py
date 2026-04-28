@@ -786,6 +786,42 @@ class TestWorkerCreation:
                 scheduler.create_workers(job)
 
             assert "exited immediately with code 1" in str(exc_info.value)
+            assert mock_popen.call_count == 1
+
+    @patch("areal.infra.scheduler.local.gethostip")
+    @patch("areal.infra.scheduler.local.subprocess.Popen")
+    @patch("areal.infra.scheduler.local.find_free_ports")
+    def test_create_workers_retries_immediate_port_conflict(
+        self, mock_find_ports, mock_popen, mock_gethostip, tmp_path
+    ):
+        mock_gethostip.return_value = "127.0.0.1"
+        mock_find_ports.side_effect = [[8000, 8001], [8002, 8003]]
+
+        conflict_proc = Mock()
+        conflict_proc.pid = 1234
+        conflict_proc.poll.return_value = 1
+        conflict_proc.returncode = 1
+
+        success_proc = Mock()
+        success_proc.pid = 1235
+        success_proc.poll.return_value = None
+
+        mock_popen.side_effect = [conflict_proc, success_proc]
+
+        scheduler = create_scheduler(tmp_path)
+        job = Job(replicas=1, role="test")
+
+        with patch.object(
+            scheduler,
+            "_read_log_tail",
+            return_value="Address already in use\nPort 8000 is in use by another program",
+        ):
+            worker_ids = scheduler.create_workers(job)
+
+        assert worker_ids == ["test/0"]
+        assert mock_popen.call_count == 2
+        assert scheduler._workers["test"][0].worker.worker_ports == ["8002", "8003"]
+        assert scheduler._allocated_ports == {8002, 8003}
 
     @patch("areal.infra.scheduler.local.gethostip")
     @patch("areal.infra.scheduler.local.subprocess.Popen")
@@ -1063,6 +1099,39 @@ class TestDeleteWorkers:
         """Should log warning and return when role doesn't exist."""
         # Should not raise
         scheduler.delete_workers("nonexistent")
+
+    def test_delete_workers_reverse_order(self, scheduler, tmp_path, monkeypatch):
+        """With reverse_order=True, workers are cleaned up in reverse rank order.
+
+        This protects rank-0 (owner of the global TCPStore server) from being
+        torn down before non-zero ranks finish their final NCCL abort.
+        """
+        workers = [
+            create_worker_info(
+                worker_id=f"role1/{i}",
+                role="role1",
+                ports=[str(8000 + i)],
+                log_file=str(tmp_path / f"role1-{i}.log"),
+            )
+            for i in range(4)
+        ]
+        scheduler._workers["role1"] = workers
+        scheduler._allocated_ports = {8000, 8001, 8002, 8003}
+
+        observed_order: list[str] = []
+
+        original_cleanup = scheduler._cleanup_workers
+
+        def spy(workers_arg):
+            observed_order.extend(w.worker.id for w in workers_arg)
+            original_cleanup(workers_arg)
+
+        monkeypatch.setattr(scheduler, "_cleanup_workers", spy)
+
+        scheduler.delete_workers("role1", reverse_order=True)
+
+        assert observed_order == ["role1/3", "role1/2", "role1/1", "role1/0"]
+        assert "role1" not in scheduler._workers
 
     def test_cleanup_workers_releases_ports(self, scheduler, tmp_path):
         """Should release allocated ports when cleaning up workers."""

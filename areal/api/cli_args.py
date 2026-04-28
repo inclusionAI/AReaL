@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 import argparse
 import json
 import os
@@ -25,6 +27,7 @@ from areal.utils.constants import (
     PROX_LOGP_METHODS_ALL,
 )
 from areal.utils.pkg_version import is_version_less
+from areal.utils.seqpack import PACKING_ALGORITHMS
 
 if TYPE_CHECKING:
     from transformers import PreTrainedTokenizerFast
@@ -121,6 +124,27 @@ class MicroBatchSpec:
             "help": "Divisor for the number of micro-batches. The final number of micro-batches will be adjusted to be divisible by this value.",
         },
     )
+    packing_algorithm: str = field(
+        default="ffd",
+        metadata={
+            "help": (
+                "Sequence packing algorithm for micro-batch allocation. "
+                "Supported values: 'ffd' (First Fit Decreasing, default), "
+                "'kk' (Karmarkar-Karp, better balance but slightly slower). "
+                "KK is recommended when workload balance across DP ranks is "
+                "critical (e.g., large-scale RL training with variable-length sequences)."
+            ),
+            "choices": ["ffd", "kk"],
+        },
+    )
+
+    def __post_init__(self):
+        """Validate packing algorithm configuration."""
+        if self.packing_algorithm not in PACKING_ALGORITHMS:
+            raise ValueError(
+                f"packing_algorithm must be one of {sorted(PACKING_ALGORITHMS)}, "
+                f"got '{self.packing_algorithm}'"
+            )
 
     @classmethod
     def new(cls, mb_spec: "MicroBatchSpec", **kwargs):
@@ -130,6 +154,7 @@ class MicroBatchSpec:
             granularity=mb_spec.granularity,
             max_tokens_per_mb=mb_spec.max_tokens_per_mb,
             n_mbs_divisor=mb_spec.n_mbs_divisor,
+            packing_algorithm=mb_spec.packing_algorithm,
         )
         fields.update(kwargs)
         return cls(**fields)
@@ -531,7 +556,7 @@ class ArchonEngineConfig:
 
     # Whether to enable torch.compile
     enable_compile: bool = field(
-        default=True,
+        default=False,
         metadata={"help": "Enable torch.compile for TransformerBlocks."},
     )
 
@@ -1092,6 +1117,14 @@ class TrainEngineConfig:
     archon: ArchonEngineConfig = field(default_factory=ArchonEngineConfig)
     megatron: MegatronEngineConfig = field(default_factory=MegatronEngineConfig)
 
+    # offload
+    offload: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to offload model parameters and optimizer states to CPU. "
+        },
+    )
+
     # Lora
     use_lora: bool = field(
         default=False,
@@ -1136,6 +1169,33 @@ class TrainEngineConfig:
             "e.g. 'fsdp:d4', 'megatron:d4t2p2', 'archon:d2'. Required."
         },
     )
+
+    # v2 controller options
+    _version: str = field(
+        default="v1",
+        metadata={
+            "help": "Train controller implementation version. Use 'v1' for legacy TrainController, 'v2' for GatewayTrainController.",
+            "choices": ["v1", "v2"],
+        },
+    )
+    admin_api_key: str = field(
+        default="areal-admin-key",
+        metadata={
+            "help": "Admin API key used by gateway/router/data-proxy in controller v2."
+        },
+    )
+    log_level: str = field(
+        default="warning",
+        metadata={"help": "Gateway stack log level for controller v2."},
+    )
+    request_timeout: float = field(
+        default=3600.0,
+        metadata={"help": "Gateway request timeout in seconds for controller v2."},
+    )
+    setup_timeout: float = field(
+        default=3600.0,
+        metadata={"help": "Gateway setup timeout in seconds for controller v2."},
+    )
     scheduling_strategy: SchedulingStrategy = field(
         default_factory=SchedulingStrategy,
         metadata={
@@ -1158,6 +1218,175 @@ class TrainEngineConfig:
                 "memory_efficient_load cannot be used with init_from_scratch=True. "
                 "memory_efficient_load is for loading pretrained weights on CPU, "
                 "but init_from_scratch creates a model without loading any weights."
+            )
+        if self._version not in ("v1", "v2"):
+            raise ValueError(
+                f"_version must be either 'v1' or 'v2', got '{self._version}'"
+            )
+
+
+@dataclass
+class RejectionSamplingConfig:
+    """Unified configuration for sample filtering based on policy divergence.
+
+    Filters tokens/sequences where the divergence between proximal policy
+    and behavior policy exceeds a threshold, via two action modes:
+    - 'mask': zero out loss_mask (rejection, exclude from gradient)
+    - 'clamp': clamp importance weight to bounds (truncation, bounded gradient)
+
+    Supports direct ratio bounds and KL divergence estimators (K1/K2/K3),
+    at both token-level and sequence-level granularity.
+
+    Replaces the removed ``behave_imp_weight_cap`` and ``behave_imp_weight_mode``.
+
+    Attributes:
+        level: Filtering granularity ('token' or 'sequence'). When ``level='sequence'``
+            and ``metric='ratio'``, both the filtering decision and the correction
+            weight (behave_imp_weight) use the sequence-level geometric mean,
+            matching the old ``sequence_mask``/``sequence_truncate`` semantics.
+        action: Action mode ('mask' or 'clamp').
+        metric: Divergence metric ('ratio', 'kl_k1', 'kl_k2', 'kl_k3').
+        agg: Aggregation method for sequence-level ('sum', 'mean', 'max').
+            For 'ratio' metric, aggregation is performed in log space (geometric
+            mean/sum) to avoid the "length trap" and match GSPO semantics.
+            For KL metrics, aggregation is arithmetic.
+        upper: Upper bound for filtering.
+        lower: Lower bound for filtering (optional).
+    """
+
+    level: str = field(
+        default="token",
+        metadata={
+            "help": "Filtering granularity. "
+            "'token': per-token filtering (each token judged independently). "
+            "'sequence': per-sequence filtering (all tokens in a sequence share the same fate). "
+            "When metric='ratio', both the filtering decision and the correction weight "
+            "(behave_imp_weight) operate at sequence level using the geometric mean.",
+            "choices": ["token", "sequence"],
+        },
+    )
+    action: str = field(
+        default="mask",
+        metadata={
+            "help": "Action to take when metric exceeds threshold. "
+            "'mask': zero out loss_mask for filtered tokens/sequences (rejection, "
+            "completely excludes from gradient computation). "
+            "'clamp': clamp importance weight to [lower, upper] bounds (truncation, "
+            "tokens still participate in gradient but with bounded weight).",
+            "choices": ["mask", "clamp"],
+        },
+    )
+    metric: str = field(
+        default="ratio",
+        metadata={
+            "help": "Divergence metric for filtering. "
+            "'ratio': direct importance ratio π_proximal/π_behave. "
+            "'kl_k1': KL estimator k1 = log(r), forward KL unbiased estimator (can be negative). "
+            "'kl_k2': KL estimator k2 = 0.5 * (log r)^2, non-negative quadratic approximation. "
+            "'kl_k3': KL estimator k3 = r - log(r) - 1, non-negative exact forward KL estimator.",
+            "choices": ["ratio", "kl_k1", "kl_k2", "kl_k3"],
+        },
+    )
+    agg: str = field(
+        default="mean",
+        metadata={
+            "help": "Aggregation method for sequence-level filtering. "
+            "Only used when level='sequence'. "
+            "For 'ratio' metric, aggregation is in log space: "
+            "'sum' = exp(sum(log(r_i))), 'mean' = exp(mean(log(r_i))) = geometric mean "
+            "(length-invariant, consistent with GSPO). "
+            "For KL metrics, aggregation is arithmetic: "
+            "'sum' = sum(kl_i), 'mean' = mean(kl_i). "
+            "'max': max of per-token metric values (most conservative).",
+            "choices": ["sum", "mean", "max"],
+        },
+    )
+    upper: float = field(
+        default=5.0,
+        metadata={
+            "help": "Upper bound for filtering. "
+            "Tokens/sequences with metric > upper are filtered out (loss_mask zeroed). "
+            "For 'ratio' metric: must be > 1.0, typical values are 2.0 or 5.0. "
+            "For 'kl_k2'/'kl_k3' metrics: typical values are 0.5-2.0."
+        },
+    )
+    lower: float | None = field(
+        default=None,
+        metadata={
+            "help": "Lower bound for filtering (optional). "
+            "None means no lower bound. "
+            "For 'ratio' metric: typical value is 0.5 (filter out tokens where policy "
+            "probability dropped significantly). Must be > 0. "
+            "For 'kl_k1' metric: can be used to filter negative KL estimates."
+        },
+    )
+
+    def __post_init__(self):
+        """Validate configuration."""
+        import warnings
+
+        _VALID_LEVELS = ("token", "sequence")
+        _VALID_ACTIONS = ("mask", "clamp")
+        _VALID_METRICS = ("ratio", "kl_k1", "kl_k2", "kl_k3")
+        _VALID_AGGS = ("sum", "mean", "max")
+
+        # Validate enum-like fields.
+        if self.level not in _VALID_LEVELS:
+            raise ValueError(
+                f"level must be one of {_VALID_LEVELS}, got '{self.level}'"
+            )
+        if self.action not in _VALID_ACTIONS:
+            raise ValueError(
+                f"action must be one of {_VALID_ACTIONS}, got '{self.action}'"
+            )
+        if self.metric not in _VALID_METRICS:
+            raise ValueError(
+                f"metric must be one of {_VALID_METRICS}, got '{self.metric}'"
+            )
+        if self.agg not in _VALID_AGGS:
+            raise ValueError(f"agg must be one of {_VALID_AGGS}, got '{self.agg}'")
+
+        # Validate lower <= upper when both are set.
+        if self.lower is not None and self.lower > self.upper:
+            raise ValueError(
+                f"lower ({self.lower}) cannot be greater than upper ({self.upper})"
+            )
+
+        # For ratio metric, upper must be > 1.0 (otherwise all non-identical policy tokens are filtered).
+        if self.metric == "ratio":
+            if self.upper <= 1.0:
+                raise ValueError(
+                    f"upper must be > 1.0 for 'ratio' metric (otherwise all non-identical "
+                    f"policy tokens will be filtered), got {self.upper}"
+                )
+            if self.lower is not None and self.lower <= 0:
+                raise ValueError(
+                    f"lower must be positive for 'ratio' metric, got {self.lower}"
+                )
+        # For KL metrics, upper must be > 0.
+        # Note: kl_k1 is excluded because it is a forward KL unbiased estimator that
+        # can produce negative values, so requiring upper > 0 would be too restrictive.
+        if self.metric in ("kl_k2", "kl_k3") and self.upper <= 0:
+            raise ValueError(
+                f"upper must be positive for '{self.metric}' metric, got {self.upper}"
+            )
+        # Clamp action only supports ratio metric (direct importance weight truncation).
+        if self.action == "clamp" and self.metric != "ratio":
+            raise ValueError(
+                f"action='clamp' only supports metric='ratio' (direct importance weight "
+                f"truncation). Got metric='{self.metric}'. "
+                f"Use action='mask' for KL-based filtering."
+            )
+        # Clamp action defaults lower to 0.0 (consistent with old truncate behavior).
+        if self.action == "clamp" and self.lower is None:
+            self.lower = 0.0
+        # Validate sequence-level aggregation.
+        if self.level == "token" and self.agg != "mean":
+            warnings.warn(
+                f"agg='{self.agg}' is ignored when level='token'. "
+                "Aggregation is only used for sequence-level filtering.",
+                UserWarning,
+                stacklevel=2,
             )
 
 
@@ -1264,32 +1493,12 @@ class PPOActorConfig(TrainEngineConfig):
             "help": "Use the decoupled loss. Implicitly enables recompute_logprob."
         },
     )
-    behave_imp_weight_cap: float | None = field(
-        default=5.0,
+    rejection_sampling: RejectionSamplingConfig | None = field(
+        default=None,
         metadata={
-            "help": "Filter out tokens/sequences where behave_imp_weight exceeds this cap when computing loss. "
-            "Only effective when use_decoupled_loss=True (decoupled/async training). "
-            "Must be > 1.0 when mode is not 'disabled'. "
-            "Mode controlled by behave_imp_weight_mode (mask/truncate/disabled)."
-        },
-    )
-    behave_imp_weight_mode: str = field(
-        default="token_mask",
-        metadata={
-            "help": "Mode for importance weight filtering. "
-            "Only effective when use_decoupled_loss=True (decoupled/async training). "
-            "'token_truncate': clamp token ratio to [0, cap]. "
-            "'token_mask': set token ratio to 0 where ratio > cap. "
-            "'sequence_truncate': clamp sequence ratio to [0, cap]. "
-            "'sequence_mask': set sequence ratio to 0 where ratio > cap. "
-            "'disabled': disable importance weight correction.",
-            "choices": [
-                "token_truncate",
-                "token_mask",
-                "sequence_truncate",
-                "sequence_mask",
-                "disabled",
-            ],
+            "help": "Rejection sampling configuration for filtering stale samples. "
+            "None disables filtering (equivalent to old behave_imp_weight_mode='disabled'). "
+            "Only effective when use_decoupled_loss=True."
         },
     )
     importance_sampling_level: str = field(
@@ -1342,34 +1551,28 @@ class PPOActorConfig(TrainEngineConfig):
 
     def __post_init__(self):
         """Validate PPO actor configuration."""
-        # Validate MIS/TIS configuration
-        if self.behave_imp_weight_mode == "disabled":
-            if self.behave_imp_weight_cap is not None:
-                raise ValueError(
-                    f"behave_imp_weight_cap must be None when behave_imp_weight_mode is 'disabled', "
-                    f"got {self.behave_imp_weight_cap}."
-                )
-        else:
-            if (
-                self.behave_imp_weight_cap is not None
-                and self.behave_imp_weight_cap <= 1.0
-            ):
-                raise ValueError(
-                    f"behave_imp_weight_cap must be > 1.0 when behave_imp_weight_mode is not 'disabled', "
-                    f"got {self.behave_imp_weight_cap}."
-                )
-
-        # Warn if behave_imp_weight settings are configured but use_decoupled_loss is False
-        if not self.use_decoupled_loss:
-            if (
-                self.behave_imp_weight_cap is not None
-                or self.behave_imp_weight_mode != "disabled"
-            ):
-                logger.warning(
-                    "behave_imp_weight_cap and behave_imp_weight_mode are configured but "
-                    "use_decoupled_loss=False. These settings will be ignored. "
-                    "Set use_decoupled_loss=True to enable decoupled loss with importance weight correction."
-                )
+        # Warn if rejection_sampling is configured but use_decoupled_loss is False
+        if not self.use_decoupled_loss and self.rejection_sampling is not None:
+            logger.warning(
+                "rejection_sampling is configured but use_decoupled_loss=False. "
+                "Filtering will be ignored. Set use_decoupled_loss=True to enable."
+            )
+        # Warn if decoupled loss is enabled but no rejection sampling configured.
+        # The old default (behave_imp_weight_cap=5.0, mode=token_mask) enabled
+        # filtering implicitly; the new default (rejection_sampling=None) disables
+        # it. This warning helps users who relied on the old defaults.
+        if self.use_decoupled_loss and self.rejection_sampling is None:
+            logger.warning(
+                "use_decoupled_loss=True with rejection_sampling=None: "
+                "staleness filtering is disabled. If you previously relied on "
+                "the default behave_imp_weight_cap=5.0 with token_mask mode, "
+                "restore equivalent behavior with:\n"
+                "  rejection_sampling:\n"
+                "    level: token\n"
+                "    action: mask\n"
+                "    metric: ratio\n"
+                "    upper: 5.0"
+            )
 
         # Validate SAPO configuration
         if self.use_sapo_loss:
@@ -1477,6 +1680,8 @@ class vLLMConfig:
         host: str | None = None,
         port: int | None = None,
         dist_init_addr: str | None = None,
+        n_nodes: int = 1,
+        node_rank: int = 0,
     ):
         args: dict = conf_as_dict(vllm_config)
         args = dict(
@@ -1492,6 +1697,18 @@ class vLLMConfig:
             args["port"] = port
         if host is not None:
             args["host"] = host
+        # Multi-node support
+        if n_nodes > 1:
+            args["nnodes"] = n_nodes
+            args["node_rank"] = node_rank
+            if dist_init_addr is not None:
+                from areal.utils.network import split_hostport
+
+                master_host, master_port = split_hostport(dist_init_addr)
+                args["master_addr"] = master_host
+                args["master_port"] = str(master_port)
+            if node_rank > 0:
+                args["headless"] = True
         return args
 
     @staticmethod
@@ -1506,6 +1723,8 @@ class vLLMConfig:
         host: str | None = None,
         port: int | None = None,
         dist_init_addr: str | None = None,
+        n_nodes: int = 1,
+        node_rank: int = 0,
     ):
         args = vLLMConfig.build_args(
             vllm_config=vllm_config,
@@ -1514,6 +1733,8 @@ class vLLMConfig:
             host=host,
             port=port,
             dist_init_addr=dist_init_addr,
+            n_nodes=n_nodes,
+            node_rank=node_rank,
         )
         return vLLMConfig.build_cmd_from_args(args)
 
@@ -1617,7 +1838,9 @@ class SGLangConfig:
 
     @staticmethod
     def build_cmd_from_args(args: dict[str, Any]):
-        return get_py_cmd("areal.infra.launcher.sglang_launch_server", args)
+        return get_py_cmd(
+            "areal.experimental.inference_service.sglang.launch_server", args
+        )
 
     @staticmethod
     def build_args(
@@ -1908,6 +2131,13 @@ class _Timer:
 class EvaluatorConfig(_Timer):
     """Configuration for model evaluation scheduling and timing."""
 
+    eval_before_train: bool = field(
+        default=False,
+        metadata={
+            "help": "Run one evaluation before training begins, then continue with the configured evaluation frequency.",
+        },
+    )
+
 
 @dataclass
 class SaverConfig(_Timer):
@@ -2124,6 +2354,25 @@ class SessionTracerConfig:
 
 
 @dataclass
+class MemoryProfilerConfig:
+    """CUDA memory snapshot profiling configuration.
+
+    Attributes:
+        profile_steps: Steps at which to record memory snapshots.
+        max_entries: Max entries for torch.cuda.memory._record_memory_history.
+    """
+
+    profile_steps: list[int] = field(
+        default_factory=lambda: [0, 1],
+        metadata={"help": "List of global steps to capture memory snapshots."},
+    )
+    max_entries: int = field(
+        default=100000,
+        metadata={"help": "Max entries for memory history ring buffer."},
+    )
+
+
+@dataclass
 class PerfTracerConfig:
     """Configuration for perf tracer emission."""
 
@@ -2235,6 +2484,10 @@ class SchedulerConfig:
 class _DatasetConfig:
     """Configuration for dataset loading and preprocessing."""
 
+    split: str = field(
+        default="train",
+        metadata={"help": "Dataset split to use, e.g., 'train', 'test'."},
+    )
     path: str = field(
         default=MISSING,
         metadata={
@@ -2260,6 +2513,12 @@ class _DatasetConfig:
     num_workers: int = field(
         default=0, metadata={"help": "Number of worker processes for data loading"}
     )
+    num_dataset_workers: int = field(
+        default=1,
+        metadata={
+            "help": "Number of remote data-service worker processes to launch when using scheduling_spec."
+        },
+    )
     drop_last: bool = field(
         default=True, metadata={"help": "Drop the last incomplete batch"}
     )
@@ -2267,6 +2526,30 @@ class _DatasetConfig:
         default=None,
         metadata={
             "help": "Maximum token length of sequences in dataset. Longer sequences are filtered out."
+        },
+    )
+    dataset_kwargs: dict[str, Any] = field(
+        default_factory=dict,
+        metadata={
+            "help": "Additional keyword arguments for dataset loading. "
+            "These are passed to the dataset loading function `get_custom_dataset`."
+        },
+    )
+    scheduling_spec: SchedulingSpec | None = field(
+        default_factory=lambda: SchedulingSpec(
+            cpu=1, gpu=0, mem=10, cmd="python3 -m areal.infra.rpc.guard"
+        ),
+        metadata={
+            "help": "Scheduling spec for remote data loading workers. "
+            "If set, dataset loading will be offloaded to a data service with remote workers."
+        },
+    )
+    setup_timeout: float = field(
+        default=120.0,
+        metadata={
+            "help": "Timeout in seconds for the data service to load and register a dataset. "
+            "Increase this value when loading large datasets for the first time "
+            "(e.g. HuggingFace datasets that require downloading and preprocessing)."
         },
     )
 
@@ -2284,6 +2567,10 @@ class ValidDatasetConfig(_DatasetConfig):
     `shuffle` and `drop_last` default to False.
     """
 
+    split: str = field(
+        default="test",
+        metadata={"help": "Dataset split to use, e.g., 'train', 'test'."},
+    )
     shuffle: bool = field(
         default=False, metadata={"help": "Whether to shuffle the dataset"}
     )
@@ -2359,6 +2646,12 @@ class BaseExperimentConfig:
         default=None,
         metadata={"help": "Performance tracer configuration. None means disabled."},
     )
+    memory_profiler: MemoryProfilerConfig | None = field(
+        default=None,
+        metadata={
+            "help": "Memory snapshot profiler configuration. None means disabled."
+        },
+    )
     recover: RecoverConfig = field(default_factory=RecoverConfig)
 
     sglang: SGLangConfig = field(default_factory=SGLangConfig)
@@ -2393,6 +2686,52 @@ class RWConfig(BaseExperimentConfig):
             raise ValueError(
                 "RWConfig requires actor.is_critic=True for reward modeling. "
                 "Set 'actor.is_critic: true' in your YAML config."
+            )
+
+
+@dataclass
+class DPOEngineConfig(TrainEngineConfig):
+    """Engine configuration for DPO training, extending TrainEngineConfig with DPO-specific fields."""
+
+    beta: float = field(
+        default=0.1,
+        metadata={"help": "KL penalty coefficient for DPO loss."},
+    )
+
+    loss_type: str = field(
+        default="sigmoid",
+        metadata={
+            "help": "DPO loss variant. "
+            "'sigmoid': original DPO loss (Rafailov et al. 2023). "
+            "'ipo': Identity Preference Optimization with per-token length normalization (Azar et al. 2023).",
+            "choices": ["sigmoid", "ipo"],
+        },
+    )
+
+    def __post_init__(self):
+        super().__post_init__()
+        _valid = {"sigmoid", "ipo"}
+        if self.loss_type not in _valid:
+            raise ValueError(
+                f"Unsupported DPO loss_type '{self.loss_type}'. "
+                f"Must be one of {sorted(_valid)}."
+            )
+
+
+@dataclass
+class DPOConfig(BaseExperimentConfig):
+    """Configuration for Direct Preference Optimization (DPO) experiments."""
+
+    actor: DPOEngineConfig = field(default_factory=DPOEngineConfig)
+
+    ref: DPOEngineConfig = field(default_factory=DPOEngineConfig)
+
+    def __post_init__(self):
+        super().__post_init__()
+        if getattr(self.actor, "is_critic", False):
+            raise ValueError(
+                "DPOConfig requires a language model (is_critic=False). "
+                "Remove 'actor.is_critic: true' from your YAML config."
             )
 
 
@@ -2485,7 +2824,44 @@ def parse_cli_args(argv: list[str]):
     return cfg, config_file
 
 
+_LEGACY_REJECTION_SAMPLING_KEYS = {
+    "behave_imp_weight_cap",
+    "behave_imp_weight_mode",
+}
+
+_LEGACY_MIGRATION_MESSAGE = (
+    "Config keys 'behave_imp_weight_cap' and 'behave_imp_weight_mode' have been "
+    "removed. Use 'rejection_sampling' sub-config instead.\n"
+    "Migration mapping:\n"
+    "  behave_imp_weight_mode='disabled'  -> rejection_sampling: null\n"
+    "  behave_imp_weight_mode='token_mask', behave_imp_weight_cap=X\n"
+    "    -> rejection_sampling: {level: token, action: mask, metric: ratio, upper: X}\n"
+    "  behave_imp_weight_mode='token_truncate', behave_imp_weight_cap=X\n"
+    "    -> rejection_sampling: {level: token, action: clamp, metric: ratio, upper: X}\n"
+)
+
+
+def _migrate_legacy_rejection_sampling(cfg: DictConfig) -> DictConfig:
+    """Intercept removed behave_imp_weight_* keys and raise actionable error."""
+    # Walk top-level and known nested actor/teacher configs for legacy keys.
+    sections_to_check = ["actor", "teacher"]
+    for section in sections_to_check:
+        if not OmegaConf.is_missing(cfg, section) and section in cfg:
+            sub = cfg[section]
+            if sub is None or not isinstance(sub, DictConfig):
+                continue
+            found = _LEGACY_REJECTION_SAMPLING_KEYS.intersection(sub.keys())
+            if found:
+                raise ValueError(
+                    f"Found removed config key(s) {found} under '{section}'. "
+                    + _LEGACY_MIGRATION_MESSAGE
+                )
+    return cfg
+
+
 def to_structured_cfg(cfg, config_cls):
+    # Intercept legacy config keys before merge to give actionable error.
+    _migrate_legacy_rejection_sampling(cfg)
     # Merge with the default configuration.
     # The yaml and commandline can omit some default values defined in python dataclasses.
     default_cfg = OmegaConf.structured(config_cls)
