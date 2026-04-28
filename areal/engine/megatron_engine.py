@@ -123,6 +123,15 @@ if TYPE_CHECKING:
     from areal.api.cli_args import DPOEngineConfig, PPOActorConfig, PPOCriticConfig
 
 def _patch_gpt_model_postprocess_for_inference(model_list: _MegatronModelList) -> None:
+    """Patch ``GPTModel._postprocess`` to skip MTP when ``labels=None``.
+
+    In the ``forward_only`` path (e.g. ``compute_logp``), no labels are
+    passed to the model.  However, Megatron-Core's ``_postprocess`` still
+    enters the MTP branch when ``config.mtp_num_layers`` is set, invoking
+    ``process_mtp_loss`` with ``labels=None`` which either crashes or
+    corrupts the hidden states.  Temporarily clearing ``mtp_num_layers``
+    forces ``_postprocess`` to skip MTP and return logits directly.
+    """
     from megatron.core.models.gpt.gpt_model import GPTModel
 
     if getattr(GPTModel, "_areal_postprocess_patched", False):
@@ -1264,6 +1273,7 @@ class MegatronEngine(TrainEngine):
         mcore_opt_config.exp_avg_sq_dtype = getattr(
             torch, self.mcore_config.exp_avg_sq_dtype
         )
+        
         self.optimizer = get_megatron_optimizer(mcore_opt_config, self.model)
 
         warmup_steps_proportion = self.optimizer_config.warmup_steps_proportion
