@@ -91,6 +91,22 @@ from geo_edit.datasets.input_template import (
     O3_BENCH_INPUT_TEMPLATE,
     O3_BENCH_NOTOOL_INPUT_TEMPLATE,
     O3_BENCH_SEPARATED_TEMPLATE,
+    PFP_BENCH_ANSWER_FORMAT,
+    PFP_BENCH_INPUT_TEMPLATE,
+    PFP_BENCH_NOTOOL_INPUT_TEMPLATE,
+    PFP_BENCH_SEPARATED_TEMPLATE,
+    REFSPATIAL_BENCH_ANSWER_FORMAT,
+    REFSPATIAL_BENCH_INPUT_TEMPLATE,
+    REFSPATIAL_BENCH_NOTOOL_INPUT_TEMPLATE,
+    REFSPATIAL_BENCH_SEPARATED_TEMPLATE,
+    OMNISPATIAL_ANSWER_FORMAT,
+    OMNISPATIAL_INPUT_TEMPLATE,
+    OMNISPATIAL_NOTOOL_INPUT_TEMPLATE,
+    OMNISPATIAL_SEPARATED_TEMPLATE,
+    THREEDSR_BENCH_ANSWER_FORMAT,
+    THREEDSR_BENCH_INPUT_TEMPLATE,
+    THREEDSR_BENCH_NOTOOL_INPUT_TEMPLATE,
+    THREEDSR_BENCH_SEPARATED_TEMPLATE,
 )
 
 FieldSource = str | Callable[[Mapping[str, Any]], Any]
@@ -875,6 +891,77 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
         },
         separated_prompt_template=O3_BENCH_SEPARATED_TEMPLATE,
         answer_format=O3_BENCH_ANSWER_FORMAT,
+    ),
+    "pfp_bench": DatasetSpec(
+        name="pfp_bench",
+        id_key="index",
+        answer_key="answer",
+        image_key="image",
+        prompt_template=PFP_BENCH_INPUT_TEMPLATE,
+        notool_prompt_template=PFP_BENCH_NOTOOL_INPUT_TEMPLATE,
+        template_fields={"question": "question"},
+        task_kwargs_fields={
+            "meta_info_extra": lambda item: {
+                "category": item.get("category", ""),
+            },
+        },
+        separated_prompt_template=PFP_BENCH_SEPARATED_TEMPLATE,
+        answer_format=PFP_BENCH_ANSWER_FORMAT,
+    ),
+    "refspatial_bench": DatasetSpec(
+        name="refspatial_bench",
+        id_key="index",
+        answer_key="answer",
+        image_key="image",
+        prompt_template=REFSPATIAL_BENCH_INPUT_TEMPLATE,
+        notool_prompt_template=REFSPATIAL_BENCH_NOTOOL_INPUT_TEMPLATE,
+        template_fields={"question": "question"},
+        task_kwargs_fields={
+            "meta_info_extra": lambda item: {
+                "category": item.get("category", ""),
+                "step": item.get("step", 0),
+            },
+        },
+        separated_prompt_template=REFSPATIAL_BENCH_SEPARATED_TEMPLATE,
+        answer_format=REFSPATIAL_BENCH_ANSWER_FORMAT,
+    ),
+    "omnispatial": DatasetSpec(
+        name="omnispatial",
+        id_key="index",
+        answer_key="answer",
+        image_key="image",
+        prompt_template=OMNISPATIAL_INPUT_TEMPLATE,
+        notool_prompt_template=OMNISPATIAL_NOTOOL_INPUT_TEMPLATE,
+        template_fields={
+            "question": "question",
+            "options_text": "options_text",
+        },
+        task_kwargs_fields={
+            "meta_info_extra": lambda item: {
+                "category": item.get("category", ""),
+            },
+        },
+        separated_prompt_template=OMNISPATIAL_SEPARATED_TEMPLATE,
+        answer_format=OMNISPATIAL_ANSWER_FORMAT,
+    ),
+    "3dsrbench": DatasetSpec(
+        name="3dsrbench",
+        id_key="index",
+        answer_key="answer",
+        image_key="image",
+        prompt_template=THREEDSR_BENCH_INPUT_TEMPLATE,
+        notool_prompt_template=THREEDSR_BENCH_NOTOOL_INPUT_TEMPLATE,
+        template_fields={
+            "question": "question",
+            "options_text": "options_text",
+        },
+        task_kwargs_fields={
+            "meta_info_extra": lambda item: {
+                "category": item.get("category", ""),
+            },
+        },
+        separated_prompt_template=THREEDSR_BENCH_SEPARATED_TEMPLATE,
+        answer_format=THREEDSR_BENCH_ANSWER_FORMAT,
     ),
 }
 

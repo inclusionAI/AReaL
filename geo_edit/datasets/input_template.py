@@ -604,3 +604,109 @@ You MUST select one of the given options (A, B, C, D, E, or F). Do NOT provide t
 """
 
 O3_BENCH_ANSWER_FORMAT = "You MUST respond with only the option letter (A, B, C, D, E, or F) in <answer></answer> tags. Do NOT output the answer text itself."
+
+PFP_BENCH_INPUT_TEMPLATE = """\
+{question}
+
+If you need to analyze the image in detail, you can use the available tools.
+
+You MUST respond with only the option letter (A, B, C, or D) in <answer></answer> tags.
+"""
+
+PFP_BENCH_NOTOOL_INPUT_TEMPLATE = """\
+{question}
+
+You MUST respond with only the option letter (A, B, C, or D) in <answer></answer> tags.
+"""
+
+PFP_BENCH_SEPARATED_TEMPLATE = """\
+{question}
+
+You MUST select one of the given options (A, B, C, or D). Do NOT provide the raw answer text.
+"""
+
+PFP_BENCH_ANSWER_FORMAT = "You MUST respond with only the option letter (A, B, C, or D) in <answer></answer> tags. Do NOT output the answer text itself."
+
+REFSPATIAL_BENCH_INPUT_TEMPLATE = """\
+{question}
+
+If you need to analyze the image in detail, you can use the available tools.
+
+Provide your final answer as a list of normalized (x, y) tuples in <answer></answer> tags, e.g. <answer>[(0.5, 0.3)]</answer>.
+"""
+
+REFSPATIAL_BENCH_NOTOOL_INPUT_TEMPLATE = """\
+{question}
+
+Provide your final answer as a list of normalized (x, y) tuples in <answer></answer> tags, e.g. <answer>[(0.5, 0.3)]</answer>.
+"""
+
+REFSPATIAL_BENCH_SEPARATED_TEMPLATE = """\
+{question}
+"""
+
+REFSPATIAL_BENCH_ANSWER_FORMAT = "Provide your final answer as a list of normalized (x, y) coordinate tuples in <answer></answer> tags, e.g. <answer>[(0.5, 0.3)]</answer>. Coordinates should be between 0 and 1."
+
+OMNISPATIAL_INPUT_TEMPLATE = """\
+Look at the image and answer the following spatial reasoning question.
+
+Question: {question}
+
+{options_text}
+
+If you need to analyze the image in detail, you can use the available tools.
+
+You MUST respond with only the option letter (A, B, C, or D) in <answer></answer> tags.
+"""
+
+OMNISPATIAL_NOTOOL_INPUT_TEMPLATE = """\
+Look at the image and answer the following spatial reasoning question.
+
+Question: {question}
+
+{options_text}
+
+You MUST respond with only the option letter (A, B, C, or D) in <answer></answer> tags.
+"""
+
+OMNISPATIAL_SEPARATED_TEMPLATE = """\
+Question: {question}
+
+{options_text}
+
+You MUST select one of the given options (A, B, C, or D). Do NOT provide the raw answer text.
+"""
+
+OMNISPATIAL_ANSWER_FORMAT = "You MUST respond with only the option letter (A, B, C, or D) in <answer></answer> tags. Do NOT output the answer text itself."
+
+THREEDSR_BENCH_INPUT_TEMPLATE = """\
+Look at the image and answer the following 3D spatial reasoning question. Consider the real-world 3D locations and orientations of the objects.
+
+Question: {question}
+
+{options_text}
+
+If you need to analyze the image in detail, you can use the available tools.
+
+You MUST respond with only the option letter (A, B, C, or D) in <answer></answer> tags.
+"""
+
+THREEDSR_BENCH_NOTOOL_INPUT_TEMPLATE = """\
+Look at the image and answer the following 3D spatial reasoning question. Consider the real-world 3D locations and orientations of the objects.
+
+Question: {question}
+
+{options_text}
+
+You MUST respond with only the option letter (A, B, C, or D) in <answer></answer> tags.
+"""
+
+THREEDSR_BENCH_SEPARATED_TEMPLATE = """\
+Question: {question}
+
+{options_text}
+
+You MUST select one of the given options (A, B, C, or D). Do NOT provide the raw answer text.
+"""
+
+THREEDSR_BENCH_ANSWER_FORMAT = "You MUST respond with only the option letter (A, B, C, or D) in <answer></answer> tags. Do NOT output the answer text itself."
