@@ -34,7 +34,7 @@ from areal.api import (
     WeightUpdateMeta,
     WorkflowLike,
 )
-from areal.api.cli_args import InferenceEngineConfig, OpenAIProxyConfig
+from areal.api.cli_args import InferenceEngineConfig
 from areal.api.io_struct import (
     HttpGenerationResult,
     HttpRequest,
@@ -526,20 +526,15 @@ class RemoteInfEngine(InferenceEngine):
         from areal.experimental.openai import OpenAIProxyWorkflow
 
         agent_cfg = self.config.agent
-        openai_cfg = (
-            agent_cfg.openai
-            if agent_cfg is not None and agent_cfg.openai is not None
-            else OpenAIProxyConfig()
-        )
 
         return OpenAIProxyWorkflow(
-            mode=openai_cfg.mode,
+            mode=agent_cfg.mode,
             agent=agent,
             proxy_addr=proxy_addr,
-            admin_api_key=openai_cfg.admin_api_key,
-            discount=openai_cfg.turn_discount,
-            export_style=openai_cfg.export_style,
-            subproc_max_workers=openai_cfg.subproc_max_workers,
+            admin_api_key=agent_cfg.admin_api_key,
+            discount=agent_cfg.turn_discount,
+            export_style=agent_cfg.export_style,
+            subproc_max_workers=agent_cfg.subproc_max_workers,
             proxy_gateway_addr=self._proxy_gateway_addr,
         )
 
@@ -555,14 +550,9 @@ class RemoteInfEngine(InferenceEngine):
         # 0. None workflow = online mode (config-driven)
         if workflow is None:
             agent_cfg = self.config.agent
-            openai_cfg = (
-                agent_cfg.openai
-                if agent_cfg is not None and agent_cfg.openai is not None
-                else OpenAIProxyConfig()
-            )
-            if openai_cfg.mode != "online":
+            if agent_cfg is None or agent_cfg.mode != "online":
                 raise ValueError(
-                    "workflow is None but OpenAIProxyConfig.mode is not 'online'. "
+                    "workflow is None but AgentConfig.mode is not 'online'. "
                     "Provide a workflow or set mode='online' in the config."
                 )
             if proxy_addr is None:
@@ -1061,9 +1051,7 @@ class RemoteInfEngine(InferenceEngine):
             AgentWorkflow will use this proxy instead of a local one.
         """
         if workflow is None and (
-            self.config.agent is None
-            or self.config.agent.openai is None
-            or self.config.agent.openai.mode != "online"
+            self.config.agent is None or self.config.agent.mode != "online"
         ):
             raise ValueError(
                 "workflow must be specified for submit (unless mode='online')"

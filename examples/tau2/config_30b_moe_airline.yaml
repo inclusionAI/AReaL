@@ -46,16 +46,15 @@ rollout:
   request_timeout: 3600.0
   request_retries: 3
   agent:
-    openai:
-      mode: inline
-      tool_call_parser: qwen25
-      reasoning_parser: qwen3
-      chat_template_type: hf
-      engine_max_tokens: ${gconfig.max_tokens}
-      export_style: individual
-      turn_discount: 1.0
-      subproc_max_workers: 4
-      session_timeout_seconds: 3600
+    mode: inline
+    tool_call_parser: qwen25
+    reasoning_parser: qwen3
+    chat_template_type: hf
+    engine_max_tokens: ${gconfig.max_tokens}
+    export_style: individual
+    turn_discount: 1.0
+    subproc_max_workers: 4
+    session_timeout_seconds: 3600
 
 actor:
   backend: "megatron:(attn:d4p4t2|ffn:d2p4e4)"

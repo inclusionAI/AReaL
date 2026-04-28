@@ -268,7 +268,7 @@ class RolloutControllerV2:
 
         cfg = self.config
         admin_api_key = self.config.admin_api_key
-        openai_cfg = self._openai_config
+        agent_cfg = self._agent_config
 
         if self.external_mode:
             dp_size = 1
@@ -584,16 +584,16 @@ class RolloutControllerV2:
             "--callback-server-addr",
             f"http://{self.callback_addr}",
             "--tool-call-parser",
-            openai_cfg.tool_call_parser,
+            agent_cfg.tool_call_parser,
             "--reasoning-parser",
-            openai_cfg.reasoning_parser,
+            agent_cfg.reasoning_parser,
             "--chat-template-type",
-            openai_cfg.chat_template_type,
+            agent_cfg.chat_template_type,
         ]
-        if openai_cfg.engine_max_tokens is not None:
+        if agent_cfg.engine_max_tokens is not None:
             data_proxy_base_cmd += [
                 "--engine-max-tokens",
-                str(openai_cfg.engine_max_tokens),
+                str(agent_cfg.engine_max_tokens),
             ]
 
         for group_idx in range(dp_size):
@@ -1457,10 +1457,10 @@ class RolloutControllerV2:
                 "Gateway address is unavailable; initialize the controller first"
             )
 
-        openai_cfg = self._openai_config
+        agent_cfg = self._agent_config
         admin_api_key = self.config.admin_api_key
-        turn_discount = openai_cfg.turn_discount
-        export_style = openai_cfg.export_style
+        turn_discount = agent_cfg.turn_discount
+        export_style = agent_cfg.export_style
 
         return InferenceServiceWorkflow(
             controller=self,
@@ -1595,12 +1595,8 @@ class RolloutControllerV2:
         raise TypeError(f"Invalid should_accept_fn type: {type(should_accept_fn)}")
 
     @property
-    def _openai_config(self):
-        from areal.api.cli_args import OpenAIProxyConfig
-
-        return self.config.agent.openai or OpenAIProxyConfig(
-            admin_api_key=self.config.admin_api_key
-        )
+    def _agent_config(self):
+        return self.config.agent
 
     # -- Internal HTTP helpers ---------------------------------------------
 

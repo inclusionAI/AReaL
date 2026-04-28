@@ -41,13 +41,12 @@ rollout:
   tokenizer_path: ${tokenizer_path}
   dump_to_file: true
   agent:
-    openai:
-      mode: inline
-      tool_call_parser: qwen25
-      reasoning_parser: qwen3
-      engine_max_tokens: ${gconfig.max_tokens}
-      export_style: individual
-      turn_discount: 1.0
+    mode: inline
+    tool_call_parser: qwen25
+    reasoning_parser: qwen3
+    engine_max_tokens: ${gconfig.max_tokens}
+    export_style: individual
+    turn_discount: 1.0
 
 actor:
   backend: "archon:d2"

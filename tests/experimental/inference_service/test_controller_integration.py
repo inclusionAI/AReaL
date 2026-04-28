@@ -176,7 +176,6 @@ def _make_gateway_controller_config(
     from areal.api.cli_args import (
         AgentConfig,
         InferenceEngineConfig,
-        OpenAIProxyConfig,
         SchedulingSpec,
     )
 
@@ -186,7 +185,7 @@ def _make_gateway_controller_config(
         model=model_path,
         agent=AgentConfig(
             agent_cls_path="areal.experimental.openai.proxy.online_agent._OnlineAgent",
-            openai=OpenAIProxyConfig(mode="online") if online_mode else None,
+            mode="online" if online_mode else "inline",
             set_reward_finish_timeout=set_reward_finish_timeout,
         ),
         scheduling_spec=(

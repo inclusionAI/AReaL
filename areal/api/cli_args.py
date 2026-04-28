@@ -1882,9 +1882,44 @@ class SGLangConfig:
 
 
 @dataclass
-class OpenAIProxyConfig:
-    """Configuration for OpenAI proxy when using agent workflows."""
+class AgentConfig:
+    """Configuration for agent workflows and the experimental agent service controller.
 
+    Consolidates proxy settings (mode, parsers, export) with agent-service
+    orchestration (scheduling, auth) into a single flat dataclass.
+    """
+
+    agent_cls_path: str = field(
+        default="",
+        metadata={
+            "help": "Fully-qualified import path for the AgentRunnable implementation."
+        },
+    )
+    admin_api_key: str = field(
+        default="areal-admin-key",
+        metadata={
+            "help": (
+                "Admin API key for the proxy server and agent-service inter-service auth. "
+                "Used to authenticate management operations (grant_capacity, start_session). "
+                "Cannot be used for chat completions. Each session gets a unique "
+                "API key allocated via start_session. "
+                "WARNING: Change this from the default for non-local deployments."
+            ),
+        },
+    )
+    scheduling_spec: tuple[SchedulingSpec, ...] = field(
+        default_factory=lambda: (
+            SchedulingSpec(
+                gpu=0,
+                cmd="python -m areal.experimental.agent_service.guard",
+            ),
+        ),
+        metadata={
+            "help": "Scheduling spec for agent-service guard workers. Must contain exactly one SchedulingSpec. Use scheduling_spec[0].env_vars for child-process environment variables."
+        },
+    )
+
+    # -- Proxy / workflow settings (formerly OpenAIProxyConfig) ----------------
     mode: str = field(
         default="inline",
         metadata={
@@ -1945,55 +1980,6 @@ class OpenAIProxyConfig:
             "help": "Session timeout in seconds. Sessions inactive longer than this will be garbage collected."
         },
     )
-    admin_api_key: str = field(
-        default="areal-admin-key",
-        metadata={
-            "help": (
-                "Admin API key for the proxy server. Used to authenticate management "
-                "operations (grant_capacity, start_session). "
-                "Cannot be used for chat completions. Each session gets a unique "
-                "API key allocated via start_session. "
-                "WARNING: Change this from the default for non-local deployments."
-            ),
-        },
-    )
-
-    def __post_init__(self):
-        if not self.admin_api_key or not self.admin_api_key.strip():
-            raise ValueError("admin_api_key must not be empty or whitespace-only")
-
-
-@dataclass
-class AgentConfig:
-    """Configuration for the experimental agent service controller."""
-
-    agent_cls_path: str = field(
-        default="",
-        metadata={
-            "help": "Fully-qualified import path for the AgentRunnable implementation."
-        },
-    )
-    admin_api_key: str = field(
-        default="areal-agent-admin",
-        metadata={"help": "Shared admin API key for agent-service inter-service auth."},
-    )
-    scheduling_spec: tuple[SchedulingSpec, ...] = field(
-        default_factory=lambda: (
-            SchedulingSpec(
-                gpu=0,
-                cmd="python -m areal.experimental.agent_service.guard",
-            ),
-        ),
-        metadata={
-            "help": "Scheduling spec for agent-service guard workers. Must contain exactly one SchedulingSpec. Use scheduling_spec[0].env_vars for child-process environment variables."
-        },
-    )
-    openai: OpenAIProxyConfig | None = field(
-        default=None,
-        metadata={
-            "help": "OpenAI proxy configuration for agent-style rollout workflows."
-        },
-    )
     set_reward_finish_timeout: float = field(
         default=0.0,
         metadata={
@@ -2008,6 +1994,8 @@ class AgentConfig:
             raise ValueError(
                 f"scheduling_spec must contain exactly 1 SchedulingSpec, got {len(self.scheduling_spec)}"
             )
+        if not self.admin_api_key or not self.admin_api_key.strip():
+            raise ValueError("admin_api_key must not be empty or whitespace-only")
         if self.set_reward_finish_timeout < 0:
             raise ValueError(
                 "set_reward_finish_timeout must be non-negative, "
@@ -2186,11 +2174,10 @@ class InferenceEngineConfig:
         if (
             self._version == "v2"
             and self.agent is not None
-            and self.agent.openai is not None
-            and self.agent.openai.admin_api_key != "areal-admin-key"
+            and self.agent.admin_api_key != "areal-admin-key"
         ):
             logger.warning(
-                "rollout.agent.openai.admin_api_key is ignored by rollout controller v2; "
+                "rollout.agent.admin_api_key is ignored by rollout controller v2; "
                 "use rollout.admin_api_key instead."
             )
 

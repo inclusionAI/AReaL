@@ -113,16 +113,16 @@ python3 examples/experimental/inference_service/human_in_the_loop_demo.py
 
 Key CLI arguments:
 
-| Argument             | Default               | Description                                                           |
-| -------------------- | --------------------- | --------------------------------------------------------------------- |
-| `--actor-path`       | `Qwen/Qwen3-0.6B`     | Path to the HuggingFace model weights                                 |
-| `--admin-key`        | `sk-test123456`       | Admin API key (must match `rollout.openai.admin_api_key` in the YAML) |
-| `--request-timeout`  | `3600`                | Per-request timeout in seconds                                        |
-| `--gateway-wait`     | `600`                 | Seconds to wait for the gateway to become ready                       |
-| `--question`         | *strawberry question* | Question posed in every HITL round                                    |
-| `--external-url`     | `None`                | External API URL (enables external model mode)                        |
-| `--external-api-key` | `None`                | API key for the external provider                                     |
-| `--external-model`   | `None`                | Model name sent to the external API                                   |
+| Argument             | Default               | Description                                                          |
+| -------------------- | --------------------- | -------------------------------------------------------------------- |
+| `--actor-path`       | `Qwen/Qwen3-0.6B`     | Path to the HuggingFace model weights                                |
+| `--admin-key`        | `sk-test123456`       | Admin API key (must match `rollout.agent.admin_api_key` in the YAML) |
+| `--request-timeout`  | `3600`                | Per-request timeout in seconds                                       |
+| `--gateway-wait`     | `600`                 | Seconds to wait for the gateway to become ready                      |
+| `--question`         | *strawberry question* | Question posed in every HITL round                                   |
+| `--external-url`     | `None`                | External API URL (enables external model mode)                       |
+| `--external-api-key` | `None`                | API key for the external provider                                    |
+| `--external-model`   | `None`                | Model name sent to the external API                                  |
 
 You can override the model path without editing the script:
 

@@ -36,11 +36,10 @@ rollout:
   setup_timeout: 300.0
   admin_api_key: sk-test123456
   agent:
-    openai:
-      mode: online
-      export_style: individual
-      turn_discount: 1.0
-      admin_api_key: sk-test123456
+    mode: online
+    export_style: individual
+    turn_discount: 1.0
+    admin_api_key: sk-test123456
 
 gconfig:
   n_samples: 1

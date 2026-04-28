@@ -30,12 +30,10 @@ def main(args: list[str]) -> None:
     logger = logging.getLogger("InferenceServiceOnlineTrain")
 
     config, _ = load_expr_config(remaining, PPOConfig)
-    openai_cfg = (
-        config.rollout.agent.openai if config.rollout.agent is not None else None
-    )
-    if openai_cfg is None or openai_cfg.mode != "online":
+    agent_cfg = config.rollout.agent
+    if agent_cfg is None or agent_cfg.mode != "online":
         raise ValueError(
-            "online_rollout.py requires rollout.agent.openai.mode='online' for inference_service online training."
+            "online_rollout.py requires rollout.agent.mode='online' for inference_service online training."
         )
     if not is_single_controller():
         raise NotImplementedError(
