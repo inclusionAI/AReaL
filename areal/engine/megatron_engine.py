@@ -2406,11 +2406,35 @@ class MegatronEngine(TrainEngine):
 
         _t_bc0 = _diag_time.time()
         handles = []
+        _mtp_upcast_count = 0
         for idx, (name, param) in enumerate(converted_named_tensors):
+            # MTP draft-head deltas are typically smaller than bf16 ULP
+            # (see [MTPSyncHealth] stall diagnostics). Upcast MTP tensors
+            # to fp32 on the trainer side before NCCL broadcast so the
+            # inference-side draft head sees the full precision update.
+            # The rollout side will downcast during load_weights.
+            send_tensor = param.data
+            if (
+                (".enorm" in name or ".hnorm" in name or ".eh_proj" in name
+                 or ".shared_head." in name or ".mtp_layers." in name)
+                and send_tensor.dtype == torch.bfloat16
+            ):
+                send_tensor = send_tensor.float().contiguous()
+                # rebind so the receiver (whose dtype spec was already
+                # promoted in build_tensor_weight_update_request) matches.
+                converted_named_tensors[idx] = (name, send_tensor)
+                _mtp_upcast_count += 1
             handles.append(
                 dist.broadcast(
-                    param.data, 0, group=self.weight_update_group, async_op=True
+                    send_tensor, 0, group=self.weight_update_group, async_op=True
                 )
+            )
+        if _mtp_upcast_count > 0:
+            self.logger.info(
+                "[MTPBroadcastDtype] Upcast %d MTP tensors to fp32 for "
+                "NCCL broadcast (avoid bf16 ULP absorption of draft-head "
+                "weight deltas).",
+                _mtp_upcast_count,
             )
         self.logger.info(
             f"[DiagBucket] Enqueued {len(handles)} async broadcasts "
@@ -2432,9 +2456,18 @@ class MegatronEngine(TrainEngine):
         try:
             fut.result(timeout=30)
         except TimeoutError:
-            self.logger.warning(
-                "Callback response timed out, but NCCL broadcast "
-                "completed successfully. Continuing weight update."
+            # This was previously silently swallowed. Surface loudly:
+            # if the callback never finishes, the inference engine may
+            # have partially applied the broadcast, desyncing the draft.
+            self.logger.error(
+                "[MTPBroadcastTimeout] Callback response timed out after "
+                "30s while waiting for rollout side update_weights_from_"
+                "distributed to acknowledge. NCCL broadcast completed on "
+                "trainer side but the inference engine may NOT have "
+                "finished applying the weights. This CAN silently desync "
+                "MTP draft head and cause accept_rate decay. "
+                "n_tensors=%d, n_specs=%d.",
+                len(converted_named_tensors), len(param_specs),
             )
         except Exception as e:
             self.logger.warning(

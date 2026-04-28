@@ -1,4 +1,5 @@
 import re
+import logging
 
 import torch
 import torch.distributed as dist
@@ -180,38 +181,59 @@ def _convert_mtp_layer_to_hf(
     param: Parameter | Tensor | FP8BlockwiseTensorHelper,
     tf_config: TransformerConfig,
 ) -> list[tuple[str, Tensor]] | None:
-    """Convert MCore MTP layer parameter names to HuggingFace format.
+    """Generic MCore -> HF converter for a **MiMo-style** MTP layer.
 
-    MCore MTP layers follow the naming pattern:
-        module.module.decoder.mtp_layers.{layer_idx}.{submodule}.{param}
-    which maps to HF format:
-        model.mtp_layers.{layer_idx}.{submodule}.{param}
+    This function is kept for backwards compatibility for models whose HF
+    layout stores MTP tensors under ``model.mtp_layers.{i}.*`` (e.g. MiMo).
+    Models such as DeepSeek-V3 / GLM4-MoE (HF layout appends MTP as a
+    regular ``model.layers.{num_layers + i}.*`` with ``shared_head.norm``)
+    MUST provide a model-specific MTP converter instead; for those models
+    the DeepSeek/GLM-specific branch in ``convert_deepseekv3_to_hf`` /
+    ``convert_glm4moe_to_hf`` short-circuits before reaching this function.
 
-    Returns a list of (hf_name, param) tuples if the parameter is an MTP
+    Handled MCore name patterns (both versions produced by different
+    megatron-core builds are accepted so this helper works regardless of
+    whether MTP lives under ``decoder.mtp_layers`` or top-level ``mtp.layers``):
+        module.module.decoder.mtp_layers.{idx}.{component}
+        module.module.mtp.layers.{idx}.{component}
+
+    Returns a list of (hf_name, tensor) tuples if the parameter is an MTP
     parameter, or None if it is not.
+
+    IMPORTANT: the previous implementation contained no-op
+    ``replace("enorm.weight", "enorm.weight")`` calls and a TODO-style
+    comment. It silently emitted mis-named tensors for every non-MiMo model
+    that routed through it (DeepSeek-V3 / GLM4-MoE / Bailing / Qwen3-MoE),
+    which in turn caused the SGLang rollout engine to silently skip MTP
+    weight updates (SpecDec accept_rate monotone decay). The behaviour is
+    now explicit: this helper ONLY emits names under
+    ``model.mtp_layers.{idx}.*`` and the non-MiMo callers no longer invoke
+    it on MTP params.
     """
-    import re
+    logger = logging.getLogger(__name__)
+    # Accept both naming conventions produced by different mcore versions.
     mtp_match = re.match(
         r"module\.module\.decoder\.mtp_layers\.(\d+)\.(.+)", name
     )
+    if mtp_match is None:
+        mtp_match = re.match(
+            r"module\.module\.mtp\.layers\.(\d+)\.(.+)", name
+        )
     if mtp_match is None:
         return None
 
     layer_idx = int(mtp_match.group(1))
     remainder = mtp_match.group(2)
 
-    # Map common MCore submodule names to HF names
-    hf_remainder = remainder
-
-    # enorm / hnorm -> input_layernorm / post_attention_layernorm equivalent
-    hf_remainder = hf_remainder.replace("enorm.weight", "enorm.weight")
-    hf_remainder = hf_remainder.replace("hnorm.weight", "hnorm.weight")
-
-    # Note: Some models (e.g., MiMo) may need column-half swap for eh_proj.
-    # This should be handled in model-specific conversion functions, not here.
-    # The generic MTP converter passes eh_proj through unchanged.
-
-    hf_name = f"model.mtp_layers.{layer_idx}.{hf_remainder}"
+    # Keep the MCore remainder verbatim; MiMo HF layout expects
+    # ``model.mtp_layers.{idx}.{enorm|hnorm|eh_proj|final_layernorm}.weight``
+    # and model-specific converters (e.g. ``_convert_mimo_mtp_param``)
+    # perform the name rewriting + eh_proj column-half swap themselves.
+    hf_name = f"model.mtp_layers.{layer_idx}.{remainder}"
+    logger.debug(
+        "[MTPConvertGeneric] mcore=%s -> hf=%s shape=%s",
+        name, hf_name, tuple(param.shape),
+    )
     return [(hf_name, param)]
 
 # Adapted from slime
@@ -472,6 +494,83 @@ def convert_qwen2_to_hf(
 
 
 # Adapted from slime
+def _convert_deepseekv3_mtp_param(
+    tf_config: TransformerConfig,
+    name: str,
+    param: "Parameter | Tensor | FP8BlockwiseTensorHelper",
+):
+    """DeepSeek-V3 MTP MCore -> HF converter.
+
+    Mirrors the layout used by SGLang ``DeepseekV3ForCausalLMNextN`` and
+    matches slime / verl conventions:
+        mcore ``mtp.layers.{i}.enorm.weight``            -> ``model.layers.{N+i}.enorm.weight``
+        mcore ``mtp.layers.{i}.hnorm.weight``            -> ``model.layers.{N+i}.hnorm.weight``
+        mcore ``mtp.layers.{i}.eh_proj.weight``          -> ``model.layers.{N+i}.eh_proj.weight``
+        mcore ``mtp.layers.{i}.final_layernorm.weight``  -> ``model.layers.{N+i}.shared_head.norm.weight``
+        mcore ``mtp.layers.{i}.transformer_layer.<...>`` -> runs through the regular DSv3
+                                                             attention/MLP/MoE mappers by
+                                                             rewriting the proxy name to
+                                                             ``decoder.layers.{N+i}.<...>``.
+
+    ``embed_tokens`` and ``shared_head.head`` are tied to the main model and
+    are NOT emitted from the MTP block (SGLang skips them during load).
+
+    NOTE: unlike MiMo, there is NO column-half swap on ``eh_proj.weight``
+    for DeepSeek-V3; slime and verl both pass it through unchanged.
+    """
+    logger = logging.getLogger(__name__)
+    match = re.match(r"module\.module\.mtp\.layers\.(\d+)\.(.+)", name)
+    if match is None:
+        match = re.match(
+            r"module\.module\.decoder\.mtp_layers\.(\d+)\.(.+)", name
+        )
+    if match is None:
+        return None
+
+    mtp_local_idx, rest = match.groups()
+    mtp_local_idx = int(mtp_local_idx)
+    try:
+        num_layers = int(tf_config.num_layers)
+    except Exception as e:
+        raise ValueError(
+            f"[MTPConvertDSv3] cannot read num_layers from tf_config ({e}); "
+            "needed to compute HF MTP layer index."
+        )
+    hf_layer_idx = num_layers + mtp_local_idx
+
+    direct = {
+        "enorm.weight": f"model.layers.{hf_layer_idx}.enorm.weight",
+        "hnorm.weight": f"model.layers.{hf_layer_idx}.hnorm.weight",
+        "eh_proj.weight": f"model.layers.{hf_layer_idx}.eh_proj.weight",
+        "final_layernorm.weight": (
+            f"model.layers.{hf_layer_idx}.shared_head.norm.weight"
+        ),
+    }
+    if rest in direct:
+        logger.info(
+            "[MTPConvertDSv3] mcore=%s -> hf=%s (direct) shape=%s",
+            name, direct[rest], tuple(param.shape),
+        )
+        return [(direct[rest], param)]
+
+    # transformer_layer.*  ==> run the regular DSv3 mapper on a proxy name
+    # that pretends this MTP block is ``decoder.layers.{num_layers+i}``.
+    if not rest.startswith("transformer_layer."):
+        raise ValueError(
+            f"[MTPConvertDSv3] unsupported MTP component {rest!r} in {name!r}"
+        )
+    inner = rest[len("transformer_layer."):]
+    proxy_name = f"module.module.decoder.layers.{hf_layer_idx}.{inner}"
+    logger.info(
+        "[MTPConvertDSv3] delegating transformer_layer: mcore=%s via proxy=%s",
+        name, proxy_name,
+    )
+    # Call the main DSv3 converter with the proxy name. This reuses all of
+    # the attention/MLP/MoE mapping logic and yields the correct
+    # ``model.layers.{hf_layer_idx}.*`` HF keys in one shot.
+    return convert_deepseekv3_to_hf(tf_config, proxy_name, param)
+
+
 def convert_deepseekv3_to_hf(
     tf_config: TransformerConfig,
     name: str,
@@ -484,10 +583,13 @@ def convert_deepseekv3_to_hf(
     if name == "module.module.decoder.final_layernorm.weight":
         return [("model.norm.weight", param)]
 
-    # Check for MTP layer parameters
-    mtp_result = _convert_mtp_layer_to_hf(name, param, tf_config)
-    if mtp_result is not None:
-        return mtp_result
+    # MTP layer parameters are routed through a DSv3-specific converter
+    # that emits the correct HF layout for SGLang
+    # (model.layers.{num_layers+i}.{enorm,hnorm,eh_proj,shared_head.norm,...}).
+    if ".mtp." in name or ".mtp_layers." in name:
+        mtp_result = _convert_deepseekv3_mtp_param(tf_config, name, param)
+        if mtp_result is not None:
+            return mtp_result
 
     try:
         head_dim = (

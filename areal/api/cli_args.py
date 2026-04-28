@@ -1684,7 +1684,13 @@ class SGLangConfig:
             "help": "Attention mode for speculative decoding. E.g., 'full', 'sparse'."
         },
     )
-    enable_multi_layer_eagle: bool = False
+    enable_multi_layer_eagle: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable multi-layer EAGLE draft head (SGLang only). "
+            "Required when the draft model has more than one MTP layer."
+        },
+    )
     enable_draft_weights_cpu_backup: bool | None = field(
         default=None,
         metadata={
