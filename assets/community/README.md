@@ -12,9 +12,9 @@ For background on how the project is governed and how to participate, please see
 
 ## Upcoming Meetings
 
-| Date       | Agenda | Slides | Recording |
-| ---------- | ------ | ------ | --------- |
-| 2026/05/01 | TBD    | TBD    | TBD       |
+| Date       | Agenda                                                                                                         | Slides | Recording |
+| ---------- | -------------------------------------------------------------------------------------------------------------- | ------ | --------- |
+| 2026/05/01 | [Google Doc](https://docs.google.com/document/d/1w106Eoj2rMX702EXX56Qz8OeD255Fx-36iLarL6Hi0M/edit?usp=sharing) | TBD    | TBD       |
 
 ## Past Meetings
 
