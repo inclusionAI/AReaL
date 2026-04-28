@@ -18,6 +18,7 @@ nohup python -m vllm.entrypoints.openai.api_server \
   --allowed-local-media-path /storage/openpsi/data \
   --gpu-memory-utilization "${GPU_MEM_UTIL:-0.8}" \
   --enable-prefix-caching \
+  --limit-mm-per-prompt "image=${MAX_IMAGES_PER_PROMPT:-5}" \
   > /tmp/log/vllm_api.log 2>&1 &
 echo $! > /tmp/log/vllm.pid
 echo "waiting endpoint..."
