@@ -78,6 +78,7 @@ def mock_vlm_input(device: str) -> dict[str, Any]:
 
 
 def make_vlm_engine(backend: str, init_optimizer: bool = False) -> MegatronEngine:
+    bridge_type = os.environ.get("AREAL_TEST_BRIDGE_TYPE", "mbridge")
     config = TrainEngineConfig(
         backend=backend,
         experiment_name="test-vlm",
@@ -85,7 +86,7 @@ def make_vlm_engine(backend: str, init_optimizer: bool = False) -> MegatronEngin
         path=VLM_MODEL_PATH,
         mb_spec=MicroBatchSpec(max_tokens_per_mb=4096),
         optimizer=OptimizerConfig() if init_optimizer else None,
-        megatron=MegatronEngineConfig(),
+        megatron=MegatronEngineConfig(bridge_type=bridge_type),
         gradient_checkpointing=True,
     )
     alloc_mode = ModelAllocation.from_str(backend)

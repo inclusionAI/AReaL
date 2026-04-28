@@ -411,7 +411,14 @@ def convert_qwen2_5_vl_to_hf(
         lm_name = "module.module." + name[len(_LM_PREFIX) :]
         return convert_qwen2_to_hf(tf_config, lm_name, param)
 
-    # --- Vision model direct mappings ---
+    # --- megatron-bridge: vision tower stored in HF format under self.visual.* ---
+    # (vs mbridge's self.vision_model.* in mcore format). Just strip the
+    # "module.module." prefix and emit the HF name directly.
+    _MB_VISUAL_PREFIX = "module.module.visual."
+    if name.startswith(_MB_VISUAL_PREFIX):
+        return [(name[len("module.module.") :], param)]
+
+    # --- mbridge vision tower (mcore format) — direct mappings ---
     _VISION_DIRECT = {
         "module.module.vision_model.patch_embed.proj.weight": "visual.patch_embed.proj.weight",
         "module.module.vision_model.decoder.final_layernorm.weight": "visual.merger.ln_q.weight",
