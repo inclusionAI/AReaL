@@ -240,27 +240,33 @@ class RolloutController:
         **kwargs,
     ):
         # Create workers via scheduler
+        logger.info("Creating workers via scheduler...")
         worker_ids = self.scheduler.create_workers(job=job)
+        logger.info(f"Workers created: {worker_ids}")
 
         # Wait for workers to be ready
+        logger.info("Waiting for workers to be ready...")
         self.workers = self.scheduler.get_workers(role=job.role)
+        logger.info(f"Workers ready: {[w.id for w in self.workers]}")
 
         # Get engine class path for dynamic import on workers
         engine_class = self.inf_engine
-        engine_path = f"{engine_class.__module__}.{engine_class.__name__}"
 
         # Create and initialize engines on workers
+        logger.info("Creating engines...")
         tasks = [
             self.scheduler.create_engine(
                 worker_id=worker.id,
-                engine=engine_path,
+                engine=f"{engine_class.__module__}.{engine_class.__name__}",
                 engine_name=self._engine_name(rank),
                 config=self.config,
             )
             for rank, worker in enumerate(self.workers)
         ]
         await asyncio.gather(*tasks)
+        logger.info("Engine created on all workers!")
 
+        logger.info("Calling engine initialization...")
         if server_infos is not None:
             # Connecting to existing local servers for evaluation
             self.server_infos = server_infos
