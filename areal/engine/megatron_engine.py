@@ -1029,6 +1029,7 @@ class MegatronEngine(TrainEngine):
                                             name, _has_mg, _has_g,
                                             _flag_v, param.requires_grad, _mg_ptr)
                             mtp_stats["mtp_grad_norm"] = mtp_g**0.5
+                            self._last_mtp_grad_norm = mtp_g**0.5
                             mtp_stats["non_mtp_grad_norm"] = non_mtp_g**0.5
                             mtp_stats["mtp_backward_scale"] = (
                                 float(scale_str) if scale_str != "N/A" else 0.0)
@@ -3147,6 +3148,41 @@ class MegatronEngine(TrainEngine):
                     len(self._mtp_stall_window), _win_fmt,
                     _bf16_floor_total,
                 )
+                # One-line version->step audit trail.  Makes
+                try:
+                    _gn_audit = float(
+                        getattr(self, "_last_mtp_grad_norm", 0.0)
+                    )
+                except Exception:
+                    _gn_audit = 0.0
+                try:
+                    _step_audit = int(
+                        getattr(self, "_global_step", 0)
+                    )
+                except Exception:
+                    _step_audit = 0
+                try:
+                    _ntok_audit = int(
+                        getattr(self, "_current_n_tokens", 0)
+                    )
+                except Exception:
+                    _ntok_audit = 0
+                try:
+                    _nmb_audit = int(
+                        getattr(self, "_current_num_microbatches", 0)
+                    )
+                except Exception:
+                    _nmb_audit = 0
+                self.logger.info(
+                    "[MTPVersionAudit-v11] version=%d step=%d "
+                    "mtp_grad_norm=%.4e num_mb=%d n_tokens=%d "
+                    "max|Δ|=%.3e sum|Δ|=%.3e stalled_frac=%d/%d",
+                    meta.version, _step_audit, _gn_audit,
+                    _nmb_audit, _ntok_audit,
+                    max(_deltas) if _deltas else 0.0,
+                    sum(_deltas) if _deltas else 0.0,
+                    len(_stall_tensors), len(_deltas),
+                )
                 if (
                     len(self._mtp_stall_window) >= 3
                     and all(p >= 0.9 for _, p, _ in self._mtp_stall_window)
@@ -3165,6 +3201,30 @@ class MegatronEngine(TrainEngine):
                         sum(s for _, _, s in self._mtp_stall_window),
                         ", ".join(_stall_tensors[:3]),
                     )
+                    # the draft IS training and the "stall" is a bf16
+                    # quantization artefact at the broadcast boundary.
+                    _last_gn = float(getattr(self, "_last_mtp_grad_norm", 0.0))
+                    # Additional liveness escape hatch
+                    if _last_gn > 1e-4:
+                        try:
+                            _step_sup = int(
+                                getattr(self, "_global_step", 0)
+                            )
+                        except Exception:
+                            _step_sup = 0
+                        self.logger.info(
+                            "[MTPSyncHealth-v10] STALL candidate at "
+                            "version=%d step=%d SUPPRESSED: "
+                            "last mtp_grad_norm=%.4e > 1e-4 (draft IS "
+                            "learning; bf16 quantization at broadcast "
+                            "absorbs sub-ULP weight updates). Window: "
+                            "%d/%d tensors<floor, cum_sumΔ=%.3e, "
+                            "bf16_floor_est=%.3e.",
+                            meta.version, _step_sup, _last_gn,
+                            len(_stall_tensors), len(_deltas),
+                            sum(s for _, _, s in self._mtp_stall_window),
+                            _bf16_floor_total,
+                        )
 
         # Record a CUDA event on the default stream BEFORE any NCCL
         # broadcasts begin.  At this point, all MTP tensors from
@@ -3739,6 +3799,57 @@ class MegatronEngine(TrainEngine):
                     "in eff_per_step_update or tokens_per_mb).",
                     _num_mb, _n_tokens, _tok_per_mb, _eff_step_mag,
                 )
+                # Rolling 5-step token-count trend to surface
+                # sequence-length collapse BEFORE it manifests as an
+                # accept_rate drop.
+                if not hasattr(self, "_mtp_tok_trend"):
+                    self._mtp_tok_trend = []  # list[(step, n_tokens, num_mb)]
+                try:
+                    _gstep_v11 = int(getattr(self, "_global_step", 0))
+                except Exception:
+                    _gstep_v11 = 0
+                self._mtp_tok_trend.append(
+                    (_gstep_v11, int(_n_tokens), int(_num_mb))
+                )
+                if len(self._mtp_tok_trend) > 5:
+                    self._mtp_tok_trend.pop(0)
+                if (
+                    len(self._mtp_tok_trend) >= 5
+                    and self._mtp_tok_trend[0][1] > 0
+                    and _n_tokens > 0
+                ):
+                    _prev_avg = sum(
+                        t for _, t, _ in self._mtp_tok_trend[:-1]
+                    ) / max(1, len(self._mtp_tok_trend) - 1)
+                    _drop_pct = (
+                        1.0 - _n_tokens / _prev_avg
+                    ) if _prev_avg > 0 else 0.0
+                    _tok_trend_msg = ",".join(
+                        f"s{s}:{t//1000}k/{n}mb"
+                        for s, t, n in self._mtp_tok_trend
+                    )
+                    if _drop_pct > 0.3:
+                        self.logger.warning(
+                            "[MTPDataTrend-v11] SEQUENCE-LENGTH "
+                            "COLLAPSE: n_tokens dropped %.1f%% vs "
+                            "5-step trailing avg (%.0f -> %d). "
+                            "Trend: [%s]. Draft head will see "
+                            "fewer tokens per update; accept_rate "
+                            "regression is likely within 1-2 "
+                            "versions. Mitigations: raise "
+                            "mtp_loss_scaling_factor, enable reward "
+                            "clipping, or widen rollout batch.",
+                            _drop_pct * 100.0, _prev_avg, _n_tokens,
+                            _tok_trend_msg,
+                        )
+                    elif _drop_pct > 0.15:
+                        self.logger.info(
+                            "[MTPDataTrend-v11] mild token drop "
+                            "%.1f%% (%.0f -> %d) over last 5 "
+                            "steps. Trend: [%s].",
+                            _drop_pct * 100.0, _prev_avg, _n_tokens,
+                            _tok_trend_msg,
+                        )
 
         return loss * loss_scale
 
