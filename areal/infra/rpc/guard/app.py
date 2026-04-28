@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Shared Guard process: process management, port allocation, and child forking.
 
 This module provides the base Guard functionality shared between:
@@ -411,6 +413,37 @@ def create_app(state: GuardState) -> Flask:
 
         except Exception as e:
             logger.error(f"Error in kill_forked_worker: {e}\n{traceback.format_exc()}")
+            return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+
+    @app.route("/set_env", methods=["POST"])
+    def set_env():
+        """Set environment variables on the guard process.
+
+        Forked child processes will inherit these via ``os.environ``.
+
+        Expected JSON payload::
+
+            {"env": {"KEY": "value", "KEY2": "value2"}}
+        """
+        try:
+            data = request.get_json(silent=True)
+            if data is None:
+                return jsonify({"error": "Invalid JSON in request body"}), 400
+
+            env_payload = data.get("env")
+            if env_payload is None:
+                return jsonify({"error": "Missing 'env' field in request"}), 400
+            if not isinstance(env_payload, dict):
+                return jsonify({"error": "'env' must be a dictionary"}), 400
+
+            for key, value in env_payload.items():
+                os.environ[key] = str(value)
+
+            logger.info("Updated %d environment variables", len(env_payload))
+            return jsonify({"status": "success"})
+
+        except Exception as e:
+            logger.error(f"Error in set_env: {e}\n{traceback.format_exc()}")
             return jsonify({"error": f"Internal server error: {str(e)}"}), 500
 
     @app.route("/configure", methods=["POST"])

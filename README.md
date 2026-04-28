@@ -4,29 +4,34 @@
 
 <p align="center">
 | <a href="https://arxiv.org/pdf/2505.24298"><b>Paper</b></a> | <a href="https://inclusionai.github.io/AReaL/"><b>Documentation</b></a> | <a href="https://inclusionai.github.io/AReaL/zh/"><b>中文文档</b></a> | <a href="https://deepwiki.com/inclusionAI/AReaL"><b>Ask DeepWiki</b></a> | <a href="https://huggingface.co/collections/inclusionAI/"><b>🤗 Models & Data</b></a> |
-<a href="./assets/wechat_qrcode.png" target="_blank"><img src="./assets/wechat_icon.png" width="20" style="vertical-align: middle;"> <b>WeChat (微信) Group</b></a> |
+<a href="./assets/figures/wechat_qrcode.png" target="_blank"><img src="./assets/figures/wechat_icon.png" width="20" style="vertical-align: middle;"> <b>WeChat (微信) Group</b></a> |
   <a href="https://gitcgr.com/inclusionAI/AReaL">
     <img src="https://gitcgr.com/badge/inclusionAI/AReaL.svg" alt="gitcgr" />
   </a>
 </p>
 
-<img align="right" alt="ReaL" src="/assets/logo.png" width="20%">
+<img align="right" alt="ReaL" src="/assets/figures/logo.png" width="20%">
 
-AReaL is an open-source **fully asynchronous** reinforcement learning training system
-for large **reasoning and agentic models**, developed by members from Tsinghua IIIS and
-the AReaL Team at Ant Group. Built upon the open-source project
-[ReaLHF](https://github.com/openpsi-project/ReaLHF), we are fully committed to
-open-source principles by providing the training details, data, and infrastructure
-required to reproduce our results, along with the models themselves. AReaL aims to help
-everyone build their own AI agents easily and affordably. Our team loves milk tea
-because it's delicious, customizable, and affordable—we hope you enjoy our project just
-as much as you'd enjoy real milk tea. Cheers!
+**AReaL** is a reinforcement learning (RL) infrastructure designed to bridge foundation
+model training with modern agent-based applications. It was originally developed by
+researchers and engineers from Tsinghua IIIS and the AReaL Team at Ant Group.
+
+Built on a **fully asynchronous RL training paradigm**, AReaL is optimized for
+efficiency and scalability, making it particularly well-suited for training large-scale
+**reasoning and agentic models**.
+
+AReaL’s mission is to make building AI agents **accessible, efficient, and
+cost-effective** for a broad community of developers and researchers.
+
+> Like milk tea - customizable, scalable, and enjoyable - we hope AReaL brings both
+> flexibility and delight to your AI development experience. Cheers!
 
 **AReaL Highlights**
 
 - ⚡ **Flexibility**: Seamless customization for
   [agentic RL](https://inclusionai.github.io/AReaL/en/tutorial/agentic_rl.html) and
-  [online RL training](./examples/openclaw/) by simply replacing the `base_url`.
+  [online RL training](https://www.inclusion-ai.org/AReaL/en/tutorial/online_proxy.html)
+  for **black-box agent applications** by simply replacing the `base_url`.
 - 📈 **Scalability**: **Stable** fully asynchronous RL training with **industry-leading
   speed**.
 - ✨ **Cutting-Edge Performance**: State-of-the-art [math](/blog/AReaL_v0_2.md),
@@ -35,9 +40,30 @@ as much as you'd enjoy real milk tea. Cheers!
 
 ## 📰 News
 
+**\[2026/04/23\]** 🚀 We’re excited to release our integration with
+[Scaffoldings](https://github.com/NVIDIA/TensorRT-LLM/tree/main/tensorrt_llm/scaffolding)
+for agentic RL training - now live in our
+[examples](https://github.com/inclusionAI/AReaL/tree/main/examples/scaffolding)! Huge
+shoutout to @narutolhy and @WeiHaocheng for making this happen 🙌. The modular design of
+the Scaffoldings enables it to achieve a thorough decoupling of agent execution, reward
+calculation, and trajectory acquisition. This enables developers to reuse existing
+modules when implementing an agentic RL method, allowing them to focus on their own
+innovative modules.
+
+**\[2026/04/18\]** We are thrilled to announce that **AReaL's first Community Biweekly
+Meeting** was successfully held! Thank you to everyone who joined us. Meeting materials
+are now available
+[here](https://github.com/inclusionAI/AReaL/tree/main/assets/community). Our next
+meeting is scheduled for **2026/05/01** and will also be conducted in Chinese;
+English-language meetings will be scheduled in the future. We warmly welcome everyone to
+participate! See [Community](./assets/community/README.md) for more details.
+
 **\[2026/03/02\]** We provide [a complete example](./examples/openclaw/) to train your
 own 🦞 OpenClaw agent by simply replacing the `base_url` and `api_key` with AReaL's RL
 service - no complicated dependencies, no code changes, works with any agentic runtime!
+
+<details>
+<summary><b>📋 Previous Releases</b></summary>
 
 **\[2026/02/06\]** We are delighted to introduce **AReaL-SEA**, a self-evolving data
 synthesis engine. Combined with RL training on AReaL, the 235B MoE model surpasses GPT 5
@@ -52,9 +78,6 @@ open-sourcing [SETA](https://github.com/camel-ai/seta), their terminal agent RL 
 trained with AReaL! Check out
 [their training workflow](https://github.com/camel-ai/seta/tree/main/training/tbench_areal_workflow)
 and the [announcement on X](https://x.com/guohao_li/status/2009678513574408636).
-
-<details>
-<summary><b>📋 Previous Releases</b></summary>
 
 **\[2026/01/01\]** Happy New Year! Thanks to the outstanding contribution from
 @HwVanICI, we are excited to officially announce stable support for AReaL training on
@@ -116,12 +139,13 @@ model (Qwen/Qwen2-1.5B-Instruct). To run on a single node:
 python3 examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml scheduler.type=local
 ```
 
-To run on a Ray cluster with 2 nodes and 8 GPUs per node (remember to update paths in
-the YAML file to point to your shared storage):
+If you prefer to run experiments on a Ray cluster, update paths in the YAML file to
+point to your shared storage, and run:
 
 ```bash
 python3 examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml \
   cluster.n_nodes=2 cluster.n_gpus_per_node=8 \
+  cluster.fileroot=/path/to/nfs \
   scheduler.type=ray
 ```
 
@@ -183,7 +207,8 @@ All RL algorithms support both asynchronous and synchronous versions by setting
 | **RLOO**                 | [📖 Docs](docs/en/algorithms/grpo_series.md)  | [📄 Paper](https://arxiv.org/pdf/2402.14740v1) | [🔗 GSM8K Example](examples/math/gsm8k_rloo.yaml)                 |
 | **SAPO**                 | [📖 Docs](docs/en/algorithms/grpo_series.md)  | [📄 Paper](https://arxiv.org/abs/2511.20347)   | [🔗 GSM8K Example](examples/math/gsm8k_sapo.yaml)                 |
 | **M2PO**                 | [📖 Docs](docs/algorithms/m2po.md)            | [📄 Paper](https://arxiv.org/abs/2510.01161)   | [🔗 GSM8K Example](examples/math/gsm8k_m2po.yaml)                 |
-| **RLHF Reward Modeling** | -                                             | -                                              | [🔗 RLHF Example](examples/alignment/)                            |
+| **DPO**                  | [📖 Docs](docs/en/algorithms/dpo.md)          | [📄 Paper](https://arxiv.org/abs/2305.18290)   | [🔗 HH-RLHF Example](examples/alignment/hhrlhf_dpo.yaml)          |
+| **RLHF Reward Modeling** | -                                             | -                                              | [🔗 RLHF Example](examples/alignment/hhrlhf_rw.yaml)              |
 | **SFT**                  | -                                             | -                                              | [🔗 GSM8K Example](examples/math/gsm8k_sft.py)                    |
 | **Distillation**         | [📖 Docs](docs/en/algorithms/distillation.md) | [📄 Paper](https://arxiv.org/pdf/2506.02208)   | [🔗 GSM8K Example](examples/distillation/gsm8k_grpo_distill.yaml) |
 
@@ -297,7 +322,7 @@ git push
 ## 🗺️ Future Roadmap
 
 - **[Full Roadmap](ROADMAP.md)**
-- **[2025 Q4 Roadmap](https://github.com/inclusionAI/AReaL/issues/542)**
+- **[2026 Q1 Roadmap](https://github.com/inclusionAI/AReaL/issues/907)**
 
 AReaL is under active development with planned minor releases weekly and major releases
 monthly. We warmly welcome community engagement and contributions. We are also
@@ -339,6 +364,10 @@ outstanding projects, including but not limited to
 [SGLang](https://github.com/sgl-project/sglang), [QwQ](https://github.com/QwenLM/QwQ),
 [Light-R1](https://github.com/Qihoo360/Light-R1), and
 [DAPO](https://github.com/BytedTsinghua-SIA/DAPO).
+
+## 📜 License
+
+This project is licensed under the [Apache License 2.0](LICENSE).
 
 ## 📄 Citation
 

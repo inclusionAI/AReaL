@@ -1,14 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+
 from __future__ import annotations
 
 import httpx
 
-from ..auth import DEFAULT_ADMIN_KEY, admin_headers
+from ..auth import DEFAULT_ADMIN_API_KEY, admin_headers
 
 
 class RouterClient:
-    def __init__(self, router_addr: str, admin_key: str = DEFAULT_ADMIN_KEY) -> None:
+    def __init__(
+        self, router_addr: str, admin_api_key: str = DEFAULT_ADMIN_API_KEY
+    ) -> None:
         self._addr = router_addr
-        self._headers = admin_headers(admin_key)
+        self._headers = admin_headers(admin_api_key)
         self._http = httpx.AsyncClient(timeout=30.0)
 
     async def register(self, addr: str) -> None:

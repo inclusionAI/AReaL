@@ -1,0 +1,31 @@
+# Default: catch-all
+*                           @garrett4wade
+
+# Core package
+/areal/api/                 @garrett4wade
+/areal/engine/              @rchardx
+/areal/experimental/inference_service        @nuzant
+/areal/experimental/agent_service/          @CormickKneey
+/areal/infra/               @garrett4wade
+/areal/infra/scheduler/ray.py              @HwVanICI
+/areal/models/              @rchardx
+/areal/trainer/             @garrett4wade
+
+# Tests & Examples
+/tests/                     @garrett4wade @rchardx @nuzant
+/examples/                  @garrett4wade
+
+# Documentation
+/docs/                      @garrett4wade
+
+# CI/CD & infrastructure
+/.github/                   @garrett4wade @nuzant
+/Dockerfile                 @garrett4wade @fishcrap
+pyproject.toml              @garrett4wade @fishcrap
+pyproject.vllm.toml         @garrett4wade @fishcrap
+uv.lock                     @garrett4wade @fishcrap
+uv.vllm.lock                @garrett4wade @fishcrap
+
+# Governance & community
+GOVERNANCE.md               @garrett4wade
+CONTRIBUTING.md             @garrett4wade

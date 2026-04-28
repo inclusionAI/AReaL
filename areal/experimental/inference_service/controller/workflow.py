@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
@@ -5,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 import aiohttp
 
 from areal.api.workflow_api import RolloutWorkflow
+from areal.experimental.openai.proxy.server import deserialize_interactions
 from areal.infra import workflow_context
 from areal.utils import logging, stats_tracker
 
@@ -21,23 +24,6 @@ _GRANT_CAPACITY_PATHNAME = "grant_capacity"
 _RL_START_SESSION_PATHNAME = "rl/start_session"
 _RL_SET_REWARD_PATHNAME = "rl/set_reward"
 _EXPORT_TRAJECTORIES_PATHNAME = "export_trajectories"
-
-
-def _deserialize_interactions(
-    data: dict[str, Any],
-) -> dict[str, InteractionWithTokenLogpReward]:
-    from areal.experimental.openai.types import InteractionWithTokenLogpReward
-    from areal.infra.rpc.serialization import deserialize_value
-
-    data = deserialize_value(data)
-    result: dict[str, InteractionWithTokenLogpReward] = {}
-    for key, item in data.items():
-        interaction = InteractionWithTokenLogpReward()
-        interaction._cache = item["tensor_dict"]
-        interaction.reward = item["reward"]
-        interaction.interaction_id = item["interaction_id"]
-        result[key] = interaction
-    return result
 
 
 class InferenceServiceWorkflow(RolloutWorkflow):
@@ -108,7 +94,8 @@ class InferenceServiceWorkflow(RolloutWorkflow):
         async with session.post(url, json=payload, headers=headers) as resp:
             resp.raise_for_status()
             data = await resp.json()
-        return _deserialize_interactions(data["interactions"])
+
+        return deserialize_interactions(data["interactions"])
 
     async def arun_episode(
         self,

@@ -1,9 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+
 from typing import Any
 
 import torch
 
 from areal.api import TrainEngine
+from areal.experimental.training_service.controller.controller import (
+    GatewayTrainController,
+)
 from areal.infra import TrainController
+from areal.infra.rpc.serialization import serialize_value
 from areal.utils import stats_tracker
 from areal.utils.data import batched_call
 from areal.utils.perf_tracer import trace_perf
@@ -20,6 +26,7 @@ class LMEngine:
 
     def _train_lm(self, data: dict[str, Any]) -> None:
         self.engine.train()
+        data["loss_mask"] = torch.roll(data["loss_mask"].bool(), shifts=-1, dims=-1)
         stats = self.engine.train_batch(
             input_=data,
             loss_fn=compute_packed_sft_loss,
@@ -34,6 +41,7 @@ class LMEngine:
 
     def _evaluate_lm(self, data: dict[str, Any]) -> None:
         self.engine.eval()
+        data["loss_mask"] = torch.roll(data["loss_mask"].bool(), shifts=-1, dims=-1)
         self.engine.eval_batch(
             input_=data,
             loss_fn=compute_packed_sft_loss,
@@ -43,11 +51,31 @@ class LMEngine:
 
 class LMController(TrainController):
     def train_lm(self, *args, **kwargs):
-        self._custom_function_call("train_lm", *args, **kwargs)
+        self._custom_function_call(
+            "train_lm", *args, rpc_meta={"broadcast": True}, **kwargs
+        )
 
     def evaluate_lm(self, *args, **kwargs):
         args, kwargs = self._pad_eval_dispatch_args(args, kwargs, group_size=1)
-        self._custom_function_call("evaluate_lm", *args, **kwargs)
+        self._custom_function_call(
+            "evaluate_lm", *args, rpc_meta={"broadcast": True}, **kwargs
+        )
+
+
+class LMControllerV2(GatewayTrainController):
+    def train_lm(self, *args, **kwargs):
+        payload = {
+            "args": serialize_value(list(args)),
+            "kwargs": serialize_value(kwargs),
+        }
+        self._gateway_post_result("/sft/train", payload)
+
+    def evaluate_lm(self, *args, **kwargs):
+        payload = {
+            "args": serialize_value(list(args)),
+            "kwargs": serialize_value(kwargs),
+        }
+        self._gateway_post_result("/sft/evaluate", payload)
 
 
 def compute_packed_sft_loss(
@@ -62,11 +90,10 @@ def compute_packed_sft_loss(
     cu_seqlens: torch.Tensor = input_["cu_seqlens"]
     loss_mask = input_["loss_mask"].bool()
 
-    loss_mask = torch.roll(loss_mask, shifts=-1, dims=-1)
     logprobs = torch.where(loss_mask, logprobs, 0)
 
     device = logprobs.device
-    loss = -logprobs.sum() / loss_mask.count_nonzero()
+    loss = -logprobs.sum() / (1e-5 + loss_mask.count_nonzero())
     with torch.no_grad():
         batch_size = cu_seqlens.shape[0] - 1
         seqlogp = torch.zeros(batch_size, dtype=torch.float64, device=device)

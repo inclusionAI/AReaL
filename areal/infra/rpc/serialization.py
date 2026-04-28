@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Tensor and dataclass serialization utilities for RPC communication.
 
 This module provides utilities to serialize and deserialize PyTorch tensors
@@ -12,6 +14,7 @@ Assumptions:
 """
 
 import base64
+import enum
 import importlib
 import importlib.util
 import io
@@ -244,6 +247,26 @@ class SerializedPILImage(BaseModel):
             image = image.convert(self.mode)
 
         return image
+
+
+class SerializedRayObjectRef(BaseModel):
+    """Pydantic model for serialized ray.ObjectRef handles."""
+
+    type: Literal["ray_object_ref"] = Field(default="ray_object_ref")
+    data: str
+
+    @classmethod
+    def from_object_ref(cls, ref: Any) -> "SerializedRayObjectRef":
+        import ray.cloudpickle
+
+        payload = ray.cloudpickle.dumps(ref)
+        return cls(data=base64.b64encode(payload).decode("utf-8"))
+
+    def to_object_ref(self) -> Any:
+        import ray.cloudpickle
+
+        payload = base64.b64decode(self.data.encode("utf-8"))
+        return ray.cloudpickle.loads(payload)
 
 
 class SerializedDataclass(BaseModel):
@@ -577,6 +600,13 @@ def serialize_value(value: Any) -> Any:
     if ImageObject is not None and isinstance(value, ImageObject):
         return SerializedPILImage.from_image(value).model_dump()
 
+    # Handle Ray object references when HTTP RPC needs to carry RTensor shard
+    # handles across processes.
+    import ray
+
+    if isinstance(value, ray.ObjectRef):
+        return SerializedRayObjectRef.from_object_ref(value).model_dump()
+
     # Handle dataclass instances (check before dict, as dataclasses can be dict-like)
     # Note: is_dataclass returns True for both classes and instances, so check it's not a type
     if is_dataclass(value) and not isinstance(value, type):
@@ -615,6 +645,19 @@ def serialize_value(value: Any) -> Any:
     # `launch_server` returns a subprocess.Popen, skip it
     if isinstance(value, subprocess.Popen):
         return None
+
+    # Handle torch.dtype (e.g. torch.float32)
+    if isinstance(value, torch.dtype):
+        return {"type": "torch_dtype", "value": str(value)}
+
+    # Handle Enum values (e.g. ShardingType.TP_SHARDING)
+    if isinstance(value, enum.Enum):
+        cls = type(value)
+        return {
+            "type": "enum",
+            "class_path": f"{cls.__module__}.{cls.__qualname__}",
+            "value": value.value,
+        }
 
     # Primitives (int, float, str, bool) pass through unchanged
     return value
@@ -706,6 +749,16 @@ def deserialize_value(value: Any) -> Any:
                     f"Failed to deserialize PIL image, treating as regular dict: {e}"
                 )
 
+        # Check for SerializedRayObjectRef marker
+        if value.get("type") == "ray_object_ref":
+            try:
+                serialized_ref = SerializedRayObjectRef.model_validate(value)
+                return serialized_ref.to_object_ref()
+            except Exception as e:
+                logger.warning(
+                    f"Failed to deserialize ray.ObjectRef, treating as regular dict: {e}"
+                )
+
         # Check for SerializedTensor marker
         if value.get("type") == "tensor":
             try:
@@ -715,6 +768,14 @@ def deserialize_value(value: Any) -> Any:
                 logger.warning(
                     f"Failed to deserialize tensor, treating as regular dict: {e}"
                 )
+
+        if value.get("type") == "torch_dtype":
+            return getattr(torch, value["value"].removeprefix("torch."))
+
+        if value.get("type") == "enum":
+            module_path, class_name = value["class_path"].rsplit(".", 1)
+            enum_cls = getattr(importlib.import_module(module_path), class_name)
+            return enum_cls(value["value"])
 
         # Regular dict - recursively deserialize values
         return {key: deserialize_value(val) for key, val in value.items()}

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 import logging
 import os
 import subprocess
@@ -14,6 +15,7 @@ from torchdata.stateful_dataloader import StatefulDataLoader
 from areal.api import (
     InferenceEngine,
     LocalInfServerInfo,
+    ModelAllocation,
     ModelRequest,
     ModelResponse,
     ParamSpec,
@@ -361,6 +363,45 @@ class RemoteSGLangEngine(InferenceEngine):
         # Pure composition - create internal engine with SGLang backend
         self._engine = RemoteInfEngine(config, SGLangBackend())
 
+    @classmethod
+    def from_pretrained(
+        cls,
+        tokenizer_path: str | None = None,
+        dp_size: int = 1,
+        max_concurrent_rollouts: int | None = None,
+        **kwargs,
+    ) -> "RemoteInfEngine":
+        """Create a RemoteInfEngine without kwargs instead of InferenceEngineConfig.
+
+        Parameters
+        ----------
+        tokenizer_path: str | None = None
+            Path to the tokenizer
+        dp_size : int
+            Data parallelism size
+        max_concurrent_rollouts : int | None
+            Maximum concurrent rollouts
+        **kwargs : dict
+            Additional config parameters passed to InferenceEngineConfig
+
+        Returns
+        -------
+        RemoteInfEngine
+        """
+
+        backend_str = f"sglang:d{dp_size}"
+
+        config = InferenceEngineConfig(
+            backend=backend_str,
+            max_concurrent_rollouts=max_concurrent_rollouts,
+            tokenizer_path=tokenizer_path,
+            **kwargs,
+        )
+
+        engine = cls(config)
+
+        return engine
+
     def initialize(
         self,
         engine_id: str | None = None,
@@ -368,6 +409,10 @@ class RemoteSGLangEngine(InferenceEngine):
         train_data_parallel_size: int | None = None,
     ):
         """Initialize the engine by discovering and connecting to servers."""
+        if train_data_parallel_size is None:
+            train_data_parallel_size = ModelAllocation.from_str(
+                self.config.backend, name="rollout"
+            ).parallel.data_parallel_size
         return self._engine.initialize(engine_id, addr, train_data_parallel_size)
 
     def destroy(self):

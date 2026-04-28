@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Lightning Attention module for megatron-core, using fla (flash-linear-attention) Triton kernels.
 
 BailingMoeV2_5 uses a heterogeneous architecture where most layers use Lightning Attention

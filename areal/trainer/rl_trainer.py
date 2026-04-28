@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 from __future__ import annotations
 
 import functools
@@ -7,7 +9,6 @@ from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
 import torch.distributed as dist
-from datasets import Dataset
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api import (
@@ -41,6 +42,10 @@ from areal.infra import (
     SlurmScheduler,
     current_platform,
 )
+from areal.infra.data_service import DataController
+from areal.infra.data_service.controller.config import DataServiceConfig
+from areal.infra.data_service.rdataset import RDataset
+from areal.infra.utils.concurrent import call_maybe_async
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
 from areal.utils.dataloader import create_dataloader
 from areal.utils.environ import is_single_controller
@@ -52,6 +57,8 @@ from areal.utils.saver import Saver
 from areal.utils.stats_logger import StatsLogger
 
 if TYPE_CHECKING:
+    from datasets import Dataset
+
     from areal.engine import (
         FSDPPPOActor,
         FSDPPPOCritic,
@@ -111,6 +118,9 @@ class PPOTrainer:
         self.scheduler = None
         if is_single_controller():
             self.scheduler = self._init_scheduler()
+        self.data_controller: DataController | None = None
+        self._train_rdataset: RDataset | None = None
+        self._valid_rdataset: RDataset | None = None
 
         # Set seed.
         seeding.set_random_seed(config.seed, key=f"trainer{rank}")
@@ -119,6 +129,17 @@ class PPOTrainer:
         self.actor_alloc = ModelAllocation.from_str(config.actor.backend, name="actor")
         self.rollout_alloc = ModelAllocation.from_str(
             config.rollout.backend, name="rollout"
+        )
+        self._should_offload_rollout = self._is_actor_rollout_colocated(config)
+        self._should_offload_actor = (
+            self._should_offload_rollout or config.actor.offload
+        )
+        self._should_offload_critic = (
+            config.critic is not None and config.critic.offload
+        )
+        self._should_offload_ref = config.ref is not None and config.ref.offload
+        self._should_offload_teacher = (
+            config.teacher is not None and config.teacher.offload
         )
 
         # Validate config before proceeding with weight initialization
@@ -165,6 +186,22 @@ class PPOTrainer:
 
                     OmegaConf.set_struct(sglang_cfg, False)
                     sglang_cfg.skip_tokenizer_init = True
+        openai_cfg = config.rollout.openai
+        self._online_mode = openai_cfg is not None and openai_cfg.mode == "online"
+
+        if self._online_mode and config.valid_dataset is not None:
+            raise ValueError(
+                "valid_dataset must not be set when using online RL mode "
+                "(openai.mode='online'). Online mode does not support "
+                "validation datasets."
+            )
+
+        # -- Dataset loading --------------------------------------------------
+        if not self._online_mode and train_dataset is None:
+            raise ValueError(
+                "train_dataset must be provided unless using online RL mode "
+                "(openai.mode='online')."
+            )
 
         # Create models: actor, critic, ref — each with its own allocation.
         self.actor = self._create_train_engine(config.actor, self.actor_alloc)
@@ -179,19 +216,21 @@ class PPOTrainer:
             ref_alloc = ModelAllocation.from_str(config.ref.backend, name="ref")
             self.ref = self._create_train_engine(config.ref, ref_alloc)
 
-        # Create dataloaders
-        self.train_dataset = train_dataset
-        self.valid_dataset = valid_dataset
-        if train_dataset is None:
-            # Online mode: require total_train_steps to compute steps_per_epoch.
-            # Without this, __len__()=1 causes every step to be treated as an
-            # epoch boundary, making Saver/RecoverHandler fire every step and
-            # corrupting the LR schedule.
+        self.teacher = None
+        if config.teacher is not None:
+            teacher_alloc = ModelAllocation.from_str(
+                config.teacher.backend, name="teacher"
+            )
+            self.teacher = self._create_train_engine(config.teacher, teacher_alloc)
+
+        steps_per_epoch: int | None = None
+        self.train_dataloader: StatefulDataLoader | _EmptyDataLoader
+        if self._online_mode:
             if config.total_train_steps is None:
                 raise ValueError(
-                    "total_train_steps must be set for online mode "
-                    "(train_dataset is None). Both total_train_epochs and "
-                    "total_train_steps are needed to compute steps_per_epoch."
+                    "total_train_steps must be set for online mode. "
+                    "Both total_train_epochs and total_train_steps are needed "
+                    "to compute steps_per_epoch."
                 )
             steps_per_epoch = config.total_train_steps // config.total_train_epochs
             if steps_per_epoch < 1:
@@ -205,14 +244,47 @@ class PPOTrainer:
                 steps_per_epoch=steps_per_epoch,
             )
         else:
+            assert train_dataset is not None
+            if is_single_controller() and isinstance(train_dataset, RDataset):
+                ds_cfg = DataServiceConfig.from_dataset_config(
+                    config.train_dataset, seed=config.seed
+                )
+                assert self.scheduler is not None
+                controller = DataController(ds_cfg, self.scheduler)
+                controller.initialize(
+                    role="data", num_dataset_workers=ds_cfg.num_workers
+                )
+                self.data_controller = controller
+                train_dataset.connect(
+                    controller,
+                    dataset_id=f"{config.experiment_name}_{config.trial_name}_train",
+                    tokenizer_or_processor_path=config.tokenizer_path,
+                    shuffle=config.train_dataset.shuffle,
+                    drop_last=config.train_dataset.drop_last,
+                )
+                self._train_rdataset = train_dataset
+
             self.train_dataloader = self._create_dataloader(
                 train_dataset,
                 dataset_config=self.config.train_dataset,
                 rank=self.actor.data_parallel_rank,
                 world_size=self.actor.data_parallel_world_size,
             )
-        self.valid_dataloader = None
+
+        self.valid_dataloader: StatefulDataLoader | None = None
         if self.config.valid_dataset is not None and valid_dataset is not None:
+            assert self.config.valid_dataset is not None
+            if is_single_controller() and isinstance(valid_dataset, RDataset):
+                assert self.data_controller is not None
+                valid_dataset.connect(
+                    self.data_controller,
+                    dataset_id=f"{config.experiment_name}_{config.trial_name}_valid",
+                    tokenizer_or_processor_path=config.tokenizer_path,
+                    shuffle=self.config.valid_dataset.shuffle,
+                    drop_last=self.config.valid_dataset.drop_last,
+                )
+                self._valid_rdataset = valid_dataset
+
             self.valid_dataloader = self._create_dataloader(
                 valid_dataset,
                 dataset_config=self.config.valid_dataset,
@@ -220,12 +292,24 @@ class PPOTrainer:
                 world_size=self.actor.data_parallel_world_size,
             )
 
-        ft_spec = FinetuneSpec(
-            total_train_epochs=config.total_train_epochs,
-            dataset_size=len(self.train_dataloader) * config.train_dataset.batch_size,
-            train_batch_size=config.train_dataset.batch_size,
-        )
+        # -- FinetuneSpec -----------------------------------------------------
+        if self._online_mode:
+            assert steps_per_epoch is not None
+            ft_spec = FinetuneSpec(
+                total_train_epochs=config.total_train_epochs,
+                dataset_size=steps_per_epoch * config.train_dataset.batch_size,
+                train_batch_size=config.train_dataset.batch_size,
+            )
+        else:
+            ft_spec = FinetuneSpec(
+                total_train_epochs=config.total_train_epochs,
+                dataset_size=len(self.train_dataloader)
+                * config.train_dataset.batch_size,
+                train_batch_size=config.train_dataset.batch_size,
+            )
 
+        # Initialize engines first — the scheduler must know about roles
+        # before the data controller can colocate with them.
         engine_init_kwargs = {"addr": None, "ft_spec": ft_spec}
         self.actor.initialize(**engine_init_kwargs, role="actor")
         if self.critic is not None:
@@ -233,12 +317,7 @@ class PPOTrainer:
         if self.ref is not None:
             self.ref.initialize(**engine_init_kwargs, role="ref")
 
-        self.teacher = None
-        if config.teacher is not None:
-            teacher_alloc = ModelAllocation.from_str(
-                config.teacher.backend, name="teacher"
-            )
-            self.teacher = self._create_train_engine(config.teacher, teacher_alloc)
+        if self.teacher is not None:
             self.teacher.initialize(**engine_init_kwargs, role="teacher")
 
         # Save initial LoRA weights if enabled (for inference server pre-loading)
@@ -247,11 +326,6 @@ class PPOTrainer:
         # Initialize inference with LoRA path
         self.rollout = self._init_rollout(
             config.rollout, is_eval=False, lora_path=initial_lora_path
-        )
-        # Online mode detection: skip eval rollout for efficiency.
-        openai_cfg = config.rollout.openai
-        self._online_mode = train_dataset is None or (
-            openai_cfg is not None and openai_cfg.mode == "online"
         )
 
         self.eval_rollout = None
@@ -331,6 +405,136 @@ class PPOTrainer:
         )
 
         self._config_perf_tracer()
+        self._apply_initial_offload_policy()
+
+    @staticmethod
+    def _is_colocation(strategy: SchedulingStrategy | None) -> bool:
+        if strategy is None:
+            return False
+        return strategy.type in (
+            SchedulingStrategyType.colocation,
+            SchedulingStrategyType.colocation.value,
+            "colocation",
+        )
+
+    def _is_actor_rollout_colocated(self, config: PPOConfig) -> bool:
+        actor_s = config.actor.scheduling_strategy
+        rollout_s = config.rollout.scheduling_strategy
+        return (self._is_colocation(actor_s) and actor_s.target == "rollout") or (
+            self._is_colocation(rollout_s) and rollout_s.target == "actor"
+        )
+
+    def _onload_model(self, engine, role: str) -> None:
+        with (
+            stats_tracker.record_timing(f"{role}_onload"),
+            perf_tracer.trace_scope(
+                f"train.{role}_onload",
+                category=Category.IO,
+            ),
+        ):
+            engine.onload()
+
+    def _offload_model(self, engine, role: str) -> None:
+        with (
+            stats_tracker.record_timing(f"{role}_offload"),
+            perf_tracer.trace_scope(
+                f"train.{role}_offload",
+                category=Category.IO,
+            ),
+        ):
+            engine.offload()
+
+    def _offload_rollout(self, is_eval: bool = False):
+        rollout = self.rollout if not is_eval else self.eval_rollout
+        if rollout is None:
+            return
+
+        with (
+            stats_tracker.record_timing("rollout_pause"),
+            perf_tracer.trace_scope(
+                "train.rollout_pause",
+                category=Category.INSTR,
+            ),
+        ):
+            rollout.pause()
+
+        with (
+            stats_tracker.record_timing("rollout_pause_generation"),
+            perf_tracer.trace_scope(
+                "train.rollout_pause_generation",
+                category=Category.INSTR,
+            ),
+        ):
+            call_maybe_async(rollout.pause_generation)
+
+        with (
+            stats_tracker.record_timing("rollout_offload"),
+            perf_tracer.trace_scope(
+                "train.rollout_offload",
+                category=Category.IO,
+            ),
+        ):
+            rollout.offload()
+
+    def _onload_rollout(self, is_eval: bool = False) -> None:
+        cleanup_error: Exception | None = None
+
+        rollout = self.rollout if not is_eval else self.eval_rollout
+        if rollout is None:
+            return
+
+        try:
+            with (
+                stats_tracker.record_timing("rollout_onload"),
+                perf_tracer.trace_scope(
+                    "train.rollout_onload",
+                    category=Category.IO,
+                ),
+            ):
+                rollout.onload()
+        except Exception as exc:  # noqa: BLE001
+            cleanup_error = exc
+
+        try:
+            with (
+                stats_tracker.record_timing("rollout_continue_generation"),
+                perf_tracer.trace_scope(
+                    "train.rollout_continue_generation",
+                    category=Category.INSTR,
+                ),
+            ):
+                call_maybe_async(rollout.continue_generation)
+        except Exception as exc:  # noqa: BLE001
+            if cleanup_error is None:
+                cleanup_error = exc
+
+        try:
+            with (
+                stats_tracker.record_timing("rollout_resume"),
+                perf_tracer.trace_scope(
+                    "train.rollout_resume",
+                    category=Category.INSTR,
+                ),
+            ):
+                rollout.resume()
+        except Exception as exc:  # noqa: BLE001
+            if cleanup_error is None:
+                cleanup_error = exc
+
+        if cleanup_error is not None:
+            raise cleanup_error
+
+    def _apply_initial_offload_policy(self) -> None:
+        if self._should_offload_rollout:
+            self._offload_rollout()
+        if self._should_offload_ref:
+            self._offload_model(self.ref, role="ref")
+        if self._should_offload_critic:
+            self._offload_model(self.critic, role="critic")
+        if self._should_offload_teacher:
+            self._offload_model(self.teacher, role="teacher")
+        if self._should_offload_actor:
+            self._offload_model(self.actor, role="actor")
 
     def train(
         self,
@@ -394,6 +598,8 @@ class PPOTrainer:
             epoch = global_step // steps_per_epoch
             step = global_step % steps_per_epoch
 
+            if self._should_offload_rollout:
+                self._onload_rollout()
             with (
                 stats_tracker.record_timing("rollout"),
                 perf_tracer.trace_scope(
@@ -413,8 +619,12 @@ class PPOTrainer:
                     group_size=config.gconfig.n_samples,
                     dynamic_bs=self.config.dynamic_bs,
                 )
+            if self._should_offload_rollout:
+                self._offload_rollout()
 
             if self.critic is not None:
+                if self._should_offload_critic:
+                    self._onload_model(self.critic, role="critic")
                 with (
                     stats_tracker.record_timing("critic_values"),
                     perf_tracer.trace_scope(
@@ -427,22 +637,11 @@ class PPOTrainer:
                     for traj, v in zip(rollout_batch, values):
                         traj["values"] = v
                     self.critic.get_device_stats().log("critic values")
-
-            if config.actor.should_compute_prox_logp():
-                with (
-                    stats_tracker.record_timing("recompute_logp"),
-                    perf_tracer.trace_scope(
-                        "train.recompute_logp",
-                        category=Category.COMPUTE,
-                        args={"global_step": global_step},
-                    ),
-                ):
-                    prox_logps = self.actor.compute_logp(rollout_batch)
-                    for traj, logp in zip(rollout_batch, prox_logps):
-                        traj["prox_logp"] = logp
-                    self.actor.get_device_stats().log("recompute logp")
+                # Critic stays onloaded — offloaded after ppo_update below
 
             if self.ref is not None:
+                if self._should_offload_ref:
+                    self._onload_model(self.ref, role="ref")
                 with (
                     stats_tracker.record_timing("ref_logp"),
                     perf_tracer.trace_scope(
@@ -455,8 +654,12 @@ class PPOTrainer:
                     for traj, logp in zip(rollout_batch, ref_logps):
                         traj["ref_logp"] = logp
                     self.ref.get_device_stats().log("ref logp")
+                if self._should_offload_ref:
+                    self._offload_model(self.ref, role="ref")
 
             if self.teacher is not None:
+                if self._should_offload_teacher:
+                    self._onload_model(self.teacher, role="teacher")
                 with (
                     stats_tracker.record_timing("teacher_logp"),
                     perf_tracer.trace_scope(
@@ -473,6 +676,24 @@ class PPOTrainer:
                             self.config.teacher.distill_loss_weight
                         )
                     self.teacher.get_device_stats().log("teacher logp")
+                if self._should_offload_teacher:
+                    self._offload_model(self.teacher, role="teacher")
+
+            if self._should_offload_actor:
+                self._onload_model(self.actor, role="actor")
+            if config.actor.should_compute_prox_logp():
+                with (
+                    stats_tracker.record_timing("recompute_logp"),
+                    perf_tracer.trace_scope(
+                        "train.recompute_logp",
+                        category=Category.COMPUTE,
+                        args={"global_step": global_step},
+                    ),
+                ):
+                    prox_logps = self.actor.compute_logp(rollout_batch)
+                    for traj, logp in zip(rollout_batch, prox_logps):
+                        traj["prox_logp"] = logp
+                    self.actor.get_device_stats().log("recompute logp")
 
             with (
                 stats_tracker.record_timing("compute_advantage"),
@@ -487,6 +708,12 @@ class PPOTrainer:
 
             # Wait for async checkpoint staging to complete before modifying parameters
             self.saver.maybe_wait_for_staging()
+
+            if (
+                config.memory_profiler is not None
+                and global_step in config.memory_profiler.profile_steps
+            ):
+                self.actor.start_memory_profile(config.memory_profiler.max_entries)
 
             with (
                 stats_tracker.record_timing("train_step"),
@@ -515,6 +742,18 @@ class PPOTrainer:
                 self.actor.step_lr_scheduler()
                 self.actor.get_device_stats().log("ppo update")
 
+            if (
+                config.memory_profiler is not None
+                and global_step in config.memory_profiler.profile_steps
+            ):
+                log_dir = StatsLogger.get_log_path(config.stats_logger)
+                snapshot_dir = os.path.join(
+                    log_dir, "memory_snapshots", f"step_{global_step}"
+                )
+                os.makedirs(snapshot_dir, exist_ok=True)
+                self.actor.stop_memory_profile(snapshot_dir)
+                logger.info(f"Memory snapshots saved to {snapshot_dir}")
+
             if self.critic is not None:
                 with (
                     stats_tracker.record_timing("critic_train_step"),
@@ -527,9 +766,14 @@ class PPOTrainer:
                     self.critic.ppo_update(adv_batch)
                     self.critic.step_lr_scheduler()
                     self.critic.get_device_stats().log("ppo critic update")
+                if self._should_offload_critic:
+                    self._offload_model(self.critic, role="critic")
 
             # pause inference for updating weights, save, and evaluation
             self.rollout.pause()
+
+            # Actor already onloaded; engine-internal _offload_aware_context
+            # calls in update_weights/save are no-ops.
 
             with (
                 stats_tracker.record_timing("update_weights"),
@@ -573,6 +817,12 @@ class PPOTrainer:
                     epoch=epoch, epoch_step=step, global_step=global_step
                 )
 
+            # Offload actor before eval
+            if self._should_offload_actor:
+                self._offload_model(self.actor, role="actor")
+
+            if self._should_offload_rollout:
+                self._onload_rollout(is_eval=True)
             with (
                 stats_tracker.record_timing("eval"),
                 perf_tracer.trace_scope(
@@ -588,6 +838,8 @@ class PPOTrainer:
                     epoch_step=step,
                     global_step=global_step,
                 )
+            if self._should_offload_rollout:
+                self._offload_rollout(is_eval=True)
 
             with (
                 stats_tracker.record_timing("clear_batches"),
@@ -600,6 +852,8 @@ class PPOTrainer:
                 # Since all RTensor objects are affiliated IPs,
                 # calling `clear_batches` once should be sufficient.
                 self.actor.clear_batches(rollout_batch, adv_batch)
+                if self.data_controller is not None:
+                    self.data_controller.clear_batches()
 
             with perf_tracer.trace_scope(
                 "train.log_stats",
@@ -617,6 +871,12 @@ class PPOTrainer:
 
     def close(self):
         self.saver.finalize()
+        if hasattr(self, "_train_rdataset") and self._train_rdataset is not None:
+            self._train_rdataset.close()
+        if hasattr(self, "_valid_rdataset") and self._valid_rdataset is not None:
+            self._valid_rdataset.close()
+        if hasattr(self, "data_controller") and self.data_controller is not None:
+            self.data_controller.destroy()
         self.stats_logger.close()
         if self.eval_rollout is not None:
             self.eval_rollout.destroy()
@@ -975,6 +1235,31 @@ class PPOTrainer:
         """validate config for incompatible settings before weight initialization, to avoid wasted resources on spawning workers and loading models."""
         rollout_backend = self.rollout_alloc.backend
         actor_backend = self.actor_alloc.backend
+        requires_train_engine_offload = any(
+            (
+                self._should_offload_rollout,
+                self._should_offload_actor,
+                self._should_offload_critic,
+                self._should_offload_ref,
+                self._should_offload_teacher,
+            )
+        )
+
+        if requires_train_engine_offload and not self.config.enable_offload:
+            raise ValueError(
+                "enable_offload must be True when colocation scheduling or train-engine "
+                "offload is enabled. Please set enable_offload=True."
+            )
+
+        if (
+            self._is_actor_rollout_colocated(self.config)
+            and self.config.actor.weight_update_mode != "disk"
+        ):
+            raise ValueError(
+                "weight_update_mode must be 'disk' when colocation scheduling is enabled. "
+                "Please set actor.weight_update_mode=disk."
+            )
+
         if rollout_backend == "vllm" and self.config.rollout.return_routed_experts:
             raise ValueError(
                 "return_routed_experts is only supported with SGLang backend. "

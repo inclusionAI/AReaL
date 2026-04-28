@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 # Modified from VeRL: verl/utils/checkpoint/megatron_checkpoint_manager.py
 #
 # Licensed under the Apache License, Version 2.0 (the "License");

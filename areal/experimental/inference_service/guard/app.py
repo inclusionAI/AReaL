@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """RPCGuard — inference service guard backed by the shared guard.
 
 All guard functionality is now provided by ``areal.infra.rpc.guard``.

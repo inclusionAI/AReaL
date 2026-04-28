@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 import ray
 from ray.util.placement_group import PlacementGroup
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy

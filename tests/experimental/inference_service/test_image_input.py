@@ -19,12 +19,10 @@ from PIL import Image
 
 from areal.api.cli_args import GenerationHyperparameters
 from areal.api.io_struct import ModelRequest
-from areal.experimental.inference_service.data_proxy.backend import (
-    SGLangBridgeBackend,
-    VLLMBridgeBackend,
-)
-from areal.experimental.inference_service.data_proxy.inf_bridge import InfBridge
 from areal.experimental.inference_service.data_proxy.pause import PauseState
+from areal.experimental.inference_service.inf_bridge import InfBridge
+from areal.experimental.inference_service.sglang.bridge import SGLangBridgeBackend
+from areal.experimental.inference_service.vllm.bridge import VLLMBridgeBackend
 from areal.experimental.openai.client import (
     _build_messages_list,
     _extract_images_from_messages,

@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from areal.api.cli_args import OpenAIProxyConfig
 from areal.experimental.inference_service.controller.config import (
     GatewayControllerConfig,
 )
@@ -27,8 +26,8 @@ from areal.experimental.inference_service.controller.workflow import (
 class TestGatewayControllerConfig:
     def test_defaults(self):
         cfg = GatewayControllerConfig()
-        assert isinstance(cfg.openai, OpenAIProxyConfig)
-        assert cfg.openai.admin_api_key == "areal-admin-key"
+        assert cfg.admin_api_key is None
+        assert cfg.model == "default"
         assert cfg.consumer_batch_size == 16
         assert cfg.max_concurrent_rollouts is None
         assert cfg.max_head_offpolicyness == 0
@@ -37,14 +36,13 @@ class TestGatewayControllerConfig:
 
     def test_custom_values(self):
         cfg = GatewayControllerConfig(
-            openai=OpenAIProxyConfig(admin_api_key="custom-key"),
+            admin_api_key="custom-key",
             consumer_batch_size=32,
             max_concurrent_rollouts=64,
             max_head_offpolicyness=5,
             set_reward_finish_timeout=3.0,
         )
-        assert cfg.openai is not None
-        assert cfg.openai.admin_api_key == "custom-key"
+        assert cfg.admin_api_key == "custom-key"
         assert cfg.consumer_batch_size == 32
         assert cfg.max_concurrent_rollouts == 64
         assert cfg.max_head_offpolicyness == 5
@@ -71,17 +69,17 @@ class TestGatewayControllerConfig:
 class TestControllerWorkflowResolution:
     def test_resolve_workflow_with_instance(self):
         controller = GatewayInferenceController(
-            config=GatewayControllerConfig(),
-            scheduler=MagicMock(),
+            config=GatewayControllerConfig(admin_api_key="test-key"),
+            scheduler=MagicMock(n_gpus_per_node=8),
         )
         with pytest.raises(TypeError, match=r"callable run\(\) method"):
             controller._resolve_workflow(12345)
 
     def test_resolve_workflow_none_creates_online_inference_service_workflow(self):
         cfg = GatewayControllerConfig(
-            openai=OpenAIProxyConfig(admin_api_key="test-admin-key")
+            admin_api_key="test-admin-key",
         )
-        scheduler = MagicMock()
+        scheduler = MagicMock(n_gpus_per_node=8)
         controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
         controller._gateway_addr = "http://test:8080"
 
@@ -97,9 +95,9 @@ class TestControllerWorkflowResolution:
 
     def test_resolve_workflow_agent_class_creates_offline_workflow(self):
         cfg = GatewayControllerConfig(
-            openai=OpenAIProxyConfig(admin_api_key="test-admin-key")
+            admin_api_key="test-admin-key",
         )
-        scheduler = MagicMock()
+        scheduler = MagicMock(n_gpus_per_node=8)
         controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
         controller._gateway_addr = "http://test:8080"
 
@@ -125,8 +123,8 @@ class TestControllerWorkflowResolution:
 
     def test_resolve_workflow_with_agent_class(self):
         """Test _resolve_workflow wraps agent-like classes in InferenceServiceWorkflow."""
-        cfg = GatewayControllerConfig()
-        scheduler = MagicMock()
+        cfg = GatewayControllerConfig(admin_api_key="test-key")
+        scheduler = MagicMock(n_gpus_per_node=8)
         controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
         controller._gateway_addr = "http://test:8080"
 
@@ -144,8 +142,8 @@ class TestControllerWorkflowResolution:
 
     def test_resolve_workflow_agent_class_without_gateway_raises(self):
         controller = GatewayInferenceController(
-            config=GatewayControllerConfig(),
-            scheduler=MagicMock(),
+            config=GatewayControllerConfig(admin_api_key="test-key"),
+            scheduler=MagicMock(n_gpus_per_node=8),
         )
 
         class MockAgent:
@@ -157,8 +155,8 @@ class TestControllerWorkflowResolution:
 
     def test_resolve_workflow_rollout_workflow_instance_raises(self):
         controller = GatewayInferenceController(
-            config=GatewayControllerConfig(),
-            scheduler=MagicMock(),
+            config=GatewayControllerConfig(admin_api_key="test-key"),
+            scheduler=MagicMock(n_gpus_per_node=8),
         )
         controller._gateway_addr = "http://test:8080"
 
@@ -175,8 +173,8 @@ class TestControllerWorkflowResolution:
 
     def test_resolve_workflow_rollout_workflow_class_raises(self):
         controller = GatewayInferenceController(
-            config=GatewayControllerConfig(),
-            scheduler=MagicMock(),
+            config=GatewayControllerConfig(admin_api_key="test-key"),
+            scheduler=MagicMock(n_gpus_per_node=8),
         )
         controller._gateway_addr = "http://test:8080"
 
@@ -245,9 +243,23 @@ class TestGatewayInferenceControllerAPISurface:
 
 
 class TestGatewayInferenceControllerConstruction:
-    def test_constructor(self):
+    def test_admin_api_key_none_raises(self):
         cfg = GatewayControllerConfig()
-        scheduler = MagicMock()
+        with pytest.raises(ValueError, match="admin_api_key must be set"):
+            GatewayInferenceController(
+                config=cfg, scheduler=MagicMock(n_gpus_per_node=8)
+            )
+
+    def test_model_empty_raises(self):
+        cfg = GatewayControllerConfig(admin_api_key="test-key", model="")
+        with pytest.raises(ValueError, match="model must not be empty"):
+            GatewayInferenceController(
+                config=cfg, scheduler=MagicMock(n_gpus_per_node=8)
+            )
+
+    def test_constructor(self):
+        cfg = GatewayControllerConfig(admin_api_key="test-key")
+        scheduler = MagicMock(n_gpus_per_node=8)
         controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
 
         assert controller.config is cfg
@@ -259,16 +271,16 @@ class TestGatewayInferenceControllerConstruction:
         assert controller._worker_ids == {}
         assert controller.worker_ids == {}
 
-    def test_admin_api_key_defaults_from_openai_proxy_config(self):
-        cfg = GatewayControllerConfig()
-        scheduler = MagicMock()
+    def test_admin_api_key_defaults(self):
+        cfg = GatewayControllerConfig(admin_api_key="test-key")
+        scheduler = MagicMock(n_gpus_per_node=8)
         controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
-        assert controller.config.openai.admin_api_key == "areal-admin-key"
+        assert controller.config.admin_api_key == "test-key"
 
     def test_version_management_without_services(self):
         """set_version / get_version work even without gateway services."""
-        cfg = GatewayControllerConfig()
-        scheduler = MagicMock()
+        cfg = GatewayControllerConfig(admin_api_key="test-key")
+        scheduler = MagicMock(n_gpus_per_node=8)
         controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
 
         # No gateway services started, but version management is local
@@ -276,30 +288,30 @@ class TestGatewayInferenceControllerConstruction:
         assert controller.get_version() == 42
 
     def test_export_stats_returns_dict(self):
-        cfg = GatewayControllerConfig()
-        scheduler = MagicMock()
+        cfg = GatewayControllerConfig(admin_api_key="test-key")
+        scheduler = MagicMock(n_gpus_per_node=8)
         controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
         stats = controller.export_stats()
         assert isinstance(stats, dict)
 
     def test_start_proxy_is_noop(self):
-        cfg = GatewayControllerConfig()
-        scheduler = MagicMock()
+        cfg = GatewayControllerConfig(admin_api_key="test-key")
+        scheduler = MagicMock(n_gpus_per_node=8)
         controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
         # Should not raise
         controller.start_proxy()
         controller.start_proxy_gateway()
 
     def test_proxy_gateway_addr(self):
-        cfg = GatewayControllerConfig()
-        scheduler = MagicMock()
+        cfg = GatewayControllerConfig(admin_api_key="test-key")
+        scheduler = MagicMock(n_gpus_per_node=8)
         controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
         # Before initialize, proxy_gateway_addr returns the empty _gateway_addr
         assert controller.proxy_gateway_addr == ""
 
     def test_callback_addr_formats_ipv6_hostport(self):
-        cfg = GatewayControllerConfig()
-        scheduler = MagicMock()
+        cfg = GatewayControllerConfig(admin_api_key="test-key")
+        scheduler = MagicMock(n_gpus_per_node=8)
         controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
         controller._callback_host = "2001:db8::10"
         controller._callback_port = 19000
@@ -307,15 +319,15 @@ class TestGatewayInferenceControllerConstruction:
         assert controller.callback_addr == "[2001:db8::10]:19000"
 
     def test_workflow_executor_raises_before_init(self):
-        cfg = GatewayControllerConfig()
-        scheduler = MagicMock()
+        cfg = GatewayControllerConfig(admin_api_key="test-key")
+        scheduler = MagicMock(n_gpus_per_node=8)
         controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
         with pytest.raises(RuntimeError, match="initialize"):
             _ = controller.workflow_executor
 
     def test_config_perf_tracer_is_noop(self):
-        cfg = GatewayControllerConfig()
-        scheduler = MagicMock()
+        cfg = GatewayControllerConfig(admin_api_key="test-key")
+        scheduler = MagicMock(n_gpus_per_node=8)
         controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
         # Should not raise
         controller.config_perf_tracer()
@@ -332,7 +344,7 @@ class TestGatewayInferenceControllerConstruction:
         worker.ip = "127.0.0.1"
         worker.worker_ports = [18000]
 
-        scheduler = MagicMock()
+        scheduler = MagicMock(n_gpus_per_node=8)
         scheduler.get_workers.return_value = [worker]
 
         cfg = GatewayControllerConfig(
@@ -347,7 +359,7 @@ class TestGatewayInferenceControllerConstruction:
                     cmd="python -m areal.experimental.inference_service.guard",
                 ),
             ),
-            openai=OpenAIProxyConfig(admin_api_key="test-admin-key"),
+            admin_api_key="test-admin-key",
         )
         controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
         controller._callback_host = "127.0.0.1"
@@ -383,28 +395,28 @@ class TestGatewayInferenceControllerConstruction:
 
 class TestGatewayInferenceControllerHTTP:
     def test_gateway_http_post_raises_on_failure(self):
-        cfg = GatewayControllerConfig()
-        scheduler = MagicMock()
+        cfg = GatewayControllerConfig(admin_api_key="test-key")
+        scheduler = MagicMock(n_gpus_per_node=8)
         controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
-        # _gateway_addr points to unreachable host — should raise RuntimeError
         controller._gateway_addr = "http://127.0.0.1:19999"
         with pytest.raises(RuntimeError, match="Failed to POST"):
             controller._gateway_http_post("/test", {"key": "value"})
 
-    @patch("requests.post")
-    def test_gateway_http_post_sends_auth(self, mock_post):
+    def test_gateway_http_post_sends_auth(self):
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_post.return_value = mock_resp
 
         cfg = GatewayControllerConfig(
-            openai=OpenAIProxyConfig(admin_api_key="my-secret-key")
+            admin_api_key="my-secret-key",
         )
-        scheduler = MagicMock()
+        scheduler = MagicMock(n_gpus_per_node=8)
         controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
         controller._gateway_addr = "http://127.0.0.1:8080"
 
-        controller._gateway_http_post("/test_endpoint", {"data": 1})
+        with patch.object(
+            controller._sync_client, "post", return_value=mock_resp
+        ) as mock_post:
+            controller._gateway_http_post("/test_endpoint", {"data": 1})
 
         mock_post.assert_called_once()
         call_kwargs = mock_post.call_args
@@ -416,9 +428,9 @@ class TestOnlineCallbackFlow:
     @pytest.mark.asyncio
     async def test_online_callback_without_waiter_buffers_export_request(self):
         cfg = GatewayControllerConfig(
-            openai=OpenAIProxyConfig(admin_api_key="test-admin-key")
+            admin_api_key="test-admin-key",
         )
-        scheduler = MagicMock()
+        scheduler = MagicMock(n_gpus_per_node=8)
         controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
         controller._start_online_callback_server()
         try:
@@ -437,9 +449,9 @@ class TestOnlineCallbackFlow:
     @pytest.mark.asyncio
     async def test_online_callback_settles_waiter_once(self):
         cfg = GatewayControllerConfig(
-            openai=OpenAIProxyConfig(admin_api_key="test-admin-key")
+            admin_api_key="test-admin-key",
         )
-        scheduler = MagicMock()
+        scheduler = MagicMock(n_gpus_per_node=8)
         controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
         controller._start_online_callback_server()
 
@@ -464,9 +476,9 @@ class TestOnlineCallbackFlow:
     @pytest.mark.asyncio
     async def test_online_callback_invalid_payload_keeps_waiter_pending(self):
         cfg = GatewayControllerConfig(
-            openai=OpenAIProxyConfig(admin_api_key="test-admin-key")
+            admin_api_key="test-admin-key",
         )
-        scheduler = MagicMock()
+        scheduler = MagicMock(n_gpus_per_node=8)
         controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
         controller._start_online_callback_server()
 
@@ -491,9 +503,9 @@ class TestOnlineCallbackFlow:
     @pytest.mark.asyncio
     async def test_cancelled_waiter_buffers_completed_online_result(self):
         cfg = GatewayControllerConfig(
-            openai=OpenAIProxyConfig(admin_api_key="test-admin-key")
+            admin_api_key="test-admin-key",
         )
-        scheduler = MagicMock()
+        scheduler = MagicMock(n_gpus_per_node=8)
         controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
         controller._start_online_callback_server()
 
@@ -537,9 +549,6 @@ class TestInferenceServiceWorkflow:
             timeout=3.0,
         )
         workflow._grant_capacity = AsyncMock()
-        workflow._export_interactions = AsyncMock(
-            return_value={"chatcmpl-1": mock_interaction}
-        )
 
         with (
             patch(
@@ -548,8 +557,27 @@ class TestInferenceServiceWorkflow:
             patch(
                 "areal.experimental.inference_service.controller.workflow.stats_tracker"
             ) as mock_st,
+            patch(
+                "areal.experimental.inference_service.controller.workflow.deserialize_interactions"
+            ) as mock_deserialize,
         ):
-            mock_http_session = AsyncMock()
+            mock_deserialize.return_value = {"chatcmpl-1": mock_interaction}
+
+            # _run_online uses ``async with http_session.post(...)`` directly,
+            # so the mock must support the async context-manager protocol.
+            mock_response = MagicMock()
+            mock_response.raise_for_status = MagicMock()
+            mock_response.json = AsyncMock(
+                return_value={"interactions": {"chatcmpl-1": {}}}
+            )
+
+            mock_cm = MagicMock()
+            mock_cm.__aenter__ = AsyncMock(return_value=mock_response)
+            mock_cm.__aexit__ = AsyncMock(return_value=False)
+
+            mock_http_session = MagicMock()
+            mock_http_session.post = MagicMock(return_value=mock_cm)
+
             mock_wf_ctx.get_aiohttp_session = AsyncMock(return_value=mock_http_session)
             mock_wf_ctx.stat_scope.return_value = "rollout"
             mock_st.get.return_value = MagicMock()
@@ -560,11 +588,8 @@ class TestInferenceServiceWorkflow:
         assert "chatcmpl-1" in result
         workflow._grant_capacity.assert_awaited_once()
         controller.wait_for_online_trajectory.assert_awaited_once_with(timeout=3.0)
-        workflow._export_interactions.assert_awaited_once_with(
-            mock_http_session,
-            "sess-1",
-            trajectory_id=7,
-        )
+        mock_http_session.post.assert_called_once()
+        mock_deserialize.assert_called_once_with({"chatcmpl-1": {}})
 
     @pytest.mark.asyncio
     async def test_offline_mode_runs_agent(self):
@@ -615,3 +640,215 @@ class TestInferenceServiceWorkflow:
         workflow._export_interactions.assert_awaited_once_with(
             mock_http_session, "sess-1", trajectory_id=None
         )
+
+
+# =============================================================================
+# Multi-node inference configuration
+# =============================================================================
+
+
+class TestMultiNodeConfig:
+    def test_n_gpus_per_node_default_is_none(self):
+        cfg = GatewayControllerConfig()
+        assert cfg.n_gpus_per_node is None
+
+    def test_n_gpus_per_node_custom(self):
+        cfg = GatewayControllerConfig(n_gpus_per_node=4)
+        assert cfg.n_gpus_per_node == 4
+
+    def test_n_gpus_per_node_zero_raises(self):
+        cfg = GatewayControllerConfig(
+            n_gpus_per_node=0, backend="sglang:d1t8", admin_api_key="test-key"
+        )
+        with pytest.raises(ValueError, match="n_gpus_per_node must be >= 1"):
+            GatewayInferenceController(
+                config=cfg, scheduler=MagicMock(n_gpus_per_node=0)
+            )
+
+    def test_gpus_not_divisible_raises(self):
+        cfg = GatewayControllerConfig(
+            n_gpus_per_node=3, backend="sglang:d1t8", admin_api_key="test-key"
+        )
+        with pytest.raises(ValueError, match="must be divisible by n_gpus_per_node"):
+            GatewayInferenceController(
+                config=cfg, scheduler=MagicMock(n_gpus_per_node=3)
+            )
+
+    def test_single_node_backward_compat(self):
+        cfg = GatewayControllerConfig(backend="sglang:d2t4", admin_api_key="test-key")
+        controller = GatewayInferenceController(
+            config=cfg, scheduler=MagicMock(n_gpus_per_node=8)
+        )
+        assert controller._nnodes_per_instance == 1
+
+    def test_multi_node_valid_config(self):
+        # tp=16, n_gpus_per_node=8 → nnodes_per_instance=2
+        cfg = GatewayControllerConfig(
+            n_gpus_per_node=8, backend="sglang:d1t16", admin_api_key="test-key"
+        )
+        controller = GatewayInferenceController(
+            config=cfg, scheduler=MagicMock(n_gpus_per_node=8)
+        )
+        assert controller._nnodes_per_instance == 2
+
+    @pytest.mark.asyncio
+    async def test_async_initialize_multinode_worker_count(self):
+        """With multi-node and pre-existing server_infos, should create dp_size workers."""
+        from areal.api.cli_args import SchedulingSpec
+        from areal.api.io_struct import LocalInfServerInfo
+
+        worker0 = MagicMock()
+        worker0.ip = "10.0.0.1"
+        worker0.worker_ports = [18000]
+        worker0.id = "w0"
+
+        worker1 = MagicMock()
+        worker1.ip = "10.0.0.2"
+        worker1.worker_ports = [18000]
+        worker1.id = "w1"
+
+        scheduler = MagicMock(n_gpus_per_node=4)
+        scheduler.get_workers.return_value = [worker0]
+
+        # tp=8, n_gpus_per_node=4 → nnodes_per_instance=2
+        cfg = GatewayControllerConfig(
+            tokenizer_path="mock-tokenizer",
+            backend="sglang:d1t8",
+            n_gpus_per_node=4,
+            scheduling_spec=(SchedulingSpec(gpu=1, cpu=1, mem=1, cmd="mock"),),
+            admin_api_key="test-key",
+        )
+        controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
+        controller._callback_host = "127.0.0.1"
+        controller._callback_port = 19000
+
+        with patch.object(controller, "_fork_on_guard") as mock_fork:
+            mock_fork.side_effect = [
+                ("127.0.0.1", 18081),  # router
+                ("127.0.0.1", 18082),  # data proxy (only 1, on head)
+                ("127.0.0.1", 18080),  # gateway
+            ]
+
+            await controller._async_initialize(
+                server_args=None,
+                server_infos=[
+                    LocalInfServerInfo(
+                        host="10.0.0.1", port=30000, process=MagicMock()
+                    ),
+                ],
+            )
+
+        # With server_infos, total_workers = dp_size = 1 (not dp_size * nnodes_per_instance)
+        create_call = scheduler.create_workers.call_args
+        job = create_call.kwargs.get("job") or create_call.args[0]
+        assert job.replicas == 1
+
+        # 3 forks: router + data-proxy + gateway (all on head worker)
+        assert mock_fork.call_count == 3
+        data_proxy_calls = [
+            c for c in mock_fork.call_args_list if c.kwargs.get("role") == "data-proxy"
+        ]
+        assert len(data_proxy_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_async_initialize_multinode_fork_path(self):
+        """Exercise the full multi-node fork path (server_infos=None)."""
+        from areal.api.cli_args import SchedulingSpec
+
+        worker0 = MagicMock()
+        worker0.ip = "10.0.0.1"
+        worker0.worker_ports = [18000]
+        worker0.id = "w0"
+
+        worker1 = MagicMock()
+        worker1.ip = "10.0.0.2"
+        worker1.worker_ports = [18000]
+        worker1.id = "w1"
+
+        scheduler = MagicMock(n_gpus_per_node=4)
+        scheduler.get_workers.return_value = [worker0, worker1]
+
+        # tp=8, n_gpus_per_node=4 → nnodes_per_instance=2
+        cfg = GatewayControllerConfig(
+            tokenizer_path="mock-tokenizer",
+            backend="sglang:d1t8",
+            n_gpus_per_node=4,
+            scheduling_spec=(SchedulingSpec(gpu=1, cpu=1, mem=1, cmd="mock"),),
+            admin_api_key="test-key",
+        )
+        controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
+        controller._callback_host = "127.0.0.1"
+        controller._callback_port = 19000
+
+        # Track requests.post calls to /alloc_ports and /fork
+        alloc_port_counter = 0
+        fork_calls = []
+
+        def mock_requests_post(url, json=None, timeout=None):
+            nonlocal alloc_port_counter
+            resp = MagicMock()
+            resp.status_code = 200
+            if "/alloc_ports" in url:
+                alloc_port_counter += 1
+                resp.json.return_value = {
+                    "status": "success",
+                    "host": url.split("//")[1].split(":")[0],
+                    "ports": [30000 + alloc_port_counter],
+                }
+            elif "/fork" in url:
+                fork_calls.append(json)
+                resp.json.return_value = {"status": "success"}
+            return resp
+
+        with (
+            patch.object(
+                controller._sync_client, "post", side_effect=mock_requests_post
+            ) as mock_post,
+            patch.object(controller, "_fork_on_guard") as mock_fork,
+            patch.object(controller, "_wait_for_service"),
+            patch(
+                "areal.api.cli_args.pkg_version.is_version_greater_or_equal",
+                return_value=True,
+            ),
+            patch("areal.api.cli_args.is_version_less", return_value=False),
+        ):
+            mock_fork.side_effect = [
+                ("10.0.0.1", 18081),  # router
+                ("10.0.0.1", 18082),  # data proxy
+                ("10.0.0.1", 18080),  # gateway
+            ]
+
+            await controller._async_initialize(
+                server_args=None,
+                server_infos=None,
+            )
+
+        # dp_size=1, nnodes_per_instance=2: total_workers = 2
+        create_call = scheduler.create_workers.call_args
+        job = create_call.kwargs.get("job") or create_call.args[0]
+        assert job.replicas == 2
+
+        # requests.post calls:
+        # 1 rendezvous alloc (nnodes_per_instance > 1) + 2 node allocs + 2 forks = 5
+        post_calls = mock_post.call_args_list
+        alloc_calls = [c for c in post_calls if "/alloc_ports" in str(c)]
+        fork_post_calls = [c for c in post_calls if "/fork" in str(c)]
+        assert len(alloc_calls) == 3  # 1 rendezvous + 2 per-node
+        assert len(fork_post_calls) == 2  # 1 per node in the group
+
+        # Verify fork payloads have correct worker_index and role
+        assert fork_calls[0]["role"] == "inf-server"
+        assert fork_calls[0]["worker_index"] == 0
+        assert fork_calls[1]["role"] == "inf-server"
+        assert fork_calls[1]["worker_index"] == 1
+
+        # Verify dist_init_addr propagated to fork commands
+        for fc in fork_calls:
+            cmd_str = " ".join(fc["raw_cmd"])
+            assert "--dist-init-addr" in cmd_str or "--dist_init_addr" in cmd_str
+
+        # Only 1 data proxy (dp_size=1, on head worker only)
+        data_proxy_calls = [
+            c for c in mock_fork.call_args_list if c.kwargs.get("role") == "data-proxy"
+        ]
+        assert len(data_proxy_calls) == 1

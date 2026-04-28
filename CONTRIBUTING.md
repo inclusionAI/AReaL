@@ -1,13 +1,15 @@
 # Contributing to AReaL
 
 Thank you for your interest in contributing to AReaL! We welcome contributions from
-everyone, whether you're fixing bugs, improving documentation, adding new features, or
+everyone, whether you're fixing bugs, improving documentations, adding new features, or
 helping with code reviews. This guide will help you get started.
+
+Please review our [Code of Conduct](CODE_OF_CONDUCT.md) before participating and our
+[Governance](GOVERNANCE.md) document to understand how the project is managed.
 
 ## Table of Contents
 
 - [Quick Start](#quick-start)
-- [Ways to Contribute](#ways-to-contribute)
 - [Tips for Using AI-Assisted Coding](#tips-for-using-ai-assisted-coding)
 - [CI/CD](#cicd)
 
@@ -33,7 +35,7 @@ helping with code reviews. This guide will help you get started.
    # Install hooks (includes formatting, linting, and commit message checks)
    pre-commit install --install-hooks
    # Subsequent commits will automatically check your files and commit messages:
-   git commit -a -m 'feat: my change'
+   git commit -a -m 'feat(engine): my change'
    ```
 
 1. **Find an Issue:**
@@ -85,50 +87,8 @@ helping with code reviews. This guide will help you get started.
 
 1. **Submit a Pull Request**
 
-We suggest applying our provided claude command `/create-pr` whenever possible.
-
-## Ways to Contribute
-
-### 🐛 Bug Reports
-
-Found a bug? Please create a
-[bug report](https://github.com/inclusionAI/AReaL/issues/new?template=bug.md) with:
-
-- A clear description of the issue
-- Steps to reproduce
-- Expected vs. actual behavior
-- Environment details (commit ID, hardware, software)
-- Full logs when possible
-
-### ✨ Feature Requests
-
-Have an idea? Submit a
-[feature request](https://github.com/inclusionAI/AReaL/issues/new?template=feature.md)
-with:
-
-- Background and use case
-- Proposed solution or implementation approach
-- Expected benefits to the community
-
-### 📚 Documentation
-
-Documentation improvements are always welcome:
-
-- Fix typos or clarify existing docs
-- Add examples or tutorials
-- Improve API documentation
-- Write blog posts or guides
-
-### 💻 Code Contributions
-
-We accept various types of code contributions:
-
-- Bug fixes
-- New features
-- Performance improvements
-- Algorithm implementations
-- Test coverage improvements
-- Code refactoring
+We suggest applying our provided agent harness command `/create-pr` whenever possible.
+Use that in `claude`, `opencode`, or any other coding agent CLI.
 
 **IMPORTANT**: For new features and code refactoring, please submit a corresponding
 issue or open a draft PR to discuss with the core developers before making any code
@@ -149,7 +109,7 @@ Pre-commit checks run automatically on every PR. CI executes
 `pre-commit run --all-files` to verify formatting (Ruff, clang-format, mdformat) and
 linting. Commit messages are also validated against
 [Conventional Commits](https://www.conventionalcommits.org/) format (e.g., `feat: ...`,
-`fix: ...`, `docs: ...`).
+`fix: ...`, `docs: ...`, `gov: ...`).
 
 As long as you have `pre-commit install --install-hooks` set up locally, your code will
 be checked before each commit and your commit messages will be validated automatically.
@@ -204,8 +164,6 @@ def test_some_multi_gpu_functionality():
 ```
 
 ### Image Building
-
-> **NOTE:** The image building CI workflow is experimental and subject to change.
 
 The image building workflow can be triggered manually from any branch by users with
 write permissions to the repository.

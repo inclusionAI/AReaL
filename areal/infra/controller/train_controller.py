@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 import asyncio
 from typing import Any
 
@@ -400,6 +402,19 @@ class TrainController:
         """Destroy the controller and release GPU memory of models.
 
         Cleans up all resources including workers, engines, and internal state.
+
+        The teardown order is carefully chosen to avoid a noisy
+        ``TCPStore.recvValue failed`` warning from NCCL's HeartbeatMonitor
+        on non-zero ranks:
+
+        1. Remote engines' ``destroy()`` runs first so that every rank calls
+           ``dist.destroy_process_group()`` after a CPU barrier. This
+           guarantees all ranks finish NCCL abort together before any store
+           shuts down.
+        2. Workers are killed in reverse rank order so that rank-0 (owner
+           of the global TCPStore server) receives SIGTERM last. This
+           avoids the short window where non-zero ranks' HeartbeatMonitor
+           threads poll a store whose TCP listener has already been closed.
         """
         logger.info("Destroying TrainController...")
 
@@ -417,17 +432,28 @@ class TrainController:
                         )
                         for rank, worker in enumerate(self.workers)
                     ]
-                    await asyncio.gather(*tasks, return_exceptions=True)
+                    return await asyncio.gather(*tasks, return_exceptions=True)
 
-                run_async_task(_destroy_all_engines)
+                results = run_async_task(_destroy_all_engines)
+                # Surface per-worker failures instead of silently swallowing them.
+                for rank, res in enumerate(results or []):
+                    if isinstance(res, BaseException):
+                        logger.warning(
+                            f"Engine destroy on rank {rank} raised "
+                            f"{type(res).__name__}: {res}"
+                        )
                 logger.info("Engines destroyed")
             except Exception as e:
                 logger.error(f"Error destroying engines: {e}")
 
-        # Then delete workers via scheduler
+        # Then delete workers via scheduler. Pass reverse_order=True so
+        # that rank-0 (TCPStore owner) is killed last. All in-tree
+        # Scheduler implementations (Local/Ray/Slurm) accept this kwarg;
+        # third-party subclasses that override ``delete_workers`` must
+        # adopt the same signature.
         try:
-            logger.info("Deleting all workers...")
-            self.scheduler.delete_workers(role=self._worker_role)
+            logger.info("Deleting all workers (reverse rank order)...")
+            self.scheduler.delete_workers(role=self._worker_role, reverse_order=True)
             logger.info("Workers deleted")
         except Exception as e:
             logger.error(f"Error deleting workers: {e}")
@@ -440,16 +466,32 @@ class TrainController:
             dist.destroy_process_group()
         logger.info("TrainController destroyed")
 
-    def _custom_function_call(self, method: str, *args, **kwargs):
+    def _custom_function_call(
+        self,
+        method: str,
+        *args,
+        rpc_meta: dict[str, Any] | None = None,
+        **kwargs,
+    ):
         """Dispatch method call to workers via the appropriate path."""
         dp_args, dp_kwargs, group_indices = self._prepare_dispatch(*args, **kwargs)
-        results = run_async_task(self._call_workers, method, dp_args, dp_kwargs)
+        results = run_async_task(
+            self._call_workers, method, dp_args, dp_kwargs, rpc_meta=rpc_meta
+        )
         return self._collect_results(results, group_indices)
 
-    async def _async_custom_function_call(self, method: str, *args, **kwargs):
+    async def _async_custom_function_call(
+        self,
+        method: str,
+        *args,
+        rpc_meta: dict[str, Any] | None = None,
+        **kwargs,
+    ):
         """Async version of _custom_function_call."""
         dp_args, dp_kwargs, group_indices = self._prepare_dispatch(*args, **kwargs)
-        results = await self._call_workers(method, dp_args, dp_kwargs)
+        results = await self._call_workers(
+            method, dp_args, dp_kwargs, rpc_meta=rpc_meta
+        )
         return self._collect_results(results, group_indices)
 
     def _pad_eval_dispatch_args(
@@ -516,6 +558,7 @@ class TrainController:
         method: str,
         dp_split_args: list[list[Any]],
         dp_split_kwargs: dict[str, list[Any]],
+        rpc_meta: dict[str, Any] | None = None,
     ):
         """Send dispatched inputs to workers. DP heads get slices, others empty."""
         tasks = []
@@ -537,6 +580,7 @@ class TrainController:
                     method,
                     self._engine_name(idx),
                     *worker_args,
+                    rpc_meta=rpc_meta,
                     **worker_kwargs,
                 )
             )
@@ -667,8 +711,22 @@ class TrainController:
         self._check_rollout_engine_connected()
         self._custom_function_call("update_weights", meta=meta)
 
+    def offload(self) -> None:
+        """Offload model parameters to CPU across all train workers."""
+        self._custom_function_call("offload")
+
+    def onload(self) -> None:
+        """Onload model parameters to GPU across all train workers."""
+        self._custom_function_call("onload")
+
     def get_device_stats(self):
         return self._custom_function_call("get_device_stats")
+
+    def start_memory_profile(self, max_entries: int = 100000):
+        return self._custom_function_call("start_memory_profile", max_entries)
+
+    def stop_memory_profile(self, snapshot_dir: str):
+        return self._custom_function_call("stop_memory_profile", snapshot_dir)
 
     def config_perf_tracer(self, config: PerfTracerConfig, role: str) -> None:
         async def _call():
