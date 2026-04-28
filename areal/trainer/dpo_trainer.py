@@ -298,6 +298,10 @@ class DPOTrainer:
                 ),
             ):
                 self.actor.clear_batches(batch)
+                # ref DP heads also localized `batch` in compute_logp — drain
+                # their per-process fetch buffers. See inclusionAI/AReaL#1209.
+                if self.ref is not None:
+                    self.ref.clear_batches(batch)
                 if self.data_controller is not None:
                     self.data_controller.clear_batches()
 

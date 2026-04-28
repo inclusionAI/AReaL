@@ -782,9 +782,16 @@ class PPOTrainer:
                     args={"global_step": global_step},
                 ),
             ):
-                # Since all RTensor objects are affiliated IPs,
-                # calling `clear_batches` once should be sufficient.
+                # Each role runs in its own Python process with a
+                # process-local ``_fetch_buffer``; one HTTP DELETE to the
+                # storage owner clears ``_storage`` but not per-consumer
+                # caches. Fan out ``clear_batches`` to every role that
+                # localized the batch — see inclusionAI/AReaL#1209.
                 self.actor.clear_batches(rollout_batch, adv_batch)
+                if self.critic is not None:
+                    self.critic.clear_batches(rollout_batch, adv_batch)
+                if self.ref is not None:
+                    self.ref.clear_batches(rollout_batch)
                 if self.data_controller is not None:
                     self.data_controller.clear_batches()
 
