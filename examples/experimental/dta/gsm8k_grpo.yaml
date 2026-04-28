@@ -1,37 +1,40 @@
-experiment_name: tau2-rl
-trial_name: 7b-airline
+# GSM8K PPO: Archon training + DTA, decoupled 1+1 (1 GPU SGLang rollout + 1 GPU train).
+# Train side: actor + critic + ref colocate on archon:d1. Rollout: sglang:d1.
+#
+# Requirements:
+# - 2+ visible GPUs on the node; cluster.n_gpus_per_node: 2
+# - enable_offload=true with actor/critic offload uses torch_memory_saver; set up TMS
+#   (e.g. LD_PRELOAD) per AReaL docs before running.
+# - DTA is incompatible with gradient_checkpointing on Archon; keep it false.
+#
+# Example:
+#   uv run python examples/math/gsm8k_rl.py \
+#     --config examples/math/gsm8k_ppo_archon_dta_1plus1.yaml \
+#     scheduler.type=local
+
+experiment_name: gsm8k-grpo
+trial_name: trial0
 
 seed: 1
-enable_offload: false
-total_train_epochs: 200
-total_train_steps: 500
+total_train_epochs: 10
 tokenizer_path: ${actor.path}
 
 cluster:
-  n_nodes: 3
-  n_gpus_per_node: 8
-  fileroot: /path/to/experiments  # Replace with your experiment directory
+  n_nodes: 1
+  n_gpus_per_node: 2
+  fileroot: /tmp/areal/experiments
   name_resolve:
     type: nfs
-    nfs_record_root: /path/to/name_resolve  # Replace with your name resolve directory
-
+    nfs_record_root: /tmp/areal/name_resolve
 
 scheduler:
-  type: slurm
-
-gconfig:
-  n_samples: 8
-  min_new_tokens: 0
-  max_new_tokens: 8192
-  max_tokens: 32767
-  greedy: false
-  temperature: 1.0
+  type: local
 
 rollout:
-  backend: "sglang:d16"
+  backend: "sglang:d1"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  max_concurrent_rollouts: 256
+  max_concurrent_rollouts: 64
   queue_size: null
   consumer_batch_size: ${train_dataset.batch_size}
   max_head_offpolicyness: 2
@@ -40,28 +43,30 @@ rollout:
   fileroot: ${cluster.fileroot}
   tokenizer_path: ${tokenizer_path}
   dump_to_file: true
-  agent:
-    mode: inline
-    tool_call_parser: qwen25
-    reasoning_parser: qwen3
-    engine_max_tokens: ${gconfig.max_tokens}
-    export_style: individual
-    turn_discount: 1.0
+
+gconfig:
+  n_samples: 4
+  min_new_tokens: 0
+  max_new_tokens: 1024
+  greedy: false
+  temperature: 1.0
 
 actor:
-  backend: "archon:d8"
+  backend: "archon:d1"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: Qwen/Qwen3-8B  # HuggingFace model path
+  path: /storage/openpsi/models/Qwen__Qwen3-0.6B
   init_from_scratch: false
   disable_dropout: true
-  gradient_checkpointing: true
+  gradient_checkpointing: false
   dtype: bfloat16
   mb_spec:
-    max_tokens_per_mb: 32768
+    max_tokens_per_mb: 2048
+  archon:
+    attn_type: varlen
   optimizer:
     type: adam
-    lr: 1.7e-5
+    lr: 1.70e-5
     weight_decay: 0.017
     beta1: 0.9
     beta2: 0.999
@@ -80,31 +85,20 @@ actor:
   rejection_sampling:
     metric: ratio
     upper: 5.0
-  reward_norm: null
   adv_norm:
     mean_level: batch
     std_level: batch
   max_new_tokens: ${gconfig.max_new_tokens}
-  pad_to_maximum: true
-  tree_training_mode: sparse
+  tree_training_mode: dta
+  dta_block_size: 512
+  packing_algorithm: dta
   scheduling_spec:
     - task_type: worker
       port_count: 2
       gpu: 1
-      cpu: 4
       mem: 32
       cmd: python3 -m areal.infra.rpc.rpc_server
-      # image: /path/to/container.sif  # Optional: specify container image for Slurm
-      env_vars:
-        # NCCL settings - adjust based on your cluster network configuration
-        NCCL_DEBUG: "WARN"
-        TAU2_DATA_DIR: /path/to/tau2-bench/data  # Set if using tau2-bench
-        WANDB_BASE_URL: your-wandb-url  # Optional: for W&B logging
-        WANDB_API_KEY: your-wandb-api-key  # Optional: for W&B logging
-        AREAL_PROXY_WARN_ONCE: "1" # Avoid warning spamming
-      additional_bash_cmds:
-        # install tau2-bench with async generation
-        - uv pip install git+https://github.com/dhh1995/tau2-bench.git@dhh/async-and-custom-completion
+      env_vars: {}
 
 ref:
   backend: ${actor.backend}
@@ -114,25 +108,18 @@ ref:
   init_from_scratch: false
   disable_dropout: true
   dtype: ${actor.dtype}
+  gradient_checkpointing: false
   mb_spec:
-    max_tokens_per_mb: 32768
+    max_tokens_per_mb: 8192
+  archon:
+    attn_type: varlen
   optimizer: null
+  tree_training_mode: disabled
+  scheduling_strategy:
+    type: colocation
+    target: actor
+  scheduling_spec: ${actor.scheduling_spec}
 
-# Tau2 environment configuration
-econfig:
-  domain: airline
-  max_steps: 50
-  add_thinking_tool: false
-  solo_mode: false
-  user_llm_base_url: http://localhost:8000/v1/  # Replace with your user LLM endpoint
-  user_llm: openai/self-hosted-Qwen2.5-72B
-  user_llm_args:
-    temperature: 0.0
-    max_completion_tokens: 512
-  turn_discount: 1.0
-  invalid_format_penalty: 0.1
-
-# SGLang inference server configuration
 sglang:
   model_path: ${actor.path}
   random_seed: ${seed}
@@ -150,26 +137,22 @@ vllm:
   max_model_len: 32768
   gpu_memory_utilization: 0.9
 
-# Datasets
 train_dataset:
-  batch_size: 30
+  batch_size: 8
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: tau2/train
+  path: /storage/openpsi/data/gsm8k
   type: rl
   max_length: 1024
 
 valid_dataset:
-  batch_size: 16
-  shuffle: true
+  batch_size: 64
   pin_memory: true
   num_workers: 4
-  path: tau2/test
+  path: ${train_dataset.path}
   type: rl
-  drop_last: false
 
-# Utilities
 saver:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
@@ -191,7 +174,7 @@ evaluator:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
-  freq_epochs: null
+  freq_epochs: 1
   freq_steps: null
   freq_secs: null
 
@@ -203,11 +186,9 @@ stats_logger:
     mode: online
 
 perf_tracer:
-  enabled: false
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   fileroot: ${cluster.fileroot}
-  save_interval: 1
+  enabled: false
   session_tracer:
-    enabled: true
-    flush_threshold: 100
+    enabled: false
