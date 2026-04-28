@@ -1902,6 +1902,18 @@ class MegatronEngine(TrainEngine):
         # the DoubleScale inversion can further divide the MTP contribution by
         # num_mb.
         self._current_num_microbatches = int(len(mb_list))
+        # expose total token count for [MTPDataShapeDiag-v9] so
+        # tokens_per_mb can be logged and correlated with accept_rate
+        # regressions
+        try:
+            _tot = 0
+            for _mb in mb_list:
+                _ids = _mb.get("input_ids") if isinstance(_mb, dict) else None
+                if _ids is not None and hasattr(_ids, "numel"):
+                    _tot += int(_ids.numel())
+            self._current_n_tokens = _tot
+        except Exception:
+            self._current_n_tokens = 0
 
         # Step 3: Forward-backward using Megatron's pipeline function
         loss_multiplier = (
@@ -3050,19 +3062,35 @@ class MegatronEngine(TrainEngine):
                     _d = _cur - _prev
                     _all_norms.append((_tn, _cur, _d))
                     _deltas.append(abs(_d))
-                    # LR-adaptive STALL threshold. bf16-eps is ~7.8e-3 per
-                    # element and typical lr*grad_norm for MTP is ~1e-7..1e-6,
-                    # so the previous 1e-5 absolute threshold mis-flagged every
-                    # LN/bias tensor as "stalled"
+                    # [v9] bf16-quantization-aware STALL threshold. v8 used
+                    # 0.05 * lr * norm which, for a LayerNorm of dim=4096
+                    # (norm~64, bf16_eps per-element ~7.6e-6), yielded
+                    # ~9.6e-6 — same order as the bf16 stochastic-rounding
+                    # noise floor. That still mis-fired STALL 10/14 times
+                    # in the 0428 v7 log even though mtp_loss was
+                    # converging 646->145 (training clearly healthy).
+                    # v9 formula: use bf16 round-trip error as the true
+                    # floor, and ONLY warn after N consecutive sub-floor
+                    # versions to avoid any transient data-shape blip.
+                    #   bf16 eps ~= 2^-7 (relative), so quantization error
+                    #   on |w| ~ 1 is ~7.8e-3 per element; for a tensor of
+                    #   numel elements the L2-norm of the quantization
+                    #   delta is ~sqrt(numel) * 7.8e-3 / 2 (average).  But
+                    #   our metric is the delta between two norms, not
+                    #   the norm of the delta, and the norm itself is
+                    #   already rounded each time — so the per-sync
+                    #   observable floor is ~2^-17 * norm ~= 7.6e-6 * norm.
                     try:
                         _mtp_lr_cur = float(
                             getattr(self, "_last_logged_mtp_lr", 3e-6)
                         )
                     except Exception:
                         _mtp_lr_cur = 3e-6
-                    # Expected per-step drift ~ lr * grad_norm; anything
-                    # <5% of that is truly frozen.
-                    _stall_thr = max(1e-9, 0.05 * _mtp_lr_cur * max(_cur, 1.0))
+                    _bf16_floor = 7.6e-6 * max(_cur, 1.0)
+                    _expected_drift = max(
+                        1e-9, _mtp_lr_cur * max(_cur, 1.0) * 0.1
+                    )
+                    _stall_thr = max(_bf16_floor, _expected_drift)
                     if _cur > 0 and abs(_d) < _stall_thr:
                         _stall_tensors.append(_tn)
                 self._mtp_sync_prev_norms[_tn] = _cur
@@ -3091,19 +3119,50 @@ class MegatronEngine(TrainEngine):
                     ", ".join(_fmt_parts),
                     _drift_summary,
                 )
-                # Stall warning: require >=90% (was 50%) AND LR-adaptive
-                # threshold above. Previously bf16 noise floor mis-fired every
-                # step; the new combined criterion only fires if the MTP
-                # optimizer is truly dead.
-                if _deltas and len(_stall_tensors) >= 0.9 * len(_deltas):
+                # Windowed STALL: only warn if ALL of the last 3
+                # consecutive versions flagged >=90% tensors stalled AND
+                # the *cumulative* drift over the window is below floor.
+                # This eliminates bf16 round-trip false alarms while
+                if not hasattr(self, "_mtp_stall_window"):
+                    self._mtp_stall_window = []  # list of (version, pct, sum_d)
+                _this_pct = (
+                    len(_stall_tensors) / len(_deltas) if _deltas else 0.0
+                )
+                _this_sum_d = sum(_deltas) if _deltas else 0.0
+                self._mtp_stall_window.append(
+                    (meta.version, _this_pct, _this_sum_d)
+                )
+                if len(self._mtp_stall_window) > 3:
+                    self._mtp_stall_window.pop(0)
+                # Diagnostic: always log the window state to make
+                # subsequent triage self-evident.
+                _win_fmt = ",".join(
+                    f"v{v}:{p*100:.0f}%/Σ={s:.1e}"
+                    for v, p, s in self._mtp_stall_window
+                )
+                _bf16_floor_total = 7.6e-6 * len(_deltas) * 64  # ~per-tensor floor * 64
+                self.logger.info(
+                    "[MTPSyncHealth-v9] STALL window (last %d syncs): "
+                    "[%s] | bf16_floor_est=%.2e",
+                    len(self._mtp_stall_window), _win_fmt,
+                    _bf16_floor_total,
+                )
+                if (
+                    len(self._mtp_stall_window) >= 3
+                    and all(p >= 0.9 for _, p, _ in self._mtp_stall_window)
+                    and sum(s for _, _, s in self._mtp_stall_window)
+                        < _bf16_floor_total * 2
+                ):
                     self.logger.warning(
-                        "[MTPSyncHealth] MTP training STALL detected at version=%d: "
-                        "%d/%d tensors drift<1e-5. "
+                        "[MTPSyncHealth] MTP training STALL detected at "
+                        "version=%d (3 consecutive sub-floor syncs): "
+                        "%d/%d tensors drift<floor, cum_sumΔ=%.3e. "
                         "Likely causes: (1) mtp_lr_scale too small, "
                         "(2) mtp_loss_scaling_factor too small, "
                         "(3) MTP gradient is being zeroed by detach. "
-                        "Accept-rate collapse will follow. Stalled tensors (head): %s",
+                        "Stalled tensors (head): %s",
                         meta.version, len(_stall_tensors), len(_deltas),
+                        sum(s for _, _, s in self._mtp_stall_window),
                         ", ".join(_stall_tensors[:3]),
                     )
 
@@ -3661,6 +3720,24 @@ class MegatronEngine(TrainEngine):
                     loss_scale, _num_mb, _inv,
                     _mtp_contribution.detach().item(),
                     _eff_per_mb, _mtp_lr_dbg, _eff_step_mag,
+                )
+                # Data-shape diagnostic.
+                try:
+                    _n_tokens = int(
+                        getattr(self, "_current_n_tokens", 0)
+                    )
+                except Exception:
+                    _n_tokens = 0
+                _tok_per_mb = (
+                    _n_tokens / max(1, _num_mb) if _n_tokens else 0
+                )
+                self.logger.info(
+                    "[MTPDataShapeDiag-v9] num_mb=%d n_tokens=%d "
+                    "tokens_per_mb=%.0f eff_per_step_update=%.3e "
+                    "(accept_rate regressions in v7 log at num_mb "
+                    "drop should show up here as correlated drops "
+                    "in eff_per_step_update or tokens_per_mb).",
+                    _num_mb, _n_tokens, _tok_per_mb, _eff_step_mag,
                 )
 
         return loss * loss_scale
