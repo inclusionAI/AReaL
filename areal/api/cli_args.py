@@ -1865,7 +1865,8 @@ class InferenceEngineConfig:
     return_routed_experts: bool = field(
         default=False,
         metadata={
-            "help": "Return routed expert indices for MoE models. Effective only when using SGLang engine with MoE models."
+            "help": "Return routed expert indices for MoE models. Effective only when using SGLang engine with MoE models. "
+            "num_moe_layers and topk are automatically resolved from the model config."
         },
     )
 

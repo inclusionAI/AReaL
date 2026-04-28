@@ -135,6 +135,17 @@ class PPOTrainer:
                 type(config.actor.megatron).__name__,
             )
 
+            from areal.workflow.rlvr_r3_patch import resolve_r3_moe_config
+
+            model_path = config.actor.path or config.tokenizer_path
+            num_moe_layers, topk = resolve_r3_moe_config(model_path)
+            logger.info(
+                "[R3] Resolved from model config at %s: num_moe_layers=%d, topk=%d.",
+                model_path,
+                num_moe_layers,
+                topk,
+            )
+
             sglang_cfg = getattr(config, "sglang", None)
             if sglang_cfg is not None and not getattr(
                 sglang_cfg, "skip_tokenizer_init", True
@@ -343,6 +354,22 @@ class PPOTrainer:
             raise ValueError(f"Total epochs must be positive: {total_epochs}")
         steps_per_epoch = len(self.train_dataloader)
         max_steps = total_epochs * steps_per_epoch
+
+        if getattr(config.rollout, "return_routed_experts", False):
+            from areal.workflow.rlvr_r3_patch import resolve_r3_moe_config
+
+            model_path = config.actor.path or config.tokenizer_path
+            num_moe_layers, topk = resolve_r3_moe_config(model_path)
+            r3_inject = {
+                "r3_num_moe_layers": num_moe_layers,
+                "r3_topk": topk,
+            }
+            if workflow_kwargs is None:
+                workflow_kwargs = {}
+            workflow_kwargs.update(r3_inject)
+            if eval_workflow_kwargs is None:
+                eval_workflow_kwargs = {}
+            eval_workflow_kwargs.update(r3_inject)
 
         # Initialize proxy workers if not using RolloutWorkflow
         if workflow is None:
