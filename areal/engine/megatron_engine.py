@@ -1896,6 +1896,11 @@ class MegatronEngine(TrainEngine):
             mb_list, loss_weight_fn, mpu.get_data_parallel_group()
         )
 
+        # Expose num_microbatches to _compute_logprobs_and_loss so
+        # the DoubleScale inversion can further divide the MTP contribution by
+        # num_mb.
+        self._current_num_microbatches = int(len(mb_list))
+
         # Step 3: Forward-backward using Megatron's pipeline function
         loss_multiplier = (
             mpu.get_data_parallel_world_size() * self.optimizer.get_loss_scale().item()
@@ -3593,20 +3598,29 @@ class MegatronEngine(TrainEngine):
                 )
 
         if _mtp_loss_for_this_mb is not None and abs(loss_scale) > 0:
-            _inv = 1.0 / loss_scale
-            # Subtract the already-added mtp and re-add with inverse scaling
-            # so `(loss) * loss_scale == loss_rl * loss_scale + mtp`.
+            # Match Megatron-native MTPLossAutoScaler:
+            #   schedules.py sets main_loss_backward_scale = loss_scale
+            #   / num_microbatches.
+            _num_mb = max(1, int(getattr(self, "_current_num_microbatches", 1)))
+            _inv = 1.0 / (loss_scale * _num_mb)
+            # Subtract already-added mtp and re-add with corrected scaling so
+            # `loss * loss_scale` contributes (mtp_loss_scale * mtp_loss) /
+            # num_mb per microbatch
             loss = (loss - _mtp_contribution) + _mtp_contribution * _inv
             _n_ds = self._mtp_loss_total_count
             if _n_ds <= 4 or _n_ds % 100 == 0:
+                _eff_per_mb = (
+                    _mtp_contribution.detach().item() * _inv * loss_scale
+                )
                 self.logger.info(
-                    "[MTPFix-DoubleScale] Inverse-loss_scale applied: "
-                    "loss_scale=%.6f, inv=%.4f, mtp_contribution=%.6f, "
-                    "effective_mtp_in_final_loss=%.6f (verl-equivalent, "
-                    "single mtp_loss_scaling_factor application)",
-                    loss_scale, _inv,
+                    "[MTPFix-DoubleScale-v6] Inverse-(loss_scale*num_mb) "
+                    "applied: loss_scale=%.6f, num_mb=%d, inv=%.4f, "
+                    "mtp_contribution=%.6f, effective_mtp_contrib_per_mb="
+                    "%.6f (accumulated over num_mb MBs = mtp_loss_scale * "
+                    "mtp_loss; verl/megatron-native equivalent).",
+                    loss_scale, _num_mb, _inv,
                     _mtp_contribution.detach().item(),
-                    _mtp_contribution.detach().item(),
+                    _eff_per_mb,
                 )
 
         return loss * loss_scale
