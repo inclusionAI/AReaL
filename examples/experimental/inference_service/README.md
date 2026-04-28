@@ -1,7 +1,7 @@
 # AReaL Inference Service Examples
 
 This directory contains two examples that use the AReaL Inference Service
-(`GatewayInferenceController`) — an experimental rollout backend that exposes an
+(`RolloutControllerV2`) — an experimental rollout backend that exposes an
 OpenAI-compatible proxy gateway so any external agent runtime can submit chat requests
 and receive RL training data.
 

@@ -935,7 +935,7 @@ def test_openclaw_online_rl(tmp_path_factory):
         f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
         f"actor.path={model_path}",
         "scheduler.type=local",
-        f"rollout.openai.admin_api_key={admin_api_key}",
+        f"rollout.agent.openai.admin_api_key={admin_api_key}",
         "stats_logger.wandb.mode=disabled",
     ]
 

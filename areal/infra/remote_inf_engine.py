@@ -525,7 +525,12 @@ class RemoteInfEngine(InferenceEngine):
         """
         from areal.experimental.openai import OpenAIProxyWorkflow
 
-        openai_cfg = self.config.openai or OpenAIProxyConfig()
+        agent_cfg = self.config.agent
+        openai_cfg = (
+            agent_cfg.openai
+            if agent_cfg is not None and agent_cfg.openai is not None
+            else OpenAIProxyConfig()
+        )
 
         return OpenAIProxyWorkflow(
             mode=openai_cfg.mode,
@@ -549,7 +554,12 @@ class RemoteInfEngine(InferenceEngine):
 
         # 0. None workflow = online mode (config-driven)
         if workflow is None:
-            openai_cfg = self.config.openai or OpenAIProxyConfig()
+            agent_cfg = self.config.agent
+            openai_cfg = (
+                agent_cfg.openai
+                if agent_cfg is not None and agent_cfg.openai is not None
+                else OpenAIProxyConfig()
+            )
             if openai_cfg.mode != "online":
                 raise ValueError(
                     "workflow is None but OpenAIProxyConfig.mode is not 'online'. "
@@ -698,7 +708,7 @@ class RemoteInfEngine(InferenceEngine):
         )
 
     def choose_server(self) -> str:
-        """Choose a server based on the scheduling policy.
+        """Choose a server based on the routing strategy.
 
         Returns
         -------
@@ -708,9 +718,9 @@ class RemoteInfEngine(InferenceEngine):
         Raises
         ------
         NotImplementedError
-            If schedule policy other than round-robin is used
+            If routing strategy other than round-robin is used
         """
-        if self.config.schedule_policy == "round_robin":
+        if self.config.routing_strategy == "round_robin":
             server = self.addresses[self.server_idx]
             self.server_idx = (self.server_idx + 1) % len(self.addresses)
             return server
@@ -1051,7 +1061,9 @@ class RemoteInfEngine(InferenceEngine):
             AgentWorkflow will use this proxy instead of a local one.
         """
         if workflow is None and (
-            self.config.openai is None or self.config.openai.mode != "online"
+            self.config.agent is None
+            or self.config.agent.openai is None
+            or self.config.agent.openai.mode != "online"
         ):
             raise ValueError(
                 "workflow must be specified for submit (unless mode='online')"

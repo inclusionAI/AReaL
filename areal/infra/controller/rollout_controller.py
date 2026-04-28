@@ -453,7 +453,12 @@ class RolloutController:
             create_proxy_gateway_app,
         )
 
-        openai_cfg = self.config.openai or OpenAIProxyConfig()
+        agent_cfg = self.config.agent
+        openai_cfg = (
+            agent_cfg.openai
+            if agent_cfg is not None and agent_cfg.openai is not None
+            else OpenAIProxyConfig()
+        )
 
         app = create_proxy_gateway_app(
             proxy_addrs=self.proxy_addrs,

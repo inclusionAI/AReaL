@@ -29,6 +29,7 @@ gconfig:
   temperature: 1.0
 
 rollout:
+  _version: v2
   backend: "sglang:d2"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
@@ -40,14 +41,16 @@ rollout:
   fileroot: ${cluster.fileroot}
   tokenizer_path: ${tokenizer_path}
   dump_to_file: false
-  openai:
-    mode: inline
-    tool_call_parser: qwen25
-    reasoning_parser: qwen3
-    engine_max_tokens: ${gconfig.max_tokens}
-    export_style: individual
-    turn_discount: 1.0
-    admin_api_key: rollout-admin
+  admin_api_key: rollout-admin
+  agent:
+    openai:
+      mode: inline
+      tool_call_parser: qwen25
+      reasoning_parser: qwen3
+      engine_max_tokens: ${gconfig.max_tokens}
+      export_style: individual
+      turn_discount: 1.0
+      admin_api_key: rollout-admin
   scheduling_spec:
     - task_type: worker
       port_count: 2
