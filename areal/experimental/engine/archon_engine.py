@@ -1142,7 +1142,7 @@ class ArchonEngine(TrainEngine):
         tik = time.perf_counter()
 
         self.optimizer = create_optimizer(
-            self._get_all_parameters(), self.optimizer_config, self.parallel_dims
+            self._get_all_parameters(), self.optimizer_config
         )
         self.lr_scheduler = create_lr_scheduler(
             self.optimizer, self.optimizer_config, ft_spec.total_train_steps

@@ -86,7 +86,7 @@ from areal.engine.fsdp_utils.optimizer import (
     AnyPrecisionAdamW,
     PerLayerOptimWrapper,
 )
-from areal.utils.optimizer import Muon as MuonOptimizer
+from areal.engine.fsdp_utils.muon import Muon as MuonOptimizer
 from areal.engine.fsdp_utils.parallel import ParallelHelper, parallelize_model
 from areal.infra.dist_rollout import DistRolloutCoordinator
 from areal.infra.platforms import current_platform

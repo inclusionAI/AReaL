@@ -43,7 +43,7 @@ class TestMuonOptimizer:
     """Tests for the unified Muon optimizer with built-in Adam backend."""
 
     def test_step_and_zero_grad(self):
-        from areal.utils.optimizer import Muon
+        from areal.engine.fsdp_utils.muon import Muon
 
         model = _make_simple_model()
         opt = Muon(_make_param_groups(model))
@@ -59,7 +59,7 @@ class TestMuonOptimizer:
             assert p.grad is None or (p.grad == 0).all()
 
     def test_param_groups_structure(self):
-        from areal.utils.optimizer import Muon
+        from areal.engine.fsdp_utils.muon import Muon
 
         model = _make_simple_model()
         groups = _make_param_groups(model)
@@ -70,7 +70,7 @@ class TestMuonOptimizer:
         assert opt.param_groups[1]["use_muon"] is False
 
     def test_state_dict_roundtrip(self):
-        from areal.utils.optimizer import Muon
+        from areal.engine.fsdp_utils.muon import Muon
 
         model = _make_simple_model()
         opt = Muon(_make_param_groups(model))
@@ -93,7 +93,7 @@ class TestMuonOptimizer:
         assert len(sd2["state"]) == len(sd["state"])
 
     def test_lr_scheduler_compat(self):
-        from areal.utils.optimizer import Muon
+        from areal.engine.fsdp_utils.muon import Muon
 
         model = _make_simple_model()
         opt = Muon(_make_param_groups(model))
@@ -111,7 +111,7 @@ class TestMuonOptimizer:
         assert abs(opt.param_groups[1]["lr"] - 5e-4) < 1e-9
 
     def test_all_params_updated(self):
-        from areal.utils.optimizer import Muon
+        from areal.engine.fsdp_utils.muon import Muon
 
         model = _make_simple_model()
         opt = Muon(_make_param_groups(model))
@@ -133,7 +133,7 @@ class TestMuonOptimizer:
 
     def test_convergence(self):
         """Test that Muon+Adam can minimize a simple quadratic."""
-        from areal.utils.optimizer import Muon
+        from areal.engine.fsdp_utils.muon import Muon
 
         torch.manual_seed(42)
         model = nn.Linear(8, 1, bias=True)
@@ -160,7 +160,7 @@ class TestMuonOptimizer:
 
     def test_multi_step_finite(self):
         """Multiple steps should keep producing finite, reasonable params."""
-        from areal.utils.optimizer import Muon
+        from areal.engine.fsdp_utils.muon import Muon
 
         torch.manual_seed(42)
         model = _make_simple_model()
