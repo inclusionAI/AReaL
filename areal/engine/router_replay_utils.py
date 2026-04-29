@@ -4,7 +4,8 @@ Router Replay Utilities for AReaL.
 Handles the complete shape-transformation pipeline that converts rollout
 routing indices into the layout expected by Megatron-Core's RouterReplay:
 
-1. **Left-padding removal** -- rollout batch is left-padded; training removes it.
+1. **Right-padding to left-alignment** -- rollout batch is right-padded;
+   training uses left-aligned packed format.
 2. **TP/SP splitting** -- sequence parallelism across tensor-model-parallel ranks.
 3. **PP layer slicing** -- pipeline parallelism assigns different layers to ranks.
 4. **Dense/MoE layer mapping** -- architectures with dense FFN layers before MoE.
@@ -221,7 +222,7 @@ def set_router_replay_data(
     The packing steps mirror ``pad_packed_tensor_dict`` in ``areal/utils/data.py``:
 
     1. Use ``cu_seqlens`` to extract each sample's real tokens from the
-       left-padded ``layers_topk_idx``.
+       left-aligned ``layers_topk_idx``.
     2. Pack tokens contiguously with per-sequence TP alignment padding
        (each sequence padded to a multiple of ``seq_align_to``).
     3. ``scatter_to_sequence_parallel_region`` to split across TP/SP ranks.
@@ -230,9 +231,9 @@ def set_router_replay_data(
 
     Args:
         layers_topk_idx: ``(bs, max_seq_len, num_moe_layers, topk)`` -- the
-            replay data (left-padded, from rollout).  After
-            ``_align_routed_experts_to_mask``, this is left-ALIGNED (real
-            tokens first, matching attention_mask convention).
+            replay data (left-aligned, real tokens first).  After
+            ``_align_routed_experts_to_mask``, this matches the attention_mask
+            convention where real tokens occupy the leftmost positions.
         cu_seqlens: ``(bs+1,)`` or ``(bs+1+1,)`` -- cumulative sequence
             lengths from the PADDED micro-batch (after ``pad_packed_tensor_dict``).
             These define the actual token ordering that Megatron uses.
@@ -302,36 +303,14 @@ def set_router_replay_data(
         for i in range(bs_re, n_seqs_in_cu):
             aligned_offset += aligned_lens[i]
 
-        logger.debug(
-            "[R3] set_router_replay_data: packed %d seqs into %d tokens "
-            "(TP-aligned with seq_align_to=%d, seq_lens=%s, aligned_lens=%s).",
-            min(n_seqs_in_cu, bs_re),
-            total_aligned,
-            seq_align_to,
-            seq_lens[:8],
-            aligned_lens[:8],
-        )
-
         # Step 2: Scatter to SP ranks
         packed = packed.to(device)
         tp_size = mpu.get_tensor_model_parallel_world_size()
         if tp_size > 1:
             from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region
             local_tokens = scatter_to_sequence_parallel_region(packed)
-            logger.debug(
-                "[R3] set_router_replay_data: SP scatter tp_size=%d, "
-                "packed %s -> local_tokens %s.",
-                tp_size,
-                packed.shape,
-                local_tokens.shape,
-            )
         else:
             local_tokens = packed
-            logger.debug(
-                "[R3] set_router_replay_data: tp_size=1, skipping SP scatter. "
-                "local_tokens=%s.",
-                local_tokens.shape,
-            )
         # local_tokens: (local_tokens_count, num_layers, topk)
 
         # Step 3: Permute to (num_layers, local_tokens_count, topk)
@@ -420,19 +399,11 @@ def setup_per_microbatch_replay_forward(
         vp_rank: Virtual pipeline stage rank override.
         seq_align_to: Per-sequence TP alignment factor.
     """
-    logger.debug(
-        "[R3] setup_per_microbatch_replay_forward: "
-        "routed_experts=%s (dtype=%s), cu_seqlens=%s.",
-        routed_experts.shape,
-        routed_experts.dtype,
-        cu_seqlens.shape,
-    )
     routed_experts = routed_experts.to(torch.int32)
     set_router_replay_data(
         routed_experts, cu_seqlens, tf_config, vp_rank,
         seq_align_to=seq_align_to,
     )
-    logger.debug("[R3] Replay data distributed to router instances for micro-batch.")
 
 
 def setup_per_microbatch_replay_backward() -> None:

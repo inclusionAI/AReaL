@@ -157,8 +157,8 @@ class SGLangBackend:
                         routed_experts = None
                     else:
                         routed_experts = flat.reshape(num_sgl_token, -1)
-                        logger.info(
-                            "[R3-VERIFY] SGLang decoded routed_experts: "
+                        logger.debug(
+                            "[R3] SGLang decoded routed_experts: "
                             "shape=%s, first3=%s, hash=%d",
                             routed_experts.shape,
                             routed_experts.flat[:3].tolist(),
@@ -187,8 +187,8 @@ class SGLangBackend:
                         routed_experts = None
                     else:
                         routed_experts = raw.reshape(num_sgl_token, -1)
-                        logger.info(
-                            "[R3-VERIFY] SGLang converted routed_experts: "
+                        logger.debug(
+                            "[R3] SGLang converted routed_experts: "
                             "shape=%s, first3=%s, hash=%d",
                             routed_experts.shape,
                             routed_experts.flat[:3].tolist(),

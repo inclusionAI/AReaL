@@ -61,7 +61,7 @@ def patch_megatron_engine_for_r3(
         logger.debug("[R3] Router replay not enabled; skipping engine patch.")
         return
 
-    logger.info("[R3] Patching MegatronEngine for Router Replay (R3).")
+    logger.info("[R3] Patching MegatronEngine for Router Replay.")
 
     # Mark and save original
     engine._r3_enabled = True
@@ -73,7 +73,7 @@ def patch_megatron_engine_for_r3(
         _r3_forward_backward_batch, engine
     )
 
-    logger.info("[R3] MegatronEngine patched successfully.")
+    logger.debug("[R3] MegatronEngine patched successfully.")
 
 
 # ===================================================================
@@ -303,7 +303,7 @@ def _r3_forward_backward_batch(
         routed_experts_batch = self._r3_pending_routed_experts
         self._r3_pending_routed_experts = None  # Consume it
         _from_side_channel = True
-        logger.info(
+        logger.debug(
             "[R3] Retrieved routed_experts from engine side-channel: shape=%s.",
             routed_experts_batch.shape,
         )
@@ -313,7 +313,7 @@ def _r3_forward_backward_batch(
         if hasattr(mb_list, "data") and isinstance(mb_list.data, dict):
             routed_experts_batch = mb_list.data.pop("routed_experts", None)
             if routed_experts_batch is not None:
-                logger.info(
+                logger.debug(
                     "[R3] Retrieved routed_experts from mb_list.data (legacy path): "
                     "shape=%s.",
                     routed_experts_batch.shape,
@@ -346,7 +346,7 @@ def _r3_forward_backward_batch(
         )
 
     logger.info(
-        "[R3] R3 forward_backward: %d micro-batches, routed_experts shape=%s, "
+        "[R3] forward_backward_batch: %d micro-batches, routed_experts shape=%s, "
         "forward_only=%s",
         len(mb_list),
         routed_experts_batch.shape,
@@ -376,10 +376,6 @@ def _r3_forward_backward_batch(
     # ------------------------------------------------------------------
     RouterReplay.reset_agreement_stats()
     RouterReplay.set_global_router_replay_action(RouterReplayAction.REPLAY_FORWARD)
-    logger.debug(
-        "[R3] Set initial REPLAY_FORWARD action on %d router instances.",
-        len(RouterReplay.router_instances),
-    )
 
     # ------------------------------------------------------------------
     # 3. Wrap the MicroBatchList iterator
@@ -456,13 +452,6 @@ def _r3_forward_backward_batch(
                             model_config,
                             seq_align_to=_seq_align_to,
                         )
-                        logger.debug(
-                            "[R3] Replay setup OK for micro-batch %d: "
-                            "original_re=%s, aligned_re=%s, cu_seqlens=%s "
-                            "(seq_align_to=%d).",
-                            idx, re.shape, aligned_re.shape, cu_seqlens.shape,
-                            _seq_align_to,
-                        )
                     except Exception:
                         logger.warning(
                             "[R3] Failed to setup replay for micro-batch %d.",
@@ -520,12 +509,6 @@ def _r3_forward_backward_batch(
         handle = model_chunk.register_forward_hook(_r3_post_forward_hook)
         hook_handles.append(handle)
 
-    logger.debug(
-        "[R3] Registered forward hooks on %d model chunks for "
-        "FORWARD->BACKWARD toggle.",
-        len(hook_handles),
-    )
-
     try:
         self._r3_original_forward_backward_batch(
             mb_list, process_output_fn, forward_only=forward_only
@@ -555,4 +538,3 @@ def _r3_forward_backward_batch(
         clear_router_replay()
         self._r3_per_mb_experts = None
         self._r3_mb_counter = 0
-        logger.debug("[R3] forward_backward_batch cleanup complete.")

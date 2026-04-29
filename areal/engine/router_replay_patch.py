@@ -485,12 +485,11 @@ def apply_router_replay_patch() -> None:
     """
     global _PATCHES_APPLIED
     if _PATCHES_APPLIED:
-        logger.info("[R3] Router replay patches already applied; skipping.")
+        logger.debug("[R3] Router replay patches already applied; skipping.")
         return
 
     logger.info("[R3] Applying Router Replay patches...")
 
-    # Clear router instances to avoid state leakage between model inits.
     RouterReplay.router_instances.clear()
 
     _patch_transformer_config_init()
@@ -499,7 +498,7 @@ def apply_router_replay_patch() -> None:
     _patch_alltoall_dispatcher_preprocess()
 
     _PATCHES_APPLIED = True
-    logger.info("[R3] All Router Replay patches applied successfully.")
+    logger.debug("[R3] All Router Replay patches applied successfully.")
 
 
 def remove_router_replay_patch() -> None:
@@ -511,7 +510,7 @@ def remove_router_replay_patch() -> None:
     _undo_dispatcher_patch()
     RouterReplay.router_instances.clear()
     _PATCHES_APPLIED = False
-    logger.info("[R3] All Router Replay patches removed.")
+    logger.debug("[R3] All Router Replay patches removed.")
 
 
 # ===================================================================

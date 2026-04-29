@@ -91,7 +91,7 @@ def _ensure_tensor_routed_experts(data: dict[str, Any]) -> torch.Tensor | None:
 
     re_tensor = _resolve_to_tensor(re)
     if re_tensor is not None:
-        logger.info(
+        logger.debug(
             "[R3] routed_experts was %s (shape=%s); resolved to torch.Tensor "
             "(shape=%s, dtype=%s).",
             type(re).__name__,
