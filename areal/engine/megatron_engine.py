@@ -2317,6 +2317,33 @@ class MegatronEngine(TrainEngine):
             config_overrides=_mtp_lr_config_overrides,
         )
 
+        # [MTPOptim-v12] Dump param_groups to verify ParamKey override
+        # actually installed. Megatron 0.16 ParamKey does NOT attach a `name`
+        # field to param_groups, so downstream identification must use
+        # `max_lr` fingerprint instead of name match.
+        try:
+            _base_max_lr = float(self.optimizer_config.lr)
+            for _idx, _pg in enumerate(
+                getattr(self.optimizer, "param_groups", []) or []
+            ):
+                _n_params = len(_pg.get("params", []) or [])
+                _mxlr = _pg.get("max_lr", None)
+                _mnlr = _pg.get("min_lr", None)
+                _is_mtp = (
+                    _mxlr is not None
+                    and abs(float(_mxlr) - _base_max_lr) > 1e-12
+                )
+                self.logger.info(
+                    "[MTPOptim-v12] param_group[%d]: n_params=%d max_lr=%s "
+                    "min_lr=%s is_mtp_group=%s",
+                    _idx, _n_params, str(_mxlr), str(_mnlr),
+                    str(_is_mtp),
+                )
+        except Exception as _e:
+            self.logger.warning(
+                "[MTPOptim-v12] param_groups dump failed: %s", _e
+            )
+
         warmup_steps_proportion = self.optimizer_config.warmup_steps_proportion
         warmup_steps = int(warmup_steps_proportion * ft_spec.total_train_steps)
         lr_scheduler = OptimizerParamScheduler(
@@ -3766,15 +3793,37 @@ class MegatronEngine(TrainEngine):
                 )
 
         if _mtp_loss_for_this_mb is not None and abs(loss_scale) > 0:
-            # [v8] Refresh cached MTP LR from optimizer param_groups so the
-            # DoubleScale log and SyncHealth STALL threshold can use the
-            # realised LR (not a hardcoded default).
+            # Refresh cached MTP LR from optimizer param_groups using
+            # max_lr fingerprint (ParamKey override in megatron-core 0.16
+            # does NOT propagate the ParamKey.name into the param_group
+            # dict, so the previous name-based match always missed the MTP
+            # group and left _last_logged_mtp_lr at its default 3e-6, making
+            # the DoubleScale log severely misleading).
             try:
-                for _pg in getattr(self.optimizer, "param_groups", []):
-                    _nm = str(_pg.get("name", ""))
-                    if "mtp" in _nm.lower():
-                        self._last_logged_mtp_lr = float(_pg.get("lr", 3e-6))
-                        break
+                _pgs = getattr(self.optimizer, "param_groups", []) or []
+                if len(_pgs) > 1:
+                    _base_mx = _pgs[0].get("max_lr", None)
+                    for _pg in _pgs:
+                        _mxlr = _pg.get("max_lr", None)
+                        if (
+                            _mxlr is not None
+                            and _base_mx is not None
+                            and abs(float(_mxlr) - float(_base_mx)) > 1e-12
+                        ):
+                            self._last_logged_mtp_lr = float(
+                                _pg.get("lr", _pg.get("max_lr", 3e-6))
+                            )
+                            break
+                    else:
+                        # Single-group case or equal max_lr -> MTP shares
+                        # the base lr.
+                        self._last_logged_mtp_lr = float(
+                            _pgs[0].get("lr", 3e-6)
+                        )
+                elif len(_pgs) == 1:
+                    self._last_logged_mtp_lr = float(
+                        _pgs[0].get("lr", 3e-6)
+                    )
             except Exception:
                 pass
             # Match Megatron-native MTPLossAutoScaler:
@@ -3802,6 +3851,24 @@ class MegatronEngine(TrainEngine):
                 except Exception:
                     _mtp_lr_dbg = 3e-6
                 _eff_step_mag = _eff_per_mb * _mtp_lr_dbg
+                # [MTPSanity-v12] Detect explosive per-step update. bf16
+                # dynamic range for |W|~0.4 places 1 ULP near 3e-3; any
+                # per-step update >= 1e-2 is already tens of ULPs and
+                # almost always means the draft head is diverging. Emit
+                # a prominent warning rather than letting accept_rate
+                # silently collapse.
+                try:
+                    if abs(_eff_step_mag) >= 1e-2:
+                        self.logger.warning(
+                            "[MTPSanity-v12] per-step MTP update "
+                            "magnitude %.3e >= 1e-2 (>= ~3x bf16 ULP "
+                            "for |W|~0.4); draft head divergence is "
+                            "likely. Reduce mtp_lr_scale or "
+                            "mtp_loss_scaling.",
+                            _eff_step_mag,
+                        )
+                except Exception:
+                    pass
                 self.logger.info(
                     "[MTPFix-DoubleScale-v6] Inverse-(loss_scale*num_mb) "
                     "applied: loss_scale=%.6f, num_mb=%d, inv=%.4f, "
