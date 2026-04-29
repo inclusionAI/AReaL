@@ -6,7 +6,7 @@
 #   docker build -t areal-runtime:dev-sglang .                          # default (sglang)
 #   docker build --build-arg VARIANT=vllm -t areal-runtime:dev-vllm .    # vllm variant
 
-FROM lmsysorg/sglang:v0.5.9-cu129-amd64-runtime
+FROM lmsysorg/sglang:v0.5.10.post1-runtime
 
 # Inference backend selector: sglang (default) or vllm
 # Declared early so torch version and C++ builds match the chosen backend.

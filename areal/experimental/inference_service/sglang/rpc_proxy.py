@@ -22,7 +22,7 @@ class RpcProxy:
     """
 
     def __init__(self, port_args: PortArgs, result_ipc: str) -> None:
-        from sglang.srt.utils import get_zmq_socket
+        from sglang.srt.utils.network import get_zmq_socket
 
         self._rpc_ctx = zmq.Context(1)
         self._rpc_socket = get_zmq_socket(
@@ -36,7 +36,7 @@ class RpcProxy:
     def collective_rpc(self, method: str, **kwargs: Any) -> None:
         req = RpcReqInput(method=method, parameters=kwargs if kwargs else None)
         self._rpc_socket.send_pyobj(req)
-        resp: RpcReqOutput = self._rpc_socket.recv_pyobj(zmq.BLOCKY)
+        resp: RpcReqOutput = self._rpc_socket.recv_pyobj()
         assert isinstance(resp, RpcReqOutput)
         if not resp.success:
             raise RuntimeError(f"RPC {method} failed: {resp.message}")

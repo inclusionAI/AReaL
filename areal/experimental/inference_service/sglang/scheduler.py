@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import tempfile
 from typing import Any
@@ -146,66 +147,42 @@ def areal_run_scheduler_process(
     Only delta vs upstream:
       After ``Scheduler()`` creation → ``AwexSchedulerBridge(scheduler).bind()``
     """
-    import faulthandler
-    import logging as _logging
     import signal
 
     import psutil
-    import setproctitle
-    from sglang.srt.disaggregation.utils import DisaggregationMode
     from sglang.srt.environ import envs
-    from sglang.srt.managers.scheduler import Scheduler
-    from sglang.srt.tracing.trace import process_tracing_init, trace_set_thread_info
+    from sglang.srt.managers.scheduler import Scheduler, configure_scheduler
+    from sglang.srt.observability.trace import (
+        process_tracing_init,
+        trace_set_thread_info,
+    )
     from sglang.srt.utils import (
-        configure_logger,
         get_bool_env_var,
         kill_itself_when_parent_died,
-        numa_bind_to_node,
         set_gpu_proc_affinity,
-        suppress_other_loggers,
+    )
+    from sglang.srt.utils.numa_utils import (
+        get_numa_node_if_available,
+        numa_bind_to_node,
     )
     from sglang.utils import get_exception_traceback
 
-    logger = _logging.getLogger(__name__)
+    logger = logging.getLogger(__name__)
+    dp_rank = configure_scheduler(
+        server_args, tp_rank, attn_cp_rank, moe_dp_rank, moe_ep_rank, pp_rank, dp_rank
+    )
 
-    # Generate the logger prefix
-    prefix = ""
-    if dp_rank is None and "SGLANG_DP_RANK" in os.environ:
-        # [For Router] if env var "SGLANG_DP_RANK" exist, set dp_rank to
-        # the value of the env var
-        dp_rank = int(os.environ["SGLANG_DP_RANK"])
-    if dp_rank is not None:
-        prefix += f" DP{dp_rank}"
-    if server_args.pp_size > 1:
-        prefix += f" PP{pp_rank}"
-    if server_args.attn_cp_size > 1:
-        prefix += f" ATTN_CP{attn_cp_rank}"
-    if server_args.moe_dp_size > 1:
-        prefix += f" MOE_DP{moe_dp_rank}"
-    if server_args.tp_size > 1:
-        prefix += f" TP{tp_rank}"
-    if server_args.ep_size > 1:
-        prefix += f" EP{moe_ep_rank}"
-
-    # Config the process
-    setproctitle.setproctitle(f"sglang::scheduler{prefix.replace(' ', '_')}")
-    faulthandler.enable()
     kill_itself_when_parent_died()
     parent_process = psutil.Process().parent()
-
-    # Configure the logger
-    configure_logger(server_args, prefix=prefix)
-    suppress_other_loggers()
 
     # Set cpu affinity to this gpu process
     if get_bool_env_var("SGLANG_SET_CPU_AFFINITY"):
         set_gpu_proc_affinity(
             server_args.pp_size, server_args.tp_size, server_args.nnodes, gpu_id
         )
-    if (
-        numa_node := server_args.numa_node
-    ) is not None and not envs.SGLANG_NUMA_BIND_V2.get():
-        numa_bind_to_node(numa_node[gpu_id])
+    numa_node = get_numa_node_if_available(server_args, gpu_id)
+    if numa_node is not None and not envs.SGLANG_NUMA_BIND_V2.get():
+        numa_bind_to_node(numa_node)
 
     # Set up tracing
     if server_args.enable_trace:
@@ -235,51 +212,8 @@ def areal_run_scheduler_process(
         AwexSchedulerBridge(scheduler).bind()
         # ---- END AREAL ----
 
-        result_dict = {
-            "status": "ready",
-            "max_total_num_tokens": scheduler.max_total_num_tokens,
-            "max_req_input_len": scheduler.max_req_input_len,
-        }
-        if server_args.remote_instance_weight_loader_use_transfer_engine():
-            (
-                remote_instance_transfer_engine_session_id,
-                remote_instance_transfer_engine_weights_info_dict,
-            ) = scheduler.get_remote_instance_transfer_engine_info()
-            result_dict.update(
-                {
-                    "tp_rank": tp_rank,
-                    "remote_instance_transfer_engine_session_id": remote_instance_transfer_engine_session_id,
-                    "remote_instance_transfer_engine_weights_info_dict": remote_instance_transfer_engine_weights_info_dict,
-                }
-            )
-
-        pipe_writer.send(result_dict)
-
-        # Dispatch to the appropriate event loop based on the disaggregation mode
-        disaggregation_mode: DisaggregationMode = scheduler.disaggregation_mode
-        if disaggregation_mode == DisaggregationMode.NULL:
-            if scheduler.enable_pdmux:
-                scheduler.event_loop_pdmux()
-            elif server_args.pp_size > 1:
-                scheduler.event_loop_pp()
-            elif scheduler.enable_overlap:
-                scheduler.event_loop_overlap()
-            else:
-                scheduler.event_loop_normal()
-        elif disaggregation_mode == DisaggregationMode.PREFILL:
-            if server_args.pp_size > 1:
-                scheduler.event_loop_pp_disagg_prefill()
-            elif scheduler.enable_overlap:
-                scheduler.event_loop_overlap_disagg_prefill()
-            else:
-                scheduler.event_loop_normal_disagg_prefill()
-        elif disaggregation_mode == DisaggregationMode.DECODE:
-            if server_args.pp_size > 1:
-                scheduler.event_loop_pp_disagg_decode()
-            elif scheduler.enable_overlap:
-                scheduler.event_loop_overlap_disagg_decode()
-            else:
-                scheduler.event_loop_normal_disagg_decode()
+        pipe_writer.send(scheduler.get_init_info())
+        scheduler.run_event_loop()
 
     except Exception:
         traceback = get_exception_traceback()
