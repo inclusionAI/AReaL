@@ -908,9 +908,17 @@ class MegatronEngine(TrainEngine):
             mb_list, loss_weight_fn, mpu.get_data_parallel_group()
         )
 
-        # Step 3: Forward-backward using Megatron's pipeline function
+        # Step 3: Forward-backward using Megatron's pipeline function.
+        # `len(mb_list)` compensates Megatron Core's `output_tensor /= num_microbatches`
+        # applied in the 2-tuple `(loss, {})` branch of
+        # `megatron.core.pipeline_parallel.schedules._forward_step_helper`. Our
+        # per-microbatch loss is already globally normalized via `w_i / W_total`, so
+        # that extra division would shrink every gradient (and thus grad_norm and the
+        # effective optimizer step) by `num_microbatches`.
         loss_multiplier = (
-            mpu.get_data_parallel_world_size() * self.optimizer.get_loss_scale().item()
+            mpu.get_data_parallel_world_size()
+            * self.optimizer.get_loss_scale().item()
+            * len(mb_list)
         )
 
         def process_output(
@@ -932,7 +940,9 @@ class MegatronEngine(TrainEngine):
         )
 
         # Step 4: Optimizer step
-        return self.optimizer_step()
+        stats = self.optimizer_step()
+        stats["num_micro_batches"] = len(mb_list.mbs)
+        return stats
 
     @torch.no_grad()
     def eval_batch(
