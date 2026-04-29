@@ -189,8 +189,6 @@ class PPOTrainer:
 
                     OmegaConf.set_struct(sglang_cfg, False)
                     sglang_cfg.skip_tokenizer_init = True
-        openai_cfg = config.rollout.openai
-        self._online_mode = openai_cfg is not None and openai_cfg.mode == "online"
         agent_cfg = config.rollout.agent
         self._online_mode = agent_cfg is not None and agent_cfg.mode == "online"
 
