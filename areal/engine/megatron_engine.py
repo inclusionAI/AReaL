@@ -1273,7 +1273,27 @@ class MegatronEngine(TrainEngine):
         mcore_opt_config.exp_avg_sq_dtype = getattr(
             torch, self.mcore_config.exp_avg_sq_dtype
         )
-        # for run moe
+        # Precision-aware optimizer for MoE models
+        # -----------------------------------------
+        # When ``use_precision_aware_optimizer=True``, Megatron-Core stores
+        # optimizer states (params, grads, exp_avg, exp_avg_sq) in
+        # user-specified dtypes and compensates for low-precision rounding
+        # via fp32 remainders.  Two additional flags are set here:
+        #
+        # ``use_precision_aware_optimizer_no_fp8_or_ds_fp8``:
+        #   A derived flag that is True when the precision-aware optimizer
+        #   is enabled AND at least one of the following holds:
+        #     1. ``main_params_dtype != float32`` -- low-precision master
+        #        params (e.g. bf16) need rounding-error compensation.
+        #     2. ``fp8_recipe is None or "delayed"`` -- no real-time FP8
+        #        scaling, so the optimizer must handle quantisation error
+        #        itself (delayed-scaling FP8 updates the scale factor with
+        #        a lag, conflicting with the optimizer's immediate residual
+        #        correction).
+        #     3. ``optimizer_cpu_offload`` -- CPU offload introduces extra
+        #        precision conversions that require special handling.
+        #   When True, the optimizer applies its full residual-compensation
+        #   logic during the parameter update step.
         mcore_opt_config.use_precision_aware_optimizer_no_fp8_or_ds_fp8 = (
             mcore_opt_config.use_precision_aware_optimizer
             and (
@@ -1283,21 +1303,6 @@ class MegatronEngine(TrainEngine):
             )
         )
         mcore_opt_config.store_param_remainders = True
-        import logging as _logging
-        _opt_logger = _logging.getLogger('AReaL.OptDiag')
-        _opt_logger.warning(
-            f'[OptDiag] Megatron OptimizerConfig: '
-            f'use_precision_aware_optimizer={mcore_opt_config.use_precision_aware_optimizer}, '
-            f'use_precision_aware_optimizer_no_fp8_or_ds_fp8='
-            f'{getattr(mcore_opt_config, "use_precision_aware_optimizer_no_fp8_or_ds_fp8", "N/A")}, '
-            f'store_param_remainders={mcore_opt_config.store_param_remainders}, '
-            f'main_params_dtype={mcore_opt_config.main_params_dtype}, '
-            f'main_grads_dtype={mcore_opt_config.main_grads_dtype}, '   
-            f'exp_avg_dtype={mcore_opt_config.exp_avg_dtype}, '
-            f'exp_avg_sq_dtype={mcore_opt_config.exp_avg_sq_dtype}, '
-            f'use_distributed_optimizer={mcore_opt_config.use_distributed_optimizer}, '
-            f'bf16={mcore_opt_config.bf16}'
-        )
         self.optimizer = get_megatron_optimizer(mcore_opt_config, self.model)
 
         warmup_steps_proportion = self.optimizer_config.warmup_steps_proportion

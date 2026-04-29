@@ -341,10 +341,6 @@ class TrainController:
                 "MASTER_PORT": str(self._master_port),
                 "LOCAL_RANK": "0",  # NOTE: local rank is always 0 while each process use only one GPU
             }
-            logger.debug(
-                f"Setting env for worker "
-                f"'{worker.id}' (rank={rank}): {env}"
-            )
             await self.scheduler.set_worker_env(worker.id, env)
             await self.scheduler.create_engine(
                 worker_id=worker.id,
