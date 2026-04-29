@@ -425,7 +425,7 @@ def test_forward_backward(model_type: str, backend: str, output: str | None):
             m2_threshold=None,
             importance_sampling_level="token",
             current_version=0,
-            prox_logp_method=None,
+            prox_logp_method="recompute",
             use_sapo_loss=False,
             sapo_tau_pos=0.0,
             sapo_tau_neg=0.0,
