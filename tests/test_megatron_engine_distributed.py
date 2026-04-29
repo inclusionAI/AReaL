@@ -1,4 +1,5 @@
 import subprocess
+import sys
 
 import pytest
 
@@ -28,7 +29,8 @@ def _run_test_with_torchrun(
                 f"--vpp_size={vpp_size}",
             ],
             check=True,
-            capture_output=True,
+            stdout=sys.stdout,
+            stderr=sys.stdout,
             text=True,
         )
     except subprocess.CalledProcessError as e:
@@ -46,6 +48,28 @@ def test_qwen3_tensor_parallel(tmp_path_factory):
     output = tmp_path_factory.mktemp("test_output") / "qwen3_tensor_parallel.out"
     _run_test_with_torchrun(
         "qwen3", "megatron:d1p1t2", test_type="forward", output=str(output)
+    )
+
+
+@pytest.mark.multi_gpu
+@pytest.mark.slow
+def test_qwen3_grad_norm_mb_invariance(tmp_path_factory):
+    """Regression guard: grad_norm must be invariant to num_microbatches.
+
+    Guards the `loss_multiplier` fix in `MegatronEngine.train_batch` that
+    compensates for Megatron Core's `loss /= num_microbatches` applied on the
+    2-tuple `loss_func` return path in
+    `megatron.core.pipeline_parallel.schedules._forward_step_helper`. Without
+    the fix the reported grad_norm scales as `1 / num_microbatches`.
+    """
+    output = (
+        tmp_path_factory.mktemp("test_output") / "qwen3_grad_norm_mb_invariance.out"
+    )
+    _run_test_with_torchrun(
+        "qwen3",
+        "megatron:d2p1t1",
+        test_type="grad_norm_mb_invariance",
+        output=str(output),
     )
 
 

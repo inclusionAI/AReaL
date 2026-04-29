@@ -987,9 +987,17 @@ class MegatronEngine(TrainEngine):
             mb_list, loss_weight_fn, mpu.get_data_parallel_group()
         )
 
-        # Step 3: Forward-backward using Megatron's pipeline function
+        # Step 3: Forward-backward using Megatron's pipeline function.
+        # `len(mb_list)` compensates Megatron Core's `output_tensor /= num_microbatches`
+        # applied in the 2-tuple `(loss, {})` branch of
+        # `megatron.core.pipeline_parallel.schedules._forward_step_helper`. Our
+        # per-microbatch loss is already globally normalized via `w_i / W_total`, so
+        # that extra division would shrink every gradient (and thus grad_norm and the
+        # effective optimizer step) by `num_microbatches`.
         loss_multiplier = (
-            mpu.get_data_parallel_world_size() * self.optimizer.get_loss_scale().item()
+            mpu.get_data_parallel_world_size()
+            * self.optimizer.get_loss_scale().item()
+            * len(mb_list)
         )
 
         def process_output(
@@ -1011,7 +1019,9 @@ class MegatronEngine(TrainEngine):
         )
 
         # Step 4: Optimizer step
-        return self.optimizer_step()
+        stats = self.optimizer_step()
+        stats["num_micro_batches"] = len(mb_list.mbs)
+        return stats
 
     @torch.no_grad()
     def eval_batch(
@@ -1400,7 +1410,16 @@ class MegatronEngine(TrainEngine):
             max_lr=self.optimizer_config.lr,
             min_lr=self.optimizer_config.min_lr_ratio * self.optimizer_config.lr,
             lr_warmup_steps=warmup_steps,
-            lr_decay_steps=ft_spec.total_train_steps - warmup_steps,
+            # Megatron Core treats `lr_decay_steps` as the absolute step at
+            # which decay ends (it subtracts `lr_warmup_steps` internally to
+            # get the decay-phase length). Previously this was passed as
+            # `total_train_steps - warmup_steps`, which caused Megatron to
+            # subtract warmup twice and the cosine schedule to reach min_lr
+            # ~one full warmup earlier than intended (e.g. lr=0 at step 198
+            # for a 220-step run). Pass the raw total so cosine spans
+            # [warmup_steps, total_train_steps], matching HF's
+            # get_cosine_schedule_with_warmup used by the FSDP engine.
+            lr_decay_steps=ft_spec.total_train_steps,
             lr_decay_style=self.optimizer_config.lr_scheduler_type,
             start_wd=self.optimizer_config.weight_decay,
             end_wd=self.optimizer_config.weight_decay,
