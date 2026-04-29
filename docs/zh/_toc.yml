@@ -38,7 +38,6 @@ parts:
     - file: algorithms/grpo_series
     - file: algorithms/m2po
     - file: algorithms/prox_approx
-    - file: algorithms/router_replay
   - caption: 参考
     chapters:
     - file: reference/checkpointing
