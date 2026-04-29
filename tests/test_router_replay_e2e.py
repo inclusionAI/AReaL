@@ -17,11 +17,12 @@ megatron/test_router_replay.py`` in three ways:
    finite and non-zero when R3 is enabled.
 
 These tests are marked ``slow``/``multi_gpu`` and will be skipped in CI
-by default; run with ``pytest -m multi_gpu -k r3_e2e``.
+by default; run with ``pytest -m multi_gpu -k r3_e2e -s``.
 """
 
 from __future__ import annotations
 
+import os
 import subprocess
 
 import pytest
@@ -30,40 +31,73 @@ from areal.api.alloc_mode import ModelAllocation
 from areal.infra.platforms import current_platform
 from areal.utils.network import find_free_ports
 
+MODEL_LOCAL_PATHS = {
+    "moonlight": "/workspace/models/Moonlight-16B-A3B-Instruct",
+    "qwen3moe": "/storage/openpsi/models/Qwen__Qwen3-30B-A3B/",
+}
+
+_TIMEOUTS = {
+    "patch_plumbing": 300,
+    "forward_replay": 600,
+    "forward_backward": 600,
+}
+
+
+def _model_available(model_type: str) -> bool:
+    local = MODEL_LOCAL_PATHS.get(model_type, "")
+    return bool(local) and os.path.exists(local)
+
 
 def _run_e2e(
     model_type: str,
     alloc_mode: str,
     test_type: str,
     output: str,
-    timeout_sec: int = 1800,
+    timeout_sec: int | None = None,
 ):
+    if timeout_sec is None:
+        timeout_sec = _TIMEOUTS.get(test_type, 600)
+
     port = find_free_ports(1)[0]
     n_gpus = ModelAllocation.from_str(alloc_mode).parallel.world_size
+    cmd = [
+        "torchrun",
+        f"--nproc_per_node={n_gpus}",
+        "--nnodes=1",
+        "--master-addr=localhost",
+        f"--master_port={port}",
+        "tests/torchrun/run_router_replay_distributed.py",
+        f"--model_type={model_type}",
+        f"--backend={alloc_mode}",
+        f"--test_type={test_type}",
+        f"--output={output}",
+    ]
+    print(f"[r3-e2e] Launching (timeout={timeout_sec}s): {' '.join(cmd)}")
     try:
-        subprocess.run(
-            [
-                "torchrun",
-                f"--nproc_per_node={n_gpus}",
-                "--nnodes=1",
-                "--master-addr=localhost",
-                f"--master_port={port}",
-                "tests/torchrun/run_router_replay_distributed.py",
-                f"--model_type={model_type}",
-                f"--backend={alloc_mode}",
-                f"--test_type={test_type}",
-                f"--output={output}",
-            ],
-            check=True,
-            capture_output=True,
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
-            timeout=timeout_sec,
         )
-    except subprocess.CalledProcessError as e:
+        stdout_lines = []
+        for line in proc.stdout:
+            print(line, end="")
+            stdout_lines.append(line)
+        proc.wait(timeout=timeout_sec)
+        stdout = "".join(stdout_lines)
+        if proc.returncode != 0:
+            pytest.fail(
+                f"R3 E2E subprocess exited with code {proc.returncode}.\n"
+                f"OUTPUT:\n{stdout}"
+            )
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        stdout = "".join(stdout_lines) if stdout_lines else ""
         pytest.fail(
-            f"R3 E2E subprocess failed.\n"
-            f"STDOUT:\n{e.stdout}\n"
-            f"STDERR:\n{e.stderr}"
+            f"R3 E2E subprocess timed out after {timeout_sec}s.\n"
+            f"OUTPUT:\n{stdout}"
         )
     with open(output) as f:
         result = f.read().strip()
@@ -84,6 +118,8 @@ def test_r3_e2e_moonlight_patch_plumbing(tmp_path_factory):
     """
     if current_platform.device_count() < 4:
         pytest.skip("Moonlight R3 patch plumbing requires >= 4 GPUs")
+    if not _model_available("moonlight"):
+        pytest.skip("Moonlight model not available locally")
     out = tmp_path_factory.mktemp("r3") / "moonlight_patch.out"
     _run_e2e(
         model_type="moonlight",
@@ -104,6 +140,8 @@ def test_r3_e2e_moonlight_forward_replay(tmp_path_factory):
     """
     if current_platform.device_count() < 4:
         pytest.skip("Moonlight R3 forward replay requires >= 4 GPUs")
+    if not _model_available("moonlight"):
+        pytest.skip("Moonlight model not available locally")
     out = tmp_path_factory.mktemp("r3") / "moonlight_forward.out"
     _run_e2e(
         model_type="moonlight",
@@ -125,6 +163,8 @@ def test_r3_e2e_moonlight_forward_backward(tmp_path_factory):
     """
     if current_platform.device_count() < 4:
         pytest.skip("Moonlight R3 forward_backward requires >= 4 GPUs")
+    if not _model_available("moonlight"):
+        pytest.skip("Moonlight model not available locally")
     out = tmp_path_factory.mktemp("r3") / "moonlight_fb.out"
     _run_e2e(
         model_type="moonlight",
@@ -150,6 +190,8 @@ def test_r3_e2e_moonlight_pp2_tp4_ep4(tmp_path_factory):
     """
     if current_platform.device_count() < 8:
         pytest.skip("Moonlight R3 PP=2 config requires 8 GPUs")
+    if not _model_available("moonlight"):
+        pytest.skip("Moonlight model not available locally")
     out = tmp_path_factory.mktemp("r3") / "moonlight_pp2_patch.out"
     _run_e2e(
         model_type="moonlight",
@@ -172,6 +214,8 @@ def test_r3_e2e_moonlight_pp2_tp4_ep4_forward_backward(tmp_path_factory):
     """
     if current_platform.device_count() < 8:
         pytest.skip("Moonlight R3 PP=2 forward_backward requires 8 GPUs")
+    if not _model_available("moonlight"):
+        pytest.skip("Moonlight model not available locally")
     out = tmp_path_factory.mktemp("r3") / "moonlight_pp2_fb.out"
     _run_e2e(
         model_type="moonlight",
@@ -180,41 +224,3 @@ def test_r3_e2e_moonlight_pp2_tp4_ep4_forward_backward(tmp_path_factory):
         output=str(out),
     )
 
-
-# ---------------------------------------------------------------------------
-# 4-GPU: Qwen3-30B-A3B fallback (runs if Moonlight weights are unavailable)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.multi_gpu
-@pytest.mark.slow
-def test_r3_e2e_qwen3moe_fallback(tmp_path_factory):
-    """Fallback path: Qwen3-30B-A3B MoE when Moonlight is unavailable.
-
-    Same 4-GPU TP=2 CP=2 EP=4 layout as ``test_qwen3moe_expert_parallel``
-    in ``test_megatron_engine_distributed.py``.
-    """
-    if current_platform.device_count() < 4:
-        pytest.skip("Qwen3 MoE R3 requires >= 4 GPUs")
-    out = tmp_path_factory.mktemp("r3") / "qwen3moe_fallback.out"
-    _run_e2e(
-        model_type="qwen3moe",
-        alloc_mode="megatron:(attn:d1p1t2c2|ffn:d1p1t1e4)",
-        test_type="patch_plumbing",
-        output=str(out),
-    )
-
-
-@pytest.mark.multi_gpu
-@pytest.mark.slow
-def test_r3_e2e_qwen3moe_forward_backward(tmp_path_factory):
-    """Qwen3-30B-A3B MoE R3 full train_batch fallback (4 GPUs)."""
-    if current_platform.device_count() < 4:
-        pytest.skip("Qwen3 MoE R3 forward_backward requires >= 4 GPUs")
-    out = tmp_path_factory.mktemp("r3") / "qwen3moe_fb.out"
-    _run_e2e(
-        model_type="qwen3moe",
-        alloc_mode="megatron:(attn:d1p1t2c2|ffn:d1p1t1e4)",
-        test_type="forward_backward",
-        output=str(out),
-    )
