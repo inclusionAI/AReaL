@@ -33,8 +33,6 @@ import torch
 import torch.distributed as dist
 from megatron.core import parallel_state as mpu
 
-from tests.utils import get_model_path
-
 from areal.api import FinetuneSpec
 from areal.api.alloc_mode import ModelAllocation
 from areal.api.cli_args import (
@@ -45,18 +43,30 @@ from areal.api.cli_args import (
 )
 from areal.engine import MegatronEngine
 from areal.infra.platforms import current_platform
-from areal.utils import seeding
+from areal.utils import logging, seeding
 from areal.utils.data import broadcast_tensor_container
+
+logger = logging.getLogger("R3E2E")
+
+
+def _get_model_path(local_path: str, hf_id: str) -> str:
+    if os.path.exists(local_path):
+        logger.info("Model found at local path: %s", local_path)
+        return local_path
+    from huggingface_hub import snapshot_download
+
+    logger.info("Downloading model from HuggingFace Hub: %s", hf_id)
+    return snapshot_download(
+        repo_id=hf_id,
+        ignore_patterns=["*.gguf", "*.ggml", "consolidated*"],
+    )
 
 
 MODEL_PATHS = {
-    "moonlight": get_model_path(
-        "/storage/openpsi/models/Moonshot__Moonlight-16B-A3B-Instruct/",
+    "moonlight": _get_model_path(
+        "/workspace/models/Moonlight-16B-A3B-Instruct/",
         "moonshotai/Moonlight-16B-A3B-Instruct",
-    ),
-    "qwen3moe": get_model_path(
-        "/storage/openpsi/models/Qwen__Qwen3-30B-A3B/", "Qwen/Qwen3-30B-A3B"
-    ),
+    )
 }
 
 
@@ -233,9 +243,9 @@ def test_patch_plumbing(model_type: str, backend: str, output: str | None):
 
         expected = _collect_num_moe_layers(engine)
         got = len(RouterReplay.router_instances)
-        print(
-            f"[r3-e2e] rank={rank} expected_moe_layers={expected} "
-            f"got_router_instances={got}"
+        logger.info(
+            "[R3-E2E] rank=%d expected_moe_layers=%d got_router_instances=%d",
+            rank, expected, got,
         )
         assert got == expected, (
             f"RouterReplay.router_instances count ({got}) must match the "
@@ -282,7 +292,7 @@ def test_forward_replay(model_type: str, backend: str, output: str | None):
     try:
         # Resolve MoE metadata from the model config (same path rl_trainer uses).
         num_moe, topk = resolve_r3_moe_config(MODEL_PATHS[model_type])
-        print(f"[r3-e2e] rank={rank} num_moe_layers={num_moe} topk={topk}")
+        logger.info("[R3-E2E] rank=%d num_moe_layers=%d topk=%d", rank, num_moe, topk)
 
         # Build a synthetic routed_experts tensor with right-padding matching
         # the rollout convention: (bs, seqlen, num_moe_layers, topk).
@@ -325,7 +335,7 @@ def test_forward_replay(model_type: str, backend: str, output: str | None):
         if rank == 0 and output:
             write_result(output, True)
     except Exception as e:  # pragma: no cover - surfaced as torchrun failure
-        print(f"[r3-e2e] rank={rank} FAIL: {e!r}")
+        logger.error("[R3-E2E] rank=%d FAIL: %r", rank, e)
         if rank == 0 and output:
             write_result(output, False, repr(e))
         raise
@@ -378,8 +388,8 @@ def test_forward_backward(model_type: str, backend: str, output: str | None):
     try:
         # Resolve MoE metadata from the model config.
         num_moe, topk = resolve_r3_moe_config(MODEL_PATHS[model_type])
-        print(
-            f"[r3-e2e-fb] rank={rank} num_moe_layers={num_moe} topk={topk}"
+        logger.info(
+            "[R3-E2E-FB] rank=%d num_moe_layers=%d topk=%d", rank, num_moe, topk
         )
 
         # Build training input + rollout_expert_indices.
@@ -431,7 +441,7 @@ def test_forward_backward(model_type: str, backend: str, output: str | None):
 
         # Rank-0 side asserts the loss on the last pipeline stage.
         # stats is a dict[str, float]; the key name may vary, so check any.
-        print(f"[r3-e2e-fb] rank={rank} train_batch stats={stats}")
+        logger.info("[R3-E2E-FB] rank=%d train_batch stats=%s", rank, stats)
 
         # Side-channel must have been consumed.
         assert engine._r3_pending_routed_experts is None, (
@@ -455,7 +465,7 @@ def test_forward_backward(model_type: str, backend: str, output: str | None):
         if rank == 0 and output:
             write_result(output, True)
     except Exception as e:  # pragma: no cover - surfaced as torchrun failure
-        print(f"[r3-e2e-fb] rank={rank} FAIL: {e!r}")
+        logger.error("[R3-E2E-FB] rank=%d FAIL: %r", rank, e)
         if rank == 0 and output:
             write_result(output, False, repr(e))
         raise
@@ -485,7 +495,7 @@ def main():
     )
     parser.add_argument("--output", type=str, default=None)
     args = parser.parse_args()
-    print(args)
+    logger.info("Args: %s", args)
 
     if args.test_type == "forward_replay":
         test_forward_replay(args.model_type, args.backend, args.output)
