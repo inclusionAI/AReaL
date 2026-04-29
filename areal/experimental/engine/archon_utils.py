@@ -25,6 +25,7 @@ from areal.experimental.models.archon.activation_checkpoint import (
     ActivationCheckpointConfig,
 )
 from areal.experimental.models.archon.utils import is_moe_model_config
+from areal.utils.optimizer import Muon as MuonOptimizer
 
 if TYPE_CHECKING:
     from areal.api.cli_args import (
@@ -43,6 +44,7 @@ if TYPE_CHECKING:
 def create_optimizer(
     params: list[torch.nn.Parameter],
     optimizer_config: OptimizerConfig,
+    parallel_dims: ArchonParallelDims | None = None,
 ) -> torch.optim.Optimizer:
     """Create optimizer from config."""
     lr = optimizer_config.lr
@@ -60,6 +62,46 @@ def create_optimizer(
             eps=eps,
             fused=True,
         )
+    elif optimizer_config.type == "muon":
+        muon_params: list[torch.nn.Parameter] = []
+        backend_params: list[torch.nn.Parameter] = []
+        for p in params:
+            if p.ndim >= 2:
+                muon_params.append(p)
+            else:
+                backend_params.append(p)
+        if optimizer_config.muon_backend_lr is not None:
+            backend_lr = optimizer_config.muon_backend_lr
+        else:
+            backend_lr = lr
+            import warnings
+
+            warnings.warn(
+                "muon_backend_lr is not set; falling back to main lr (%.2e) for AdamW backend. "
+                "Typical Muon setups use a much smaller backend lr (e.g. 3e-4). "
+                "Set muon_backend_lr explicitly to suppress this warning." % lr,
+                stacklevel=2,
+            )
+        return MuonOptimizer([
+            dict(
+                params=muon_params,
+                lr=lr,
+                momentum=optimizer_config.muon_momentum,
+                weight_decay=weight_decay,
+                rms_scale=optimizer_config.muon_rms_scale,
+                nesterov=optimizer_config.muon_nesterov,
+                ns_steps=optimizer_config.muon_ns_steps,
+                use_muon=True,
+            ),
+            dict(
+                params=backend_params,
+                lr=backend_lr,
+                betas=(beta1, beta2),
+                eps=eps,
+                weight_decay=weight_decay,
+                use_muon=False,
+            ),
+        ])
     elif optimizer_config.type == "sgd":
         return torch.optim.SGD(
             params,

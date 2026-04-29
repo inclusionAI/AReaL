@@ -164,6 +164,7 @@ megatron = [
     "megatron-core==0.16.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "mbridge @ git+https://github.com/ISEEKYAN/mbridge.git@310e8fb; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "megatron-bridge==0.3.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "emerging-optimizers @ git+https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 # Convenience extra for CUDA training packages (no inference backend)
 cuda-train = [
