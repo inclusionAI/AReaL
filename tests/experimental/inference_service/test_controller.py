@@ -1,4 +1,4 @@
-"""Tests for GatewayInferenceController."""
+"""Tests for RolloutControllerV2."""
 
 from __future__ import annotations
 
@@ -8,48 +8,63 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from areal.experimental.inference_service.controller.config import (
-    GatewayControllerConfig,
-)
+from areal.api.cli_args import AgentConfig, InferenceEngineConfig
 from areal.experimental.inference_service.controller.controller import (
-    GatewayInferenceController,
+    RolloutControllerV2,
 )
 from areal.experimental.inference_service.controller.workflow import (
     InferenceServiceWorkflow,
 )
 
+
+def _make_scheduler(n_gpus_per_node: int = 8) -> MagicMock:
+    scheduler = MagicMock()
+    scheduler.n_gpus_per_node = n_gpus_per_node
+    return scheduler
+
+
 # =============================================================================
-# GatewayControllerConfig
+# InferenceEngineConfig
 # =============================================================================
 
 
-class TestGatewayControllerConfig:
+class TestInferenceEngineConfigForInferenceService:
     def test_defaults(self):
-        cfg = GatewayControllerConfig()
-        assert cfg.admin_api_key is None
+        cfg = InferenceEngineConfig(backend="sglang:d1")
+        assert cfg.admin_api_key == "areal-admin-key"
         assert cfg.model == "default"
-        assert cfg.consumer_batch_size == 16
+        assert cfg.consumer_batch_size == 1
         assert cfg.max_concurrent_rollouts is None
         assert cfg.max_head_offpolicyness == 0
         assert cfg.enable_rollout_tracing is False
-        assert cfg.set_reward_finish_timeout == 0.0
+        assert cfg.agent is not None
+        assert (
+            cfg.agent.agent_cls_path
+            == "areal.experimental.openai.proxy.online_agent._OnlineAgent"
+        )
 
     def test_custom_values(self):
-        cfg = GatewayControllerConfig(
+        cfg = InferenceEngineConfig(
+            backend="sglang:d1",
             admin_api_key="custom-key",
             consumer_batch_size=32,
             max_concurrent_rollouts=64,
             max_head_offpolicyness=5,
-            set_reward_finish_timeout=3.0,
+            agent=AgentConfig(
+                agent_cls_path="tests.experimental.openai.utils.SimpleAgent",
+                set_reward_finish_timeout=3.0,
+            ),
         )
         assert cfg.admin_api_key == "custom-key"
         assert cfg.consumer_batch_size == 32
         assert cfg.max_concurrent_rollouts == 64
         assert cfg.max_head_offpolicyness == 5
-        assert cfg.set_reward_finish_timeout == 3.0
+        assert cfg.agent is not None
+        assert cfg.agent.set_reward_finish_timeout == 3.0
 
     def test_scheduling_fields(self):
-        cfg = GatewayControllerConfig(
+        cfg = InferenceEngineConfig(
+            backend="sglang:d1",
             request_timeout=60.0,
             setup_timeout=600.0,
         )
@@ -57,30 +72,31 @@ class TestGatewayControllerConfig:
         assert cfg.setup_timeout == 600.0
 
     def test_dump_to_file_defaults_to_false(self):
-        cfg = GatewayControllerConfig()
+        cfg = InferenceEngineConfig(backend="sglang:d1")
         assert cfg.dump_to_file is False
 
 
 # =============================================================================
-# GatewayInferenceController — workflow resolution helpers
+# RolloutControllerV2 — workflow resolution helpers
 # =============================================================================
 
 
 class TestControllerWorkflowResolution:
     def test_resolve_workflow_with_instance(self):
-        controller = GatewayInferenceController(
-            config=GatewayControllerConfig(admin_api_key="test-key"),
+        controller = RolloutControllerV2(
+            config=InferenceEngineConfig(backend="sglang:d1", admin_api_key="test-key"),
             scheduler=MagicMock(n_gpus_per_node=8),
         )
         with pytest.raises(TypeError, match=r"callable run\(\) method"):
             controller._resolve_workflow(12345)
 
     def test_resolve_workflow_none_creates_online_inference_service_workflow(self):
-        cfg = GatewayControllerConfig(
+        cfg = InferenceEngineConfig(
+            backend="sglang:d1",
             admin_api_key="test-admin-key",
         )
         scheduler = MagicMock(n_gpus_per_node=8)
-        controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
+        controller = RolloutControllerV2(config=cfg, scheduler=scheduler)
         controller._gateway_addr = "http://test:8080"
 
         resolved = controller._resolve_workflow(
@@ -94,11 +110,12 @@ class TestControllerWorkflowResolution:
         assert resolved.timeout == 3.0
 
     def test_resolve_workflow_agent_class_creates_offline_workflow(self):
-        cfg = GatewayControllerConfig(
+        cfg = InferenceEngineConfig(
+            backend="sglang:d1",
             admin_api_key="test-admin-key",
         )
         scheduler = MagicMock(n_gpus_per_node=8)
-        controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
+        controller = RolloutControllerV2(config=cfg, scheduler=scheduler)
         controller._gateway_addr = "http://test:8080"
 
         class MockAgent:
@@ -115,17 +132,17 @@ class TestControllerWorkflowResolution:
         assert isinstance(resolved.agent, MockAgent)
 
     def test_resolve_should_accept_fn_none(self):
-        assert GatewayInferenceController._resolve_should_accept_fn(None) is None
+        assert RolloutControllerV2._resolve_should_accept_fn(None) is None
 
     def test_resolve_should_accept_fn_callable(self):
         fn = lambda x: True  # noqa: E731
-        assert GatewayInferenceController._resolve_should_accept_fn(fn) is fn
+        assert RolloutControllerV2._resolve_should_accept_fn(fn) is fn
 
     def test_resolve_workflow_with_agent_class(self):
         """Test _resolve_workflow wraps agent-like classes in InferenceServiceWorkflow."""
-        cfg = GatewayControllerConfig(admin_api_key="test-key")
+        cfg = InferenceEngineConfig(backend="sglang:d1", admin_api_key="test-key")
         scheduler = MagicMock(n_gpus_per_node=8)
-        controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
+        controller = RolloutControllerV2(config=cfg, scheduler=scheduler)
         controller._gateway_addr = "http://test:8080"
 
         class MockAgent:
@@ -141,8 +158,8 @@ class TestControllerWorkflowResolution:
         assert hasattr(resolved, "arun_episode")
 
     def test_resolve_workflow_agent_class_without_gateway_raises(self):
-        controller = GatewayInferenceController(
-            config=GatewayControllerConfig(admin_api_key="test-key"),
+        controller = RolloutControllerV2(
+            config=InferenceEngineConfig(backend="sglang:d1", admin_api_key="test-key"),
             scheduler=MagicMock(n_gpus_per_node=8),
         )
 
@@ -154,8 +171,8 @@ class TestControllerWorkflowResolution:
             controller._resolve_workflow(MockAgent, workflow_kwargs={})
 
     def test_resolve_workflow_rollout_workflow_instance_raises(self):
-        controller = GatewayInferenceController(
-            config=GatewayControllerConfig(admin_api_key="test-key"),
+        controller = RolloutControllerV2(
+            config=InferenceEngineConfig(backend="sglang:d1", admin_api_key="test-key"),
             scheduler=MagicMock(n_gpus_per_node=8),
         )
         controller._gateway_addr = "http://test:8080"
@@ -172,8 +189,8 @@ class TestControllerWorkflowResolution:
             controller._resolve_workflow(workflow)
 
     def test_resolve_workflow_rollout_workflow_class_raises(self):
-        controller = GatewayInferenceController(
-            config=GatewayControllerConfig(admin_api_key="test-key"),
+        controller = RolloutControllerV2(
+            config=InferenceEngineConfig(backend="sglang:d1", admin_api_key="test-key"),
             scheduler=MagicMock(n_gpus_per_node=8),
         )
         controller._gateway_addr = "http://test:8080"
@@ -188,11 +205,11 @@ class TestControllerWorkflowResolution:
 
 
 # =============================================================================
-# GatewayInferenceController — API surface
+# RolloutControllerV2 — API surface
 # =============================================================================
 
 
-class TestGatewayInferenceControllerAPISurface:
+class TestRolloutControllerV2APISurface:
     def test_has_all_public_methods(self):
         methods = [
             "initialize",
@@ -216,7 +233,7 @@ class TestGatewayInferenceControllerAPISurface:
             "start_proxy_gateway",
         ]
         for m in methods:
-            assert hasattr(GatewayInferenceController, m), f"Missing method: {m}"
+            assert hasattr(RolloutControllerV2, m), f"Missing method: {m}"
 
     def test_has_properties(self):
         properties = [
@@ -228,39 +245,38 @@ class TestGatewayInferenceControllerAPISurface:
             "worker_ids",
         ]
         for p in properties:
-            assert hasattr(GatewayInferenceController, p), f"Missing property: {p}"
+            assert hasattr(RolloutControllerV2, p), f"Missing property: {p}"
 
     def test_not_subclass_of_rollout_controller(self):
-        """GatewayInferenceController must NOT be a subclass of RolloutController."""
+        """RolloutControllerV2 must NOT be a subclass of RolloutController."""
         # Verify it doesn't inherit from any class except object
-        bases = GatewayInferenceController.__bases__
+        bases = RolloutControllerV2.__bases__
         assert bases == (object,), f"Unexpected bases: {bases}"
 
 
 # =============================================================================
-# GatewayInferenceController — construction + state
+# RolloutControllerV2 — construction + state
 # =============================================================================
 
 
-class TestGatewayInferenceControllerConstruction:
+class TestRolloutControllerV2Construction:
     def test_admin_api_key_none_raises(self):
-        cfg = GatewayControllerConfig()
+        cfg = InferenceEngineConfig(backend="sglang:d1")
+        cfg.admin_api_key = ""
         with pytest.raises(ValueError, match="admin_api_key must be set"):
-            GatewayInferenceController(
-                config=cfg, scheduler=MagicMock(n_gpus_per_node=8)
-            )
+            RolloutControllerV2(config=cfg, scheduler=MagicMock(n_gpus_per_node=8))
 
     def test_model_empty_raises(self):
-        cfg = GatewayControllerConfig(admin_api_key="test-key", model="")
+        cfg = InferenceEngineConfig(
+            backend="sglang:d1", admin_api_key="test-key", model=""
+        )
         with pytest.raises(ValueError, match="model must not be empty"):
-            GatewayInferenceController(
-                config=cfg, scheduler=MagicMock(n_gpus_per_node=8)
-            )
+            RolloutControllerV2(config=cfg, scheduler=MagicMock(n_gpus_per_node=8))
 
     def test_constructor(self):
-        cfg = GatewayControllerConfig(admin_api_key="test-key")
+        cfg = InferenceEngineConfig(backend="sglang:d1", admin_api_key="test-key")
         scheduler = MagicMock(n_gpus_per_node=8)
-        controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
+        controller = RolloutControllerV2(config=cfg, scheduler=scheduler)
 
         assert controller.config is cfg
         assert controller.scheduler is scheduler
@@ -272,63 +288,63 @@ class TestGatewayInferenceControllerConstruction:
         assert controller.worker_ids == {}
 
     def test_admin_api_key_defaults(self):
-        cfg = GatewayControllerConfig(admin_api_key="test-key")
+        cfg = InferenceEngineConfig(backend="sglang:d1", admin_api_key="test-key")
         scheduler = MagicMock(n_gpus_per_node=8)
-        controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
+        controller = RolloutControllerV2(config=cfg, scheduler=scheduler)
         assert controller.config.admin_api_key == "test-key"
 
     def test_version_management_without_services(self):
         """set_version / get_version work even without gateway services."""
-        cfg = GatewayControllerConfig(admin_api_key="test-key")
+        cfg = InferenceEngineConfig(backend="sglang:d1", admin_api_key="test-key")
         scheduler = MagicMock(n_gpus_per_node=8)
-        controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
+        controller = RolloutControllerV2(config=cfg, scheduler=scheduler)
 
         # No gateway services started, but version management is local
         controller._version = 42
         assert controller.get_version() == 42
 
     def test_export_stats_returns_dict(self):
-        cfg = GatewayControllerConfig(admin_api_key="test-key")
+        cfg = InferenceEngineConfig(backend="sglang:d1", admin_api_key="test-key")
         scheduler = MagicMock(n_gpus_per_node=8)
-        controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
+        controller = RolloutControllerV2(config=cfg, scheduler=scheduler)
         stats = controller.export_stats()
         assert isinstance(stats, dict)
 
     def test_start_proxy_is_noop(self):
-        cfg = GatewayControllerConfig(admin_api_key="test-key")
+        cfg = InferenceEngineConfig(backend="sglang:d1", admin_api_key="test-key")
         scheduler = MagicMock(n_gpus_per_node=8)
-        controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
+        controller = RolloutControllerV2(config=cfg, scheduler=scheduler)
         # Should not raise
         controller.start_proxy()
         controller.start_proxy_gateway()
 
     def test_proxy_gateway_addr(self):
-        cfg = GatewayControllerConfig(admin_api_key="test-key")
+        cfg = InferenceEngineConfig(backend="sglang:d1", admin_api_key="test-key")
         scheduler = MagicMock(n_gpus_per_node=8)
-        controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
+        controller = RolloutControllerV2(config=cfg, scheduler=scheduler)
         # Before initialize, proxy_gateway_addr returns the empty _gateway_addr
         assert controller.proxy_gateway_addr == ""
 
     def test_callback_addr_formats_ipv6_hostport(self):
-        cfg = GatewayControllerConfig(admin_api_key="test-key")
+        cfg = InferenceEngineConfig(backend="sglang:d1", admin_api_key="test-key")
         scheduler = MagicMock(n_gpus_per_node=8)
-        controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
+        controller = RolloutControllerV2(config=cfg, scheduler=scheduler)
         controller._callback_host = "2001:db8::10"
         controller._callback_port = 19000
 
         assert controller.callback_addr == "[2001:db8::10]:19000"
 
     def test_workflow_executor_raises_before_init(self):
-        cfg = GatewayControllerConfig(admin_api_key="test-key")
+        cfg = InferenceEngineConfig(backend="sglang:d1", admin_api_key="test-key")
         scheduler = MagicMock(n_gpus_per_node=8)
-        controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
+        controller = RolloutControllerV2(config=cfg, scheduler=scheduler)
         with pytest.raises(RuntimeError, match="initialize"):
             _ = controller.workflow_executor
 
     def test_config_perf_tracer_is_noop(self):
-        cfg = GatewayControllerConfig(admin_api_key="test-key")
+        cfg = InferenceEngineConfig(backend="sglang:d1", admin_api_key="test-key")
         scheduler = MagicMock(n_gpus_per_node=8)
-        controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
+        controller = RolloutControllerV2(config=cfg, scheduler=scheduler)
         # Should not raise
         controller.config_perf_tracer()
         controller.save_perf_tracer()
@@ -347,10 +363,14 @@ class TestGatewayInferenceControllerConstruction:
         scheduler = MagicMock(n_gpus_per_node=8)
         scheduler.get_workers.return_value = [worker]
 
-        cfg = GatewayControllerConfig(
+        cfg = InferenceEngineConfig(
+            backend="sglang:d1",
             tokenizer_path="mock-tokenizer",
             request_timeout=15.0,
-            set_reward_finish_timeout=7.5,
+            agent=AgentConfig(
+                agent_cls_path="tests.experimental.openai.utils.SimpleAgent",
+                set_reward_finish_timeout=7.5,
+            ),
             scheduling_spec=(
                 SchedulingSpec(
                     gpu=0,
@@ -361,7 +381,7 @@ class TestGatewayInferenceControllerConstruction:
             ),
             admin_api_key="test-admin-key",
         )
-        controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
+        controller = RolloutControllerV2(config=cfg, scheduler=scheduler)
         controller._callback_host = "127.0.0.1"
         controller._callback_port = 19000
 
@@ -389,15 +409,15 @@ class TestGatewayInferenceControllerConstruction:
 
 
 # =============================================================================
-# GatewayInferenceController — gateway HTTP helpers
+# RolloutControllerV2 — gateway HTTP helpers
 # =============================================================================
 
 
-class TestGatewayInferenceControllerHTTP:
+class TestRolloutControllerV2HTTP:
     def test_gateway_http_post_raises_on_failure(self):
-        cfg = GatewayControllerConfig(admin_api_key="test-key")
+        cfg = InferenceEngineConfig(backend="sglang:d1", admin_api_key="test-key")
         scheduler = MagicMock(n_gpus_per_node=8)
-        controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
+        controller = RolloutControllerV2(config=cfg, scheduler=scheduler)
         controller._gateway_addr = "http://127.0.0.1:19999"
         with pytest.raises(RuntimeError, match="Failed to POST"):
             controller._gateway_http_post("/test", {"key": "value"})
@@ -406,11 +426,12 @@ class TestGatewayInferenceControllerHTTP:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
 
-        cfg = GatewayControllerConfig(
+        cfg = InferenceEngineConfig(
+            backend="sglang:d1",
             admin_api_key="my-secret-key",
         )
         scheduler = MagicMock(n_gpus_per_node=8)
-        controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
+        controller = RolloutControllerV2(config=cfg, scheduler=scheduler)
         controller._gateway_addr = "http://127.0.0.1:8080"
 
         with patch.object(
@@ -427,11 +448,12 @@ class TestGatewayInferenceControllerHTTP:
 class TestOnlineCallbackFlow:
     @pytest.mark.asyncio
     async def test_online_callback_without_waiter_buffers_export_request(self):
-        cfg = GatewayControllerConfig(
+        cfg = InferenceEngineConfig(
+            backend="sglang:d1",
             admin_api_key="test-admin-key",
         )
         scheduler = MagicMock(n_gpus_per_node=8)
-        controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
+        controller = RolloutControllerV2(config=cfg, scheduler=scheduler)
         controller._start_online_callback_server()
         try:
             async with httpx.AsyncClient() as client:
@@ -448,11 +470,12 @@ class TestOnlineCallbackFlow:
 
     @pytest.mark.asyncio
     async def test_online_callback_settles_waiter_once(self):
-        cfg = GatewayControllerConfig(
+        cfg = InferenceEngineConfig(
+            backend="sglang:d1",
             admin_api_key="test-admin-key",
         )
         scheduler = MagicMock(n_gpus_per_node=8)
-        controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
+        controller = RolloutControllerV2(config=cfg, scheduler=scheduler)
         controller._start_online_callback_server()
 
         waiter_task = asyncio.create_task(
@@ -475,11 +498,12 @@ class TestOnlineCallbackFlow:
 
     @pytest.mark.asyncio
     async def test_online_callback_invalid_payload_keeps_waiter_pending(self):
-        cfg = GatewayControllerConfig(
+        cfg = InferenceEngineConfig(
+            backend="sglang:d1",
             admin_api_key="test-admin-key",
         )
         scheduler = MagicMock(n_gpus_per_node=8)
-        controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
+        controller = RolloutControllerV2(config=cfg, scheduler=scheduler)
         controller._start_online_callback_server()
 
         waiter_task = asyncio.create_task(
@@ -502,11 +526,12 @@ class TestOnlineCallbackFlow:
 
     @pytest.mark.asyncio
     async def test_cancelled_waiter_buffers_completed_online_result(self):
-        cfg = GatewayControllerConfig(
+        cfg = InferenceEngineConfig(
+            backend="sglang:d1",
             admin_api_key="test-admin-key",
         )
         scheduler = MagicMock(n_gpus_per_node=8)
-        controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
+        controller = RolloutControllerV2(config=cfg, scheduler=scheduler)
         controller._start_online_callback_server()
 
         waiter_task = asyncio.create_task(
@@ -648,45 +673,31 @@ class TestInferenceServiceWorkflow:
 
 
 class TestMultiNodeConfig:
-    def test_n_gpus_per_node_default_is_none(self):
-        cfg = GatewayControllerConfig()
-        assert cfg.n_gpus_per_node is None
-
-    def test_n_gpus_per_node_custom(self):
-        cfg = GatewayControllerConfig(n_gpus_per_node=4)
-        assert cfg.n_gpus_per_node == 4
-
-    def test_n_gpus_per_node_zero_raises(self):
-        cfg = GatewayControllerConfig(
-            n_gpus_per_node=0, backend="sglang:d1t8", admin_api_key="test-key"
-        )
+    def test_scheduler_zero_gpus_raises(self):
+        cfg = InferenceEngineConfig(backend="sglang:d1t8", admin_api_key="test-key")
+        scheduler = _make_scheduler()
+        scheduler.n_gpus_per_node = 0
         with pytest.raises(ValueError, match="n_gpus_per_node must be >= 1"):
-            GatewayInferenceController(
-                config=cfg, scheduler=MagicMock(n_gpus_per_node=0)
-            )
+            RolloutControllerV2(config=cfg, scheduler=MagicMock(n_gpus_per_node=0))
 
     def test_gpus_not_divisible_raises(self):
-        cfg = GatewayControllerConfig(
-            n_gpus_per_node=3, backend="sglang:d1t8", admin_api_key="test-key"
-        )
+        cfg = InferenceEngineConfig(backend="sglang:d1t8", admin_api_key="test-key")
+        scheduler = _make_scheduler()
+        scheduler.n_gpus_per_node = 3
         with pytest.raises(ValueError, match="must be divisible by n_gpus_per_node"):
-            GatewayInferenceController(
-                config=cfg, scheduler=MagicMock(n_gpus_per_node=3)
-            )
+            RolloutControllerV2(config=cfg, scheduler=MagicMock(n_gpus_per_node=3))
 
     def test_single_node_backward_compat(self):
-        cfg = GatewayControllerConfig(backend="sglang:d2t4", admin_api_key="test-key")
-        controller = GatewayInferenceController(
+        cfg = InferenceEngineConfig(backend="sglang:d2t4", admin_api_key="test-key")
+        controller = RolloutControllerV2(
             config=cfg, scheduler=MagicMock(n_gpus_per_node=8)
         )
         assert controller._nnodes_per_instance == 1
 
     def test_multi_node_valid_config(self):
         # tp=16, n_gpus_per_node=8 → nnodes_per_instance=2
-        cfg = GatewayControllerConfig(
-            n_gpus_per_node=8, backend="sglang:d1t16", admin_api_key="test-key"
-        )
-        controller = GatewayInferenceController(
+        cfg = InferenceEngineConfig(backend="sglang:d1t16", admin_api_key="test-key")
+        controller = RolloutControllerV2(
             config=cfg, scheduler=MagicMock(n_gpus_per_node=8)
         )
         assert controller._nnodes_per_instance == 2
@@ -711,14 +722,13 @@ class TestMultiNodeConfig:
         scheduler.get_workers.return_value = [worker0]
 
         # tp=8, n_gpus_per_node=4 → nnodes_per_instance=2
-        cfg = GatewayControllerConfig(
+        cfg = InferenceEngineConfig(
             tokenizer_path="mock-tokenizer",
             backend="sglang:d1t8",
-            n_gpus_per_node=4,
             scheduling_spec=(SchedulingSpec(gpu=1, cpu=1, mem=1, cmd="mock"),),
             admin_api_key="test-key",
         )
-        controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
+        controller = RolloutControllerV2(config=cfg, scheduler=scheduler)
         controller._callback_host = "127.0.0.1"
         controller._callback_port = 19000
 
@@ -769,14 +779,13 @@ class TestMultiNodeConfig:
         scheduler.get_workers.return_value = [worker0, worker1]
 
         # tp=8, n_gpus_per_node=4 → nnodes_per_instance=2
-        cfg = GatewayControllerConfig(
+        cfg = InferenceEngineConfig(
             tokenizer_path="mock-tokenizer",
             backend="sglang:d1t8",
-            n_gpus_per_node=4,
             scheduling_spec=(SchedulingSpec(gpu=1, cpu=1, mem=1, cmd="mock"),),
             admin_api_key="test-key",
         )
-        controller = GatewayInferenceController(config=cfg, scheduler=scheduler)
+        controller = RolloutControllerV2(config=cfg, scheduler=scheduler)
         controller._callback_host = "127.0.0.1"
         controller._callback_port = 19000
 

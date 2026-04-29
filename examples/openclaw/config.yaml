@@ -31,7 +31,7 @@ rollout:
   fileroot: ${cluster.fileroot}
   tokenizer_path: ${tokenizer_path}
   dump_to_file: false
-  openai:
+  agent:
     mode: online
     tool_call_parser: qwen
     reasoning_parser: qwen3

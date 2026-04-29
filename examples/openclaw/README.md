@@ -46,7 +46,7 @@ uv run python3 examples/openclaw/train.py --config examples/openclaw/config.yaml
     actor.backend=fsdp:d1 \
     actor.path=Qwen/Qwen3-0.6B \
     scheduler.type=local \
-    rollout.openai.admin_api_key=<admin-api-key>
+    rollout.agent.admin_api_key=<admin-api-key>
 ```
 
 After initialization, you will see output similar to the following:

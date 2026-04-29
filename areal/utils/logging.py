@@ -114,9 +114,9 @@ LOGGER_COLORS_EXACT = {
     "AgentRouter": "light_purple",
     "AgentWorker": "light_purple",
     "AgentDataProxy": "light_purple",
-    "AgentServiceController": "light_purple",
+    "AgentController": "light_purple",
     # Inference service - white (orchestration)
-    "GatewayInferenceController": "white",
+    "RolloutControllerV2": "white",
     "InferenceDataProxy": "white",
     "InferenceInfBridge": "white",
     "InferenceRouter": "white",

@@ -21,7 +21,7 @@ class DataProxyConfig:
     # Set at startup by __main__.py after the host is resolved.
     serving_addr: str = ""
 
-    # ArealOpenAI client parameters (forwarded from OpenAIProxyConfig)
+    # ArealOpenAI client parameters (forwarded from AgentConfig)
     tool_call_parser: str = "qwen"
     reasoning_parser: str = "qwen3"
     engine_max_tokens: int | None = None

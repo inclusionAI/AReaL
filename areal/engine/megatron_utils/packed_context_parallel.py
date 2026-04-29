@@ -163,13 +163,36 @@ def postprocess_packed_seqs_context_parallel(
     return output_new
 
 
+_VLM_FORWARD_KEYS = ("pixel_values", "image_grid_thw", "video_grid_thw")
+
+
+def extract_vision_from_multi_modal(
+    mb: dict[str, Any], padded_mb: dict[str, Any]
+) -> None:
+    """Extract pixel_values, image_grid_thw, video_grid_thw from multi_modal_input.
+
+    Mirrors the logic in FSDPEngine._prepare_mb_list. After extraction, vision
+    tensors are placed as top-level keys in both ``mb`` and ``padded_mb``.
+    """
+    if "multi_modal_input" not in mb:
+        return
+    multi_modal_input = mb["multi_modal_input"]
+    for key in _VLM_FORWARD_KEYS:
+        items = [item[key] for item in multi_modal_input if key in item]
+        if items:
+            concatenated = torch.cat(items, dim=0)
+            mb[key] = concatenated
+            padded_mb[key] = concatenated
+
+
 def packed_context_parallel_forward(
     model: torch.nn.Module,
     input_: dict[str, Any],
     gather_cp_output: bool = True,
+    is_vision_model: bool = False,
 ):
     input_ids = input_["input_ids"]
-    position_ids = input_["position_ids"]
+    position_ids = input_.get("position_ids", None)
     cu_seqlens = input_.get("cu_seqlens", None)
     # `attention_mask`: dense torch.Tensor (flex attention with Megatron) or None.
     # `tree_triton_data`: read from a separate key; takes priority over
@@ -178,21 +201,66 @@ def packed_context_parallel_forward(
     tree_triton_data = input_.get("tree_triton_data", None)
     packed_seq_params = None
 
+    is_vision = is_vision_model and any(key in input_ for key in _VLM_FORWARD_KEYS)
+
+    # Track whether we reconstructed 2D batch form for vision
+    vision_repack_info = None
+
     if cu_seqlens is not None:
-        if attention_mask is not None or tree_triton_data is not None:
-            raise ValueError(
-                "Attention mask should be None when using packed sequences."
+        if not is_vision:
+            if attention_mask is not None or tree_triton_data is not None:
+                raise ValueError(
+                    "Attention mask should be None when using packed sequences."
+                )
+            input_ids, packed_seq_params = preprocess_packed_seqs_context_parallel(
+                input_ids, cu_seqlens
             )
-        input_ids, packed_seq_params = preprocess_packed_seqs_context_parallel(
-            input_ids, cu_seqlens
-        )
-        input_ids = input_ids.contiguous()
+            input_ids = input_ids.contiguous()
+        else:
+            # VLM models expect batch-form [B, S] input_ids for mRoPE position
+            # computation and vision token embedding replacement. Reconstruct
+            # padded 2D tensors from packed 1D using cu_seqlens via boolean
+            # masking — avoids per-sample Python loop and GPU-CPU sync.
+            batch_size = cu_seqlens.shape[0] - 1
+            seq_lens = cu_seqlens[1:] - cu_seqlens[:-1]
+            max_seqlen = int(seq_lens.max().item())
+            # int64 for input_ids: mbridge's get_rope_index uses input_ids.dtype
+            # for position_ids, and some kernels (_index_put_impl_) require int64.
+            # Upcast to torch.long so the scatter `input_ids_2d[mask] = input_ids`
+            # below has matching source/dest dtypes (data pipeline may emit int32).
+            if input_ids.dtype != torch.long:
+                input_ids = input_ids.to(torch.long)
+            attention_mask = (
+                torch.arange(max_seqlen, device=input_ids.device)[None, :]
+                < seq_lens[:, None]
+            )
+            input_ids_2d = torch.zeros(
+                batch_size, max_seqlen, dtype=torch.long, device=input_ids.device
+            )
+            input_ids_2d[attention_mask] = input_ids
+            input_ids = input_ids_2d
+            vision_repack_info = (cu_seqlens, seq_lens, max_seqlen)
 
     # Pass tree_triton_data as attention_mask if present (for Triton tree attention)
     # Otherwise use the attention_mask from input (could be dense tensor for flex attention)
-    final_attention_mask = (
-        tree_triton_data if tree_triton_data is not None else attention_mask
-    )
+    # For VLM: pass None — the model's get_rope_index uses the 2D attention_mask
+    # internally for correct mRoPE positions. Each batch slot holds one sequence
+    # with trailing padding, so causal attention yields correct outputs at
+    # non-padding positions; padding outputs are discarded during repack.
+    if is_vision:
+        final_attention_mask = None
+    else:
+        final_attention_mask = (
+            tree_triton_data if tree_triton_data is not None else attention_mask
+        )
+
+    # VLM: pass vision inputs through to model forward. The VLM model computes
+    # mRoPE position_ids internally, so position_ids remains None for VLM.
+    vlm_kwargs: dict[str, Any] = {}
+    if is_vision:
+        for key in _VLM_FORWARD_KEYS:
+            if key in input_:
+                vlm_kwargs[key] = input_[key]
 
     try:
         output = model(
@@ -200,6 +268,7 @@ def packed_context_parallel_forward(
             attention_mask=final_attention_mask,
             position_ids=position_ids,
             packed_seq_params=packed_seq_params,
+            **vlm_kwargs,
         )
     except Exception as e:
         raise RuntimeError(
@@ -211,6 +280,22 @@ def packed_context_parallel_forward(
     is_pipeline_last_stage = mpu.is_pipeline_last_stage(
         ignore_virtual=False, vp_stage=model_vp_stage
     )
+
+    # Repack vision output to packed [total_len, ...] for the last PP stage only.
+    # Intermediate stages must return their output unchanged so the pipeline
+    # send/recv shapes match what the next stage expects (megatron-core's
+    # `_communicate_shapes` negotiates based on this return value).
+    #
+    # On the last PP stage, megatron-core GPTModel returns logits already
+    # transposed to [B, S, V] (gpt_model.py: `return logits.transpose(0, 1).contiguous()`),
+    # so a boolean mask of valid positions selects the packed sequence.
+    if vision_repack_info is not None and is_pipeline_last_stage:
+        _, repack_seq_lens, repack_max_seqlen = vision_repack_info
+        mask = (
+            torch.arange(repack_max_seqlen, device=output.device)[None, :]
+            < repack_seq_lens[:, None]
+        )
+        output = output[mask]
     output = postprocess_packed_seqs_context_parallel(
         output, cu_seqlens, is_pipeline_last_stage, gather_output=gather_cp_output
     )

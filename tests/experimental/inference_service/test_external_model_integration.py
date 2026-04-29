@@ -227,6 +227,7 @@ async def test_external_model_flow_end_to_end_gateway_router_data_proxy(router_c
             transport=external_transport, base_url="http://mock-external"
         ) as external_client,
     ):
+        data_proxy_app.state.http_client = external_client
         await router_client.post(
             "/register",
             json={"worker_addr": WORKER_ADDR},
@@ -244,6 +245,7 @@ async def test_external_model_flow_end_to_end_gateway_router_data_proxy(router_c
             *,
             client: httpx.AsyncClient | None = None,
         ) -> dict:
+            del router_addr, admin_api_key, timeout, client
             resp = await router_client.post(
                 "/register_model",
                 json={
@@ -268,6 +270,7 @@ async def test_external_model_flow_end_to_end_gateway_router_data_proxy(router_c
             model: str | None = None,
             client: httpx.AsyncClient | None = None,
         ) -> str:
+            del router_addr, path, timeout, admin_api_key, client
             payload: dict = {}
             if model is not None:
                 payload["model"] = model
@@ -293,6 +296,7 @@ async def test_external_model_flow_end_to_end_gateway_router_data_proxy(router_c
             *,
             client: httpx.AsyncClient | None = None,
         ) -> httpx.Response:
+            del timeout, client
             if upstream_url.startswith(WORKER_ADDR):
                 path = upstream_url.removeprefix(WORKER_ADDR)
                 return await data_proxy_client.post(path, content=body, headers=headers)
