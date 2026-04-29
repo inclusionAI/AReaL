@@ -1292,7 +1292,16 @@ class MegatronEngine(TrainEngine):
             max_lr=self.optimizer_config.lr,
             min_lr=self.optimizer_config.min_lr_ratio * self.optimizer_config.lr,
             lr_warmup_steps=warmup_steps,
-            lr_decay_steps=ft_spec.total_train_steps - warmup_steps,
+            # Megatron Core treats `lr_decay_steps` as the absolute step at
+            # which decay ends (it subtracts `lr_warmup_steps` internally to
+            # get the decay-phase length). Previously this was passed as
+            # `total_train_steps - warmup_steps`, which caused Megatron to
+            # subtract warmup twice and the cosine schedule to reach min_lr
+            # ~one full warmup earlier than intended (e.g. lr=0 at step 198
+            # for a 220-step run). Pass the raw total so cosine spans
+            # [warmup_steps, total_train_steps], matching HF's
+            # get_cosine_schedule_with_warmup used by the FSDP engine.
+            lr_decay_steps=ft_spec.total_train_steps,
             lr_decay_style=self.optimizer_config.lr_scheduler_type,
             start_wd=self.optimizer_config.weight_decay,
             end_wd=self.optimizer_config.weight_decay,
