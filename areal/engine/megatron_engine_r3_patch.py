@@ -524,16 +524,6 @@ def _r3_forward_backward_batch(
         # Harvest agreement stats BEFORE clearing replay state.
         _agreement = RouterReplay.harvest_agreement_stats()
         self._r3_last_agreement_stats = _agreement
-        if _agreement.get("n_samples", 0) > 0:
-            from areal.utils import stats_tracker
-            with stats_tracker.scope("r3"):
-                stats_tracker.scalar(
-                    router_agreement_rate=_agreement["avg"],
-                    router_agreement_rate_min=_agreement["min"],
-                    router_agreement_rate_max=_agreement["max"],
-                    router_agreement_n_samples=_agreement["n_samples"],
-                    router_agreement_n_calls=_agreement["n_calls"],
-                )
 
         clear_router_replay()
         self._r3_per_mb_experts = None
