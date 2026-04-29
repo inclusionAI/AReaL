@@ -79,7 +79,8 @@ def test_inference_service_online_rl(tmp_path_factory):
         f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
         f"actor.path={model_path}",
         "scheduler.type=local",
-        f"rollout.openai.admin_api_key={admin_api_key}",
+        f"rollout.admin_api_key={admin_api_key}",
+        "rollout._version=v2",
         "stats_logger.wandb.mode=disabled",
     ]
 
@@ -245,6 +246,7 @@ def test_tau2_rollout(tmp_path_factory):
             "cluster.n_gpus_per_node=2",
             f"cluster.fileroot={str(experiments_path)}",
             f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+            "rollout.admin_api_key=test-admin-key",
             f"model_path={model_path}",
             "train_dataset.batch_size=2",
             "train_dataset.path=tau2/train",
