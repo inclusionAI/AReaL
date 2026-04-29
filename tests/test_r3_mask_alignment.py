@@ -5,87 +5,76 @@ from areal.engine.megatron_engine_r3_patch import _align_routed_experts_to_mask
 
 
 class TestAlignRoutedExpertsToMask:
-    """Tests for _align_routed_experts_to_mask: seq and batch alignment."""
-
-    def _make_left_padded_re(self, bs, seqlen, num_layers=2, topk=3, pad_val=0):
-        re = torch.randint(1, 64, (bs, seqlen, num_layers, topk))
-        re[:, 0, :, :] = pad_val
-        re[:, 1, :, :] = pad_val
-        return re
+    """Tests for _align_routed_experts_to_mask: cu_seqlens-based alignment."""
 
     def test_same_shape_no_change(self):
         routed_experts = torch.randint(1, 64, (4, 10, 2, 3))
-        attention_mask = torch.ones(4, 10, dtype=torch.long)
-        result = _align_routed_experts_to_mask(routed_experts, attention_mask)
+        cu_seqlens = torch.tensor([0, 10, 20, 30, 40], dtype=torch.long)
+        max_seqlen = 10
+        result = _align_routed_experts_to_mask(routed_experts, cu_seqlens, max_seqlen)
         torch.testing.assert_close(result, routed_experts)
 
     def test_seq_dim_shorter_right_pad(self):
         routed_experts = torch.randint(1, 64, (2, 5, 2, 3))
-        attention_mask = torch.ones(2, 8, dtype=torch.long)
-        result = _align_routed_experts_to_mask(routed_experts, attention_mask)
+        cu_seqlens = torch.tensor([0, 5, 10], dtype=torch.long)
+        max_seqlen = 8
+        result = _align_routed_experts_to_mask(routed_experts, cu_seqlens, max_seqlen)
         assert result.shape == (2, 8, 2, 3)
         torch.testing.assert_close(result[:, :5, :, :], routed_experts)
         assert (result[:, 5:, :, :] == 0).all()
 
-    def test_seq_dim_longer_left_padded_to_left_aligned(self):
-        bs, re_seqlen, mask_seqlen, num_layers, topk = 3, 10, 6, 2, 3
-        routed_experts = torch.zeros(bs, re_seqlen, num_layers, topk, dtype=torch.long)
-        routed_experts[:, 4:, :, :] = torch.randint(1, 64, (bs, 6, num_layers, topk))
-        attention_mask = torch.ones(bs, mask_seqlen, dtype=torch.long)
-        result = _align_routed_experts_to_mask(routed_experts, attention_mask)
-        assert result.shape == (bs, mask_seqlen, num_layers, topk)
-        torch.testing.assert_close(result, routed_experts[:, 4:, :, :])
-
-    def test_seq_dim_longer_with_varying_lengths(self):
-        bs, re_seqlen, mask_seqlen, num_layers, topk = 2, 10, 8, 2, 3
-        routed_experts = torch.zeros(bs, re_seqlen, num_layers, topk, dtype=torch.long)
-        routed_experts[0, 3:, :, :] = torch.randint(1, 64, (7, num_layers, topk))
-        routed_experts[1, 5:, :, :] = torch.randint(1, 64, (5, num_layers, topk))
-        attention_mask = torch.zeros(bs, mask_seqlen, dtype=torch.long)
-        attention_mask[0, :7] = 1
-        attention_mask[1, :5] = 1
-        result = _align_routed_experts_to_mask(routed_experts, attention_mask)
-        assert result.shape == (bs, mask_seqlen, num_layers, topk)
-        torch.testing.assert_close(result[0, :7, :, :], routed_experts[0, 3:, :, :])
-        torch.testing.assert_close(result[1, :5, :, :], routed_experts[1, 5:, :, :])
+    def test_varying_seq_lens(self):
+        bs, re_seqlen, num_layers, topk = 2, 10, 2, 3
+        routed_experts = torch.randint(1, 64, (bs, re_seqlen, num_layers, topk))
+        cu_seqlens = torch.tensor([0, 7, 12], dtype=torch.long)
+        max_seqlen = 8
+        result = _align_routed_experts_to_mask(routed_experts, cu_seqlens, max_seqlen)
+        assert result.shape == (2, 8, 2, 3)
+        torch.testing.assert_close(result[0, :7, :, :], routed_experts[0, :7, :, :])
+        torch.testing.assert_close(result[1, :5, :, :], routed_experts[1, :5, :, :])
         assert (result[0, 7:, :, :] == 0).all()
         assert (result[1, 5:, :, :] == 0).all()
 
     def test_batch_dim_smaller_padded(self):
         routed_experts = torch.randint(1, 64, (3, 8, 2, 3))
-        attention_mask = torch.ones(5, 8, dtype=torch.long)
-        result = _align_routed_experts_to_mask(routed_experts, attention_mask)
-        assert result.shape == (5, 8, 2, 3)
+        cu_seqlens = torch.tensor([0, 8, 16, 24, 32], dtype=torch.long)
+        max_seqlen = 8
+        result = _align_routed_experts_to_mask(routed_experts, cu_seqlens, max_seqlen)
+        assert result.shape == (4, 8, 2, 3)
         torch.testing.assert_close(result[:3, :, :, :], routed_experts)
         assert (result[3:, :, :, :] == 0).all()
 
     def test_batch_dim_larger_truncated(self):
         routed_experts = torch.randint(1, 64, (5, 8, 2, 3))
-        attention_mask = torch.ones(3, 8, dtype=torch.long)
-        result = _align_routed_experts_to_mask(routed_experts, attention_mask)
-        assert result.shape == (3, 8, 2, 3)
-        torch.testing.assert_close(result, routed_experts[:3])
+        cu_seqlens = torch.tensor([0, 8, 16], dtype=torch.long)
+        max_seqlen = 8
+        result = _align_routed_experts_to_mask(routed_experts, cu_seqlens, max_seqlen)
+        assert result.shape == (2, 8, 2, 3)
+        torch.testing.assert_close(result, routed_experts[:2])
 
     def test_both_batch_and_seq_mismatch(self):
-        routed_experts = torch.zeros(2, 10, 2, 3, dtype=torch.long)
-        routed_experts[:, 4:, :, :] = torch.randint(1, 64, (2, 6, 2, 3))
-        attention_mask = torch.ones(4, 6, dtype=torch.long)
-        result = _align_routed_experts_to_mask(routed_experts, attention_mask)
+        routed_experts = torch.randint(1, 64, (2, 10, 2, 3))
+        cu_seqlens = torch.tensor([0, 6, 12, 18, 24], dtype=torch.long)
+        max_seqlen = 6
+        result = _align_routed_experts_to_mask(routed_experts, cu_seqlens, max_seqlen)
         assert result.shape == (4, 6, 2, 3)
-        torch.testing.assert_close(result[:2, :, :, :], routed_experts[:, 4:, :, :])
+        torch.testing.assert_close(result[:2, :, :, :], routed_experts[:, :6, :, :])
         assert (result[2:, :, :, :] == 0).all()
 
-    def test_empty_attention_mask_same_seqlen(self):
+    def test_zero_len_sequences(self):
         routed_experts = torch.randint(1, 64, (2, 8, 2, 3))
-        attention_mask = torch.zeros(2, 8, dtype=torch.long)
-        result = _align_routed_experts_to_mask(routed_experts, attention_mask)
+        cu_seqlens = torch.tensor([0, 0, 8], dtype=torch.long)
+        max_seqlen = 8
+        result = _align_routed_experts_to_mask(routed_experts, cu_seqlens, max_seqlen)
         assert result.shape == (2, 8, 2, 3)
-        torch.testing.assert_close(result, routed_experts)
+        assert (result[0] == 0).all()
+        torch.testing.assert_close(result[1], routed_experts[1])
 
-    def test_empty_attention_mask_longer_re_seqlen(self):
-        routed_experts = torch.zeros(2, 10, 2, 3, dtype=torch.long)
-        routed_experts[:, 4:, :, :] = torch.randint(1, 64, (2, 6, 2, 3))
-        attention_mask = torch.zeros(2, 6, dtype=torch.long)
-        result = _align_routed_experts_to_mask(routed_experts, attention_mask)
-        assert result.shape == (2, 6, 2, 3)
-        assert (result == 0).all()
+    def test_max_seqlen_larger_than_re_seqlen(self):
+        routed_experts = torch.randint(1, 64, (2, 5, 2, 3))
+        cu_seqlens = torch.tensor([0, 5, 10], dtype=torch.long)
+        max_seqlen = 10
+        result = _align_routed_experts_to_mask(routed_experts, cu_seqlens, max_seqlen)
+        assert result.shape == (2, 10, 2, 3)
+        torch.testing.assert_close(result[:, :5, :, :], routed_experts)
+        assert (result[:, 5:, :, :] == 0).all()
