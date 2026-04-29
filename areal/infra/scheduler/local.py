@@ -872,10 +872,9 @@ class LocalScheduler(Scheduler):
                         self._read_log_tail(str(log_file)),
                     )
 
-                worker_ip = gethostip()
                 worker = Worker(
                     id=worker_id,
-                    ip=worker_ip,
+                    ip=gethostip(),
                     worker_ports=[str(p) for p in ports],
                     engine_ports=[],
                 )
@@ -964,11 +963,7 @@ class LocalScheduler(Scheduler):
         ready_workers = set()
 
         while len(ready_workers) < len(workers):
-            elapsed = time.time() - start_time
-            if elapsed > timeout:
-                not_ready = [
-                    w.worker.id for w in workers if w.worker.id not in ready_workers
-                ]
+            if time.time() - start_time > timeout:
                 raise WorkerTimeoutError(
                     role,
                     timeout,
@@ -992,6 +987,7 @@ class LocalScheduler(Scheduler):
 
                 if self._is_worker_ready(worker_info):
                     ready_workers.add(worker_info.worker.id)
+                    logger.debug(f"Worker {worker_info.worker.id} is ready")
 
             if len(ready_workers) < len(workers):
                 time.sleep(self.health_check_interval)
@@ -1005,33 +1001,15 @@ class LocalScheduler(Scheduler):
 
         try:
             response = requests.get(url, timeout=2.0)
-            ready = response.status_code == 200
-            if not ready:
-                logger.warning(
-                    f"Worker health check failed: {url} -> {response.status_code}"
-                )
-            return ready
-        except Exception as e:
-            logger.warning(f"Worker health check error: {url} -> {e}")
+            return response.status_code == 200
+        except Exception:
             return False
 
     def _configure_worker(self, worker_info: WorkerInfo, worker_rank: int):
-        worker_id = worker_info.worker.id
-        wait_start = time.time()
-        last_log_time = wait_start
         while not self._is_worker_ready(worker_info):
             time.sleep(0.1)
-            now = time.time()
-            if now - last_log_time >= 5.0:
-                elapsed = now - wait_start
-                logger.warning(
-                    f"Still waiting for worker "
-                    f"'{worker_id}' after {elapsed:.0f}s "
-                    f"(ip={worker_info.worker.ip}, "
-                    f"ports={worker_info.worker.worker_ports})"
-                )
-                last_log_time = now
 
+        worker_id = worker_info.worker.id
         port = int(worker_info.worker.worker_ports[0])
         url = f"http://{format_hostport(worker_info.worker.ip, port)}/configure"
 
@@ -1368,6 +1346,10 @@ class LocalScheduler(Scheduler):
         url = f"http://{format_hostport(worker_info.worker.ip, port)}/create_engine"
 
         try:
+            logger.debug(
+                f"Creating engine '{engine_name}' (class: {engine}) on worker '{worker_id}'"
+            )
+
             timeout = aiohttp.ClientTimeout(total=300.0)
             async with aiohttp.ClientSession(
                 timeout=timeout,
@@ -1381,6 +1363,9 @@ class LocalScheduler(Scheduler):
                 ) as response:
                     if response.status == 200:
                         result = await response.json()
+                        logger.debug(
+                            f"Engine '{engine_name}' created successfully on worker '{worker_id}'"
+                        )
                         return result.get("result")
                     elif response.status == 400:
                         # Import error or bad request
@@ -1640,6 +1625,10 @@ class LocalScheduler(Scheduler):
                 )
 
             try:
+                logger.debug(
+                    f"Async calling method '{method}' on worker '{worker_id}' (attempt {attempt})"
+                )
+
                 timeo = aiohttp.ClientTimeout(
                     total=http_timeout, sock_connect=http_timeout, connect=http_timeout
                 )
