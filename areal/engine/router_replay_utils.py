@@ -218,11 +218,6 @@ def set_router_replay_data(
 ) -> None:
     """Scatter packed router top-k indices to SP ranks and update RouterReplay instances.
 
-    **CRITICAL**: This function must pack tokens using the EXACT same
-    cu_seqlens-based TP-aligned layout that Megatron uses for input_ids.
-    A different packing method (e.g., simple attention_mask concatenation)
-    causes token misalignment and near-random agreement rates.
-
     The packing steps mirror ``pad_packed_tensor_dict`` in ``areal/utils/data.py``:
 
     1. Use ``cu_seqlens`` to extract each sample's real tokens from the

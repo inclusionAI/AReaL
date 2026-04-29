@@ -284,10 +284,6 @@ def _r3_forward_backward_batch(
 
     If the data does not contain ``routed_experts``, delegates directly
     to the original method with zero overhead.
-
-    **CRITICAL FIX**: Uses ``cu_seqlens`` from the padded micro-batch
-    (with per-sequence TP alignment) for packing replay data, ensuring
-    token ordering matches exactly what Megatron's transformer layers see.
     """
     from areal.engine.router_replay_patch import RouterReplay, RouterReplayAction
     from areal.engine.router_replay_utils import (

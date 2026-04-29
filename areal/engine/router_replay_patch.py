@@ -6,24 +6,6 @@ Router Replay forces the TopKRouter to use pre-recorded expert assignments
 This eliminates the train/inference routing mismatch caused by weight
 staleness in asynchronous RL training.
 
-Patches applied:
-1. **RouterReplay class** -- self-contained class (no dependency on
-   megatron.core.transformer.moe.router_replay which does not exist in
-   megatron-core 0.16.0).
-2. **TransformerConfig.__init__** -- accepts ``enable_routing_replay`` kwarg.
-3. **TopKRouter.__init__** -- creates a ``RouterReplay`` instance per MoE layer.
-4. **TopKRouter.routing** -- replaces routing logic to support record/replay.
-5. **MoEAlltoAllTokenDispatcher.preprocess** -- fixes ``num_out_tokens`` when
-   replay indices contain duplicate expert assignments.
-
-Usage::
-
-    from areal.engine.router_replay_patch import apply_router_replay_patch
-    apply_router_replay_patch()          # call once before model creation
-
-    from areal.engine.router_replay_patch import remove_router_replay_patch
-    remove_router_replay_patch()         # optional: for test cleanup
-
 Ref some code from megatron or verl, adapted for AReaL.
 """
 
@@ -76,7 +58,6 @@ from megatron.core.transformer.transformer_config import TransformerConfig
 
 # ===================================================================
 # RouterReplayAction enum and RouterReplay class
-# (self-contained -- no dependency on megatron.core.transformer.moe.router_replay)
 # ===================================================================
 
 
