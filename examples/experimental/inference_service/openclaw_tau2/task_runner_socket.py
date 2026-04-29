@@ -4,7 +4,6 @@ import sys
 from pathlib import Path
 
 from loguru import logger
-
 from tau2.data_model.simulation import SimulationRun
 from tau2.data_model.tasks import Task
 from tau2.environment.environment import Environment
@@ -24,8 +23,12 @@ def _initial_state_kwargs(task: Task) -> dict:
     }
 
 
-def _save_simulation(domain: str, task: Task, agent: str, simulation: SimulationRun) -> None:
-    output_file = Path("simulation_results") / f"simulation_{domain}_{task.id}_{agent}.json"
+def _save_simulation(
+    domain: str, task: Task, agent: str, simulation: SimulationRun
+) -> None:
+    output_file = (
+        Path("simulation_results") / f"simulation_{domain}_{task.id}_{agent}.json"
+    )
     output_file.parent.mkdir(exist_ok=True)
     try:
         payload = (
@@ -36,7 +39,8 @@ def _save_simulation(domain: str, task: Task, agent: str, simulation: Simulation
             else simulation.__dict__
         )
         output_file.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False, default=str), encoding="utf-8"
+            json.dumps(payload, indent=2, ensure_ascii=False, default=str),
+            encoding="utf-8",
         )
         logger.info("Simulation saved to: {}", output_file)
     except Exception as exc:
@@ -66,7 +70,10 @@ def _build_agent(
     if issubclass(agent_constructor, LLMAgent):
         return (
             agent_constructor(
-                tools=tools, domain_policy=policy, llm=llm_agent, llm_args=llm_args_agent
+                tools=tools,
+                domain_policy=policy,
+                llm=llm_agent,
+                llm_args=llm_args_agent,
             ),
             environment,
             False,
@@ -74,7 +81,11 @@ def _build_agent(
     if issubclass(agent_constructor, LLMGTAgent):
         return (
             agent_constructor(
-                tools=tools, domain_policy=policy, llm=llm_agent, llm_args=llm_args_agent, task=task
+                tools=tools,
+                domain_policy=policy,
+                llm=llm_agent,
+                llm_args=llm_args_agent,
+                task=task,
             ),
             environment,
             False,
@@ -85,7 +96,9 @@ def _build_agent(
             solo_environment.set_state(**init_kwargs)
         if env_server:
             env_server.environment = solo_environment
-        user_tools = solo_environment.get_user_tools() if solo_environment.user_tools else []
+        user_tools = (
+            solo_environment.get_user_tools() if solo_environment.user_tools else []
+        )
         return (
             agent_constructor(
                 tools=solo_environment.get_tools() + user_tools,
@@ -135,7 +148,11 @@ def _run_task_impl(
     if max_errors <= 0:
         raise ValueError("Max errors must be greater than 0")
     logger.info(
-        "STARTING SIMULATION: domain={} task={} agent={} user={}", domain, task.id, agent, user
+        "STARTING SIMULATION: domain={} task={} agent={} user={}",
+        domain,
+        task.id,
+        agent,
+        user,
     )
     environment_constructor = registry.get_env_constructor(domain)
     environment = environment_constructor()
@@ -191,7 +208,10 @@ def _run_task_impl(
             "seed": seed,
             "solo_mode": solo_mode,
         }
-        if "validate_communication" in inspect.signature(Orchestrator.__init__).parameters:
+        if (
+            "validate_communication"
+            in inspect.signature(Orchestrator.__init__).parameters
+        ):
             orch_kwargs["validate_communication"] = enforce_communication_protocol
         simulation = Orchestrator(**orch_kwargs).run()
         simulation.reward_info = evaluate_simulation_with_environment(
@@ -259,12 +279,17 @@ def _build_cli_parser(description: str, max_steps: int):
     import argparse
 
     parser = argparse.ArgumentParser(description=description)
-    parser.add_argument("--domain", type=str, default="airline", choices=["airline", "retail"])
+    parser.add_argument(
+        "--domain", type=str, default="airline", choices=["airline", "retail"]
+    )
     parser.add_argument("--task-id", type=str)
     parser.add_argument("--max-steps", type=int, default=max_steps)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
-        "--log-level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
+        "--log-level",
+        type=str,
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
     )
     for name, default in (
         ("--agent", "openclaw_agent"),
@@ -288,7 +313,11 @@ def _load_selected_task(domain: str, task_id: str | None) -> Task | None:
     if not tasks:
         logger.error("No tasks found for domain: {}", domain)
         return None
-    task = next((item for item in tasks if item.id == task_id), tasks[0]) if task_id else tasks[0]
+    task = (
+        next((item for item in tasks if item.id == task_id), tasks[0])
+        if task_id
+        else tasks[0]
+    )
     if task_id and task.id != task_id:
         logger.error("Task {} not found", task_id)
         return None
@@ -296,7 +325,10 @@ def _load_selected_task(domain: str, task_id: str | None) -> Task | None:
 
 
 def _log_simulation_summary(
-    simulation: SimulationRun, *, environment: Environment | None = None, debug: bool = False
+    simulation: SimulationRun,
+    *,
+    environment: Environment | None = None,
+    debug: bool = False,
 ) -> None:
     logger.info("Task ID: {}", simulation.task_id)
     logger.info("Steps taken: {}", len(simulation.messages))
@@ -309,7 +341,9 @@ def _log_simulation_summary(
         if simulation.reward_info.action_checks:
             logger.info(
                 "Action Checks: {}/{} matched",
-                sum(check.action_match for check in simulation.reward_info.action_checks),
+                sum(
+                    check.action_match for check in simulation.reward_info.action_checks
+                ),
                 len(simulation.reward_info.action_checks),
             )
         if simulation.reward_info.env_assertions:
@@ -326,7 +360,12 @@ def _log_simulation_summary(
         logger.info("Environment DB Hash: {}", environment.get_db_hash())
     if debug:
         for idx, turn in enumerate(simulation.messages, 1):
-            logger.debug("Turn {}: role={} content={}", idx, turn.role, (turn.content or "")[:200])
+            logger.debug(
+                "Turn {}: role={} content={}",
+                idx,
+                turn.role,
+                (turn.content or "")[:200],
+            )
 
 
 def main() -> int:
@@ -358,7 +397,9 @@ def main() -> int:
     except Exception:
         logger.exception("Error running task")
         return 1
-    _log_simulation_summary(simulation, environment=environment, debug=args.log_level == "DEBUG")
+    _log_simulation_summary(
+        simulation, environment=environment, debug=args.log_level == "DEBUG"
+    )
     return 0
 
 

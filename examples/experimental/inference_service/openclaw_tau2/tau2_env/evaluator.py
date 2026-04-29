@@ -1,5 +1,4 @@
 from loguru import logger
-
 from tau2.data_model.simulation import (
     DBCheck,
     EnvAssertionCheck,
@@ -43,7 +42,11 @@ def _merge_reward_breakdowns(*infos: RewardInfo | None) -> dict:
 class OpenClawEnvironmentEvaluator:
     @classmethod
     def calculate_reward(
-        cls, environment: Environment, task: Task, full_trajectory: list, solo_mode: bool = False
+        cls,
+        environment: Environment,
+        task: Task,
+        full_trajectory: list,
+        solo_mode: bool = False,
     ) -> RewardInfo:
         _ = full_trajectory, solo_mode
         criteria = task.evaluation_criteria
@@ -61,11 +64,16 @@ class OpenClawEnvironmentEvaluator:
         for action in criteria.actions or []:
             try:
                 gold_environment.make_tool_call(
-                    tool_name=action.name, requestor=action.requestor, **action.arguments
+                    tool_name=action.name,
+                    requestor=action.requestor,
+                    **action.arguments,
                 )
             except Exception as exc:
                 logger.warning(
-                    "Error in golden action {}({}): {}", action.name, action.arguments, exc
+                    "Error in golden action {}({}): {}",
+                    action.name,
+                    action.arguments,
+                    exc,
                 )
         db_reward = float(
             gold_environment.get_db_hash() == environment.get_db_hash()
@@ -75,7 +83,9 @@ class OpenClawEnvironmentEvaluator:
         env_reward = 1.0
         for assertion in criteria.env_assertions or []:
             met = environment.run_env_assertion(assertion, raise_assertion_error=False)
-            check = EnvAssertionCheck(env_assertion=assertion, met=met, reward=float(met))
+            check = EnvAssertionCheck(
+                env_assertion=assertion, met=met, reward=float(met)
+            )
             env_checks.append(check)
             env_reward *= check.reward
         reward = 1.0
@@ -122,20 +132,31 @@ def evaluate_simulation_with_environment(
             task=task, full_trajectory=simulation.messages
         )
     if evaluation_type == EvaluationType.COMMUNICATE:
-        return CommunicateEvaluator.calculate_reward(task=task, full_trajectory=simulation.messages)
+        return CommunicateEvaluator.calculate_reward(
+            task=task, full_trajectory=simulation.messages
+        )
     if evaluation_type == EvaluationType.ACTION:
-        return ActionEvaluator.calculate_reward(task=task, full_trajectory=simulation.messages)
-    if evaluation_type not in {EvaluationType.ALL, EvaluationType.ALL_WITH_NL_ASSERTIONS}:
+        return ActionEvaluator.calculate_reward(
+            task=task, full_trajectory=simulation.messages
+        )
+    if evaluation_type not in {
+        EvaluationType.ALL,
+        EvaluationType.ALL_WITH_NL_ASSERTIONS,
+    }:
         raise ValueError(f"Unknown evaluation type: {evaluation_type}")
     env_info = OpenClawEnvironmentEvaluator.calculate_reward(
         environment, task, simulation.messages, solo_mode
     )
-    action_info = ActionEvaluator.calculate_reward(task=task, full_trajectory=simulation.messages)
+    action_info = ActionEvaluator.calculate_reward(
+        task=task, full_trajectory=simulation.messages
+    )
     communicate_info = CommunicateEvaluator.calculate_reward(
         task=task, full_trajectory=simulation.messages
     )
     nl_info = (
-        NLAssertionsEvaluator.calculate_reward(task=task, full_trajectory=simulation.messages)
+        NLAssertionsEvaluator.calculate_reward(
+            task=task, full_trajectory=simulation.messages
+        )
         if evaluation_type == EvaluationType.ALL_WITH_NL_ASSERTIONS
         else None
     )
@@ -162,7 +183,9 @@ def evaluate_simulation_with_environment(
         nl_assertions=nl_info.nl_assertions if nl_info else None,
         communicate_checks=communicate_info.communicate_checks,
         reward_basis=criteria.reward_basis,
-        reward_breakdown=_merge_reward_breakdowns(env_info, action_info, communicate_info, nl_info),
+        reward_breakdown=_merge_reward_breakdowns(
+            env_info, action_info, communicate_info, nl_info
+        ),
         info={
             "env": env_info.info,
             "nl": nl_info.info if nl_info else None,

@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 
 from loguru import logger
-
 from tau2.environment.tool import Tool
 
 
@@ -29,7 +28,8 @@ class OpenClawWorkspaceManager:
         self.llm_base_url = llm_base_url or os.environ.get("OPENCLAW_API_BASE")
         self.llm_model = llm_model or os.environ.get("OPENCLAW_MODEL", "gpt-4o")
         self.base_workspace_dir = Path(
-            base_workspace_dir or Path(tempfile.gettempdir()) / "openclaw-tau2-workspaces"
+            base_workspace_dir
+            or Path(tempfile.gettempdir()) / "openclaw-tau2-workspaces"
         )
         self.base_workspace_dir.mkdir(parents=True, exist_ok=True)
         self.created_agents: set[str] = set()
@@ -62,7 +62,9 @@ class OpenClawWorkspaceManager:
             f"- `{name}` ({info.get('type', 'string')}, {'required' if name in required else 'optional'}): {info.get('description', '')}"
             for name, info in properties.items()
         )
-        example = json.dumps({name: f"<{name}>" for name in properties if name in required} or {})
+        example = json.dumps(
+            {name: f"<{name}>" for name in properties if name in required} or {}
+        )
         return "\n".join(
             filter(
                 None,
@@ -94,7 +96,9 @@ class OpenClawWorkspaceManager:
     def _setup_workspace_tools(self, workspace_path: Path, tools: list[Tool]) -> None:
         skill_dir = workspace_path / "skills" / "tau2-tools"
         skill_dir.mkdir(parents=True, exist_ok=True)
-        (skill_dir / "SKILL.md").write_text(self._build_skill_markdown(tools), encoding="utf-8")
+        (skill_dir / "SKILL.md").write_text(
+            self._build_skill_markdown(tools), encoding="utf-8"
+        )
         tools_dir = workspace_path / "tools"
         tools_dir.mkdir(exist_ok=True)
         self._write_json(
@@ -156,7 +160,9 @@ class OpenClawWorkspaceManager:
             )
             if result.returncode:
                 logger.warning(
-                    "Failed to delete agent '{}': {}", agent_id, result.stderr or result.stdout
+                    "Failed to delete agent '{}': {}",
+                    agent_id,
+                    result.stderr or result.stdout,
                 )
         except Exception as exc:
             logger.debug("Agent deletion via CLI failed for '{}': {}", agent_id, exc)

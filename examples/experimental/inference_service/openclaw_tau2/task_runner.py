@@ -1,7 +1,6 @@
 import sys
 
 from loguru import logger
-
 from tau2.data_model.simulation import SimulationRun
 from tau2.data_model.tasks import Task
 from tau2.evaluator.evaluator import EvaluationType

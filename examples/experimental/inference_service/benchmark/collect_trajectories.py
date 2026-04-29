@@ -20,7 +20,7 @@ Usage:
       --concurrency 5 \
       --num-tasks 50 \
       --max-steps 200 \
-      --output-dir /storage/.../trajectories
+      --output-dir ./trajectories
 """
 
 from __future__ import annotations

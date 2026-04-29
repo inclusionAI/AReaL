@@ -26,7 +26,8 @@ try:
     from tau2.environment.tool import Tool
 except ImportError as exc:
     logger.error(
-        "Failed to import tau2: {}\nPlease install tau2-bench: pip install -e ../tau2-bench", exc
+        "Failed to import tau2: {}\nPlease install tau2-bench: pip install -e ../tau2-bench",
+        exc,
     )
     raise
 
@@ -43,7 +44,11 @@ class MessageTranslator:
                 translated.append({"role": "user", "content": msg.content})
             elif isinstance(msg, ToolMessage):
                 translated.append(
-                    {"role": "tool", "content": msg.content, "tool_call_id": msg.tool_call_id}
+                    {
+                        "role": "tool",
+                        "content": msg.content,
+                        "tool_call_id": msg.tool_call_id,
+                    }
                 )
             elif isinstance(msg, SystemMessage):
                 translated.append({"role": "system", "content": msg.content})
@@ -115,8 +120,8 @@ class OpenClawAgent(LocalAgent[OpenClawAgentState]):
             api_key=self.config.api_key,
             model=self.config.model,
         )
-        self.workspace_manager: OpenClawWorkspaceManager | None = OpenClawWorkspaceManager(
-            cli_command=self.config.cli_command
+        self.workspace_manager: OpenClawWorkspaceManager | None = (
+            OpenClawWorkspaceManager(cli_command=self.config.cli_command)
         )
         self.agent_id: str | None = f"tau2-{uuid.uuid4().hex[:8]}"
         try:
@@ -126,7 +131,9 @@ class OpenClawAgent(LocalAgent[OpenClawAgentState]):
             if self.socket_server_config:
                 self._inject_socket_tools(self.socket_server_config)
         except Exception as exc:
-            logger.warning("Failed to create workspace, continuing without isolation: {}", exc)
+            logger.warning(
+                "Failed to create workspace, continuing without isolation: {}", exc
+            )
             self.workspace_manager = None
             self.agent_id = None
         logger.info(
@@ -143,12 +150,16 @@ class OpenClawAgent(LocalAgent[OpenClawAgentState]):
             return
         from ..tau2_env import create_openclaw_tool_script
 
-        tools_dir = self.workspace_manager.get_workspace_path(self.agent_id) / "socket_tools"
+        tools_dir = (
+            self.workspace_manager.get_workspace_path(self.agent_id) / "socket_tools"
+        )
         tools_dir.mkdir(exist_ok=True)
         for tool in self.tools:
             script_path = tools_dir / f"{tool.name}.py"
             script_path.write_text(
-                create_openclaw_tool_script(tool_name=tool.name, server_config=server_config),
+                create_openclaw_tool_script(
+                    tool_name=tool.name, server_config=server_config
+                ),
                 encoding="utf-8",
             )
             script_path.chmod(0o755)
@@ -168,9 +179,13 @@ class OpenClawAgent(LocalAgent[OpenClawAgentState]):
             '`python socket_tools/<tool_name>.py \'{"param": "value"}\'`.'
         )
 
-    def get_init_state(self, message_history: list[Message] | None = None) -> OpenClawAgentState:
+    def get_init_state(
+        self, message_history: list[Message] | None = None
+    ) -> OpenClawAgentState:
         message_history = message_history or []
-        assert all(is_valid_agent_history_message(message) for message in message_history), (
+        assert all(
+            is_valid_agent_history_message(message) for message in message_history
+        ), (
             "Message history must contain only AssistantMessage, UserMessage, or ToolMessage to Agent."
         )
         return OpenClawAgentState(
@@ -191,7 +206,9 @@ class OpenClawAgent(LocalAgent[OpenClawAgentState]):
                 session_id=state.openclaw_session_id,
                 agent_id=self.agent_id,
             )
-            state.openclaw_session_id = response.get("session_id", state.openclaw_session_id)
+            state.openclaw_session_id = response.get(
+                "session_id", state.openclaw_session_id
+            )
             assistant_msg = self.message_translator.from_openclaw(response["message"])
         except Exception:
             logger.exception("Error in OpenClaw agent")
@@ -211,11 +228,19 @@ class OpenClawAgent(LocalAgent[OpenClawAgentState]):
         cleanups = []
         if state and state.openclaw_session_id:
             cleanups.append(
-                ("session", lambda: self.service.cleanup_session(state.openclaw_session_id))
+                (
+                    "session",
+                    lambda: self.service.cleanup_session(state.openclaw_session_id),
+                )
             )
         if self.workspace_manager and self.agent_id:
             cleanups.append(
-                ("workspace", lambda: self.workspace_manager.delete_agent_workspace(self.agent_id))
+                (
+                    "workspace",
+                    lambda: self.workspace_manager.delete_agent_workspace(
+                        self.agent_id
+                    ),
+                )
             )
         for label, cleanup in cleanups:
             try:
@@ -229,5 +254,6 @@ class OpenClawAgent(LocalAgent[OpenClawAgentState]):
 
     def set_seed(self, seed: int) -> None:
         logger.warning(
-            "set_seed({}) called but OpenClaw may not support deterministic seeding", seed
+            "set_seed({}) called but OpenClaw may not support deterministic seeding",
+            seed,
         )

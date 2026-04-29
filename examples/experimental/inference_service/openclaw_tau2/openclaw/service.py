@@ -70,7 +70,10 @@ class OpenClawService:
     def _verify_cli(self) -> None:
         try:
             result = subprocess.run(
-                [self.cli_command, "--version"], capture_output=True, text=True, timeout=5
+                [self.cli_command, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
         except FileNotFoundError:
             logger.error("OpenClaw CLI not found: {}", self.cli_command)
@@ -82,7 +85,9 @@ class OpenClawService:
             logger.warning("OpenClaw CLI check returned code {}", result.returncode)
             return
         version = result.stdout.strip().split()
-        logger.info("OpenClaw CLI available: {}", version[1] if len(version) > 1 else "unknown")
+        logger.info(
+            "OpenClaw CLI available: {}", version[1] if len(version) > 1 else "unknown"
+        )
 
     def _build_message_text(self, messages: list[dict[str, Any]]) -> str:
         system_parts, user_messages = [], []
@@ -151,7 +156,9 @@ class OpenClawService:
     def _retry_enoent(self, error: Any, attempt: int, attempts: int) -> bool:
         if "ENOENT" not in str(error) or attempt >= attempts - 1:
             return False
-        logger.warning("Session file not found, retrying in 1.0s ({}/{})", attempt + 1, attempts)
+        logger.warning(
+            "Session file not found, retrying in 1.0s ({}/{})", attempt + 1, attempts
+        )
         time.sleep(1.0)
         return True
 
@@ -188,7 +195,11 @@ class OpenClawService:
         for attempt in range(attempts):
             try:
                 result = subprocess.run(
-                    cmd, capture_output=True, text=True, timeout=self.timeout, env=self._build_env()
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=self.timeout,
+                    env=self._build_env(),
                 )
                 if not result.returncode:
                     return self._parse_result(result, session_id)
@@ -198,7 +209,9 @@ class OpenClawService:
                 raise OpenClawServiceError(f"OpenClaw CLI failed: {last_error}")
             except subprocess.TimeoutExpired as exc:
                 self._cleanup_lock_files(agent_id)
-                raise OpenClawServiceError(f"OpenClaw CLI timeout after {self.timeout}s") from exc
+                raise OpenClawServiceError(
+                    f"OpenClaw CLI timeout after {self.timeout}s"
+                ) from exc
             except OpenClawServiceError:
                 raise
             except Exception as exc:
@@ -207,7 +220,9 @@ class OpenClawService:
                     continue
                 logger.exception("Error calling OpenClaw CLI")
                 raise OpenClawServiceError(f"OpenClaw CLI call failed: {exc}") from exc
-        raise OpenClawServiceError(f"OpenClaw CLI failed after {attempts} attempts: {last_error}")
+        raise OpenClawServiceError(
+            f"OpenClaw CLI failed after {attempts} attempts: {last_error}"
+        )
 
     def _cleanup_lock_files(self, agent_id: str | None) -> None:
         if not agent_id:
@@ -216,7 +231,9 @@ class OpenClawService:
             from .workspace_manager import OpenClawWorkspaceManager
 
             for lock_path in (
-                OpenClawWorkspaceManager(cli_command=self.cli_command).get_workspace_path(agent_id)
+                OpenClawWorkspaceManager(
+                    cli_command=self.cli_command
+                ).get_workspace_path(agent_id)
                 / ".openclaw"
             ).rglob("*.lock"):
                 lock_path.unlink(missing_ok=True)

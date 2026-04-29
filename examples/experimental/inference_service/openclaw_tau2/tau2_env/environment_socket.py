@@ -4,7 +4,6 @@ import threading
 from typing import Any
 
 from loguru import logger
-
 from tau2.data_model.tasks import Task
 from tau2.environment.environment import Environment
 
@@ -18,7 +17,11 @@ def _recv_json(sock: socket.socket) -> dict[str, Any] | None:
         chunks.append(data)
         if b"\n" in data:
             break
-    return json.loads(b"".join(chunks).split(b"\n", 1)[0].decode("utf-8")) if chunks else None
+    return (
+        json.loads(b"".join(chunks).split(b"\n", 1)[0].decode("utf-8"))
+        if chunks
+        else None
+    )
 
 
 def _serialize_result(result: Any) -> Any:
@@ -39,7 +42,11 @@ def _serialize_result(result: Any) -> Any:
 
 class EnvironmentSocketServer:
     def __init__(
-        self, environment: Environment, task: Task = None, host: str = "127.0.0.1", port: int = 0
+        self,
+        environment: Environment,
+        task: Task = None,
+        host: str = "127.0.0.1",
+        port: int = 0,
     ):
         self.environment = environment
         self.task = task
