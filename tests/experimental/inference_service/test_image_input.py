@@ -386,7 +386,7 @@ class TestVLLMBridgeBackendVisionMessages:
         msg_content = http_req.payload["messages"][0]["content"]
         image_part = msg_content[1]
         assert image_part["type"] == "image_url"
-        expected_uri = f"data:image/jpeg;base64,{red_pixel_b64}"
+        expected_uri = f"data:image/png;base64,{red_pixel_b64}"
         assert image_part["image_url"]["url"] == expected_uri
 
     def test_multiple_vision_images_injected(self, red_pixel_b64, blue_pixel_b64):
@@ -421,11 +421,11 @@ class TestVLLMBridgeBackendVisionMessages:
         msg_content = http_req.payload["messages"][0]["content"]
         assert (
             msg_content[1]["image_url"]["url"]
-            == f"data:image/jpeg;base64,{red_pixel_b64}"
+            == f"data:image/png;base64,{red_pixel_b64}"
         )
         assert (
             msg_content[2]["image_url"]["url"]
-            == f"data:image/jpeg;base64,{blue_pixel_b64}"
+            == f"data:image/png;base64,{blue_pixel_b64}"
         )
 
     def test_mismatched_image_count_raises(self, red_pixel_b64):
@@ -489,7 +489,7 @@ class TestVLLMBridgeBackendVisionMessages:
         http_req = backend.build_generation_request(req, with_lora=False, version=0)
 
         full_url = http_req.payload["messages"][0]["content"][0]["image_url"]["url"]
-        assert full_url.startswith("data:image/jpeg;base64,")
+        assert full_url.startswith("data:image/png;base64,")
         b64_payload = full_url.split(",", 1)[1]
         decoded = base64.b64decode(b64_payload)
         recovered = Image.open(io.BytesIO(decoded))
