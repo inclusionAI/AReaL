@@ -39,6 +39,7 @@ fi
 # Flags matching the Dockerfile's uv sync invocation (Stage 3), minus
 # --active / --project which are Docker-specific.
 UV_SYNC_ARGS=(
+  --active
   --inexact
   --no-build-isolation
   --extra cuda
