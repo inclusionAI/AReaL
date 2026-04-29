@@ -700,6 +700,10 @@ class TrainController:
         """
         self._custom_function_call("load", meta)
 
+    def load_lora_adapter(self, path: str):
+        """Load LoRA adapter weights from a HF adapter directory."""
+        self._custom_function_call("load_lora_adapter", path)
+
     def step_lr_scheduler(self):
         """Step the learning rate scheduler.
 

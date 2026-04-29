@@ -22,6 +22,8 @@ from peft import (
     TaskType,
     get_peft_model,
 )
+from peft.mapping import PEFT_TYPE_TO_PREFIX_MAPPING
+from safetensors.torch import load_file as load_safetensors_file
 from torch import nn
 from torch.distributed.checkpoint.state_dict import (
     StateDictOptions,
@@ -135,6 +137,40 @@ from areal.utils.save_load import get_state_dict_from_repo_id_or_path
 if TYPE_CHECKING:
     from areal.api import Scheduler
     from areal.api.cli_args import DPOEngineConfig, PPOActorConfig, PPOCriticConfig
+
+
+def _get_active_peft_adapter_name(model: nn.Module) -> str:
+    active_adapter = getattr(model, "active_adapter", None)
+    if isinstance(active_adapter, str):
+        return active_adapter
+    if isinstance(active_adapter, (list, tuple)) and active_adapter:
+        return str(active_adapter[0])
+
+    peft_config = getattr(model, "peft_config", None)
+    if isinstance(peft_config, dict):
+        if "default" in peft_config:
+            return "default"
+        if len(peft_config) == 1:
+            return next(iter(peft_config))
+    return "default"
+
+
+def _insert_adapter_name_into_state_dict(
+    state_dict: dict[str, torch.Tensor],
+    adapter_name: str,
+    parameter_prefix: str,
+) -> dict[str, torch.Tensor]:
+    remapped_state = {}
+    for key, value in state_dict.items():
+        if parameter_prefix in key:
+            _, _, suffix = key.rpartition(parameter_prefix)
+            if "." in suffix:
+                parts = suffix.split(".", 1)
+                key = f"{key[: -len(suffix)]}{parts[0]}.{adapter_name}.{parts[1]}"
+            else:
+                key = f"{key}.{adapter_name}"
+        remapped_state[key] = value
+    return remapped_state
 
 
 @dataclasses.dataclass
@@ -652,6 +688,10 @@ class FSDPEngine(TrainEngine):
             # pinning and normalization established by PerLayerOptimWrapper.__init__.
             if meta.with_optim and self._per_layer_optim_wrapper is not None:
                 self._per_layer_optim_wrapper.refresh_states()
+
+    def load_lora_adapter(self, path: str):
+        with self._offload_aware_context():
+            self._load_lora_adapter_from_hf(path)
 
     @contextmanager
     def _offload_aware_context(self):
@@ -1518,6 +1558,47 @@ class FSDPEngine(TrainEngine):
             full_state,
             self.cpu_offload,
             tie_word_embeddings=self.model_config.tie_word_embeddings,
+        )
+
+    def _load_lora_adapter_from_hf(self, path: str):
+        """Load adapter-only HF checkpoint into the current PEFT model."""
+        if self.model is None:
+            raise RuntimeError("Model not initialized")
+        if not self.config.use_lora:
+            raise RuntimeError("LoRA adapter load requires config.use_lora=True")
+
+        adapter_path = os.path.join(path, "adapter_model.safetensors")
+        if dist.get_rank() == 0:
+            if not os.path.isfile(adapter_path):
+                raise FileNotFoundError(
+                    f"LoRA adapter checkpoint not found: {adapter_path}"
+                )
+            adapter_name = _get_active_peft_adapter_name(self.model)
+            peft_config = getattr(self.model, "peft_config", {})
+            if adapter_name not in peft_config:
+                raise RuntimeError(
+                    f"Active LoRA adapter '{adapter_name}' not found in model.peft_config"
+                )
+            peft_type = peft_config[adapter_name].peft_type
+            parameter_prefix = PEFT_TYPE_TO_PREFIX_MAPPING.get(peft_type)
+            if parameter_prefix is None:
+                raise RuntimeError(
+                    f"Unsupported PEFT type '{peft_type}' for adapter '{adapter_name}'"
+                )
+            adapter_state = load_safetensors_file(adapter_path, device="cpu")
+            partial_state = _insert_adapter_name_into_state_dict(
+                adapter_state,
+                adapter_name=adapter_name,
+                parameter_prefix=parameter_prefix,
+            )
+        else:
+            partial_state = {}
+
+        fsdp2_load_full_state_dict(
+            self.model,
+            partial_state,
+            self.cpu_offload,
+            strict=False,
         )
 
     def _save_to_dcp(

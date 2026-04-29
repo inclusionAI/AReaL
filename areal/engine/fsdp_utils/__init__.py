@@ -112,6 +112,7 @@ def fsdp2_load_full_state_dict(
     full_state: dict,
     cpu_offload=None,
     tie_word_embeddings=False,
+    strict: bool | None = None,
 ):
     """
     Loads the full state dict (could be only on rank 0) into the sharded model. This is done by broadcasting the
@@ -138,11 +139,14 @@ def fsdp2_load_full_state_dict(
     else:
         model = model.to(device=device, non_blocking=True)
     cpu_offload = cpu_offload is not None
+    if strict is None:
+        strict = not tie_word_embeddings
+
     options = StateDictOptions(
         full_state_dict=True,
         cpu_offload=cpu_offload,
         broadcast_from_rank0=True,
-        strict=not tie_word_embeddings,
+        strict=strict,
     )
     set_model_state_dict(model, full_state, options=options)
 

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import functools
 import os
+import shlex
+import subprocess
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, cast
 
@@ -54,6 +57,7 @@ from areal.utils.dataloader import create_dataloader
 from areal.utils.environ import is_single_controller
 from areal.utils.evaluator import Evaluator
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer
+from areal.utils.network import gethostip
 from areal.utils.perf_tracer import Category
 from areal.utils.recover import RecoverHandler
 from areal.utils.saver import Saver
@@ -73,6 +77,13 @@ if TYPE_CHECKING:
     from areal.trainer.ppo.critic import PPOCriticController
 
 logger = logging.getLogger("RLTrainer")
+
+_LORA_ADAPTER_REQUIRED_FILES = (
+    "adapter_config.json",
+    "adapter_model.safetensors",
+    "config.json",
+)
+_LORA_ADAPTER_SYNC_TIMEOUT_S = 300
 
 
 class _EmptyDataLoader:
@@ -284,8 +295,8 @@ class PPOTrainer:
         if self.teacher is not None:
             self.teacher.initialize(**engine_init_kwargs, role="teacher")
 
-        # Save initial LoRA weights if enabled (for inference server pre-loading)
-        initial_lora_path = self._save_initial_lora_weights()
+        # Prepare actor LoRA state before rollout initialization.
+        initial_lora_path = self._prepare_initial_actor_lora()
 
         # Initialize inference with LoRA path
         self.rollout = self._init_rollout(
@@ -1028,13 +1039,34 @@ class PPOTrainer:
         controller.initialize(**init_kwargs)
         return controller
 
-    def _save_initial_lora_weights(self) -> str | None:
-        """Save initial LoRA weights for inference server pre-loading.
+    def _get_actor_lora_bootstrap_hf_path(self) -> str | None:
+        path = os.getenv("GUI_LORA_BOOTSTRAP_HF_PATH", "").strip()
+        if not path:
+            return None
+        if not self.config.actor.use_lora:
+            raise RuntimeError(
+                "GUI_LORA_BOOTSTRAP_HF_PATH is set, but actor.use_lora is false."
+            )
+        actor_backend = str(getattr(self.config.actor, "backend", ""))
+        if not actor_backend.startswith("fsdp"):
+            raise RuntimeError(
+                "GUI_LORA_BOOTSTRAP_HF_PATH is currently only supported for FSDP actors."
+            )
+        return path
 
-        Returns path to saved LoRA weights, or None if LoRA is disabled.
-        """
+    def _prepare_initial_actor_lora(self) -> str | None:
+        """Load optional bootstrap LoRA weights and persist initial adapter weights."""
+        bootstrap_path = self._get_actor_lora_bootstrap_hf_path()
         if not self.config.actor.use_lora:
             return None
+
+        if bootstrap_path:
+            logger.info(
+                "Bootstrapping actor LoRA weights from HF path: %s", bootstrap_path
+            )
+            self._sync_lora_adapter_dir_to_cluster_nodes(bootstrap_path)
+            self.actor.load_lora_adapter(bootstrap_path)
+            logger.info("Loaded bootstrap actor LoRA weights from %s", bootstrap_path)
 
         path = os.path.join(
             Saver.get_model_save_root(
@@ -1058,6 +1090,151 @@ class PPOTrainer:
         self.actor.save(meta=meta)
 
         return path
+
+    def _local_lora_adapter_ready(self, path: str) -> bool:
+        return all(
+            os.path.isfile(os.path.join(path, name))
+            for name in _LORA_ADAPTER_REQUIRED_FILES
+        )
+
+    def _remote_lora_adapter_ready(self, host: str, path: str) -> bool:
+        checks = " && ".join(
+            f"test -f {shlex.quote(os.path.join(path, name))}"
+            for name in _LORA_ADAPTER_REQUIRED_FILES
+        )
+        result = subprocess.run(
+            ["ssh", host, f"bash -lc {shlex.quote(checks)}"],
+            capture_output=True,
+            text=True,
+            timeout=_LORA_ADAPTER_SYNC_TIMEOUT_S,
+        )
+        return result.returncode == 0
+
+    def _get_actor_worker_ips(self) -> list[str]:
+        return sorted({worker.ip for worker in self.actor.workers if worker.ip})
+
+    def _copy_dir_between_hosts(
+        self,
+        src_host: str | None,
+        src_path: str,
+        dst_host: str | None,
+        dst_path: str,
+    ) -> None:
+        src_parent, src_name = os.path.dirname(src_path), os.path.basename(src_path)
+        dst_parent = os.path.dirname(dst_path)
+
+        if dst_host is None:
+            os.makedirs(dst_parent, exist_ok=True)
+        else:
+            subprocess.run(
+                ["ssh", dst_host, f"mkdir -p {shlex.quote(dst_parent)}"],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=_LORA_ADAPTER_SYNC_TIMEOUT_S,
+            )
+
+        if src_host is None:
+            src_proc = subprocess.Popen(
+                ["tar", "-cf", "-", "-C", src_parent, src_name],
+                stdout=subprocess.PIPE,
+            )
+        else:
+            src_proc = subprocess.Popen(
+                [
+                    "ssh",
+                    src_host,
+                    f"tar -cf - -C {shlex.quote(src_parent)} {shlex.quote(src_name)}",
+                ],
+                stdout=subprocess.PIPE,
+            )
+
+        if dst_host is None:
+            dst_proc = subprocess.Popen(
+                ["tar", "-xf", "-", "-C", dst_parent],
+                stdin=src_proc.stdout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=False,
+            )
+        else:
+            dst_proc = subprocess.Popen(
+                ["ssh", dst_host, f"tar -xf - -C {shlex.quote(dst_parent)}"],
+                stdin=src_proc.stdout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=False,
+            )
+
+        assert src_proc.stdout is not None
+        src_proc.stdout.close()
+        try:
+            _, dst_err = dst_proc.communicate(timeout=_LORA_ADAPTER_SYNC_TIMEOUT_S)
+            src_return = src_proc.wait(timeout=_LORA_ADAPTER_SYNC_TIMEOUT_S)
+        except subprocess.TimeoutExpired as exc:
+            src_proc.kill()
+            dst_proc.kill()
+            raise RuntimeError(
+                f"LoRA adapter sync timed out after {_LORA_ADAPTER_SYNC_TIMEOUT_S}s "
+                f"from {src_host or 'local'}:{src_path} to {dst_host or 'local'}:{dst_path}"
+            ) from exc
+        if src_return != 0:
+            raise RuntimeError(
+                f"LoRA adapter sync source copy failed from {src_host or 'local'}:{src_path}"
+            )
+        if dst_proc.returncode != 0:
+            stderr = dst_err.decode("utf-8", errors="replace") if dst_err else ""
+            raise RuntimeError(
+                f"LoRA adapter sync destination copy failed to {dst_host or 'local'}:{dst_path}: {stderr}"
+            )
+
+    def _sync_lora_adapter_dir_to_cluster_nodes(self, path: str) -> None:
+        if not is_single_controller():
+            return
+        if self.config.cluster.n_nodes <= 1:
+            return
+        if not isinstance(self.scheduler, RayScheduler):
+            logger.warning(
+                "Skipping LoRA adapter multi-node sync because scheduler is not RayScheduler."
+            )
+            return
+
+        node_ips = self._get_actor_worker_ips()
+        if not node_ips:
+            raise RuntimeError(
+                "Could not determine actor worker nodes for LoRA adapter sync."
+            )
+
+        local_ip = gethostip()
+        if not self._local_lora_adapter_ready(path):
+            raise RuntimeError(
+                f"LoRA adapter checkpoint was not found on the controller node at {path}."
+            )
+
+        copy_targets = [
+            node_ip
+            for node_ip in node_ips
+            if node_ip != local_ip
+            and not self._remote_lora_adapter_ready(node_ip, path)
+        ]
+        if not copy_targets:
+            return
+
+        with ThreadPoolExecutor(max_workers=min(len(copy_targets), 8)) as executor:
+            futures = {
+                executor.submit(
+                    self._copy_dir_between_hosts, None, path, node_ip, path
+                ): node_ip
+                for node_ip in copy_targets
+            }
+            for future in as_completed(futures):
+                node_ip = futures[future]
+                try:
+                    future.result()
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Failed to sync LoRA adapter checkpoint to actor node {node_ip}."
+                    ) from exc
 
     def _save_hf(self, epoch: int, epoch_step: int, global_step: int):
         # Save as HF models for evaluation

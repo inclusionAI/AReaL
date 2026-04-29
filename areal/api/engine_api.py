@@ -309,6 +309,12 @@ class TrainEngine(abc.ABC):
         """
         raise NotImplementedError()
 
+    def load_lora_adapter(self, path: str):
+        """Load LoRA adapter weights from an adapter-only HF checkpoint."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support adapter-only LoRA loading."
+        )
+
     @abc.abstractmethod
     def optimizer_zero_grad(self):
         """Zero out all gradients in the optimizer."""
