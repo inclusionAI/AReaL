@@ -1253,7 +1253,12 @@ class MegatronEngine(TrainEngine):
         assert self.optimizer_config.type in [
             "adam",
             "sgd",
-        ], "Only AdamW/sgd optimizer is supported in this engine."
+            "muon",
+        ], (
+            "MegatronEngine supports 'adam'/'sgd'/'muon' optimizer. "
+            "Muon requires the 'emerging-optimizers' package to be installed "
+            "(Megatron-Core dispatches Muon via _get_megatron_emerging_optimizer)."
+        )
         if self.optimizer_config.type == "sgd":
             self.logger.warning(
                 "Using the 'sgd' optimizer with Megatron may be less stable. Consider using the 'adam' (AdamW) optimizer for improved stability."
@@ -1275,6 +1280,23 @@ class MegatronEngine(TrainEngine):
             clip_grad=self.optimizer_config.gradient_clipping,
             fp8_recipe=(self.fp8_config.recipe if self.enable_fp8 else None),
         )
+
+        # Forward Muon-specific hyperparameters to Megatron-Core's OptimizerConfig.
+        # Megatron-Core dispatches to _get_megatron_emerging_optimizer when
+        # optimizer not in ("adam", "sgd"); it requires the `emerging-optimizers` package.
+        if self.optimizer_config.type == "muon":
+            for attr, value in (
+                ("muon_momentum", self.optimizer_config.muon_momentum),
+                ("muon_nesterov", self.optimizer_config.muon_nesterov),
+                ("muon_num_ns_steps", self.optimizer_config.muon_ns_steps),
+            ):
+                if hasattr(mcore_opt_config, attr):
+                    setattr(mcore_opt_config, attr, value)
+                else:
+                    self.logger.warning(
+                        f"Megatron-Core OptimizerConfig has no attribute '{attr}'; "
+                        "your Megatron-Core may be too old to support Muon."
+                    )
         mcore_opt_config.overlap_param_gather_with_optimizer_step = (
             self.mcore_config.overlap_param_gather_with_optimizer_step
         )
