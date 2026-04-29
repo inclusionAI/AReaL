@@ -213,6 +213,9 @@ def _build_training_input_with_rollout_experts(
         # grpo_loss_fn reads input_data['logprobs'] as the old (rollout) log-prob.
         "logprobs": rollout_logprobs,
         "advantages": advantages,
+        # prox_logp is required when prox_logp_method='recompute'.
+        # In standard GRPO, prox_logp equals the rollout log-probabilities.
+        "prox_logp": rollout_logprobs.clone(),
     }
     return input_dict, rollout_expert_indices
 
