@@ -37,31 +37,6 @@ decoder in ``areal/engine/sglang_remote.py``.
 
 The patch is idempotent.  When R3 is disabled the patch is a no-op at
 runtime because the routed-experts attribute stays ``None``.
-
-Compatibility note
-------------------
-Different SGLang branches use different attribute names on the
-``BatchTokenIDOutput`` / ``BatchStrOutput`` dataclasses:
-
-* Current SGLang main / v0.5.9 : ``recv_obj.routed_experts``
-* Original R3 commit ``bed301a5`` (the base verl's R3 example was built
-  against, see
-  ``https://github.com/sgl-project/sglang/commit/bed301a5acaa9577c9aa706468bdf242f6a43051``)
-  : ``recv_obj.output_routed_experts``
-
-The patch handles both attribute names so AReaL runs unmodified against
-either SGLang build.  Consequently the TokenizerManager attaches the
-resulting ``meta_info["routed_experts"]`` entry to every response regardless
-of which internal field the scheduler populated.
-
-Reference
----------
-* SGLang encodes ``routed_experts`` via ``pybase64.b64encode`` at
-  ``python/sglang/srt/managers/detokenizer_manager.py::_extract_routed_experts``
-  for the ``skip_tokenizer_init=False`` path.
-* verl applies the symmetric decoder at
-  ``verl/workers/rollout/sglang_rollout/async_sglang_server.py`` via
-  ``extract_routed_experts_from_meta_info`` (which assumes a base64 string).
 """
 
 from __future__ import annotations
@@ -71,12 +46,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 _PATCH_APPLIED = False
-
-# Attribute names used across the SGLang versions we must support.
-# * ``routed_experts``        : current SGLang main / v0.5.9.
-# * ``output_routed_experts`` : original R3 commit ``bed301a5`` that the
-#                               verl R3 example and the AReaL R3 docker
-#                               were built on.
 _ROUTED_EXPERTS_ATTRS = ("routed_experts", "output_routed_experts")
 
 
@@ -149,12 +118,6 @@ def apply_sglang_r3_patch() -> bool:
         # serialisation sees a plain string (which ``jsonable_encoder``
         # passes through untouched) instead of a ``torch.Tensor`` (which
         # ``jsonable_encoder`` silently flattens to ``{}``).
-        #
-        # We must handle BOTH attribute names because different SGLang
-        # builds populate different fields:
-        #   * ``routed_experts``        - current SGLang main / v0.5.9
-        #   * ``output_routed_experts`` - original R3 commit ``bed301a5``
-        #                                 (verl's R3 base commit)
         try:
             for attr_name in _ROUTED_EXPERTS_ATTRS:
                 re_list = getattr(recv_obj, attr_name, None)

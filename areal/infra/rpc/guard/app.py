@@ -463,6 +463,8 @@ def create_app(state: GuardState) -> Flask:
                 return jsonify({"error": "Invalid JSON in request body"}), 400
 
             if not s._configure_hooks:
+                # No hooks registered — no-op (guard-only mode)
+                logger.debug("Received /configure request (no-op)")
                 return jsonify({"status": "ok"})
 
             # Dispatch to all registered configure hooks
@@ -608,7 +610,6 @@ def run_server(
                 etcd3_addr=state.etcd3_addr or "localhost:2379",
             )
         )
-        logger.info("name_resolve reconfigured successfully")
 
     worker_id = f"{state.role}/{state.worker_index}"
     key = names.worker_discovery(
