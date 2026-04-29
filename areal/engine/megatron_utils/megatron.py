@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
+import functools
+import inspect
 import re
 
 import torch
@@ -23,6 +25,11 @@ from areal.engine.megatron_utils.megatron_lora import (
 )
 
 
+@functools.cache
+def _accepts_hf_config(fn) -> bool:
+    return "hf_config" in inspect.signature(fn).parameters
+
+
 def _all_gather_and_concat(
     tensor: torch.Tensor,
     tp_size: int,
@@ -30,6 +37,7 @@ def _all_gather_and_concat(
     partition_dim: int,
     partition_stride: int,
     name: str,
+    gated_linear_unit: bool = False,
 ) -> torch.Tensor:
     """All-gather tensor partitions and concatenate along partition dimension.
 
@@ -38,6 +46,21 @@ def _all_gather_and_concat(
     these must be de-interleaved before concatenation to reconstruct the correct
     full tensor.
     """
+    # mcore sets partition_stride=1 for ``linear_fc1.weight|bias`` even when
+    # gated_linear_unit=True, but the per-rank storage is ``[gate_local | up_local]``
+    # (what makes the in-place ``chunk(2, dim=-1)`` in MLP.forward valid). Without
+    # de-interleaving here, plain cat yields ``[gate_r0 | up_r0 | gate_r1 | up_r1]``
+    # and downstream ``chunk(2)`` mislabels mixed halves as gate_proj/up_proj.
+    # Override to stride=2 to trigger the de-interleave below.
+    # Covers both ``mlp.linear_fc1`` (language/vision) and
+    # ``projection.encoder.linear_fc1`` (vision→language merger).
+    if (
+        gated_linear_unit
+        and partition_stride == 1
+        and ("linear_fc1.weight" in name or "linear_fc1.bias" in name)
+    ):
+        partition_stride = 2
+
     partitions = [torch.empty_like(tensor) for _ in range(tp_size)]
     dist.all_gather(partitions, tensor, group=tp_group)
 
@@ -68,6 +91,7 @@ def _all_gather_fp8_tensor_and_concat(
     partition_stride: int,
     name: str,
     block_size: int = 128,
+    gated_linear_unit: bool = False,
 ) -> FP8BlockwiseTensorHelper:
     """All-gather a Float8BlockwiseQTensor along the partition dimension.
 
@@ -75,7 +99,13 @@ def _all_gather_fp8_tensor_and_concat(
     This allows conversion functions to work with FP8 tensors as regular tensors.
     """
     gathered_rowwise_data = _all_gather_and_concat(
-        tensor._rowwise_data, tp_size, tp_group, partition_dim, partition_stride, name
+        tensor._rowwise_data,
+        tp_size,
+        tp_group,
+        partition_dim,
+        partition_stride,
+        name,
+        gated_linear_unit=gated_linear_unit,
     )
     gathered_rowwise_scale_inv = _all_gather_and_concat(
         tensor._rowwise_scale_inv,
@@ -84,6 +114,7 @@ def _all_gather_fp8_tensor_and_concat(
         partition_dim,
         partition_stride,
         name,
+        gated_linear_unit=gated_linear_unit,
     )
 
     return FP8BlockwiseTensorHelper(
@@ -98,6 +129,7 @@ def all_gather_param(
     fp8_direct_convert: bool = False,
     quantization_config: dict[str, int | str | list[str]] | None = None,
     duplicated_param_names: set[str] | None = None,
+    gated_linear_unit: bool = False,
 ) -> torch.Tensor | FP8BlockwiseTensorHelper:
     if "expert_bias" in name:
         return param
@@ -142,12 +174,25 @@ def all_gather_param(
     if param_is_fp8 and fp8_direct_convert:
         block_size = get_block_size_from_config(quantization_config)
         return _all_gather_fp8_tensor_and_concat(
-            param, tp_size, tp_group, partition_dim, partition_stride, name, block_size
+            param,
+            tp_size,
+            tp_group,
+            partition_dim,
+            partition_stride,
+            name,
+            block_size,
+            gated_linear_unit=gated_linear_unit,
         )
 
     # bf16/fp32
     param = _all_gather_and_concat(
-        param.data, tp_size, tp_group, partition_dim, partition_stride, name
+        param.data,
+        tp_size,
+        tp_group,
+        partition_dim,
+        partition_stride,
+        name,
+        gated_linear_unit=gated_linear_unit,
     )
     return param
 
@@ -156,9 +201,11 @@ def all_gather_param(
 def remove_padding(
     name: str, param: Parameter | Tensor | FP8BlockwiseTensorHelper, vocab_size: int
 ):
-    if (
-        name == "module.module.embedding.word_embeddings.weight"
-        or name == "module.module.output_layer.weight"
+    if name in (
+        "module.module.embedding.word_embeddings.weight",
+        "module.module.output_layer.weight",
+        "module.module.language_model.embedding.word_embeddings.weight",
+        "module.module.language_model.output_layer.weight",
     ):
         return param[:vocab_size]
     return param
@@ -317,6 +364,123 @@ def convert_qwen3moe_to_hf(
             return [(f"model.layers.{layer_idx}.self_attn.q_norm.weight", param)]
         elif rest == "self_attention.k_layernorm.weight":
             return [(f"model.layers.{layer_idx}.self_attn.k_norm.weight", param)]
+
+    raise ValueError(f"Unknown parameter name: {name}")
+
+
+def _vision_qkv_mcore_to_hf(param: Tensor, vision_num_heads: int) -> Tensor:
+    """Convert vision encoder QKV from mcore interleaved to HF grouped format.
+
+    mcore: per-head interleaved [num_heads, 3, head_dim, H] flattened to [3*H_v, H_v]
+    HF:    grouped [3, num_heads, head_dim, H] flattened to [3*H_v, H_v]
+
+    Reverse of mbridge Qwen2_5VLBridge._weight_to_mcore_format for vision QKV.
+
+    Args:
+        param: Vision QKV weight [3*hidden_vision, hidden_vision] or bias [3*hidden_vision]
+        vision_num_heads: Number of attention heads in the vision encoder
+    """
+    hidden_vision = param.shape[0] // 3
+    head_dim = hidden_vision // vision_num_heads
+    is_bias = param.ndim == 1
+
+    if is_bias:
+        x = param.view(vision_num_heads, 3, head_dim)
+        return x.permute(1, 0, 2).contiguous().view(-1)
+    else:
+        in_features = param.shape[-1]
+        x = param.view(vision_num_heads, 3, head_dim, in_features)
+        return x.permute(1, 0, 2, 3).contiguous().view(-1, in_features)
+
+
+def convert_qwen2_5_vl_to_hf(
+    tf_config: TransformerConfig,
+    name: str,
+    param: Parameter | Tensor | FP8BlockwiseTensorHelper,
+    hf_config=None,
+):
+    """Convert Qwen2.5-VL Megatron parameters to HuggingFace format.
+
+    Handles both vision_model and language_model parameters.
+    Language model params are delegated to convert_qwen2_to_hf after
+    stripping the 'language_model.' prefix.
+    """
+    # --- Language model: strip prefix and delegate ---
+    _LM_PREFIX = "module.module.language_model."
+    if name.startswith(_LM_PREFIX):
+        lm_name = "module.module." + name[len(_LM_PREFIX) :]
+        return convert_qwen2_to_hf(tf_config, lm_name, param)
+
+    # --- megatron-bridge: vision tower stored in HF format under self.visual.* ---
+    # (vs mbridge's self.vision_model.* in mcore format). Just strip the
+    # "module.module." prefix and emit the HF name directly.
+    _MB_VISUAL_PREFIX = "module.module.visual."
+    if name.startswith(_MB_VISUAL_PREFIX):
+        return [(name[len("module.module.") :], param)]
+
+    # --- mbridge vision tower (mcore format) — direct mappings ---
+    _VISION_DIRECT = {
+        "module.module.vision_model.patch_embed.proj.weight": "visual.patch_embed.proj.weight",
+        "module.module.vision_model.decoder.final_layernorm.weight": "visual.merger.ln_q.weight",
+        "module.module.vision_model.projection.encoder.linear_fc1.weight": "visual.merger.mlp.0.weight",
+        "module.module.vision_model.projection.encoder.linear_fc1.bias": "visual.merger.mlp.0.bias",
+        "module.module.vision_model.projection.encoder.linear_fc2.weight": "visual.merger.mlp.2.weight",
+        "module.module.vision_model.projection.encoder.linear_fc2.bias": "visual.merger.mlp.2.bias",
+    }
+    if name in _VISION_DIRECT:
+        return [(_VISION_DIRECT[name], param)]
+
+    # --- Vision model per-layer params ---
+    vision_layers_pattern = (
+        r"module\.module\.vision_model\.decoder\.layers\.(\d+)\.(.+)"
+    )
+    match = re.match(vision_layers_pattern, name)
+    if match:
+        layer_idx, rest = match.groups()
+
+        # Attention — vision QKV needs reordering from mcore interleaved
+        # [num_heads, 3*head_dim, ...] to HF grouped [3*num_heads*head_dim, ...]
+        if rest in (
+            "self_attention.linear_qkv.weight",
+            "self_attention.linear_qkv.bias",
+        ):
+            vision_num_heads = getattr(
+                getattr(hf_config, "vision_config", None), "num_heads", None
+            )
+            if vision_num_heads is None:
+                raise ValueError(
+                    "hf_config.vision_config.num_heads is required for vision QKV "
+                    "conversion. Pass hf_config to convert_to_hf()."
+                )
+            param = _vision_qkv_mcore_to_hf(param, vision_num_heads)
+            hf_key = "weight" if "weight" in rest else "bias"
+            return [(f"visual.blocks.{layer_idx}.attn.qkv.{hf_key}", param)]
+        elif rest == "self_attention.linear_proj.weight":
+            return [(f"visual.blocks.{layer_idx}.attn.proj.weight", param)]
+        elif rest == "self_attention.linear_proj.bias":
+            return [(f"visual.blocks.{layer_idx}.attn.proj.bias", param)]
+        elif rest == "self_attention.linear_qkv.layer_norm_weight":
+            return [(f"visual.blocks.{layer_idx}.norm1.weight", param)]
+
+        # MLP
+        elif rest == "mlp.linear_fc1.weight":
+            gate_weight, up_weight = param.chunk(2, dim=0)
+            return [
+                (f"visual.blocks.{layer_idx}.mlp.gate_proj.weight", gate_weight),
+                (f"visual.blocks.{layer_idx}.mlp.up_proj.weight", up_weight),
+            ]
+        elif rest == "mlp.linear_fc1.bias":
+            gate_bias, up_bias = param.chunk(2, dim=0)
+            return [
+                (f"visual.blocks.{layer_idx}.mlp.gate_proj.bias", gate_bias),
+                (f"visual.blocks.{layer_idx}.mlp.up_proj.bias", up_bias),
+            ]
+        elif rest == "mlp.linear_fc2.weight":
+            return [(f"visual.blocks.{layer_idx}.mlp.down_proj.weight", param)]
+        elif rest == "mlp.linear_fc2.bias":
+            return [(f"visual.blocks.{layer_idx}.mlp.down_proj.bias", param)]
+        elif rest == "mlp.linear_fc1.layer_norm_weight":
+            return [(f"visual.blocks.{layer_idx}.norm2.weight", param)]
 
     raise ValueError(f"Unknown parameter name: {name}")
 
@@ -767,6 +931,7 @@ _CONVERSION_FN_REGISTRY = {
     "qwen3_lora": convert_qwen3_lora_to_hf,
     "qwen2_lora": convert_qwen3_lora_to_hf,
     "qwen3_moe_lora": convert_qwen3_moe_lora_to_hf,
+    "qwen2_5_vl": convert_qwen2_5_vl_to_hf,
     "qwen3_moe": convert_qwen3moe_to_hf,
     "qwen2": convert_qwen2_to_hf,
     "qwen3": convert_qwen2_to_hf,
@@ -784,6 +949,7 @@ def convert_to_hf(
     param: Parameter | Tensor | FP8BlockwiseTensorHelper,
     quantization_config: dict[str, int | str | list[str]] | None = None,
     fp8_direct_convert: bool = False,
+    hf_config=None,
 ):
     """Convert Megatron parameter to HuggingFace format, optionally with FP8 quantization.
 
@@ -799,6 +965,8 @@ def convert_to_hf(
             - weight_block_size: Optional tuple/list of [block_m, block_n] for blockwise quantization
         fp8_direct_convert: If True, directly convert TE FP8 tensors to PyTorch FP8 format.
             If False, dequantize TE FP8 to bf16 first, then quantize to PyTorch FP8.
+        hf_config: Optional HuggingFace PretrainedConfig. Required for VLM models
+            that need vision_config for weight conversion (e.g., vision QKV reordering).
 
     Returns:
         List of (name, tensor) tuples in HuggingFace format. For FP8 quantization,
@@ -806,7 +974,13 @@ def convert_to_hf(
     """
     for key, conversion_fn in _CONVERSION_FN_REGISTRY.items():
         if key in model_name:
-            converted_named_tensors = conversion_fn(tf_config, name, param)
+            # Pass hf_config to converters that accept it (e.g., VLM models)
+            if _accepts_hf_config(conversion_fn):
+                converted_named_tensors = conversion_fn(
+                    tf_config, name, param, hf_config=hf_config
+                )
+            else:
+                converted_named_tensors = conversion_fn(tf_config, name, param)
             if quantization_config:
                 if fp8_direct_convert:
                     return convert_fp8_helper_to_pytorch_fp8(converted_named_tensors)
@@ -852,7 +1026,14 @@ def get_named_parameters(model_module, num_experts):
             if not name.startswith("module.module."):
                 name = "module." + name
 
-            decoder_layers_pattern = r"module\.module\.decoder\.layers\.(\d+)\.(.+)"
+            # Match either text-only (module.module.decoder.layers.X) or VLM
+            # (module.module.language_model.decoder.layers.X) — both share the
+            # same layer_offset (here `config` is the language_model config).
+            # Vision blocks (module.module.vision_model.decoder.layers.X) are
+            # intentionally not matched: vision is not PP-split.
+            decoder_layers_pattern = (
+                r"module\.module\.(language_model\.)?decoder\.layers\.(\d+)\.(.+)"
+            )
             match = re.match(decoder_layers_pattern, name)
             if not match:
                 mtp_layers_pattern = r"module\.module\.mtp\.layers\.(\d+)\.(.+)"
@@ -877,7 +1058,8 @@ def get_named_parameters(model_module, num_experts):
                 )
                 continue
 
-            layer_idx, rest = match.groups()
+            lm_prefix, layer_idx, rest = match.groups()
+            lm_prefix = lm_prefix or ""
             layer_idx = int(layer_idx) + layer_offset
 
             # this is hardcoded for te grouped matmul
@@ -887,11 +1069,14 @@ def get_named_parameters(model_module, num_experts):
                 rest, expert_idx = match.groups()
                 expert_idx = int(expert_idx) + expert_offset
                 yield (
-                    f"module.module.decoder.layers.{layer_idx}.mlp.experts.{rest}.weight{expert_idx}",
+                    f"module.module.{lm_prefix}decoder.layers.{layer_idx}.mlp.experts.{rest}.weight{expert_idx}",
                     param,
                 )
             else:
-                yield f"module.module.decoder.layers.{layer_idx}.{rest}", param
+                yield (
+                    f"module.module.{lm_prefix}decoder.layers.{layer_idx}.{rest}",
+                    param,
+                )
 
         # treat expert bias as normal parameters
         for name, buffer in single_module.named_buffers():
@@ -901,14 +1086,20 @@ def get_named_parameters(model_module, num_experts):
             if not name.startswith("module.module."):
                 name = "module." + name
 
-            decoder_layers_pattern = r"module\.module\.decoder\.layers\.(\d+)\.(.+)"
+            decoder_layers_pattern = (
+                r"module\.module\.(language_model\.)?decoder\.layers\.(\d+)\.(.+)"
+            )
             match = re.match(decoder_layers_pattern, name)
             if not match:
                 yield name, buffer
             else:
-                layer_idx, rest = match.groups()
+                lm_prefix, layer_idx, rest = match.groups()
+                lm_prefix = lm_prefix or ""
                 layer_idx = int(layer_idx) + layer_offset
-                yield f"module.module.decoder.layers.{layer_idx}.{rest}", buffer
+                yield (
+                    f"module.module.{lm_prefix}decoder.layers.{layer_idx}.{rest}",
+                    buffer,
+                )
 
     if isinstance(model_module, (list, tuple)):
         try:

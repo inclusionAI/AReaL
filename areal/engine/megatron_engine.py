@@ -7,6 +7,7 @@ import functools
 import gc
 import math
 import os
+import re
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future
 from contextlib import contextmanager
@@ -55,7 +56,7 @@ from areal.engine.core.distributed import (
     init_custom_process_group,
     warmup_process_groups,
 )
-from areal.engine.core.model import disable_dropout_in_model
+from areal.engine.core.model import disable_dropout_in_model, is_valid_vision_model
 from areal.engine.megatron_utils.checkpointer import MegatronCheckpointManager
 from areal.engine.megatron_utils.deterministic import set_deterministic_algorithms
 from areal.engine.megatron_utils.fp8 import FP8BlockwiseTensorHelper
@@ -67,6 +68,7 @@ from areal.engine.megatron_utils.megatron import (
 )
 from areal.engine.megatron_utils.megatron_lora import get_vllm_lora_target_modules
 from areal.engine.megatron_utils.packed_context_parallel import (
+    extract_vision_from_multi_modal,
     packed_context_parallel_forward,
     split_packed_seqs_for_context_parallel,
 )
@@ -107,7 +109,7 @@ from areal.utils.data import (
     unpad_logits,
 )
 from areal.utils.functional import gather_logprobs, gather_logprobs_entropy
-from areal.utils.hf_utils import load_hf_tokenizer
+from areal.utils.hf_utils import load_hf_processor_and_tokenizer, load_hf_tokenizer
 from areal.utils.lock import DistributedLock
 from areal.utils.network import find_free_ports, format_host_for_url, gethostip
 from areal.utils.offload import is_tms_enabled, torch_memory_saver
@@ -117,6 +119,22 @@ from areal.utils.seeding import get_seed
 if TYPE_CHECKING:
     from areal.api import Scheduler
     from areal.api.cli_args import DPOEngineConfig, PPOActorConfig, PPOCriticConfig
+
+
+# `model.named_modules()` yields LOCAL layer indices on each PP rank, while
+# `get_named_parameters` rewrites them to GLOBAL indices via layer_offset. Strip
+# the index so the GLU detection set matches across PP ranks. Also strip trailing
+# numeric suffixes on `weight`/`bias` so TEGroupedLinear MoE expert weights
+# (`weight0`, `weight1`, …, `weight{global_expert_idx}` after expert_offset
+# rewriting) collapse to the same canonical form.
+_LAYER_IDX_RE = re.compile(r"\.layers\.\d+\.")
+_EXPERT_NUM_RE = re.compile(r"\.(weight|bias)\d+$")
+
+
+def _normalize_glu_param_name(name: str) -> str:
+    name = _LAYER_IDX_RE.sub(".layers.", name)
+    name = _EXPERT_NUM_RE.sub(r".\1", name)
+    return name
 
 
 class _MegatronModelList(list):
@@ -181,6 +199,8 @@ class MegatronEngine(TrainEngine):
         self.quantization_config: dict[str, int | str | list[str]] | None = None
         self.bridge_cls: str = getattr(self.mcore_config, "bridge_type", "mbridge")
         self.bridge_lora: MegatronBridgeLoRA | None = None
+        self.is_vision_model: bool = False
+        self.processor = None
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         if parallel_strategy is None:
@@ -316,6 +336,22 @@ class MegatronEngine(TrainEngine):
                 self.parallel_strategy, self.hf_config, self.tf_config
             )
 
+            self.is_vision_model = is_valid_vision_model(self.hf_config.model_type)
+            if self.is_vision_model:
+                if self.parallel_strategy.context_parallel_size > 1:
+                    raise NotImplementedError(
+                        "Context parallel (CP > 1) is not supported with VLM models. "
+                        f"Got context_parallel_size={self.parallel_strategy.context_parallel_size} "
+                        f"for model_type={self.hf_config.model_type}."
+                    )
+                self.processor, self.tokenizer = load_hf_processor_and_tokenizer(
+                    self.config.path
+                )
+                self.logger.info(
+                    f"VLM model detected (type={self.hf_config.model_type}). "
+                    f"Loaded processor and tokenizer."
+                )
+
             self.quantization_config = getattr(
                 self.hf_config, "quantization_config", None
             )
@@ -367,6 +403,9 @@ class MegatronEngine(TrainEngine):
                     delattr(param, "clear_high_precision_init_val")
 
         assert self.model, "Megatron models failed to initialize."
+
+        self._glu_fc1_names: set[str] = self._build_glu_fc1_names()
+
         modules = [m.module if isinstance(m, DDP) else m for m in self.model]
         total_params = sum(
             param.numel() for module in modules for param in module.parameters()
@@ -415,6 +454,53 @@ class MegatronEngine(TrainEngine):
         model_config.finalize_model_grads_func = finalize_model_grads
         self._create_optimizer(ft_spec)
         self._initialized = True
+
+    def _build_glu_fc1_names(self) -> set[str]:
+        """Detect which `linear_fc1` parameters belong to GLU MLPs.
+
+        Compares weight shapes: if ``fc1.weight.shape[0] == 2 * fc2.weight.shape[1]``
+        at the TP-local level, the MLP is gated and fc1 needs stride-2 de-interleave
+        at TP>1. Shape-based detection is model-agnostic and doesn't rely on config
+        flags. Names are stored with layer indices and per-expert numeric suffixes
+        stripped so they match across PP ranks (`model.named_modules()` yields LOCAL
+        indices while `get_named_parameters` rewrites to GLOBAL via `layer_offset`)
+        and across TEGroupedLinear MoE expert weights (`weight0`, `weight1`, ...).
+        """
+        glu_fc1_names: set[str] = set()
+        for model in self.model:
+            for mod_name, module in model.named_modules():
+                fc1 = getattr(module, "linear_fc1", None)
+                fc2 = getattr(module, "linear_fc2", None)
+                if fc1 is None or fc2 is None:
+                    continue
+                # Pick a representative weight: standard linear has `.weight`;
+                # TEGroupedLinear has `weight0` per local expert (all experts
+                # share the same shape).
+                fc1_w = getattr(fc1, "weight", None)
+                if fc1_w is None:
+                    fc1_w = getattr(fc1, "weight0", None)
+                fc2_w = getattr(fc2, "weight", None)
+                if fc2_w is None:
+                    fc2_w = getattr(fc2, "weight0", None)
+                if fc1_w is None or fc2_w is None:
+                    continue
+                fc1_out = fc1_w.shape[0]
+                fc2_in = fc2_w.shape[1] if fc2_w.dim() >= 2 else fc2_w.shape[0]
+                if fc1_out != 2 * fc2_in:
+                    continue
+                # Iterate fc1's direct parameters (recurse=False) and pick
+                # `weight`/`bias` plus their grouped-MoE numbered variants.
+                for p_name, _ in fc1.named_parameters(recurse=False):
+                    base = p_name.rstrip("0123456789")
+                    if base not in ("weight", "bias"):
+                        continue
+                    full_name = (
+                        f"{mod_name}.linear_fc1.{p_name}"
+                        if mod_name
+                        else f"linear_fc1.{p_name}"
+                    )
+                    glu_fc1_names.add(_normalize_glu_param_name(full_name))
+        return glu_fc1_names
 
     def _build_hf_mcore_bridge(self):
         if self.bridge_cls == "mbridge":
@@ -744,6 +830,7 @@ class MegatronEngine(TrainEngine):
                 model,
                 mb_input.padded_mb,
                 gather_cp_output=not cp_local,
+                is_vision_model=self.is_vision_model,
             )
 
             # Release tree attention metadata after forward pass
@@ -1331,12 +1418,15 @@ class MegatronEngine(TrainEngine):
         Returns:
             Tuple of (prepared_param, param_size_in_bytes)
         """
+        normalized = _normalize_glu_param_name(name)
+        is_glu = any(normalized.endswith(glu_name) for glu_name in self._glu_fc1_names)
         param = all_gather_param(
             name,
             param,
             self.fp8_direct_convert,
             quantization_config=self.quantization_config,
             duplicated_param_names=self._duplicated_param_names,
+            gated_linear_unit=is_glu,
         )
         param = remove_padding(name, param, self.hf_config.vocab_size)
 
@@ -1378,6 +1468,7 @@ class MegatronEngine(TrainEngine):
                 param,
                 quantization_config=self.quantization_config,
                 fp8_direct_convert=self.fp8_direct_convert,
+                hf_config=self.hf_config,
             )
         )
         buffer_size += param_size
@@ -1450,6 +1541,7 @@ class MegatronEngine(TrainEngine):
                     param,
                     quantization_config=self.quantization_config,
                     fp8_direct_convert=self.fp8_direct_convert,
+                    hf_config=self.hf_config,
                 )
             )
 
@@ -1593,7 +1685,7 @@ class MegatronEngine(TrainEngine):
             self.rollout_engine.pause_generation()
             fut = self.rollout_engine.update_weights_from_disk(meta)
 
-        self._save_model_to_hf(meta.path, self.tokenizer, None)
+        self._save_model_to_hf(meta.path, self.tokenizer, self.processor)
         # dist.barrier() are called when _save_model_to_hf finished
 
         if dist.get_rank() == 0:
@@ -1707,8 +1799,9 @@ class MegatronEngine(TrainEngine):
                     f" minimum ({recommended_min_n_mbs}) to avoid pipeline bubbles."
                 )
             return mb_list
-        # Amend position ids
-        input_ = amend_position_ids(input_)
+        # Amend position ids (skip for VLM — model computes mRoPE internally)
+        if not self.is_vision_model:
+            input_ = amend_position_ids(input_)
         # Split the input into micro-batches
         # NOTE: Here we use 2*pp_size in forward to align logprob precision
         # TODO: Performance check
@@ -1763,6 +1856,12 @@ class MegatronEngine(TrainEngine):
             mb["max_seqlen"] = int(mb["max_seqlen"])
         for mb in mb_list.padded_mbs:
             mb["max_seqlen"] = int(mb["max_seqlen"])
+
+        # Extract vision data from multi_modal_input into top-level keys
+        if self.is_vision_model:
+            for mb, padded_mb in zip(mb_list.mbs, mb_list.padded_mbs):
+                extract_vision_from_multi_modal(mb, padded_mb)
+
         return mb_list
 
     def _compute_logprobs_and_loss(
