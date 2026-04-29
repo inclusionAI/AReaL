@@ -26,6 +26,7 @@ from areal.api.io_struct import (
     HttpGenerationResult,
     HttpRequest,
     WeightUpdateRequests,
+    detect_image_mime,
     get_versioned_lora_name,
 )
 from areal.infra import RemoteInfEngine, RolloutController, WorkflowExecutor
@@ -83,8 +84,9 @@ class VLLMBackend:
                                 raise ValueError(
                                     "Not enough images in req.image_data to match image_url entries."
                                 )
+                            mime = detect_image_mime(base64_img)
                             content["image_url"] = {
-                                "url": f"data:image/jpeg;base64,{base64_img}"
+                                "url": f"data:{mime};base64,{base64_img}"
                             }
             payload["messages"] = parsed_input.copy()
             payload["logprobs"] = True
