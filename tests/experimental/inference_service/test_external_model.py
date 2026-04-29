@@ -431,6 +431,7 @@ async def data_proxy_app(data_proxy_config, mock_tokenizer, mock_areal_client):
     store = SessionStore()
     store.set_admin_key(data_proxy_config.admin_api_key)
     app.state.session_store = store
+    app.state.http_client = MagicMock()
     app.state.version = 0
     http_client = httpx.AsyncClient(timeout=10.0)
     app.state.http_client = http_client
@@ -678,6 +679,7 @@ async def test_external_model_end_to_end_register_then_chat(router_config):
             *,
             client: httpx.AsyncClient | None = None,
         ) -> dict:
+            del router_addr, admin_api_key, timeout, client
             resp = await router_client.post(
                 "/register_model",
                 json={
@@ -702,23 +704,26 @@ async def test_external_model_end_to_end_register_then_chat(router_config):
             model: str | None = None,
             client: httpx.AsyncClient | None = None,
         ) -> str:
+            del router_addr, path, timeout, admin_api_key, client
+            payload: dict[str, str] = {}
             if model is not None:
-                resp = await router_client.post(
-                    "/route",
-                    json={"model": model},
-                    headers=admin_headers(),
-                )
+                payload["model"] = model
+            if api_key is not None:
+                payload["api_key"] = api_key
+            if session_id is not None:
+                payload["session_id"] = session_id
+            resp = await router_client.post(
+                "/route",
+                json=payload,
+                headers=admin_headers(),
+            )
+            if model is not None:
                 if resp.status_code == 404:
                     raise RouterKeyRejectedError("not found", 404)
                 if resp.status_code == 503:
                     raise RouterKeyRejectedError("no healthy workers", 503)
                 resp.raise_for_status()
                 return resp.json()["worker_addr"]
-            resp = await router_client.post(
-                "/route",
-                json={"api_key": api_key, "session_id": session_id},
-                headers=admin_headers(),
-            )
             resp.raise_for_status()
             return resp.json()["worker_addr"]
 
@@ -730,6 +735,7 @@ async def test_external_model_end_to_end_register_then_chat(router_config):
             *,
             client: httpx.AsyncClient | None = None,
         ) -> httpx.Response:
+            del timeout, client
             if upstream_url == f"{WORKER_ADDR}/register_model":
                 data = json.loads(body)
                 proxy_state[data["name"]] = {

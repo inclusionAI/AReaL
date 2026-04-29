@@ -139,6 +139,7 @@ async def online_stack(monkeypatch):
     dp_app.state.pause_state = pause_state
     dp_app.state.config = dp_config
     dp_app.state.session_store = store
+    dp_app.state.http_client = MagicMock()
     dp_app.state.version = 0
 
     router_app = create_router_app(router_config)
@@ -177,8 +178,10 @@ async def online_stack(monkeypatch):
             model: str | None = None,
             client: httpx.AsyncClient | None = None,
         ) -> str:
-            del router_addr, timeout
+            del router_addr, timeout, client
             payload: dict[str, str] = {}
+            if model is not None:
+                payload["model"] = model
             if session_id is not None:
                 payload["session_id"] = session_id
             else:
@@ -205,7 +208,7 @@ async def online_stack(monkeypatch):
             *,
             client: httpx.AsyncClient | None = None,
         ):
-            del timeout
+            del timeout, client
             path = url.replace(DATA_PROXY_ADDR, "")
             return await dp_client.post(path, content=body, headers=headers)
 
@@ -217,7 +220,7 @@ async def online_stack(monkeypatch):
             *,
             client: httpx.AsyncClient | None = None,
         ) -> None:
-            del router_addr, timeout
+            del router_addr, timeout, client
             resp = await router_client.post(
                 "/remove_session",
                 json={"session_id": session_id},
@@ -298,21 +301,26 @@ async def test_online_stack_explicit_then_latest_export(online_stack):
         json={"model": "sglang", "messages": [{"role": "user", "content": "first"}]},
         headers=_hitl_headers(),
     )
-    await gw.post(
+    first_reward = await gw.post(
         "/rl/set_reward",
         json={"reward": 1.0},
         headers=_hitl_headers(),
     )
+    assert first_reward.status_code == 200
+    assert first_reward.json()["trajectory_id"] == 0
+
     await gw.post(
         "/chat/completions",
         json={"model": "sglang", "messages": [{"role": "user", "content": "second"}]},
         headers=_hitl_headers(),
     )
-    await gw.post(
+    second_reward = await gw.post(
         "/rl/set_reward",
         json={"reward": 2.0},
         headers=_hitl_headers(),
     )
+    assert second_reward.status_code == 200
+    assert second_reward.json()["trajectory_id"] == 1
 
     explicit_resp = await gw.post(
         "/export_trajectories",

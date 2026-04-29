@@ -34,7 +34,7 @@ from areal.api import (
     WeightUpdateMeta,
     WorkflowLike,
 )
-from areal.api.cli_args import InferenceEngineConfig, OpenAIProxyConfig
+from areal.api.cli_args import InferenceEngineConfig
 from areal.api.io_struct import (
     HttpGenerationResult,
     HttpRequest,
@@ -525,16 +525,16 @@ class RemoteInfEngine(InferenceEngine):
         """
         from areal.experimental.openai import OpenAIProxyWorkflow
 
-        openai_cfg = self.config.openai or OpenAIProxyConfig()
+        agent_cfg = self.config.agent
 
         return OpenAIProxyWorkflow(
-            mode=openai_cfg.mode,
+            mode=agent_cfg.mode,
             agent=agent,
             proxy_addr=proxy_addr,
-            admin_api_key=openai_cfg.admin_api_key,
-            discount=openai_cfg.turn_discount,
-            export_style=openai_cfg.export_style,
-            subproc_max_workers=openai_cfg.subproc_max_workers,
+            admin_api_key=agent_cfg.admin_api_key,
+            discount=agent_cfg.turn_discount,
+            export_style=agent_cfg.export_style,
+            subproc_max_workers=agent_cfg.subproc_max_workers,
             proxy_gateway_addr=self._proxy_gateway_addr,
         )
 
@@ -549,10 +549,10 @@ class RemoteInfEngine(InferenceEngine):
 
         # 0. None workflow = online mode (config-driven)
         if workflow is None:
-            openai_cfg = self.config.openai or OpenAIProxyConfig()
-            if openai_cfg.mode != "online":
+            agent_cfg = self.config.agent
+            if agent_cfg is None or agent_cfg.mode != "online":
                 raise ValueError(
-                    "workflow is None but OpenAIProxyConfig.mode is not 'online'. "
+                    "workflow is None but AgentConfig.mode is not 'online'. "
                     "Provide a workflow or set mode='online' in the config."
                 )
             if proxy_addr is None:
@@ -698,7 +698,7 @@ class RemoteInfEngine(InferenceEngine):
         )
 
     def choose_server(self) -> str:
-        """Choose a server based on the scheduling policy.
+        """Choose a server based on the routing strategy.
 
         Returns
         -------
@@ -708,9 +708,9 @@ class RemoteInfEngine(InferenceEngine):
         Raises
         ------
         NotImplementedError
-            If schedule policy other than round-robin is used
+            If routing strategy other than round-robin is used
         """
-        if self.config.schedule_policy == "round_robin":
+        if self.config.routing_strategy == "round_robin":
             server = self.addresses[self.server_idx]
             self.server_idx = (self.server_idx + 1) % len(self.addresses)
             return server
@@ -1051,7 +1051,7 @@ class RemoteInfEngine(InferenceEngine):
             AgentWorkflow will use this proxy instead of a local one.
         """
         if workflow is None and (
-            self.config.openai is None or self.config.openai.mode != "online"
+            self.config.agent is None or self.config.agent.mode != "online"
         ):
             raise ValueError(
                 "workflow must be specified for submit (unless mode='online')"
