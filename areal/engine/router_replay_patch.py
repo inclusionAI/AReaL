@@ -84,13 +84,6 @@ class RouterReplay:
     # Set by the engine patch before forward_backward_func.
     pp_size: int = 1
 
-    # Class-level agreement accumulator.
-    # Collects per-call agreement rates during REPLAY_FORWARD to provide
-    # an accurate R3 effectiveness metric every training step.
-    _agreement_matches: int = 0
-    _agreement_total: int = 0
-    _agreement_per_call: list = []
-
     # ------------------------------------------------------------------
     # Class-level (static) helpers
     # ------------------------------------------------------------------
@@ -135,37 +128,6 @@ class RouterReplay:
         """Clear the replay action on all router instances."""
         for r in RouterReplay.router_instances:
             r.clear_router_replay_action()
-
-    @classmethod
-    def reset_agreement_stats(cls) -> None:
-        """Reset the agreement rate accumulator before a training step."""
-        cls._agreement_matches = 0
-        cls._agreement_total = 0
-        cls._agreement_per_call = []
-
-    reset_agreement_accumulator = reset_agreement_stats
-
-    @classmethod
-    def get_agreement_rate(cls) -> float:
-        if cls._agreement_total == 0:
-            return -1.0
-        return cls._agreement_matches / cls._agreement_total
-
-    @classmethod
-    def harvest_agreement_stats(cls) -> dict:
-        """Harvest accumulated agreement statistics and reset.
-
-        Returns a dict with keys: avg, min, max, n_samples, n_calls.
-        """
-        result = {
-            "avg": cls.get_agreement_rate(),
-            "min": min(cls._agreement_per_call) if cls._agreement_per_call else -1.0,
-            "max": max(cls._agreement_per_call) if cls._agreement_per_call else -1.0,
-            "n_samples": cls._agreement_total,
-            "n_calls": len(cls._agreement_per_call),
-        }
-        cls.reset_agreement_stats()
-        return result
 
     def __init__(self) -> None:
         self.target_topk_idx: torch.Tensor | None = None
@@ -260,34 +222,6 @@ def _patched_topk_routing_with_score_function(
             top_indices = top_indices.to(scores.device)
             probs = scores.gather(1, top_indices)
 
-            # --- Router Agreement Rate: compare replay vs natural routing ---
-            # Compute what the router would have chosen WITHOUT replay
-            # (no grad to avoid interfering with the backward graph).
-            # NOTE: Exclude padding tokens from agreement computation.
-            # Padding tokens have all-zero replay indices and would
-            # artificially drag down agreement rates since their
-            # natural routing is essentially random.
-            try:
-                with torch.no_grad():
-                    _, natural_indices = _compute_topk(
-                        scores, topk, num_groups=num_groups, group_topk=group_topk
-                    )
-                    non_padding_mask = (top_indices != 0).any(dim=-1)
-                    replay_sorted = top_indices.sort(dim=-1).values
-                    natural_sorted = natural_indices.sort(dim=-1).values
-                    matches = (replay_sorted == natural_sorted).all(dim=-1)
-                    if non_padding_mask.any():
-                        masked_matches = matches[non_padding_mask]
-                        n_matched = int(masked_matches.sum().item())
-                        n_total = int(masked_matches.numel())
-                        RouterReplay._agreement_matches += n_matched
-                        RouterReplay._agreement_total += n_total
-                        if n_total > 0:
-                            RouterReplay._agreement_per_call.append(
-                                n_matched / n_total
-                            )
-            except Exception:
-                logger.debug("[R3] Agreement rate computation failed.", exc_info=True)
             return probs, top_indices
 
         elif routing_action == RouterReplayAction.REPLAY_BACKWARD:

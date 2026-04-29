@@ -374,7 +374,6 @@ def _r3_forward_backward_batch(
     # ------------------------------------------------------------------
     # 2b. Set initial replay action to REPLAY_FORWARD.
     # ------------------------------------------------------------------
-    RouterReplay.reset_agreement_stats()
     RouterReplay.set_global_router_replay_action(RouterReplayAction.REPLAY_FORWARD)
 
     # ------------------------------------------------------------------
@@ -520,10 +519,6 @@ def _r3_forward_backward_batch(
         # Restore the original class on this instance (undo the per-instance
         # class swap done above). The original class was never modified.
         mb_list.__class__ = _r3_original_mb_list_class
-
-        # Harvest agreement stats BEFORE clearing replay state.
-        _agreement = RouterReplay.harvest_agreement_stats()
-        self._r3_last_agreement_stats = _agreement
 
         clear_router_replay()
         self._r3_per_mb_experts = None
