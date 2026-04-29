@@ -188,6 +188,34 @@ class MegatronEngine(TrainEngine):
         self._mtp_layers_verified: bool = False
         self._mtp_tensor_update_warned: bool = False
         if self.enable_mtp_training:
+            # [MTPVersionBanner-v16] + v17 tag: make it trivial to
+            # verify which patch revision is running in a given log.
+            try:
+                import os as _os_banner
+                _banner_tags = [
+                    "v6:DoubleScaleInv",
+                    "v9:bf16StallDiag",
+                    "v11:VersionAudit",
+                    "v12:OptimDump+Sanity",
+                    "v14:LRScaleGuard+WeightDeltaGuard",
+                    "v16:MTPSerializeFp32Upcast(AREAL_MTP_FP32_BROADCAST)",
+                    "v17:MTPNativeAutoScaler+ConsumerBypass"
+                    "(AREAL_MTP_NATIVE_AUTOSCALER,autograd_in_graph)",
+                ]
+                _banner_flags = {
+                    "AREAL_MTP_FP32_BROADCAST":
+                        _os_banner.environ.get(
+                            "AREAL_MTP_FP32_BROADCAST", "0"),
+                    "AREAL_MTP_NATIVE_AUTOSCALER":
+                        _os_banner.environ.get(
+                            "AREAL_MTP_NATIVE_AUTOSCALER", "0"),
+                }
+                self.logger.info(
+                    "[MTPVersionBanner] tags=%s flags=%s",
+                    ",".join(_banner_tags), _banner_flags,
+                )
+            except Exception:
+                pass
             self.logger.info(
                 f"[MTPTrain] MTP online training ENABLED: "
                 f"num_layers={self.mtp_num_layers}, "
@@ -1456,6 +1484,92 @@ class MegatronEngine(TrainEngine):
                                     else:
                                         _mtp_loss_to_store = mtp_loss_scale * mtp_loss / num_tokens
                                     _engine_ref._mtp_loss_for_backward.append(_mtp_loss_to_store)
+
+                                    # ---  BEGIN ---
+                                    # Reproduce Megatron-native behaviour:
+                                    #   hidden_states = MTPLossAutoScaler.apply(
+                                    #       hidden_states,
+                                    #       mtp_loss_scale * mtp_loss [/ num_tokens],
+                                    #   )
+                                    # where MTPLossAutoScaler.backward() returns
+                                    # (grad_output, ones_like(mtp_loss) *
+                                    #  main_loss_backward_scale). Combined with
+                                    # set_loss_scale(1/num_microbatches) this
+                                    # injects a per-token * per-vocab gradient
+                                    # of magnitude ~ mtp_loss_scale straight into
+                                    # the autograd graph, bypassing the scalar
+                                    # FIFO + DoubleScale-v6 inverse path.
+                                    #
+                                    # Gated so the legacy behaviour remains
+                                    # bit-exact by default. Enable with
+                                    #   AREAL_MTP_NATIVE_AUTOSCALER=1
+                                    try:
+                                        import os as _os_v17
+                                        _v17_on = (
+                                            _os_v17.environ.get(
+                                                "AREAL_MTP_NATIVE_AUTOSCALER",
+                                                "0",
+                                            ) == "1"
+                                        )
+                                    except Exception:
+                                        _v17_on = False
+                                    if _v17_on:
+                                        try:
+                                            from megatron.core.transformer.multi_token_prediction import (
+                                                MTPLossAutoScaler as _MTPLossAutoScaler_v17,
+                                            )
+                                            _num_mb_v17 = int(getattr(
+                                                _engine_ref,
+                                                "_current_num_microbatches",
+                                                1,
+                                            ) or 1)
+                                            if _num_mb_v17 <= 0:
+                                                _num_mb_v17 = 1
+                                            import torch as _torch_v17
+                                            # schedules.py sets
+                                            # main_loss_backward_scale =
+                                            # loss_scale / num_microbatches;
+                                            # AReaL's consumer already folds
+                                            # loss_scale via the outer
+                                            # loss * loss_scale contract,
+                                            # so only 1/num_mb is needed here.
+                                            _MTPLossAutoScaler_v17.set_loss_scale(
+                                                _torch_v17.tensor(
+                                                    1.0 / float(_num_mb_v17)
+                                                )
+                                            )
+                                            hidden_states = (
+                                                _MTPLossAutoScaler_v17.apply(
+                                                    hidden_states,
+                                                    _mtp_loss_to_store,
+                                                )
+                                            )
+                                            _engine_ref._v17_native_active = True
+                                            if _mtp_diag_mb_counter[0] == 0:
+                                                _logger.info(
+                                                    "[MTPNativeAutoScaler-v17] "
+                                                    "apply() injected: "
+                                                    "num_mb=%d, "
+                                                    "main_loss_backward_scale=%.6e, "
+                                                    "hidden_states.shape=%s, "
+                                                    "hidden_states.rg=%s",
+                                                    _num_mb_v17,
+                                                    1.0 / float(_num_mb_v17),
+                                                    list(hidden_states.shape),
+                                                    hidden_states.requires_grad,
+                                                )
+                                        except Exception as _e_v17:
+                                            _engine_ref._v17_native_active = False
+                                            _logger.warning(
+                                                "[MTPNativeAutoScaler-v17] "
+                                                "apply() failed, falling back "
+                                                "to legacy FIFO+DoubleScale "
+                                                "path: %s",
+                                                _e_v17,
+                                            )
+                                    else:
+                                        _engine_ref._v17_native_active = False
+                                    # --- [MTPNativeAutoScaler-v17] END ---
                                     # [v5-F4] Cap FIFO to avoid unbounded growth on producer/consumer drift.
                                     _fifo_len = len(_engine_ref._mtp_loss_for_backward)
                                     if _fifo_len > 32:
@@ -3053,10 +3167,58 @@ class MegatronEngine(TrainEngine):
                             fp8_direct_convert=self.fp8_direct_convert,
                         )
                     )
+                    #  Upcast MTP-draft
+                    # tensors to fp32 before serialization/broadcast so
+                    # sub-bf16-ULP weight deltas are not rounded away
+                    # on the wire. Complements upstream's NCCL-path
+                    # [MTPBroadcastDtype] upcast (which only covers
+                    # the distributed-weight-update path, not the
+                    # MTPSerialize/update_weights_from_tensor path).
+                    # Gated on AREAL_MTP_FP32_BROADCAST=1.
+                    try:
+                        import os as _os_v16
+                        _v16_on = (
+                            _os_v16.environ.get(
+                                "AREAL_MTP_FP32_BROADCAST", "0",
+                            ) == "1"
+                        )
+                    except Exception:
+                        _v16_on = False
+                    if _v16_on:
+                        import torch as _torch_v16
+                        _upcasted = 0
+                        for _i in range(_prev_count, len(mtp_hf_tensors)):
+                            _nm_v16, _tn_v16 = mtp_hf_tensors[_i]
+                            if _tn_v16.dtype == _torch_v16.bfloat16:
+                                mtp_hf_tensors[_i] = (
+                                    _nm_v16,
+                                    _tn_v16.float().contiguous(),
+                                )
+                                _upcasted += 1
+                        if _upcasted > 0:
+                            self.logger.info(
+                                "[MTPBf16UpcastBroadcast-v16] Upcast %d MTP "
+                                "tensors bf16->fp32 at MTPSerialize path "
+                                "(name=%s).",
+                                _upcasted, name,
+                            )
                     # Diagnostic: log each converted MTP tensor with value
                     # statistics for post-mortem debugging of weight corruption.
                     for _hf_name, _hf_tensor in mtp_hf_tensors[_prev_count:]:
                         _abs = _hf_tensor.float().abs()
+                        # [MTPWeightDeltaGuard-v14] Flag all-zero MTP
+                        # tensors explicitly so draft-head stall is
+                        # surfaced independently of MTPWeightDiag.
+                        try:
+                            if float(_abs.max().item()) == 0.0:
+                                self.logger.warning(
+                                    "[MTPWeightDeltaGuard-v14] MTP "
+                                    "tensor %s (hf=%s) has abs_max==0; "
+                                    "draft head is stalled this step.",
+                                    name, _hf_name,
+                                )
+                        except Exception:
+                            pass
                         self.logger.info(
                             f"[MTPWeightDiag] convert_to_hf: "
                             f"megatron={name} -> hf={_hf_name}, "
@@ -3774,7 +3936,17 @@ class MegatronEngine(TrainEngine):
                     _mtp_ema_decay * _ema_val
                     + (1 - _mtp_ema_decay) * _raw_val
                 )
-            loss = loss + _mtp_contribution
+            if not bool(getattr(self, "_v17_native_active", False)):
+                loss = loss + _mtp_contribution
+            else:
+                # [MTPNativeConsumerBypass-v17] Native MTPLossAutoScaler
+                # already injected the gradient via autograd; adding
+                # _mtp_contribution scalar here would double-count.
+                if self._mtp_loss_total_count == 0:
+                    self.logger.info(
+                        "[MTPNativeConsumerBypass-v17] Skipping scalar "
+                        "loss+=_mtp_contribution; autograd path active."
+                    )
             _n = self._mtp_loss_total_count
             if _n <= 4 or _n % 100 == 0:
                 self.logger.info(
@@ -3792,7 +3964,11 @@ class MegatronEngine(TrainEngine):
                     loss_scale,
                 )
 
-        if _mtp_loss_for_this_mb is not None and abs(loss_scale) > 0:
+        if (
+            _mtp_loss_for_this_mb is not None
+            and abs(loss_scale) > 0
+            and not bool(getattr(self, "_v17_native_active", False))
+        ):
             # Refresh cached MTP LR from optimizer param_groups using
             # max_lr fingerprint (ParamKey override in megatron-core 0.16
             # does NOT propagate the ParamKey.name into the param_group
@@ -3824,6 +4000,31 @@ class MegatronEngine(TrainEngine):
                     self._last_logged_mtp_lr = float(
                         _pgs[0].get("lr", 3e-6)
                     )
+                # [MTPLRScaleGuard-v14] detect obviously-wrong MTP lr.
+                try:
+                    _mtp_lr_g = float(
+                        getattr(self, "_last_logged_mtp_lr", 0.0)
+                    )
+                    _base_lr_g = None
+                    if _pgs:
+                        _base_lr_g = float(_pgs[0].get("lr", 0.0))
+                    if (
+                        _base_lr_g is not None
+                        and _base_lr_g > 0
+                        and _mtp_lr_g > 0
+                        and _mtp_lr_g >= 10.0 * _base_lr_g
+                        and (self._mtp_loss_total_count <= 4
+                             or self._mtp_loss_total_count % 100 == 0)
+                    ):
+                        self.logger.warning(
+                            "[MTPLRScaleGuard-v14] MTP lr %.3e is "
+                            ">=10x base lr %.3e; this is almost "
+                            "certainly a mis-scaled mtp_lr_scale "
+                            "and will destabilise the draft head.",
+                            _mtp_lr_g, _base_lr_g,
+                        )
+                except Exception:
+                    pass
             except Exception:
                 pass
             # Match Megatron-native MTPLossAutoScaler:
