@@ -37,6 +37,7 @@ rollout:
     reasoning_parser: qwen3
     export_style: individual
     turn_discount: 1.0
+    admin_api_key: sk-test123456
   admin_api_key: sk-test123456
 
 gconfig:
