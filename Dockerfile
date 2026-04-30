@@ -115,7 +115,7 @@ RUN git clone https://github.com/deepseek-ai/FlashMLA.git /flash-mla \
 
 # DeepGEMM (FP8 GEMM library for DeepSeek-V3)
 RUN git clone https://github.com/deepseek-ai/DeepGEMM /DeepGEMM \
-    && cd /DeepGEMM \
+    && cd /DeepGEMM && git checkout d30fc36c8 \
     && git submodule update --init --recursive \
     && uv pip install -v . --no-build-isolation \
     && rm -rf /DeepGEMM
