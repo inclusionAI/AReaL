@@ -1,0 +1,204 @@
+experiment_name: moonlight-16b-a3b-gsm8k-grpo
+trial_name: trial0
+
+seed: 1
+enable_offload: false
+total_train_epochs: 10
+tokenizer_path: ${actor.path}
+
+cluster:
+  n_nodes: 1
+  n_gpus_per_node: 8
+  fileroot: /tmp/areal/moon_experiments
+  name_resolve:
+    type: nfs
+    nfs_record_root: /tmp/areal/moon_name_resolve
+
+scheduler:
+  type: null
+
+rollout:
+  backend: "sglang:d1p1t8"
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  max_concurrent_rollouts: 64
+  queue_size: null
+  consumer_batch_size: ${train_dataset.batch_size}
+  max_head_offpolicyness: 2
+  enable_rollout_tracing: false
+  scheduling_spec: ${actor.scheduling_spec}
+  fileroot: ${cluster.fileroot}
+  tokenizer_path: ${tokenizer_path}
+  dump_to_file: true
+  # R3: Enable returning routed expert assignments from rollout inference.
+  # This triggers the entire Router Replay pipeline: SGLang returns per-token
+  # expert indices, which are then replayed during training to eliminate
+  # train/inference routing mismatch in MoE models.
+  # num_moe_layers and topk are automatically resolved from the model config.
+  return_routed_experts: true
+
+gconfig:
+  n_samples: 8
+  min_new_tokens: 0
+  max_new_tokens: 1024
+  greedy: false
+  temperature: 1.0
+
+actor:
+  backend: "megatron:(attn:d1p2t4|ffn:d1p2t1e4)"    # ← PP=2 回退，TP=4/EP=4
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  path: /workspace/models/Moonlight-16B-A3B-Instruct
+  init_from_scratch: false
+  disable_dropout: true
+  gradient_checkpointing: true
+  dtype: bfloat16
+  mb_spec:
+    max_tokens_per_mb: 1280                             # ← 从 2048 降至 512
+  optimizer:
+    type: adam_bf16
+    lr: 2e-6
+    weight_decay: 0.003
+    beta1: 0.9
+    beta2: 0.999
+    eps: 1e-8
+    lr_scheduler_type: constant
+    gradient_clipping: 1.0
+    warmup_steps_proportion: 0.001
+  eps_clip: 0.2
+  temperature: ${gconfig.temperature}
+  reward_scaling: 10.0
+  reward_bias: -0.5
+  kl_ctl: 0.0
+  ppo_n_minibatches: 1                                # ← 从 1 提高至 4（分批梯度累积）
+  recompute_logprob: true
+  use_decoupled_loss: true
+  behave_imp_weight_cap: 5.0
+  reward_norm:
+    mean_level: group
+    std_level: group
+    group_size: ${gconfig.n_samples}
+  adv_norm:
+    mean_level: batch
+    std_level: batch
+  weight_update_mode: disk
+  max_new_tokens: ${gconfig.max_new_tokens}
+  megatron:
+    use_deterministic_algorithms: false
+    recompute_granularity: full
+    recompute_method: uniform
+    recompute_num_layers: 14
+    main_grads_dtype: bfloat16       # 梯度从 FP32 降为 BF16（节省 ~4 GiB）
+    # store_param_remainders: true
+    # optimizer_cpu_offload: true
+    # optimizer_offload_fraction: 0.5
+    # main_params_dtype: bfloat16
+    # main_grads_dtype: bfloat16
+    # # adam_bf16 已自动设置以下两项，但显式声明更安全
+    # exp_avg_dtype: bfloat16
+    # exp_avg_sq_dtype: bfloat16
+    ddp:
+      grad_reduce_in_fp32: false                    # ← 保持逐层重计算
+  scheduling_spec:
+    - task_type: worker
+      port_count: 2
+      gpu: 1
+      mem: 48
+      cmd: python3 -m areal.infra.rpc.rpc_server
+      env_vars:
+        PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+
+ref:
+  backend: ${actor.backend}
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  path: ${actor.path}
+  init_from_scratch: false
+  disable_dropout: true
+  dtype: ${actor.dtype}
+  mb_spec:
+    max_tokens_per_mb: 1280
+  optimizer: null
+  scheduling_strategy:
+    type: colocation
+    target: actor
+  scheduling_spec: ${actor.scheduling_spec}
+
+sglang:
+  model_path: ${actor.path}
+  random_seed: ${seed}
+  skip_tokenizer_init: false
+  dtype: bfloat16
+  max_running_requests: 8
+  context_length: 2048
+  mem_fraction_static: 0.2
+  attention_backend: triton
+  # R3: Enable SGLang to capture and return per-token routed expert indices
+  # during inference. This is auto-set by rl_trainer when
+  # rollout.return_routed_experts=true, but explicitly declared here for clarity.
+  enable_return_routed_experts: true
+  chunked_prefill_size: 2048
+
+vllm:
+  model: ${actor.path}
+  seed: ${seed}
+  skip_tokenizer_init: false
+  dtype: bfloat16
+  max_model_len: 4096
+  gpu_memory_utilization: 0.75
+
+train_dataset:
+  batch_size: 64
+  shuffle: true
+  pin_memory: true
+  num_workers: 4
+  path: openai/gsm8k
+  type: rl
+  max_length: 512
+
+valid_dataset:
+  batch_size: 128
+  pin_memory: true
+  num_workers: 4
+  path: openai/gsm8k
+  type: rl
+
+saver:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: null
+
+recover:
+  mode: disabled
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: 3600
+
+evaluator:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: null
+
+stats_logger:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  wandb:
+    mode: disabled
+
+perf_tracer:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  enabled: false
+  session_tracer:
+    enabled: false

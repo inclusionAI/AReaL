@@ -17,8 +17,6 @@ from typing import TYPE_CHECKING, Any
 import mbridge
 import torch
 import torch.distributed as dist
-from megatron.bridge import AutoBridge as MegatronBridgeAutoBridge
-from megatron.bridge.peft.lora import LoRA as MegatronBridgeLoRA
 from megatron.core import parallel_state as mpu
 from megatron.core import tensor_parallel
 from megatron.core.distributed import DistributedDataParallel as DDP
@@ -66,7 +64,10 @@ from areal.engine.megatron_utils.megatron import (
     get_named_parameters,
     remove_padding,
 )
-from areal.engine.megatron_utils.megatron_lora import get_vllm_lora_target_modules
+from areal.engine.megatron_utils.megatron_lora import (
+    ensure_save_hf_adapter_patched,
+    get_vllm_lora_target_modules,
+)
 from areal.engine.megatron_utils.packed_context_parallel import (
     extract_vision_from_multi_modal,
     packed_context_parallel_forward,
@@ -118,7 +119,46 @@ from areal.utils.seeding import get_seed
 
 if TYPE_CHECKING:
     from areal.api import Scheduler
+    from areal.api.cli_args import PPOActorConfig, PPOCriticConfig
+    from megatron.bridge import AutoBridge as MegatronBridgeAutoBridge
+    from megatron.bridge.peft.lora import LoRA as MegatronBridgeLoRA
     from areal.api.cli_args import DPOEngineConfig, PPOActorConfig, PPOCriticConfig
+
+def _patch_gpt_model_postprocess_for_inference(model_list: _MegatronModelList) -> None:
+    """Patch ``GPTModel._postprocess`` to skip MTP when ``labels=None``.
+
+    In the ``forward_only`` path (e.g. ``compute_logp``), no labels are
+    passed to the model.  However, Megatron-Core's ``_postprocess`` still
+    enters the MTP branch when ``config.mtp_num_layers`` is set, invoking
+    ``process_mtp_loss`` with ``labels=None`` which either crashes or
+    corrupts the hidden states.  Temporarily clearing ``mtp_num_layers``
+    forces ``_postprocess`` to skip MTP and return logits directly.
+    """
+    from megatron.core.models.gpt.gpt_model import GPTModel
+
+    if getattr(GPTModel, "_areal_postprocess_patched", False):
+        return
+
+    _original_postprocess = GPTModel._postprocess
+
+    def _patched_postprocess(self, hidden_states, input_ids, position_ids, labels, **kwargs):
+        if labels is None and getattr(self.config, "mtp_num_layers", None) is not None:
+            original_mtp = self.config.mtp_num_layers
+            self.config.mtp_num_layers = None
+            try:
+                result = _original_postprocess(
+                    self, hidden_states, input_ids, position_ids, labels=labels, **kwargs
+                )
+            finally:
+                self.config.mtp_num_layers = original_mtp
+            return result
+        return _original_postprocess(
+            self, hidden_states, input_ids, position_ids, labels=labels, **kwargs
+        )
+
+    GPTModel._postprocess = _patched_postprocess
+    GPTModel._areal_postprocess_patched = True
+
 
 
 # `model.named_modules()` yields LOCAL layer indices on each PP rank, while
@@ -188,6 +228,17 @@ class MegatronEngine(TrainEngine):
         self.seed: int = 0
         self.own_global_group: bool = False
         self.is_offload: bool = False
+        self._r3_enabled: bool = getattr(config.megatron, "enable_router_replay", False)
+        if not self._r3_enabled:
+            self._r3_enabled = getattr(config, "_r3_enable_router_replay", False)
+        logging.getLogger("[MegatronEngine]").info(
+            "[R3] __init__: _r3_enabled=%s, config.megatron.enable_router_replay=%s, "
+            "config._r3_enable_router_replay=%s, config.megatron type=%s",
+            self._r3_enabled,
+            getattr(config.megatron, "enable_router_replay", "<MISSING>"),
+            getattr(config, "_r3_enable_router_replay", "<MISSING>"),
+            type(config.megatron).__name__,
+        )
         self._offload_depth: int = 0
         self.enable_tree_training: bool = self.config.enable_tree_training
         # FP8 configuration
@@ -250,6 +301,8 @@ class MegatronEngine(TrainEngine):
         )
 
     def _apply_megatron_bridge_lora(self) -> None:
+        from megatron.bridge.peft.lora import LoRA as MegatronBridgeLoRA
+
         assert self.model is not None, "Model must be initialized before applying LoRA."
         assert self.bridge_cls == "megatron-bridge"
 
@@ -321,6 +374,14 @@ class MegatronEngine(TrainEngine):
 
         self.tokenizer = load_hf_tokenizer(self.config.path)
 
+        # R3: _r3_enabled was set in __init__ from config.megatron.enable_router_replay.
+        self.logger.info(
+            "[R3] enable_router_replay=%s (config.megatron type=%s, "
+            "config type=%s).",
+            self._r3_enabled,
+            type(self.config.megatron).__name__,
+            type(self.config).__name__,
+        )
         with patch_bridge_for_tree_training(
             self.enable_tree_training and self.bridge_cls == "mbridge"
         ):
@@ -358,6 +419,14 @@ class MegatronEngine(TrainEngine):
 
             self._check_and_apply_fp8_config()
             self._validate_fp8_consistency()
+
+            # R3: Apply Router Replay patch BEFORE model creation so that
+            # TopKRouter.__init__ and TransformerConfig.__init__ are patched.
+            if self._r3_enabled:
+                from areal.engine.router_replay_patch import apply_router_replay_patch
+                apply_router_replay_patch()
+                self.tf_config.enable_routing_replay = True
+                self.logger.info("[R3] Router Replay patches applied before model creation.")
 
             with self.device:
                 models = make_mcore_model(
@@ -418,6 +487,8 @@ class MegatronEngine(TrainEngine):
             for model in self.model:
                 disable_dropout_in_model(model)
 
+        _patch_gpt_model_postprocess_for_inference(self.model)
+
         primary_model = self.model[0]
         model_config = get_model_config(primary_model)
 
@@ -453,6 +524,12 @@ class MegatronEngine(TrainEngine):
                 model_config.param_sync_func = model_config.param_sync_func[0]
         model_config.finalize_model_grads_func = finalize_model_grads
         self._create_optimizer(ft_spec)
+
+        # R3: Apply engine-level patch after model and optimizer are ready.
+        if self._r3_enabled:
+            from areal.engine.megatron_engine_r3_patch import patch_megatron_engine_for_r3
+            patch_megatron_engine_for_r3(self, enable_router_replay=True)
+            self.logger.info("[R3] Router Replay enabled on MegatronEngine.")
         self._initialized = True
 
     def _build_glu_fc1_names(self) -> set[str]:
@@ -521,6 +598,8 @@ class MegatronEngine(TrainEngine):
             )
 
         elif self.bridge_cls == "megatron-bridge":
+            from megatron.bridge import AutoBridge as MegatronBridgeAutoBridge
+
             if self.enable_tree_training:
                 raise NotImplementedError(
                     "Tree training is not supported with bridge_type='megatron-bridge'."
@@ -1291,7 +1370,36 @@ class MegatronEngine(TrainEngine):
         mcore_opt_config.exp_avg_sq_dtype = getattr(
             torch, self.mcore_config.exp_avg_sq_dtype
         )
-
+        # Precision-aware optimizer for MoE models
+        # -----------------------------------------
+        # When ``use_precision_aware_optimizer=True``, Megatron-Core stores
+        # optimizer states (params, grads, exp_avg, exp_avg_sq) in
+        # user-specified dtypes and compensates for low-precision rounding
+        # via fp32 remainders.  Two additional flags are set here:
+        #
+        # ``use_precision_aware_optimizer_no_fp8_or_ds_fp8``:
+        #   A derived flag that is True when the precision-aware optimizer
+        #   is enabled AND at least one of the following holds:
+        #     1. ``main_params_dtype != float32`` -- low-precision master
+        #        params (e.g. bf16) need rounding-error compensation.
+        #     2. ``fp8_recipe is None or "delayed"`` -- no real-time FP8
+        #        scaling, so the optimizer must handle quantisation error
+        #        itself (delayed-scaling FP8 updates the scale factor with
+        #        a lag, conflicting with the optimizer's immediate residual
+        #        correction).
+        #     3. ``optimizer_cpu_offload`` -- CPU offload introduces extra
+        #        precision conversions that require special handling.
+        #   When True, the optimizer applies its full residual-compensation
+        #   logic during the parameter update step.
+        mcore_opt_config.use_precision_aware_optimizer_no_fp8_or_ds_fp8 = (
+            mcore_opt_config.use_precision_aware_optimizer
+            and (
+                mcore_opt_config.main_params_dtype != torch.float32
+                or (mcore_opt_config.fp8_recipe is None or mcore_opt_config.fp8_recipe == "delayed")
+                or mcore_opt_config.optimizer_cpu_offload
+            )
+        )
+        mcore_opt_config.store_param_remainders = True
         self.optimizer = get_megatron_optimizer(mcore_opt_config, self.model)
 
         warmup_steps_proportion = self.optimizer_config.warmup_steps_proportion
@@ -1417,6 +1525,17 @@ class MegatronEngine(TrainEngine):
                         if getattr(module, "parallel_mode", None) == "duplicated":
                             for p_name, _ in module.named_parameters(recurse=False):
                                 full = f"{mod_name}.{p_name}" if mod_name else p_name
+                                # Normalize to match the naming convention used
+                                # by megatron_utils.megatron.get_named_parameters
+                                # (which is the source of ``name`` passed into
+                                # ``all_gather_param``). Without this, MLA
+                                # ``linear_q_down_proj`` / ``linear_kv_down_proj``
+                                # weights are never recognized as duplicated and
+                                # get all-gathered across the TP group, producing
+                                # oversized tensors that sglang rejects when
+                                # loading Moonlight / DeepSeek-V3 MLA weights.
+                                if not full.startswith("module.module."):
+                                    full = "module." + full
                                 duplicated.add(full)
             self._cached_duplicated_param_names = duplicated
         return self._cached_duplicated_param_names
@@ -1738,6 +1857,7 @@ class MegatronEngine(TrainEngine):
                     "Saving critic model is not supported with megatron-bridge."
                 )
             if self.config.use_lora:
+                ensure_save_hf_adapter_patched()
                 self.bridge.save_hf_adapter(
                     self.model,
                     path=path,
@@ -1764,9 +1884,25 @@ class MegatronEngine(TrainEngine):
 
         if dist.get_rank() == 0:
             if tokenizer is not None:
-                tokenizer.save_pretrained(path)
+                if hasattr(tokenizer, "save_pretrained"):
+                    tokenizer.save_pretrained(path)
+                else:
+                    self.logger.warning(
+                        "Tokenizer object has no save_pretrained() method "
+                        f"(got type={type(tokenizer).__name__}); skipping save. "
+                        "This usually means the tokenizer could not be "
+                        "reconstructed from its serialized form (e.g. a model "
+                        "with a custom tokenizer class requiring "
+                        "trust_remote_code=True) and was decoded as a raw dict."
+                    )
             if processor is not None:
-                processor.save_pretrained(path)
+                if hasattr(processor, "save_pretrained"):
+                    processor.save_pretrained(path)
+                else:
+                    self.logger.warning(
+                        "Processor object has no save_pretrained() method "
+                        f"(got type={type(processor).__name__}); skipping save."
+                    )
 
         current_platform.synchronize()
         dist.barrier(group=self.cpu_group)

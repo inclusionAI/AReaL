@@ -534,6 +534,10 @@ def call_engine_method():
                     category=category,
                     args={"method": method_name, "engine": engine_name},
                 ):
+                    if not hasattr(engine, method_name):
+                        raise ValueError(
+                            f"Engine does not have method '{method_name}'"
+                        )
                     method = getattr(engine, method_name)
                     result = method(*args_bcast, **kwargs_bcast)
 
@@ -545,8 +549,22 @@ def call_engine_method():
 
                 return result
             except AttributeError as e:
-                logger.error(f"Method '{method_name}' not found on engine: {e}")
-                raise ValueError(f"Engine does not have method '{method_name}'")
+                # Only treat this as "method missing" if the method truly is
+                # not defined on the engine. An AttributeError raised from
+                # within the method body should propagate as-is so the real
+                # stack trace is visible.
+                if not hasattr(engine, method_name):
+                    logger.error(
+                        f"Method '{method_name}' not found on engine: {e}"
+                    )
+                    raise ValueError(
+                        f"Engine does not have method '{method_name}'"
+                    )
+                logger.error(
+                    f"Engine method '{method_name}' raised AttributeError: "
+                    f"{e}\n{traceback.format_exc()}"
+                )
+                raise
             except Exception as e:
                 logger.error(
                     f"Engine method '{method_name}' failed: "

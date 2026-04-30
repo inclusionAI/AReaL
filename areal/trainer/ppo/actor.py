@@ -133,6 +133,22 @@ class PPOActor:
 
     def _compute_logp(self, data: dict[str, Any]) -> torch.Tensor | None:
         self.engine.eval()
+        # R3: side-channel routed_experts into the engine so that the R3
+        # forward_backward_batch wrapper replays routing decisions even in
+        # the forward_only (compute_logp) path.
+        _r3_routed_experts = data.pop("routed_experts", None)
+        if _r3_routed_experts is not None and not isinstance(
+            _r3_routed_experts, torch.Tensor
+        ):
+            from areal.trainer.ppo.actor_r3_patch import _resolve_to_tensor
+            _r3_routed_experts = _resolve_to_tensor(_r3_routed_experts)
+        if _r3_routed_experts is not None and getattr(
+            self.engine, "_r3_enabled", False
+        ):
+            # forward_batch performs ONE forward_backward_batch(forward_only=True)
+            # call internally; the R3 engine patch will split routed_experts per
+            # micro-batch and consume the side-channel (setting it back to None).
+            self.engine._r3_pending_routed_experts = _r3_routed_experts
         return self.engine.forward(
             input_=data,
             aggregate_fn=lambda xs: torch.cat(xs, dim=-1),
@@ -333,16 +349,69 @@ class PPOActor:
             data.pop(key, None)
         # NOTE: calling engine.train() is critical to enabling gradient checkpointing
         self.engine.train()
+        _r3_routed_experts = data.pop("routed_experts", None)
+        if _r3_routed_experts is not None and not isinstance(
+            _r3_routed_experts, torch.Tensor
+        ):
+            from areal.trainer.ppo.actor_r3_patch import _resolve_to_tensor
+            _r3_routed_experts = _resolve_to_tensor(_r3_routed_experts)
+        if _r3_routed_experts is not None:
+            _re_np = _r3_routed_experts.cpu().numpy()
+            _nonzero = _re_np[_re_np > 0]
+            logger.info(
+                "[R3-VERIFY] Actor received routed_experts: "
+                "shape=%s, dtype=%s, nonzero_count=%d/%d, "
+                "nonzero_first3=%s, max=%d, hash=%d",
+                _r3_routed_experts.shape,
+                _r3_routed_experts.dtype,
+                len(_nonzero),
+                _re_np.size,
+                _nonzero[:3].tolist() if len(_nonzero) >= 3 else _nonzero.tolist(),
+                int(_re_np.max()),
+                hash(_re_np.tobytes()),
+            )
+
         mb_inputs = split_padded_tensor_dict_into_mb_list(
             data,
             mb_spec=MicroBatchSpec(n_mbs=self.config.ppo_n_minibatches),
         )
 
+        # R3: Split routed_experts per mini-batch for side-channel delivery.
+        _r3_split = None
+        if _r3_routed_experts is not None:
+            from areal.trainer.ppo.actor_r3_patch import split_routed_experts_for_minibatches
+            _r3_split = split_routed_experts_for_minibatches(
+                _r3_routed_experts, mb_inputs
+            )
+            logger.info(
+                "[R3] Split routed_experts for %d mini-batches via side-channel "
+                "(shapes: %s).",
+                len(mb_inputs.mbs),
+                [s.shape if s is not None else None for s in _r3_split],
+            )
+
         with stats_tracker.scope("update"):
             # Get current version for proximal approximation metrics
             current_version = self.engine.get_version()
 
-            for mb in mb_inputs.mbs:
+            for i, mb in enumerate(mb_inputs.mbs):
+                # deliver routed_experts via engine side-channel
+                # to bypass pack_tensor_dict corruption and ensure correct per-mini-batch data.
+                if _r3_split is not None:
+                    if hasattr(self.engine, "_r3_enabled"):
+                        self.engine._r3_pending_routed_experts = (
+                            _r3_split[i]
+                            if i < len(_r3_split) and _r3_split[i] is not None
+                            else None
+                        )
+                    else:
+                        logger.warning(
+                            "[R3] routed_experts available but engine._r3_enabled "
+                            "attribute missing (R3 engine patch not applied). "
+                            "Check that config.actor.megatron.enable_router_replay "
+                            "is set before engine creation.",
+                        )
+
                 train_stat = self.engine.train_batch(
                     mb,
                     loss_fn=functools.partial(
@@ -536,6 +605,22 @@ def grpo_loss_fn(
         dual_clip_ratio=stat["dual_clip_mask"].float(),
         denominator="n_valid_tokens",
     )
+
+    # ---- R3 Logprob Diff: rollout (inference) vs training logprobs ----
+    # compute |rollout_logprobs - training_logprobs|
+    # over response tokens only. This metric quantifies train/infer mismatch
+    # caused by MoE routing divergence. With R3 enabled, this diff should be
+    # smaller than without R3.
+    if loss_mask.any():
+        with torch.no_grad():
+            _logprob_diff = (old_logp[loss_mask] - logprobs.detach()[loss_mask]).abs()
+            _diff_mean = _logprob_diff.mean().item()
+            _diff_std = _logprob_diff.std().item() if _logprob_diff.numel() > 1 else 0.0
+        stats_tracker.scalar(
+            rollout_train_logprobs_abs_diff_mean=_diff_mean,
+            rollout_train_logprobs_abs_diff_std=_diff_std,
+        )
+
     if "behave_imp_weight" in stat:
         stats_tracker.denominator(unclipped_behave_tokens=stat["behave_mask"])
         stats_tracker.stat(
