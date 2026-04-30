@@ -159,7 +159,7 @@ dependencies = [
 # CUDA-dependent extras - these packages only have Linux x86_64 wheels
 # Platform markers ensure they're skipped on unsupported platforms
 vllm = [
-    "vllm==0.19.1; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "vllm==0.17.1; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "torch; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "torchaudio; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "torchvision; sys_platform == 'linux' and platform_machine == 'x86_64'",
