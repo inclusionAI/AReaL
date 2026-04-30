@@ -580,12 +580,16 @@ def call_engine_method():
         # ranks therefore stores tensors in the local ``_storage`` that NO
         # cleanup path will ever reach — RSS leaks ~per-batch-payload-size
         # per training step on every non-DP-head rank (see #1209 follow-up).
-        is_dp_head = (
-            isinstance(engine, TrainEngine)
-            and getattr(engine, "process_group_initialized", False)
-            and engine.is_data_parallel_head()
-        )
-        if is_dp_head or not isinstance(engine, TrainEngine):
+        #
+        # Skip remotize only when we are *certain* the result will be
+        # discarded — i.e. for an initialized TrainEngine on a non-DP-head
+        # rank. Non-TrainEngine workers (e.g. inference backends) and
+        # pre-init TrainEngine RPCs (where ``is_data_parallel_head()`` is
+        # not yet defined) keep the original remotize path so setup-time
+        # calls behave identically to before this gate.
+        is_train = isinstance(engine, TrainEngine)
+        is_init = getattr(engine, "process_group_initialized", False)
+        if not is_train or not is_init or engine.is_data_parallel_head():
             state = get_state()
             result = RTensor.remotize(result, node_addr=state.node_addr)
             serialized_result = serialize_value(result)
