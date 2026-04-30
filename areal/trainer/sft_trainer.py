@@ -256,9 +256,12 @@ class SFTTrainer:
                     args={"global_step": global_step},
                 ),
             ):
-                self.actor.clear_batches(batch)
-                if self.data_controller is not None:
-                    self.data_controller.clear_batches()
+                # SPMD mode never populates ``_fetch_buffer`` (no RTensor
+                # round-trip), so the fan-out is single-controller only.
+                if is_single_controller():
+                    self.actor.clear_batches(batch)
+                    if self.data_controller is not None:
+                        self.data_controller.clear_batches()
 
             with perf_tracer.trace_scope(
                 "train.log_stats",
