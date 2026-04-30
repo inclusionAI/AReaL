@@ -1165,7 +1165,7 @@ def _make_hf_model_config(args: Qwen3_5ModelArgs) -> HFQwen3_5TextConfig:
         rope_theta=args.rope_theta,
         partial_rotary_factor=args.partial_rotary_factor,
     )
-    cfg._attn_implementation = "eager"
+    cfg._attn_implementation = "flash_attention_2"
     return cfg
 
 
