@@ -111,7 +111,7 @@ class TestExtractVisionFromMultiModal:
     """Test _extract_vision_from_multi_modal helper."""
 
     def test_extracts_pixel_values_and_grid(self):
-        """Should extract and concatenate pixel_values and image_grid_thw."""
+        """Vision tensors should land on padded_mb only, not duplicated on mb."""
         from areal.engine.megatron_utils.packed_context_parallel import (
             extract_vision_from_multi_modal,
         )
@@ -132,16 +132,18 @@ class TestExtractVisionFromMultiModal:
 
         extract_vision_from_multi_modal(mb, padded_mb)
 
-        assert "pixel_values" in mb
-        assert mb["pixel_values"].shape[0] == 15  # 10 + 5
-        assert "image_grid_thw" in mb
-        assert mb["image_grid_thw"].shape[0] == 2  # 2 grids
-        # Same values in padded_mb
-        assert torch.equal(mb["pixel_values"], padded_mb["pixel_values"])
-        assert torch.equal(mb["image_grid_thw"], padded_mb["image_grid_thw"])
+        # Forward side (padded_mb) gets the concatenated vision tensors.
+        assert padded_mb["pixel_values"].shape[0] == 15  # 10 + 5
+        assert padded_mb["image_grid_thw"].shape[0] == 2  # 2 grids
+        # Loss side (mb) does not carry them.
+        assert "pixel_values" not in mb
+        assert "image_grid_thw" not in mb
+        # multi_modal_input is consumed and removed from both sides.
+        assert "multi_modal_input" not in mb
+        assert "multi_modal_input" not in padded_mb
 
     def test_handles_video_grid_thw(self):
-        """Should extract video_grid_thw when present."""
+        """Should extract video_grid_thw onto padded_mb."""
         from areal.engine.megatron_utils.packed_context_parallel import (
             extract_vision_from_multi_modal,
         )
@@ -159,8 +161,8 @@ class TestExtractVisionFromMultiModal:
 
         extract_vision_from_multi_modal(mb, padded_mb)
 
-        assert "video_grid_thw" in mb
-        assert mb["video_grid_thw"].shape[0] == 1
+        assert padded_mb["video_grid_thw"].shape[0] == 1
+        assert "video_grid_thw" not in mb
 
     def test_no_multi_modal_input_is_noop(self):
         """Should do nothing if multi_modal_input not in dict."""
@@ -177,7 +179,8 @@ class TestExtractVisionFromMultiModal:
         assert "image_grid_thw" not in mb
 
     def test_empty_multi_modal_input_is_noop(self):
-        """Should not add keys if multi_modal_input items have no vision data."""
+        """Should not add keys if multi_modal_input items have no vision data,
+        but should still pop multi_modal_input itself."""
         from areal.engine.megatron_utils.packed_context_parallel import (
             extract_vision_from_multi_modal,
         )
@@ -188,6 +191,83 @@ class TestExtractVisionFromMultiModal:
         extract_vision_from_multi_modal(mb, padded_mb)
 
         assert "pixel_values" not in mb
+        assert "pixel_values" not in padded_mb
+        assert "multi_modal_input" not in mb
+        assert "multi_modal_input" not in padded_mb
+
+    def test_falls_back_to_padded_mb(self):
+        """When mb lacks multi_modal_input but padded_mb has it, the fallback
+        branch should still concatenate vision tensors onto padded_mb."""
+        from areal.engine.megatron_utils.packed_context_parallel import (
+            extract_vision_from_multi_modal,
+        )
+
+        pixel_values = [torch.randn(2, 4)]
+        mb: dict[str, Any] = {"input_ids": torch.ones(2, dtype=torch.long)}
+        padded_mb: dict[str, Any] = {
+            "input_ids": torch.ones(2, dtype=torch.long),
+            "multi_modal_input": [{"pixel_values": pixel_values[0]}],
+        }
+
+        extract_vision_from_multi_modal(mb, padded_mb)
+
+        assert "multi_modal_input" not in mb
+        assert "multi_modal_input" not in padded_mb
+        assert "pixel_values" not in mb
+        assert torch.equal(padded_mb["pixel_values"], torch.cat(pixel_values, dim=0))
+
+
+class TestPrepareMbListRebindCallerSafety:
+    """Verify _prepare_mb_list rebinds mb_list.data to a filtered copy so the
+    caller's input dict survives across repeated forward() calls.
+
+    `split_padded_tensor_dict_into_mb_list` constructs `MicroBatchList(data=input_)`
+    where `mb_list.data` is the *same object* as the caller's input dict (not a
+    copy). An earlier draft did `_drop_multi_modal_payload(mb_list.data)` in-place,
+    which mutated the caller's dict and broke `engine.forward(input_)` when the
+    same `input_` was forwarded a second time (e.g. the save/load round-trip
+    test). The current implementation rebinds `mb_list.data = {filtered copy}`
+    instead — this test pins that contract.
+    """
+
+    def test_rebind_does_not_mutate_caller_input(self):
+        from areal.engine.megatron_utils.packed_context_parallel import (
+            _is_multi_modal_payload_key,
+        )
+        from areal.utils.data import MicroBatchList, MicroBatchSpec
+
+        input_ = {
+            "input_ids": torch.ones(4, dtype=torch.long),
+            "multi_modal_input": [{"pixel_values": torch.randn(2, 4)}],
+            "pixel_values": torch.randn(2, 4),
+            "image_grid_thw": torch.tensor([[1, 1, 2]]),
+        }
+        snapshot_keys = set(input_.keys())
+
+        mb_list = MicroBatchList(
+            data=input_,
+            mb_spec=MicroBatchSpec(),
+            mbs=[],
+            group_lens=[],
+        )
+        assert mb_list.data is input_, (
+            "MicroBatchList.data must alias caller's input dict to mirror "
+            "split_padded_tensor_dict_into_mb_list semantics."
+        )
+
+        mb_list.data = {
+            k: v for k, v in mb_list.data.items() if not _is_multi_modal_payload_key(k)
+        }
+
+        assert set(input_.keys()) == snapshot_keys, (
+            "Rebind must not mutate the caller's input dict — regression to "
+            "in-place `_drop_multi_modal_payload(mb_list.data)` would fail here."
+        )
+        assert "multi_modal_input" not in mb_list.data
+        assert "pixel_values" not in mb_list.data
+        assert "image_grid_thw" not in mb_list.data
+        assert "input_ids" in mb_list.data
+        assert mb_list.data is not input_
 
 
 class TestVisionModelDetection:

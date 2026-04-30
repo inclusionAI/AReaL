@@ -68,6 +68,7 @@ from areal.engine.megatron_utils.megatron import (
 )
 from areal.engine.megatron_utils.megatron_lora import get_vllm_lora_target_modules
 from areal.engine.megatron_utils.packed_context_parallel import (
+    _is_multi_modal_payload_key,
     extract_vision_from_multi_modal,
     packed_context_parallel_forward,
     split_packed_seqs_for_context_parallel,
@@ -1876,10 +1877,20 @@ class MegatronEngine(TrainEngine):
         for mb in mb_list.padded_mbs:
             mb["max_seqlen"] = int(mb["max_seqlen"])
 
-        # Extract vision data from multi_modal_input into top-level keys
+        # Extract vision data from multi_modal_input into top-level keys.
+        # Vision tensors are placed only on padded_mb (forward side); mb (loss
+        # side) gets multimodal payloads stripped. Also rebind mb_list.data to
+        # a filtered copy so multimodal references are released from the
+        # MicroBatchList without mutating the caller's input dict (which may
+        # be reused across forward calls — see save/load round-trip test).
         if self.is_vision_model:
             for mb, padded_mb in zip(mb_list.mbs, mb_list.padded_mbs):
                 extract_vision_from_multi_modal(mb, padded_mb)
+            mb_list.data = {
+                k: v
+                for k, v in mb_list.data.items()
+                if not _is_multi_modal_payload_key(k)
+            }
 
         return mb_list
 

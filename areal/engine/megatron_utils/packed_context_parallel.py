@@ -7,6 +7,8 @@ import torch.distributed as dist
 from megatron.core import parallel_state as mpu
 from megatron.core.packed_seq_params import PackedSeqParams
 
+from areal.utils.data import is_multi_modal_key
+
 
 def preprocess_packed_seqs_context_parallel(
     input_ids: torch.Tensor,
@@ -166,23 +168,40 @@ def postprocess_packed_seqs_context_parallel(
 _VLM_FORWARD_KEYS = ("pixel_values", "image_grid_thw", "video_grid_thw")
 
 
+def _is_multi_modal_payload_key(key: str) -> bool:
+    return key in _VLM_FORWARD_KEYS or is_multi_modal_key(key)
+
+
+def _drop_multi_modal_payload(data: dict[str, Any]) -> None:
+    for key in list(data.keys()):
+        if _is_multi_modal_payload_key(key):
+            data.pop(key, None)
+
+
 def extract_vision_from_multi_modal(
     mb: dict[str, Any], padded_mb: dict[str, Any]
 ) -> None:
-    """Extract pixel_values, image_grid_thw, video_grid_thw from multi_modal_input.
+    """Extract pixel_values / image_grid_thw / video_grid_thw from multi_modal_input.
 
-    Mirrors the logic in FSDPEngine._prepare_mb_list. After extraction, vision
-    tensors are placed as top-level keys in both ``mb`` and ``padded_mb``.
+    Mirrors FSDPEngine's `_prepare_multimodal_forward_inputs` (#1272): vision
+    tensors are placed only on ``padded_mb`` (forward side); ``mb`` is the
+    loss/bookkeeping side and does not need them. The original
+    ``multi_modal_input`` list-of-dicts is popped from both to avoid carrying
+    raw per-sample tensors alongside the concatenated batched form.
     """
-    if "multi_modal_input" not in mb:
-        return
-    multi_modal_input = mb["multi_modal_input"]
-    for key in _VLM_FORWARD_KEYS:
-        items = [item[key] for item in multi_modal_input if key in item]
-        if items:
-            concatenated = torch.cat(items, dim=0)
-            mb[key] = concatenated
-            padded_mb[key] = concatenated
+    multi_modal_input = mb.pop("multi_modal_input", None)
+    if multi_modal_input is None:
+        multi_modal_input = padded_mb.pop("multi_modal_input", None)
+    else:
+        padded_mb.pop("multi_modal_input", None)
+
+    if multi_modal_input is not None:
+        for key in _VLM_FORWARD_KEYS:
+            items = [item[key] for item in multi_modal_input if key in item]
+            if items:
+                padded_mb[key] = torch.cat(items, dim=0)
+
+    _drop_multi_modal_payload(mb)
 
 
 def packed_context_parallel_forward(
