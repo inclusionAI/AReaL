@@ -588,7 +588,7 @@ def call_engine_method():
         # not yet defined) keep the original remotize path so setup-time
         # calls behave identically to before this gate.
         is_train = isinstance(engine, TrainEngine)
-        is_init = getattr(engine, "process_group_initialized", False)
+        is_init = is_train and engine.initialized
         if not is_train or not is_init or engine.is_data_parallel_head():
             state = get_state()
             result = RTensor.remotize(result, node_addr=state.node_addr)
