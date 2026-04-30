@@ -572,10 +572,27 @@ def call_engine_method():
                 500,
             )
 
-        # Convert all tensors to RTensors and store locally
-        state = get_state()
-        result = RTensor.remotize(result, node_addr=state.node_addr)
-        serialized_result = serialize_value(result)
+        # Convert all tensors to RTensors and store locally — but ONLY on DP
+        # heads. The controller's ``_collect_results`` filter discards
+        # non-DP-head results (see train_controller.py:595), and
+        # ``clear_batches`` only walks ``rollout_batch``/``adv_batch`` which
+        # contain shard ids from DP-head results. Remotizing on non-DP-head
+        # ranks therefore stores tensors in the local ``_storage`` that NO
+        # cleanup path will ever reach — RSS leaks ~per-batch-payload-size
+        # per training step on every non-DP-head rank (see #1209 follow-up).
+        is_dp_head = (
+            isinstance(engine, TrainEngine)
+            and getattr(engine, "process_group_initialized", False)
+            and engine.is_data_parallel_head()
+        )
+        if is_dp_head or not isinstance(engine, TrainEngine):
+            state = get_state()
+            result = RTensor.remotize(result, node_addr=state.node_addr)
+            serialized_result = serialize_value(result)
+        else:
+            # Non-DP-head: result is discarded by controller. Skip remotize
+            # (no _storage growth) and return a sentinel.
+            serialized_result = serialize_value(None)
         return jsonify({"status": "success", "result": serialized_result})
 
     except Exception as e:
