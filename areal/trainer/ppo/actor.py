@@ -133,6 +133,22 @@ class PPOActor:
 
     def _compute_logp(self, data: dict[str, Any]) -> torch.Tensor | None:
         self.engine.eval()
+        # R3: side-channel routed_experts into the engine so that the R3
+        # forward_backward_batch wrapper replays routing decisions even in
+        # the forward_only (compute_logp) path.
+        _r3_routed_experts = data.pop("routed_experts", None)
+        if _r3_routed_experts is not None and not isinstance(
+            _r3_routed_experts, torch.Tensor
+        ):
+            from areal.trainer.ppo.actor_r3_patch import _resolve_to_tensor
+            _r3_routed_experts = _resolve_to_tensor(_r3_routed_experts)
+        if _r3_routed_experts is not None and getattr(
+            self.engine, "_r3_enabled", False
+        ):
+            # forward_batch performs ONE forward_backward_batch(forward_only=True)
+            # call internally; the R3 engine patch will split routed_experts per
+            # micro-batch and consume the side-channel (setting it back to None).
+            self.engine._r3_pending_routed_experts = _r3_routed_experts
         return self.engine.forward(
             input_=data,
             aggregate_fn=lambda xs: torch.cat(xs, dim=-1),
