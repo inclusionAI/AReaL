@@ -124,7 +124,7 @@ RUN git clone https://github.com/deepseek-ai/DeepGEMM /DeepGEMM \
 # Note: TORCH_CUDA_ARCH_LIST="9.0" enables SM90 features and aggressive PTX instructions
 # The NVSHMEM path is auto-detected from nvidia.nvshmem module installed above
 RUN git clone https://github.com/deepseek-ai/DeepEP /DeepEP \
-    && cd /DeepEP \
+    && cd /DeepEP && git checkout 567632d \
     && TORCH_CUDA_ARCH_LIST="9.0 9.0a" uv pip install -v . --no-build-isolation \
     && rm -rf /DeepEP
 
