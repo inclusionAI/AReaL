@@ -787,13 +787,16 @@ class PPOTrainer:
                 # storage owner clears ``_storage`` but not per-consumer
                 # caches. Fan out ``clear_batches`` to every role that
                 # localized the batch — see inclusionAI/AReaL#1209.
-                self.actor.clear_batches(rollout_batch, adv_batch)
-                if self.critic is not None:
-                    self.critic.clear_batches(rollout_batch, adv_batch)
-                if self.ref is not None:
-                    self.ref.clear_batches(rollout_batch)
-                if self.data_controller is not None:
-                    self.data_controller.clear_batches()
+                # SPMD mode never populates ``_fetch_buffer`` (no RTensor
+                # round-trip), so the fan-out is single-controller only.
+                if is_single_controller():
+                    self.actor.clear_batches(rollout_batch, adv_batch)
+                    if self.critic is not None:
+                        self.critic.clear_batches(rollout_batch, adv_batch)
+                    if self.ref is not None:
+                        self.ref.clear_batches(rollout_batch)
+                    if self.data_controller is not None:
+                        self.data_controller.clear_batches()
 
             with perf_tracer.trace_scope(
                 "train.log_stats",
