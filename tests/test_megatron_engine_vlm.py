@@ -195,6 +195,80 @@ class TestExtractVisionFromMultiModal:
         assert "multi_modal_input" not in mb
         assert "multi_modal_input" not in padded_mb
 
+    def test_falls_back_to_padded_mb(self):
+        """When mb lacks multi_modal_input but padded_mb has it, the fallback
+        branch should still concatenate vision tensors onto padded_mb."""
+        from areal.engine.megatron_utils.packed_context_parallel import (
+            extract_vision_from_multi_modal,
+        )
+
+        pixel_values = [torch.randn(2, 4)]
+        mb: dict[str, Any] = {"input_ids": torch.ones(2, dtype=torch.long)}
+        padded_mb: dict[str, Any] = {
+            "input_ids": torch.ones(2, dtype=torch.long),
+            "multi_modal_input": [{"pixel_values": pixel_values[0]}],
+        }
+
+        extract_vision_from_multi_modal(mb, padded_mb)
+
+        assert "multi_modal_input" not in mb
+        assert "multi_modal_input" not in padded_mb
+        assert "pixel_values" not in mb
+        assert torch.equal(padded_mb["pixel_values"], torch.cat(pixel_values, dim=0))
+
+
+class TestPrepareMbListRebindCallerSafety:
+    """Verify _prepare_mb_list rebinds mb_list.data to a filtered copy so the
+    caller's input dict survives across repeated forward() calls.
+
+    `split_padded_tensor_dict_into_mb_list` constructs `MicroBatchList(data=input_)`
+    where `mb_list.data` is the *same object* as the caller's input dict (not a
+    copy). An earlier draft did `_drop_multi_modal_payload(mb_list.data)` in-place,
+    which mutated the caller's dict and broke `engine.forward(input_)` when the
+    same `input_` was forwarded a second time (e.g. the save/load round-trip
+    test). The current implementation rebinds `mb_list.data = {filtered copy}`
+    instead — this test pins that contract.
+    """
+
+    def test_rebind_does_not_mutate_caller_input(self):
+        from areal.engine.megatron_utils.packed_context_parallel import (
+            _is_multi_modal_payload_key,
+        )
+        from areal.utils.data import MicroBatchList, MicroBatchSpec
+
+        input_ = {
+            "input_ids": torch.ones(4, dtype=torch.long),
+            "multi_modal_input": [{"pixel_values": torch.randn(2, 4)}],
+            "pixel_values": torch.randn(2, 4),
+            "image_grid_thw": torch.tensor([[1, 1, 2]]),
+        }
+        snapshot_keys = set(input_.keys())
+
+        mb_list = MicroBatchList(
+            data=input_,
+            mb_spec=MicroBatchSpec(),
+            mbs=[],
+            group_lens=[],
+        )
+        assert mb_list.data is input_, (
+            "MicroBatchList.data must alias caller's input dict to mirror "
+            "split_padded_tensor_dict_into_mb_list semantics."
+        )
+
+        mb_list.data = {
+            k: v for k, v in mb_list.data.items() if not _is_multi_modal_payload_key(k)
+        }
+
+        assert set(input_.keys()) == snapshot_keys, (
+            "Rebind must not mutate the caller's input dict — regression to "
+            "in-place `_drop_multi_modal_payload(mb_list.data)` would fail here."
+        )
+        assert "multi_modal_input" not in mb_list.data
+        assert "pixel_values" not in mb_list.data
+        assert "image_grid_thw" not in mb_list.data
+        assert "input_ids" in mb_list.data
+        assert mb_list.data is not input_
+
 
 class TestVisionModelDetection:
     """Test is_valid_vision_model detection."""
