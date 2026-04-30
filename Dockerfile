@@ -6,7 +6,7 @@
 #   docker build -t areal-runtime:dev-sglang .                          # default (sglang)
 #   docker build --build-arg VARIANT=vllm -t areal-runtime:dev-vllm .    # vllm variant
 
-FROM lmsysorg/sglang:v0.5.9-cu129-amd64-runtime
+FROM lmsysorg/sglang:v0.5.10.post1-runtime
 
 # Inference backend selector: sglang (default) or vllm
 # Declared early so torch version and C++ builds match the chosen backend.
@@ -115,7 +115,7 @@ RUN git clone https://github.com/deepseek-ai/FlashMLA.git /flash-mla \
 
 # DeepGEMM (FP8 GEMM library for DeepSeek-V3)
 RUN git clone https://github.com/deepseek-ai/DeepGEMM /DeepGEMM \
-    && cd /DeepGEMM \
+    && cd /DeepGEMM && git checkout d30fc36c8 \
     && git submodule update --init --recursive \
     && uv pip install -v . --no-build-isolation \
     && rm -rf /DeepGEMM
@@ -124,7 +124,7 @@ RUN git clone https://github.com/deepseek-ai/DeepGEMM /DeepGEMM \
 # Note: TORCH_CUDA_ARCH_LIST="9.0" enables SM90 features and aggressive PTX instructions
 # The NVSHMEM path is auto-detected from nvidia.nvshmem module installed above
 RUN git clone https://github.com/deepseek-ai/DeepEP /DeepEP \
-    && cd /DeepEP \
+    && cd /DeepEP && git checkout 567632d \
     && TORCH_CUDA_ARCH_LIST="9.0 9.0a" uv pip install -v . --no-build-isolation \
     && rm -rf /DeepEP
 

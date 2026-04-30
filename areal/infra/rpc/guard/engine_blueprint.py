@@ -545,9 +545,11 @@ def call_engine_method():
 
                 return result
             except AttributeError as e:
+                traceback.print_exc()
                 logger.error(f"Method '{method_name}' not found on engine: {e}")
                 raise ValueError(f"Engine does not have method '{method_name}'")
             except Exception as e:
+                traceback.print_exc()
                 logger.error(
                     f"Engine method '{method_name}' failed: "
                     f"{e}\n{traceback.format_exc()}"

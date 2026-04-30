@@ -134,6 +134,8 @@ class TestInitialize:
         assert len(ctrl.pairs) == 1
         assert len(ctrl._forked_services) == 4
 
+        ctrl.destroy()
+
     @patch(f"{CTRL}.requests")
     def test_initialize_uses_scheduling_spec_env_vars(self, mock_requests):
         fork_payloads = []
@@ -177,6 +179,8 @@ class TestInitialize:
             for payload in fork_payloads
         )
 
+        ctrl.destroy()
+
 
 class TestScaleUp:
     @patch(f"{CTRL}.requests")
@@ -191,6 +195,8 @@ class TestScaleUp:
         created = ctrl.scale_up(3)
         assert created == [1, 2, 3]
         assert len(ctrl.pairs) == 4
+
+        ctrl.destroy()
 
     @patch(f"{CTRL}.requests")
     def test_scale_up_round_robins_guards(self, mock_requests, config):
@@ -224,6 +230,8 @@ class TestScaleUp:
         assert len(g0_calls) == 4
         assert len(g1_calls) == 4
 
+        ctrl.destroy()
+
 
 class TestScaleDown:
     @patch(f"{CTRL}.requests")
@@ -240,6 +248,8 @@ class TestScaleDown:
         assert set(removed) == {2, 1}
         assert len(ctrl.pairs) == 1
         assert 0 in ctrl.pairs
+
+        ctrl.destroy()
 
 
 class TestDestroy:
@@ -316,6 +326,8 @@ class TestDrain:
         assert len(ctrl.pairs) == 0
         assert health_call_count > 1
 
+        ctrl.destroy()
+
     @patch(f"{CTRL}.requests")
     def test_drain_uses_default_timeout(self, mock_requests, config):
         _setup_mock_requests(mock_requests)
@@ -336,6 +348,8 @@ class TestDrain:
         ctrl.scale_down(1)
         drain_gets = get_count - pre_get_count
         assert drain_gets > 0
+
+        ctrl.destroy()
 
 
 class TestHealthMonitor:

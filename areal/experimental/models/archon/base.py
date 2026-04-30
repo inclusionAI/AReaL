@@ -30,6 +30,20 @@ class BaseModelArgs(ABC):
     # Attention backend type: "sdpa" or "varlen"
     attn_type: str = "varlen"
 
+    @staticmethod
+    def _get_rope_theta(hf_config: PretrainedConfig, default: float = 10000.0) -> float:
+        """Extract rope_theta from HF config, compatible with transformers v4 and v5+.
+
+        In transformers v5+, rope_theta was moved from a direct config attribute
+        into the rope_parameters dict. This helper checks both locations.
+        """
+        # v5+: rope_theta lives inside rope_parameters dict
+        rope_params = getattr(hf_config, "rope_parameters", None) or {}
+        if "rope_theta" in rope_params:
+            return rope_params["rope_theta"]
+        # v4: rope_theta is a direct attribute
+        return getattr(hf_config, "rope_theta", default)
+
     @classmethod
     @abstractmethod
     def from_hf_config(

@@ -26,7 +26,6 @@ from areal.utils.constants import (
     PROX_LOGP_METHOD_RECOMPUTE,
     PROX_LOGP_METHODS_ALL,
 )
-from areal.utils.pkg_version import is_version_less
 from areal.utils.seqpack import PACKING_ALGORITHMS
 
 if TYPE_CHECKING:
@@ -1874,10 +1873,8 @@ class SGLangConfig:
             args["host"] = host
         if port is not None:
             args["port"] = port
-        if not pkg_version.is_version_greater_or_equal("sglang", "0.4.9.post2"):
-            raise RuntimeError("Needs sglang>=0.4.9.post2 to run the code.")
-        if is_version_less("sglang", "0.4.10.post2"):
-            args.pop("max_loaded_loras", None)
+        if not pkg_version.is_version_greater_or_equal("sglang", "0.5.10.post1"):
+            raise RuntimeError("Needs sglang>=0.5.10.post1 to run the code.")
         return args
 
 

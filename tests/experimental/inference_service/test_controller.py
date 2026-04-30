@@ -819,7 +819,7 @@ class TestMultiNodeConfig:
                 "areal.api.cli_args.pkg_version.is_version_greater_or_equal",
                 return_value=True,
             ),
-            patch("areal.api.cli_args.is_version_less", return_value=False),
+            patch("areal.api.cli_args.pkg_version.is_version_less", return_value=False),
         ):
             mock_fork.side_effect = [
                 ("10.0.0.1", 18081),  # router
