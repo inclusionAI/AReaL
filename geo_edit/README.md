@@ -283,6 +283,8 @@ Typical deployment: Head node runs vLLM 8-TP inference service, Worker node runs
 # Start Ray on Head node
 CUDA_VISIBLE_DEVICES=0,1,2,3
 ray start --head --port=6379 --resources='{"tool_agent": 8}'
+# CUDA_VISIBLE_DEVICES=0,1,2,3
+# ray start --head --port=6379 --resources='{"tool_agent": 4}'
 
 # Start vLLM 8-TP inference service
 bash geo_edit/scripts/launch_vllm_generate.sh

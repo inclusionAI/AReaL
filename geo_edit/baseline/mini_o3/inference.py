@@ -323,6 +323,7 @@ def main():
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--max_tokens", type=int, default=8192)
     parser.add_argument("--sample_rate", type=float, default=1.0)
+    parser.add_argument("--max_concurrent_requests", type=int, default=64)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
@@ -355,15 +356,17 @@ def main():
     total_crops = 0
     num_with_crop = 0
     num_direct = 0
+    write_lock = __import__("threading").Lock()
+    counter_lock = __import__("threading").Lock()
 
-    for item in tqdm(dataset, desc="Mini-o3 Inference"):
+    def process_one(item):
+        nonlocal total_turns, total_crops, num_with_crop, num_direct
         item_id = str(item[dataset_spec.id_key])
-
         image_key = dataset_spec.image_key or "image"
         image = load_image_from_item(item, image_key)
         if image is None:
             logger.warning("[%s] no image, skipping", item_id)
-            continue
+            return
 
         question = dataset_spec.build_prompt(item, use_tools=True)
         answer_gt = dataset_spec.get_answer(item)
@@ -380,14 +383,15 @@ def main():
             )
         except Exception as e:
             logger.error("[%s] inference failed: %s", item_id, e)
-            continue
+            return
 
-        total_turns += result["num_turns"]
-        total_crops += result["num_crops"]
-        if result["num_crops"] > 0:
-            num_with_crop += 1
-        else:
-            num_direct += 1
+        with counter_lock:
+            total_turns += result["num_turns"]
+            total_crops += result["num_crops"]
+            if result["num_crops"] > 0:
+                num_with_crop += 1
+            else:
+                num_direct += 1
 
         crop_paths = []
         for obs_idx, obs_img in enumerate(result["observations"]):
@@ -408,9 +412,14 @@ def main():
             "turn_crops": result["turn_crops"],
             "crop_image_paths": crop_paths,
         }
-
-        with open(output_path, "a", encoding="utf-8") as f:
+        with write_lock, open(output_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    with ThreadPoolExecutor(max_workers=args.max_concurrent_requests) as pool:
+        futures = [pool.submit(process_one, item) for item in dataset]
+        for _ in tqdm(as_completed(futures), total=len(futures), desc="Mini-o3 Inference"):
+            pass
 
     total = num_with_crop + num_direct
     stats = {

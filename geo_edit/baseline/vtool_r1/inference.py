@@ -493,6 +493,7 @@ def main():
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--max_tokens", type=int, default=1024)
     parser.add_argument("--sample_rate", type=float, default=1.0)
+    parser.add_argument("--max_concurrent_requests", type=int, default=64)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
@@ -526,15 +527,17 @@ def main():
     num_tool_success = 0
     num_tool_failed = 0
     num_direct = 0
+    write_lock = __import__("threading").Lock()
+    counter_lock = __import__("threading").Lock()
 
-    for item in tqdm(dataset, desc="VTool-R1 Inference"):
+    def process_one(item):
+        nonlocal num_tool_calls, num_tool_success, num_tool_failed, num_direct
         item_id = str(item[dataset_spec.id_key])
-
         image_key = dataset_spec.image_key or "image"
         image = load_image_from_item(item, image_key)
         if image is None:
             logger.warning("[%s] no image, skipping", item_id)
-            continue
+            return
 
         question = dataset_spec.build_prompt(item, use_tools=True)
         answer_gt = dataset_spec.get_answer(item)
@@ -543,7 +546,6 @@ def main():
         meta_extra = dataset_spec.build_task_kwargs(item).get("meta_info_extra", {})
         if meta_extra:
             bbox_metadata = meta_extra
-
         for bbox_key in ("columns_bbox", "rows_bbox", "x_values_bbox", "y_values_bbox"):
             if bbox_key in item:
                 if bbox_metadata is None:
@@ -563,19 +565,19 @@ def main():
             )
         except Exception as e:
             logger.error("[%s] inference failed: %s", item_id, e)
-            continue
+            return
 
-        if result["tool_used"]:
-            num_tool_calls += 1
-            if result["code_error"]:
-                num_tool_failed += 1
+        with counter_lock:
+            if result["tool_used"]:
+                num_tool_calls += 1
+                if result["code_error"]:
+                    num_tool_failed += 1
+                else:
+                    num_tool_success += 1
             else:
-                num_tool_success += 1
-        else:
-            num_direct += 1
+                num_direct += 1
 
         predicted = extract_answer(result["model_response"])
-
         edited_img_path = None
         if result["edited_image"] is not None:
             edited_img_path = os.path.join(img_dir, f"{item_id}_edited.png")
@@ -594,9 +596,14 @@ def main():
             "tool_used": result["tool_used"],
             "edited_image_path": edited_img_path,
         }
-
-        with open(output_path, "a", encoding="utf-8") as f:
+        with write_lock, open(output_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    with ThreadPoolExecutor(max_workers=args.max_concurrent_requests) as pool:
+        futures = [pool.submit(process_one, item) for item in dataset]
+        for _ in tqdm(as_completed(futures), total=len(futures), desc="VTool-R1 Inference"):
+            pass
 
     stats = {
         "total": len(dataset),

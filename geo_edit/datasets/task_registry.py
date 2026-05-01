@@ -927,7 +927,7 @@ DATASET_SPECS: Dict[str, DatasetSpec] = {
     ),
     "omnispatial": DatasetSpec(
         name="omnispatial",
-        id_key="index",
+        id_key="uid",
         answer_key="answer",
         image_key="image",
         prompt_template=OMNISPATIAL_INPUT_TEMPLATE,

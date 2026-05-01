@@ -65,6 +65,7 @@ def _init_worker(
     api_key: str | None,
     no_image_compression: bool = False,
     temperature: float = TEMPERATURE,
+    max_output_tokens: int | None = None,
 ):
     global _WORKER_AGENT, _WORKER_OUTPUT_PATH, _WORKER_MODEL_TYPE, _WORKER_API_MODE, _WORKER_NO_IMAGE_COMPRESSION
 
@@ -75,6 +76,7 @@ def _init_worker(
         tool_router,
         api_mode=api_mode,
         temperature=temperature,
+        max_output_tokens=max_output_tokens,
         system_prompt=SYSTEM_PROMPT.strip(),
         reasoning_level="low"
     )
@@ -192,6 +194,7 @@ def main():
         help="Disable image compression (send original quality to API). Default: compress to 4MB base64.",
     )
     parser.add_argument("--temperature", type=float, default=TEMPERATURE, help="Sampling temperature.")
+    parser.add_argument("--max_output_tokens", type=int, default=None, help="Max completion tokens per request (default: server/model default).")
     args = parser.parse_args()
 
     if args.model_type == "OpenAI" and not args.api_key:
@@ -234,7 +237,7 @@ def main():
     with ctx.Pool(
         processes=n_workers,
         initializer=_init_worker,
-        initargs=(args.model_name_or_path, args.model_type, args.api_base, args.api_mode, args.api_key, args.no_image_compression, args.temperature),
+        initargs=(args.model_name_or_path, args.model_type, args.api_base, args.api_mode, args.api_key, args.no_image_compression, args.temperature, args.max_output_tokens),
     ) as pool:
         inflight = []
         submit_idx = 0
@@ -269,12 +272,20 @@ def main():
                         if not os.path.exists(image_path):
                             if isinstance(image, Image.Image):
                                 image.save(image_path)
-                            elif isinstance(image, dict) and "bytes" in image:
-                                image = Image.open(BytesIO(image["bytes"]))
-                                image.save(image_path)
+                            elif (
+                                isinstance(image, dict)
+                                and isinstance(image.get("bytes"), (bytes, bytearray))
+                            ):
+                                Image.open(BytesIO(image["bytes"])).save(image_path)
+                            elif (
+                                isinstance(image, dict)
+                                and isinstance(image.get("path"), str)
+                                and os.path.exists(image["path"])
+                            ):
+                                import shutil
+                                shutil.copy2(image["path"], image_path)
                             elif isinstance(image, bytes):
-                                image = Image.open(BytesIO(image))
-                                image.save(image_path)
+                                Image.open(BytesIO(image)).save(image_path)
                             else:
                                 raise ValueError(f"Invalid image type: {type(image)}")
                 else:

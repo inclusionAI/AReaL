@@ -552,6 +552,13 @@ def main():
                             and isinstance(img["bytes"], (bytes, bytearray))
                         ):
                             Image.open(BytesIO(img["bytes"])).save(path)
+                        elif (
+                            isinstance(img, dict)
+                            and isinstance(img.get("path"), str)
+                            and os.path.exists(img["path"])
+                        ):
+                            import shutil
+                            shutil.copy2(img["path"], path)
                         elif isinstance(img, bytes):
                             Image.open(BytesIO(img)).save(path)
                         elif isinstance(img, str) and os.path.exists(img):

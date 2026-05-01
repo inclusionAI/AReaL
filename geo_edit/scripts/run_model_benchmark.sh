@@ -59,6 +59,7 @@ SKIP_EVAL=false
 JUDGE_MODEL="${JUDGE_MODEL:-gpt-4.1-mini-2025-04-14}"
 JUDGE_API_KEY="${JUDGE_API_KEY:-}"
 JUDGE_API_BASE="${JUDGE_API_BASE:-}"
+MAX_OUTPUT_TOKENS="${MAX_OUTPUT_TOKENS:-}"
 OUTPUT_ROOT="/storage/openpsi/data/lcy_image_edit/eval_results"
 EVAL_OUTPUT_ROOT="/storage/openpsi/data/lcy_image_edit/eval_output"
 ALL_DATASETS="visual_probe_easy visual_probe_medium visual_probe_hard map_trace reason_map reason_map_plus mapqa"
@@ -83,6 +84,7 @@ while [[ $# -gt 0 ]]; do
         --sample-rate)          SAMPLE_RATE="$2"; shift 2 ;;
         --output-root)          OUTPUT_ROOT="$2"; shift 2 ;;
         --eval-output-root)     EVAL_OUTPUT_ROOT="$2"; shift 2 ;;
+        --max-output-tokens)    MAX_OUTPUT_TOKENS="$2"; shift 2 ;;
         -h|--help)
             sed -n '2,/^set -/p' "$0" | head -n -1; exit 0 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
@@ -197,6 +199,8 @@ if [ "$SKIP_INFERENCE" = false ]; then
                 --enable_tools map general \
                 $COMPRESS_FLAG
         else
+            MAX_TOKENS_FLAG=""
+            [ -n "$MAX_OUTPUT_TOKENS" ] && MAX_TOKENS_FLAG="--max_output_tokens $MAX_OUTPUT_TOKENS"
             python -m geo_edit.scripts.direct_generate \
                 --api_base "$API_BASE" \
                 --dataset_path "$ds_path" \
@@ -207,6 +211,7 @@ if [ "$SKIP_INFERENCE" = false ]; then
                 --api_mode chat_completions \
                 --max_concurrent_requests "$MAX_CONCURRENT" \
                 --sample_rate "$SAMPLE_RATE" \
+                $MAX_TOKENS_FLAG \
                 $COMPRESS_FLAG
         fi
 
