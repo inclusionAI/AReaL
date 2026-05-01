@@ -110,7 +110,7 @@ def _rule_score_map_trace(output_str: str, ground_truth: str) -> dict:
         ndtw, is_success, reason = map_trace_score(output_str, ground_truth)
     except (ValueError, TypeError):
         return {"score": 0.0, "ndtw": None, "reason": "parse_error"}
-    return {"score": 1.0 if is_success and ndtw <= 1.0 else 0.0, "ndtw": ndtw if is_success else None, "reason": reason}
+    return {"score": 1.0 if is_success and ndtw < 1.0 else 0.0, "ndtw": ndtw if is_success else None, "reason": reason}
 
 
 def _rule_score_reason_map(output_str: str, record: dict) -> dict:

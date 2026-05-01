@@ -6,19 +6,26 @@ echo "model: $model_path"
 echo "port: $port"
 export VLLM_ENGINE_ITERATION_TIMEOUT_S=600
 mkdir -p /tmp/log/
+DP_SIZE="${DP_SIZE:-8}"
+TP_SIZE="${TP_SIZE:-1}"
+EXTRA_VLLM_ARGS="${EXTRA_VLLM_ARGS:-}"
+echo "data-parallel-size: $DP_SIZE"
+echo "tensor-parallel-size: $TP_SIZE"
+[ -n "$EXTRA_VLLM_ARGS" ] && echo "extra args: $EXTRA_VLLM_ARGS"
 nohup python -m vllm.entrypoints.openai.api_server \
   --model "$model_path" \
   --host 0.0.0.0 \
   --trust-remote-code \
   --port "$port" \
-  --data-parallel-size 8 \
-  --tensor-parallel-size 1 \
+  --data-parallel-size "$DP_SIZE" \
+  --tensor-parallel-size "$TP_SIZE" \
   --max-model-len "${MAX_MODEL_LEN:-65536}" \
   --dtype auto \
   --allowed-local-media-path /storage/openpsi/data \
   --gpu-memory-utilization "${GPU_MEM_UTIL:-0.8}" \
   --enable-prefix-caching \
-  --limit-mm-per-prompt "image=${MAX_IMAGES_PER_PROMPT:-5}" \
+  --limit-mm-per-prompt "{\"image\": ${MAX_IMAGES_PER_PROMPT:-5}}" \
+  $EXTRA_VLLM_ARGS \
   > /tmp/log/vllm_api.log 2>&1 &
 echo $! > /tmp/log/vllm.pid
 echo "waiting endpoint..."

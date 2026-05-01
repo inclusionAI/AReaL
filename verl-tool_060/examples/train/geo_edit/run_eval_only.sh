@@ -41,7 +41,7 @@ if [ "$rollout_n" -gt 1 ]; then
     val_temperature=1.0
 else
     val_do_sample=False
-    val_temperature=0
+    val_temperature=0.0
 fi
 
 mkdir -p $WORKSPACE/logs/eval_$RUN_NAME

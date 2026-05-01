@@ -17,7 +17,6 @@ class ATGiGPOSampler(AbstractCurriculumSampler):
     def __init__(self, data_source: Sized, data_config: DictConfig):
         self.data_source = data_source
         sampler_cfg = data_config.get("sampler", {})
-        self.v2 = sampler_cfg.get("v2", False)
         self.rollout_n = sampler_cfg.get("rollout_n", 1)
         self.tau = sampler_cfg.get("tau", 1.0)
         self.epoch_decay_start = sampler_cfg.get("epoch_decay_start", 2.0)
@@ -54,8 +53,7 @@ class ATGiGPOSampler(AbstractCurriculumSampler):
         self._step_count = 0
 
         K = max(len(self.task_types), 1)
-        total_samples = sum(self.dataset_sizes.values())
-        self.base_probs: dict[str, float] = {t: self.dataset_sizes[t] / total_samples for t in self.task_types}
+        self.base_probs: dict[str, float] = {t: 1.0 / K for t in self.task_types}
         self.sampling_probs: dict[str, float] = dict(self.base_probs)
         self._rng = np.random.default_rng(seed=42)
 
@@ -117,34 +115,26 @@ class ATGiGPOSampler(AbstractCurriculumSampler):
             self.acc_buffer[d_j] = []
 
     def _recompute_probs(self):
-        rollout_n = self.rollout_n if self.v2 else 1
         scores = []
         for d_j in self.task_types:
             explore = math.sqrt(2.0 * math.log(self.n_total + 1) / (self.n_samples[d_j] + 1))
-            epoch = self.n_samples[d_j] / (max(self.dataset_sizes[d_j], 1) * rollout_n)
+            epoch = self.n_samples[d_j] / (max(self.dataset_sizes[d_j], 1) * self.rollout_n)
             decay = max(self.epoch_decay_floor, 1.0 - self.epoch_decay_slope * max(0.0, epoch - self.epoch_decay_start))
-
-            if self.v2:
-                exploit = 1.0 - 0.5 * self.acc_ema[d_j]
-                scores.append(self.base_probs[d_j] * (exploit + explore) * decay)
-            else:
-                exploit = self.L_hat_ema[d_j]
-                scores.append((exploit + explore) * decay)
+            exploit = 1.0 - 0.5 * self.acc_ema[d_j]
+            scores.append(self.base_probs[d_j] * (exploit + explore) * decay)
 
         scores_t = torch.tensor(scores, dtype=torch.float32)
         probs = F.softmax(scores_t / self.tau, dim=0).numpy()
         self.sampling_probs = {t: float(probs[i]) for i, t in enumerate(self.task_types)}
 
     def get_metrics(self) -> dict:
-        rollout_n = self.rollout_n if self.v2 else 1
         metrics: dict[str, float] = {}
         for d_j in self.task_types:
-            metrics[f"at_gigpo/{d_j}/L_hat_ema"] = self.L_hat_ema[d_j]
             metrics[f"at_gigpo/{d_j}/acc_ema"] = self.acc_ema[d_j]
             metrics[f"at_gigpo/{d_j}/acc_raw"] = float(np.mean(self.acc_buffer[d_j])) if self.acc_buffer[d_j] else self.acc_ema[d_j]
             metrics[f"at_gigpo/{d_j}/base_prob"] = self.base_probs[d_j]
             metrics[f"at_gigpo/{d_j}/sampling_prob"] = self.sampling_probs[d_j]
-            metrics[f"at_gigpo/{d_j}/epoch_count"] = self.n_samples[d_j] / (max(self.dataset_sizes[d_j], 1) * rollout_n)
+            metrics[f"at_gigpo/{d_j}/epoch_count"] = self.n_samples[d_j] / (max(self.dataset_sizes[d_j], 1) * self.rollout_n)
             metrics[f"at_gigpo/{d_j}/period_buffer_size"] = len(self.period_buffer[d_j])
 
         probs = list(self.sampling_probs.values())

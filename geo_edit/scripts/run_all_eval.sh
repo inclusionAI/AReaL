@@ -22,7 +22,6 @@ DATASET_PATHS=(
     ["map_trace"]="/storage/openpsi/data/lcy_image_edit/maptrace_val_2851.parquet"
     ["reason_map"]="/storage/openpsi/data/ReasonMap/reasonmap_base_validation_dataset.parquet"
     ["reason_map_plus"]="/storage/openpsi/data/ReasonMap_plus/reasonmap_plus_test.parquet"
-    ["mapqa"]="/storage/openpsi/data/lcy_image_edit/MapQA_all/mapqa_test_0418.parquet"
 )
 
 declare -A DATASET_NAMES

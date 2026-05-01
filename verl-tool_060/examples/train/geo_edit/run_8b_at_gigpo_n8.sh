@@ -1,52 +1,35 @@
 #!/usr/bin/env bash
 set -x
 
-# ============================================================
-# Multi-node (4×8 GPU) second-stage training for geo_edit
-# Requires an existing Ray cluster spanning all 4 nodes.
-#
-# Environment variables:
-#   WORKSPACE        – default: /storage/openpsi/data/reasonmap_rl
-#   MODEL_PATH       – path to SFT checkpoint
-#   TOOL_SERVER_URL  – tool server URL (must be reachable from all nodes)
-#   TOOL_SERVER_IP   – tool server IP (port defaults to 30888)
-#   JUDGE_API_KEY / JUDGE_API_BASE / JUDGE_MODEL – LLM judge config
-#   WANDB_API_KEY / WANDB_BASE_URL – wandb config
-# ============================================================
+# AT-GiGPO v2-only, uniform init, n=8
+# 8B model, mixed_rl_v2 dataset (no mapqa)
 
-WORKSPACE=${WORKSPACE:-/storage/openpsi/data/lcy_image_edit/mixed_rl}
+WORKSPACE=${WORKSPACE:-/storage/openpsi/data/lcy_image_edit/mixed_rl_v2}
 model_name=${MODEL_PATH:-/storage/openpsi/models/lcy_image_edit/sft_workspace/qwen3vl8b-thinking-5ds-v2-0419-ct65536/checkpoint-280}
 
-train_data="[/storage/openpsi/data/reasonmap_rl/combined_train_rl_only.parquet,$WORKSPACE/new_train.parquet]"
-val_data="[/storage/openpsi/data/reasonmap_rl/combined_test_10pct.parquet,$WORKSPACE/new_val.parquet,$WORKSPACE/mapqa_val_200.parquet]"
-run_name="mixed-gigpo-Real4B-4nodev2_0429"
-# run_name=mixed-gigpo-4B-4nodev2_0427
+train_data="$WORKSPACE/train.parquet"
+val_data="$WORKSPACE/val.parquet"
+run_name="8b-at-gigpo-v4-uniform-n8"
 rl_alg=gigpo
- 
-# ---- Cluster topology ----
+
 n_gpus_per_node=8
-# n_nodes=2
 n_nodes=4
 
-# ---- Batch sizes (scaled for 4 nodes) ----
-n=4
-batch_size=128
-ppo_mini_batch_size=256
+n=8
+batch_size=64
+ppo_mini_batch_size=512
 
-# ---- Sequence lengths ----
-max_prompt_length=16384 
+max_prompt_length=16384
 max_response_length=32768
-max_action_length=4096
+max_action_length=8192
 max_obs_length=8192
-max_obs_length_image=8192 
+max_obs_length_image=8192
 max_obs_length_text=6144
 ppo_max_token_len_per_gpu=$(expr $max_prompt_length + $max_response_length)
 
-# ---- Sampling ----
 temperature=1.0
 top_p=1.0
 
-# ---- Agent / tool ----
 enable_agent=True
 action_stop_tokens='</action>'
 max_turns=10
@@ -55,38 +38,41 @@ enable_mtrl=True
 additional_eos_token_ids=[151645]
 reward_manager=geo_vision_qa
 
-# ---- Training ----
 strategy="fsdp2"
 lr=1e-6
-kl_loss_coef=0.0
+kl_loss_coef=0.001
 kl_coef=0.0
 entropy_coeff=0
 kl_loss_type=low_var_kl
 
-# ---- Per-GPU micro batches ----
 ppo_micro_batch_size_per_gpu=4
 log_prob_micro_batch_size_per_gpu=16
 
-# ---- Parallelism ----
 tensor_model_parallel_size=1
 ulysses_sequence_parallel_size=1
 fsdp_size=-1
 
-# ---- Memory ----
 gpu_memory_utilization=0.8
 do_offload=False
 use_dynamic_bsz=True
 
-# ---- Rollout ----
 max_num_batched_tokens=$(expr $max_prompt_length + $max_response_length)
 rollout_mode='async'
 
-# ---- Schedule ----
-total_epochs=3
+total_training_steps=300
 save_freq=5
-test_freq=20
+test_freq=10
 
-# ============================================================
+at_gigpo_tau=0.3
+at_gigpo_l_hat_update_ratio=0.025
+at_gigpo_ema_alpha=0.5
+at_gigpo_epoch_decay_start=1.5
+at_gigpo_epoch_decay_slope=0.5
+at_gigpo_epoch_decay_floor=0.05
+at_gigpo_n_turn_buckets=4
+at_gigpo_min_bucket_ratio=0.15
+at_gigpo_sort_by_turns=True
+
 export VERL_RUN_ID=$run_name
 export NCCL_DEBUG=WARN
 export WANDB_DIR=$WORKSPACE/logs/$run_name
@@ -98,7 +84,6 @@ mkdir -p $WORKSPACE/logs/$run_name
 action_stop_tokens_file="$WORKSPACE/logs/$run_name/action_stop_tokens.txt"
 echo -e -n "$action_stop_tokens" | tee $action_stop_tokens_file
 
-# ---- Resolve tool server URL ----
 if [ -n "${TOOL_SERVER_URL:-}" ]; then
     tool_server_url=$TOOL_SERVER_URL
 elif [ -n "${TOOL_SERVER_IP:-}" ]; then
@@ -114,7 +99,6 @@ for n in ray.nodes():
 fi
 echo "Using tool server at $tool_server_url"
 
-# ---- Verify Ray cluster has enough nodes ----
 python3 -c "
 import ray, sys
 ray.init(address='auto', ignore_reinit_error=True)
@@ -129,26 +113,38 @@ print('Cluster OK')
 ray.shutdown()
 "
 
-# When using a pre-started Ray cluster, env vars must be set on each node
-# BEFORE running `ray start`. Example for each worker node:
-#   export JUDGE_API_KEY=xxx JUDGE_API_BASE=xxx JUDGE_MODEL=xxx
-#   export WANDB_API_KEY=xxx WANDB_BASE_URL=xxx
-#   ray start --address=<head_ip>:6379
-#
-# Alternatively, start Ray workers with --runtime-env-json:
-#   ray start --address=<head_ip>:6379 \
-#       --runtime-env-json='{"env_vars":{"JUDGE_API_KEY":"xxx","WANDB_API_KEY":"xxx"}}'
-
 PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
-    algorithm.adv_estimator=$rl_alg  \
+    algorithm.adv_estimator=$rl_alg \
     algorithm.gigpo_omega=1.0 \
     algorithm.gigpo_gamma=0.99 \
     +algorithm.gigpo_sim_threshold=0.9 \
+    algorithm.at_gigpo.enable=true \
+    algorithm.at_gigpo.v2=true \
+    algorithm.at_gigpo.tau=$at_gigpo_tau \
+    algorithm.at_gigpo.l_hat_update_ratio=$at_gigpo_l_hat_update_ratio \
+    algorithm.at_gigpo.ema_alpha=$at_gigpo_ema_alpha \
+    algorithm.at_gigpo.epoch_decay_start=$at_gigpo_epoch_decay_start \
+    algorithm.at_gigpo.epoch_decay_slope=$at_gigpo_epoch_decay_slope \
+    algorithm.at_gigpo.epoch_decay_floor=$at_gigpo_epoch_decay_floor \
+    algorithm.at_gigpo.n_turn_buckets=$at_gigpo_n_turn_buckets \
+    algorithm.at_gigpo.min_bucket_ratio=$at_gigpo_min_bucket_ratio \
+    algorithm.at_gigpo.sort_by_turns=$at_gigpo_sort_by_turns \
+    +algorithm.at_gigpo.total_training_steps=$total_training_steps \
     data.train_files=$train_data \
     data.val_files=$val_data \
     data.train_batch_size=$batch_size \
     data.val_batch_size=256 \
-    data.dataloader_num_workers=64 \
+    +data.sampler.class_path=verl_tool/trainer/ppo/at_gigpo_sampler.py \
+    +data.sampler.class_name=ATGiGPOSampler \
+    +data.sampler.rollout_n=$n \
+    +data.sampler.tau=$at_gigpo_tau \
+    +data.sampler.epoch_decay_start=$at_gigpo_epoch_decay_start \
+    +data.sampler.epoch_decay_slope=$at_gigpo_epoch_decay_slope \
+    +data.sampler.epoch_decay_floor=$at_gigpo_epoch_decay_floor \
+    +data.sampler.l_hat_update_ratio=$at_gigpo_l_hat_update_ratio \
+    +data.sampler.ema_alpha=$at_gigpo_ema_alpha \
+    +data.sampler.total_training_steps=$total_training_steps \
+    data.dataloader_num_workers=0 \
     data.max_prompt_length=$max_prompt_length \
     data.max_response_length=$max_response_length \
     data.filter_overlong_prompts=False \
@@ -167,7 +163,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=$ppo_micro_batch_size_per_gpu \
     actor_rollout_ref.actor.use_dynamic_bsz=$use_dynamic_bsz \
     actor_rollout_ref.actor.ppo_max_token_len_per_gpu=$ppo_max_token_len_per_gpu \
-    actor_rollout_ref.actor.use_kl_loss=False \
+    actor_rollout_ref.actor.use_kl_loss=True\
     actor_rollout_ref.actor.strategy=$strategy \
     actor_rollout_ref.actor.kl_loss_coef=$kl_loss_coef \
     actor_rollout_ref.actor.kl_loss_type=$kl_loss_type \
@@ -235,7 +231,8 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     +trainer.max_actor_ckpt_to_keep=20 \
     trainer.save_freq=$save_freq \
     trainer.test_freq=$test_freq \
-    trainer.total_epochs=$total_epochs \
+    +trainer.total_training_steps=$total_training_steps \
+    trainer.total_epochs=999 \
     trainer.resume_mode=auto \
     2>&1 | tee $WORKSPACE/logs/$run_name/train.log
 
