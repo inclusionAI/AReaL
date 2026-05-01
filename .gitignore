@@ -196,6 +196,7 @@ api_key.json
 ./*.sh
 *.jpg
 *.pdf
+!docs/slides/*.pdf
 *.swp
 
 .vscode/

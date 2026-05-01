@@ -10,6 +10,26 @@
   </a>
 </p>
 
+<h2 align="center">🌲 Feature branch: Dynamic Tree Attention (DTA)</h2>
+
+<p align="center">
+  <a href="https://github.com/inclusionAI/AReaL/tree/feat/dta"><b><code>feat/dta</code></b></a>
+  &nbsp;·&nbsp;
+  <b>Paper</b> <a href="https://arxiv.org/abs/2602.00482">arxiv.org/abs/2602.00482</a>
+  &nbsp;·&nbsp;
+  <b>Slides</b> <a href="./docs/slides/AReaL-DTA-slides.pdf">PDF</a>
+  &nbsp;·&nbsp;
+  <b>Example</b> <a href="https://github.com/inclusionAI/AReaL/tree/feat/dta/examples/tau2/dta"><code>examples/tau2/dta</code></a>
+</p>
+
+<p align="center">
+  <b>Actor &amp; critic:</b> <code>tree_training_mode: dta</code>
+  &nbsp;+&nbsp;
+  <code>packing_algorithm: dta</code>
+</p>
+
+<hr>
+
 <img align="right" alt="ReaL" src="/assets/figures/logo.png" width="20%">
 
 **AReaL** is a reinforcement learning (RL) infrastructure designed to bridge foundation
@@ -39,6 +59,15 @@ cost-effective** for a broad community of developers and researchers.
   [customer service](https://arxiv.org/abs/2601.22607) agents.
 
 ## 📰 News
+
+**\[2026/05/01\]** **Dynamic Tree Attention (DTA)** training is available on the
+development branch
+[`feat/zero1-dta-archon-dp`](https://github.com/inclusionAI/AReaL/tree/feat/zero1-dta-archon-dp)
+(intended to merge into `main`). See the paper
+[arxiv.org/abs/2602.00482](https://arxiv.org/abs/2602.00482), slide deck
+[`docs/slides/AReaL-DTA-slides.pdf`](./docs/slides/AReaL-DTA-slides.pdf), and the
+**[DTA quick reference](#-dynamic-tree-attention-dta)** below for configuration and
+examples.
 
 **\[2026/04/23\]** 🚀 We’re excited to release our integration with
 [Scaffoldings](https://github.com/NVIDIA/TensorRT-LLM/tree/main/tensorrt_llm/scaffolding)
