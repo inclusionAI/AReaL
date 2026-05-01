@@ -39,7 +39,7 @@ _NA_VARIANTS = frozenset({"n/a", "na", "none", "not available", "not applicable"
 
 SUPPORTED_DATASETS = [
     "visual_probe", "map_trace", "reason_map", "reason_map_plus", "mm_mapqa",
-    "o3_bench",
+    "o3_bench", "3dsrbench",
 ]
 
 
@@ -202,6 +202,15 @@ def evaluate_record(record: dict, record_id: str, dataset_name: str) -> dict:
         result["qtype"] = qtype
         return result
 
+    if dataset_name == "3dsrbench":
+        # MCQ A/B/C/D - generic comparison + carry category for breakdown
+        result["score"] = _rule_score_generic(prediction, ground_truth)
+        result["category"] = (
+            record.get("category", "")
+            or record.get("meta_info_extra", {}).get("category", "")
+        )
+        return result
+
     result["score"] = _rule_score_generic(prediction, ground_truth)
     return result
 
@@ -316,6 +325,18 @@ def main():
         for qt in sorted(qtype_stats):
             s = qtype_stats[qt]
             lines.append(f"  {qt}: {s['correct']}/{s['n']} ({s['correct']/s['n']:.4f})" if s["n"] else f"  {qt}: 0/0")
+
+    if args.dataset_name == "3dsrbench":
+        cat_stats = defaultdict(lambda: {"n": 0, "correct": 0})
+        for r in all_results:
+            c = r.get("category", "unknown") or "unknown"
+            cat_stats[c]["n"] += 1
+            if r["score"] > 0:
+                cat_stats[c]["correct"] += 1
+        lines.append("\nPer Category:")
+        for c in sorted(cat_stats):
+            s = cat_stats[c]
+            lines.append(f"  {c}: {s['correct']}/{s['n']} ({s['correct']/s['n']:.4f})" if s["n"] else f"  {c}: 0/0")
 
     summary = "\n".join(lines)
     with open(os.path.join(args.output_path, "summary.txt"), "w") as f:

@@ -7,8 +7,8 @@ set -x
 WORKSPACE=${WORKSPACE:-/storage/openpsi/data/lcy_image_edit/mixed_rl_v2}
 model_name=${MODEL_PATH:-/storage/openpsi/models/lcy_image_edit/sft_workspace/qwen3vl8b-thinking-5ds-v2-0419-ct65536/checkpoint-280}
 
-train_data="$WORKSPACE/train.parquet"
-val_data="$WORKSPACE/val.parquet"
+train_data="[$WORKSPACE/train.parquet,$WORKSPACE/omnispatial_rl_train.parquet]"
+val_data="[$WORKSPACE/val.parquet,$WORKSPACE/omnispatial_rl_val.parquet]"
 run_name="8b-at-gigpo-v4-uniform-n8"
 rl_alg=gigpo
 
