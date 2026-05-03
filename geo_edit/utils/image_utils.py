@@ -16,7 +16,7 @@ def image_to_data_url(
     image: Image.Image,
     *,
     image_format: str = "PNG",
-    max_base64_bytes: int | None = 4 * 1024 * 1024,
+    max_base64_bytes: int | None = 1 * 1024 * 1024,
 ) -> str:
     """Convert a PIL Image to a ``data:`` URL with optional size capping.
 
@@ -48,6 +48,7 @@ def image_to_data_url(
 
     best_encoded = None
     best_quality = None
+    best_scale = 1.0
     for quality in (98, 96, 94, 92, 90, 88, 86, 84, 82, 80, 78, 76, 74, 72, 70):
         buffer = io.BytesIO()
         rgb_image.save(buffer, format="JPEG", quality=quality)
@@ -57,16 +58,37 @@ def image_to_data_url(
             best_quality = quality
             break
 
+    # Fallback: progressively downscale + JPEG q=80 until we fit.
     if best_encoded is None:
+        for scale in (0.85, 0.7, 0.55, 0.4, 0.3, 0.22, 0.16, 0.12, 0.09, 0.06, 0.04):
+            new_size = (max(1, int(rgb_image.width * scale)),
+                        max(1, int(rgb_image.height * scale)))
+            scaled = rgb_image.resize(new_size, Image.LANCZOS)
+            for quality in (90, 82, 74, 70):
+                buffer = io.BytesIO()
+                scaled.save(buffer, format="JPEG", quality=quality)
+                candidate = base64.b64encode(buffer.getvalue()).decode("ascii")
+                if len(candidate) <= max_base64_bytes:
+                    best_encoded = candidate
+                    best_quality = quality
+                    best_scale = scale
+                    break
+            if best_encoded is not None:
+                break
+
+    if best_encoded is None:
+        scaled = rgb_image.resize((128, 128), Image.LANCZOS)
         buffer = io.BytesIO()
-        rgb_image.save(buffer, format="JPEG", quality=70)
+        scaled.save(buffer, format="JPEG", quality=60)
         best_encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
-        best_quality = 70
+        best_quality = 60
+        best_scale = -1.0
 
     logger.info(
-        "Image exceeded limit (%dKB), compressed to JPEG q%d (%dKB)",
+        "Image exceeded limit (%dKB), compressed to JPEG q%d scale=%.2f (%dKB)",
         orig_kb,
         best_quality,
+        best_scale,
         len(best_encoded) // 1024,
     )
     return f"data:image/jpeg;base64,{best_encoded}"

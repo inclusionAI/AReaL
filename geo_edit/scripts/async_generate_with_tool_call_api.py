@@ -307,18 +307,40 @@ def _run_one_task(task_payload: dict):
 
             if attempt < max_attempts - 1:
                 continue
-            shutil.rmtree(task_save_dir, ignore_errors=True)
+            _persist_failure(task_save_dir, task_id, "no_valid_response", task, _WORKER_AGENT, None)
             return False, None
 
         except Exception as e:
             logging.error(f"[{task_id}] failed (attempt {attempt + 1}): {e}")
             if attempt < max_attempts - 1:
                 continue
-            shutil.rmtree(task_save_dir, ignore_errors=True)
+            _persist_failure(task_save_dir, task_id, f"exception:{type(e).__name__}", task, _WORKER_AGENT, str(e)[:500])
             return False, None
 
-    shutil.rmtree(task_save_dir, ignore_errors=True)
+    _persist_failure(task_save_dir, task_id, "exhausted", None, None, None)
     return False, None
+
+
+def _persist_failure(save_dir, task_id, reason, task, agent, err_msg):
+    import json as _json
+    try:
+        os.makedirs(save_dir, exist_ok=True)
+        info = {"id": task_id, "status": "failed", "failure_reason": reason, "error": err_msg}
+        if task is not None:
+            try:
+                contents = getattr(task, "contents", [])
+                info["n_messages"] = len(contents) if isinstance(contents, list) else 0
+                info["total_steps"] = getattr(agent, "step_count", 0) if agent else 0
+            except Exception:
+                pass
+            try:
+                task.save_trajectory()
+            except Exception:
+                pass
+        with open(os.path.join(save_dir, "failed_meta.jsonl"), "w", encoding="utf-8") as f:
+            f.write(_json.dumps(info, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
 
 
 def main():

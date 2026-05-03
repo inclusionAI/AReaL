@@ -260,34 +260,56 @@ def main():
 
                 os.makedirs(task_save_dir, exist_ok=True)
 
-                # Handle image
+                # Handle image (single or multi-image)
                 image_path = None
                 text_only = dataset_spec.image_key is None
                 if dataset_spec.image_key:
                     image = item.get(dataset_spec.image_key)
-                    if isinstance(image, str) and os.path.isfile(image):
-                        image_path = image
-                    else:
-                        image_path = os.path.join(task_save_dir, "input_image.png")
-                        if not os.path.exists(image_path):
-                            if isinstance(image, Image.Image):
-                                image.save(image_path)
+
+                    # Normalize image container:
+                    #   - numpy.ndarray / list -> treat as multi-image list
+                    #   - single object (PIL/dict/bytes/str) -> wrap into 1-element list
+                    try:
+                        import numpy as _np
+                        is_array = isinstance(image, _np.ndarray)
+                    except ImportError:
+                        is_array = False
+                    is_multi = (isinstance(image, list) or is_array) and (
+                        not (isinstance(image, str) or isinstance(image, bytes))
+                    )
+                    images = list(image) if is_multi else [image]
+
+                    saved_paths: list[str] = []
+                    for idx, sub in enumerate(images):
+                        if isinstance(sub, str) and os.path.isfile(sub):
+                            saved_paths.append(sub)
+                            continue
+                        sub_path = os.path.join(
+                            task_save_dir,
+                            "input_image.png" if len(images) == 1 else f"input_image_{idx:02d}.png",
+                        )
+                        if not os.path.exists(sub_path):
+                            if isinstance(sub, Image.Image):
+                                sub.save(sub_path)
                             elif (
-                                isinstance(image, dict)
-                                and isinstance(image.get("bytes"), (bytes, bytearray))
+                                isinstance(sub, dict)
+                                and isinstance(sub.get("bytes"), (bytes, bytearray))
                             ):
-                                Image.open(BytesIO(image["bytes"])).save(image_path)
+                                Image.open(BytesIO(sub["bytes"])).save(sub_path)
                             elif (
-                                isinstance(image, dict)
-                                and isinstance(image.get("path"), str)
-                                and os.path.exists(image["path"])
+                                isinstance(sub, dict)
+                                and isinstance(sub.get("path"), str)
+                                and os.path.exists(sub["path"])
                             ):
                                 import shutil
-                                shutil.copy2(image["path"], image_path)
-                            elif isinstance(image, bytes):
-                                Image.open(BytesIO(image)).save(image_path)
+                                shutil.copy2(sub["path"], sub_path)
+                            elif isinstance(sub, bytes):
+                                Image.open(BytesIO(sub)).save(sub_path)
                             else:
-                                raise ValueError(f"Invalid image type: {type(image)}")
+                                raise ValueError(f"Invalid image item type: {type(sub)}")
+                        saved_paths.append(sub_path)
+
+                    image_path = saved_paths[0] if len(saved_paths) == 1 else saved_paths
                 else:
                     text_only = True
 

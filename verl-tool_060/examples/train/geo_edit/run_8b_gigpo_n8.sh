@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -x
 
-# AT-GiGPO v2-only, uniform init, n=8
+# GiGPO (no AT), uniform init, n=8
 # 8B model, mixed_rl_v2 dataset (no mapqa)
 
 WORKSPACE=${WORKSPACE:-/storage/openpsi/data/lcy_image_edit/mixed_rl_v2}
@@ -9,7 +9,7 @@ model_name=${MODEL_PATH:-/storage/openpsi/models/lcy_image_edit/sft_workspace/qw
 
 train_data="[$WORKSPACE/train.parquet,$WORKSPACE/omnispatial_rl_train.parquet]"
 val_data="[$WORKSPACE/val.parquet,$WORKSPACE/omnispatial_rl_val.parquet]"
-run_name="8b-at-gigpo-v5-0502-n8"
+run_name="8b-gigpo-v5-0502-n8"
 rl_alg=gigpo
 
 n_gpus_per_node=8
@@ -63,16 +63,6 @@ total_training_steps=300
 save_freq=5
 test_freq=10
 
-at_gigpo_tau=0.3
-at_gigpo_l_hat_update_ratio=0.025
-at_gigpo_ema_alpha=0.5
-at_gigpo_epoch_decay_start=1.5
-at_gigpo_epoch_decay_slope=0.5
-at_gigpo_epoch_decay_floor=0.05
-at_gigpo_n_turn_buckets=4
-at_gigpo_min_bucket_ratio=0.15
-at_gigpo_sort_by_turns=True
-
 export VERL_RUN_ID=$run_name
 export NCCL_DEBUG=WARN
 export WANDB_DIR=$WORKSPACE/logs/$run_name
@@ -118,32 +108,10 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     algorithm.gigpo_omega=1.0 \
     algorithm.gigpo_gamma=0.99 \
     +algorithm.gigpo_sim_threshold=0.9 \
-    algorithm.at_gigpo.enable=true \
-    algorithm.at_gigpo.v2=true \
-    algorithm.at_gigpo.tau=$at_gigpo_tau \
-    algorithm.at_gigpo.l_hat_update_ratio=$at_gigpo_l_hat_update_ratio \
-    algorithm.at_gigpo.ema_alpha=$at_gigpo_ema_alpha \
-    algorithm.at_gigpo.epoch_decay_start=$at_gigpo_epoch_decay_start \
-    algorithm.at_gigpo.epoch_decay_slope=$at_gigpo_epoch_decay_slope \
-    algorithm.at_gigpo.epoch_decay_floor=$at_gigpo_epoch_decay_floor \
-    algorithm.at_gigpo.n_turn_buckets=$at_gigpo_n_turn_buckets \
-    algorithm.at_gigpo.min_bucket_ratio=$at_gigpo_min_bucket_ratio \
-    algorithm.at_gigpo.sort_by_turns=$at_gigpo_sort_by_turns \
-    +algorithm.at_gigpo.total_training_steps=$total_training_steps \
     data.train_files=$train_data \
     data.val_files=$val_data \
     data.train_batch_size=$batch_size \
     data.val_batch_size=256 \
-    +data.sampler.class_path=verl_tool/trainer/ppo/at_gigpo_sampler.py \
-    +data.sampler.class_name=ATGiGPOSampler \
-    +data.sampler.rollout_n=$n \
-    +data.sampler.tau=$at_gigpo_tau \
-    +data.sampler.epoch_decay_start=$at_gigpo_epoch_decay_start \
-    +data.sampler.epoch_decay_slope=$at_gigpo_epoch_decay_slope \
-    +data.sampler.epoch_decay_floor=$at_gigpo_epoch_decay_floor \
-    +data.sampler.l_hat_update_ratio=$at_gigpo_l_hat_update_ratio \
-    +data.sampler.ema_alpha=$at_gigpo_ema_alpha \
-    +data.sampler.total_training_steps=$total_training_steps \
     data.dataloader_num_workers=0 \
     data.max_prompt_length=$max_prompt_length \
     data.max_response_length=$max_response_length \

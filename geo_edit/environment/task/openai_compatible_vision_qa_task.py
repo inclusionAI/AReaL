@@ -49,7 +49,7 @@ class OpenAICompatibleVisionQATask(VisionQATask):
         model_type: Literal["openai", "vllm", "sglang"] = "openai",
         api_mode: Literal["responses", "chat_completions"] = "responses",
         action_tag_mode: bool = False,
-        max_image_base64_bytes: int | None = 4 * 1024 * 1024,
+        max_image_base64_bytes: int | None = 1 * 1024 * 1024,
         **kwargs,
     ):
         super().__init__(
@@ -284,12 +284,18 @@ class OpenAICompatibleVisionQATask(VisionQATask):
 
         # Fallback: use text after </think> as answer if no <answer> tag found
         if not tool_calls and not output_text:
-            think_match = re.search(r"</think>\s*(.*)", content, re.DOTALL | re.IGNORECASE)
+            think_match = re.search(r"</think>\s*(.*)", raw_text, re.DOTALL | re.IGNORECASE)
             if think_match and think_match.group(1).strip():
                 output_text = think_match.group(1).strip()
 
+        # Last-resort fallback: accept plain trimmed output as the answer.
         if not tool_calls and not output_text:
-            logger.error("Response content: %s", content)
+            stripped = (raw_text or "").strip()
+            if stripped:
+                output_text = stripped
+
+        if not tool_calls and not output_text:
+            logger.error("Response content: %s", raw_text)
             raise ValueError("Response contained no tool call or final answer.")
 
         if tool_calls and output_text:
@@ -374,6 +380,14 @@ class OpenAICompatibleVisionQATask(VisionQATask):
             think_match = re.search(r"</think>\s*(.*)", content, re.DOTALL | re.IGNORECASE)
             if think_match and think_match.group(1).strip():
                 output_text = think_match.group(1).strip()
+
+        # Last-resort fallback: if model returned a plain short answer without any
+        # <answer>/<think>/tool structure (common for non-thinking-tuned VL models on
+        # MCQ tasks), accept the trimmed content as the answer.
+        if not tool_calls and not output_text:
+            stripped = content.strip()
+            if stripped:
+                output_text = stripped
 
         if not tool_calls and not output_text:
             logger.error("Response content: %s", content)
