@@ -200,7 +200,7 @@ class MegatronEngine(TrainEngine):
                     "v14:LRScaleGuard+WeightDeltaGuard",
                     "v16:MTPSerializeFp32Upcast(AREAL_MTP_FP32_BROADCAST)",
                     "v28:MTPSigmaDeltaBf16(AREAL_MTP_SIGMA_DELTA_BF16)",
-                    "v38:DraftOutputProbe(AREAL_MTP_V30_DIAG)",
+                    "v39:LongStochProbe+PerLayerMTPNorm(AREAL_MTP_V30_DIAG)",
                     "v17:MTPNativeAutoScaler+ConsumerBypass"
                     "(AREAL_MTP_NATIVE_AUTOSCALER,autograd_in_graph)",
                 ]
@@ -5551,6 +5551,156 @@ class MegatronEngine(TrainEngine):
                         "[DraftOutputProbe-v38] outer failure at "
                         "stage=%s exc=%r\nTRACEBACK:\n%s",
                         _stage_v38, _e_v38_out, _tb_out_v38,
+                    )
+                except Exception:
+                    pass
+        # [DraftSpecTrend-v39] Long + stochastic probes.  Plus a
+        # per-MTP-layer norm scan so heads' individual drift is
+        # visible instead of aggregated |W_MTP|.
+        try:
+            import os as _os_v39
+            _v39_on = _os_v39.environ.get("AREAL_MTP_V30_DIAG", "1") == "1"
+        except Exception:
+            _v39_on = False
+        if _v39_on:
+            _stage_v39 = "enter"
+            try:
+                import traceback as _tb_v39
+                _stage_v39 = "get_rollout_engine"
+                _re_v39 = self.rollout_engine
+                _addr_v39 = getattr(_re_v39, "controller_addr", None)
+                try:
+                    _rk_v39 = (
+                        torch.distributed.get_rank()
+                        if torch.distributed.is_initialized() else 0
+                    )
+                except Exception:
+                    _rk_v39 = 0
+                # --- (a) Per-MTP-layer fp32 norm scan ---
+                _stage_v39 = "per_layer_norm"
+                try:
+                    if mtp_hf_tensors:
+                        import torch as _torch_v39
+                        _layer_norms = {}
+                        for _n, _f in mtp_hf_tensors.items():
+                            if not hasattr(_f, "dtype"):
+                                continue
+                            try:
+                                if _f.dtype != _torch_v39.float32:
+                                    _fc = _f.detach().to(_torch_v39.float32)
+                                else:
+                                    _fc = _f.detach()
+                                _nrm = float(_fc.float().norm().item())
+                                # group by "model.mtp_layers.{i}."
+                                _key = None
+                                _parts = _n.split(".")
+                                if len(_parts) >= 3 and _parts[0] == "model" and _parts[1] == "mtp_layers":
+                                    _key = f"mtp_layer_{_parts[2]}"
+                                else:
+                                    _key = "other_mtp"
+                                _layer_norms.setdefault(_key, 0.0)
+                                _layer_norms[_key] = (_layer_norms[_key] ** 2 + _nrm ** 2) ** 0.5
+                            except Exception:
+                                pass
+                        _prev = getattr(self, "_v39_prev_layer_norms", None)
+                        _rel = {}
+                        if isinstance(_prev, dict):
+                            for _k, _v in _layer_norms.items():
+                                _pv = _prev.get(_k, None)
+                                if isinstance(_pv, (int, float)) and _pv > 0:
+                                    _rel[_k] = abs(_v - _pv) / _pv
+                        self._v39_prev_layer_norms = dict(_layer_norms)
+                        if _rk_v39 == 0:
+                            self.logger.info(
+                                "[PerLayerMTPNorm-v39] version=%s "
+                                "norms=%s d_rel=%s",
+                                int(self.get_version()),
+                                {_k: ("%.6e" % _v) for _k, _v in _layer_norms.items()},
+                                {_k: ("%.3e" % _v) for _k, _v in _rel.items()},
+                            )
+                except Exception as _e_pln:
+                    if _rk_v39 == 0:
+                        try:
+                            self.logger.info(
+                                "[PerLayerMTPNorm-v39] failure: %r\nTRACEBACK:\n%s",
+                                _e_pln, _tb_v39.format_exc(),
+                            )
+                        except Exception:
+                            pass
+                # --- (b) Long probe ---
+                _stage_v39 = "long_probe"
+                if _rk_v39 == 0 and _addr_v39 is not None:
+                    try:
+                        import requests as _rq_l
+                        _ver = int(self.get_version())
+                        _r_l = _rq_l.post(
+                            f"http://{_addr_v39}/callback/get_draft_probe_long",
+                            json={"version": _ver},
+                            timeout=240.0,
+                            proxies={"http": None, "https": None},
+                        )
+                        _j_l = _r_l.json() if _r_l.status_code == 200 else {}
+                        self.logger.info(
+                            "[DraftSpecTrend-v39 long] version=%s "
+                            "status=%s out_ids_len=%s "
+                            "first16=%s last16=%s sum_lp=%s mid_lp=%s "
+                            "first_lps=%s last_lps=%s spec=%s err=%s",
+                            _ver, _r_l.status_code,
+                            _j_l.get("out_ids_len"),
+                            _j_l.get("out_ids_first16"),
+                            _j_l.get("out_ids_last16"),
+                            _j_l.get("sum_lp"),
+                            _j_l.get("mid_lp"),
+                            _j_l.get("out_lps_first4"),
+                            _j_l.get("out_lps_last4"),
+                            _j_l.get("spec_fields"),
+                            _j_l.get("error"),
+                        )
+                    except Exception as _e_l:
+                        self.logger.info(
+                            "[DraftSpecTrend-v39 long] failure: %r\nTRACEBACK:\n%s",
+                            _e_l, _tb_v39.format_exc(),
+                        )
+                # --- (c) Stochastic probe ---
+                _stage_v39 = "stoch_probe"
+                if _rk_v39 == 0 and _addr_v39 is not None:
+                    try:
+                        import requests as _rq_s
+                        _ver = int(self.get_version())
+                        _r_s = _rq_s.post(
+                            f"http://{_addr_v39}/callback/get_draft_probe_stoch",
+                            json={"version": _ver},
+                            timeout=300.0,
+                            proxies={"http": None, "https": None},
+                        )
+                        _j_s = _r_s.json() if _r_s.status_code == 200 else {}
+                        self.logger.info(
+                            "[DraftSpecTrend-v39 stoch] version=%s "
+                            "status=%s n_ok=%s "
+                            "spec_accept_rate_stats=%s "
+                            "spec_accept_length_stats=%s "
+                            "spec_accept_rate_samples=%s "
+                            "spec_accept_length_samples=%s "
+                            "histograms=%s err=%s",
+                            _ver, _r_s.status_code,
+                            _j_s.get("n_ok"),
+                            _j_s.get("spec_accept_rate_stats"),
+                            _j_s.get("spec_accept_length_stats"),
+                            _j_s.get("spec_accept_rate_samples"),
+                            _j_s.get("spec_accept_length_samples"),
+                            _j_s.get("histograms"),
+                            _j_s.get("error"),
+                        )
+                    except Exception as _e_s:
+                        self.logger.info(
+                            "[DraftSpecTrend-v39 stoch] failure: %r\nTRACEBACK:\n%s",
+                            _e_s, _tb_v39.format_exc(),
+                        )
+            except Exception as _e_v39_out:
+                try:
+                    self.logger.warning(
+                        "[DraftSpecTrend-v39] outer failure at stage=%s exc=%r\nTRACEBACK:\n%s",
+                        _stage_v39, _e_v39_out, _tb_v39.format_exc(),
                     )
                 except Exception:
                     pass

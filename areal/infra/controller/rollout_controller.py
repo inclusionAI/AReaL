@@ -1006,6 +1006,177 @@ class RolloutController:
                      "server": _srv}
                 ), 200
 
+        # ------------------------------------------------------------
+        # [v39] /callback/get_draft_probe_long
+        # ------------------------------------------------------------
+        # Like v38 but with max_new_tokens=128 and collects per-position
+        # output_token_logprobs + spec_accept_histogram to measure
+        # draft drift on longer sequences.
+        @app.route("/callback/get_draft_probe_long", methods=["POST"])
+        def get_draft_probe_long_v39():
+            payload = request.get_json() or {}
+            _version = payload.get("version")
+            _srv = None
+            _probe_ids = [1, 100, 200, 300, 400, 500, 600, 700]
+            try:
+                if not self.server_infos:
+                    return jsonify(
+                        {"error": "no server_infos", "version": _version}
+                    ), 200
+                _s0 = self.server_infos[0]
+                _srv = f"{_s0.host}:{_s0.port}"
+                import requests as _rq
+                _url = f"http://{_srv}/generate"
+                _req = {
+                    "input_ids": _probe_ids,
+                    "sampling_params": {
+                        "temperature": 0.0,
+                        "top_p": 1.0,
+                        "top_k": 1,
+                        "max_new_tokens": 128,
+                    },
+                    "return_logprob": True,
+                    "logprob_start_len": 0,
+                }
+                _r = _rq.post(
+                    _url, json=_req, timeout=180.0,
+                    proxies={"http": None, "https": None},
+                )
+                if _r.status_code != 200:
+                    return jsonify(
+                        {"error": f"status={_r.status_code}",
+                         "version": _version,
+                         "server": _srv, "body": _r.text[:400]}
+                    ), 200
+                _j = _r.json()
+                _item = _j if isinstance(_j, dict) else (
+                    _j[0] if isinstance(_j, list) and _j else {}
+                )
+                _meta = _item.get("meta_info", {}) if isinstance(_item, dict) else {}
+                _otl = _meta.get("output_token_logprobs", None)
+                _out_ids, _out_lps = [], []
+                if isinstance(_otl, list):
+                    for _e in _otl[:128]:
+                        if isinstance(_e, (list, tuple)) and len(_e) >= 2:
+                            _lp_i = _e[0]
+                            _id_i = _e[1]
+                            if isinstance(_id_i, int):
+                                _out_ids.append(int(_id_i))
+                            if isinstance(_lp_i, (int, float)):
+                                _out_lps.append(float(_lp_i))
+                _sum_lp = sum(_out_lps) if _out_lps else None
+                _mid_lp = _out_lps[len(_out_lps)//2] if _out_lps else None
+                _specf = {}
+                for _k, _v in (_meta or {}).items():
+                    _kl = str(_k).lower()
+                    if ("spec" in _kl or "accept" in _kl
+                            or "verify" in _kl or "draft" in _kl
+                            or "jump" in _kl):
+                        _specf[str(_k)] = _v
+                return jsonify(
+                    {"version": _version,
+                     "server": _srv,
+                     "out_ids_first16": _out_ids[:16],
+                     "out_ids_last16": _out_ids[-16:] if len(_out_ids) >= 16 else _out_ids,
+                     "out_ids_len": len(_out_ids),
+                     "sum_lp": _sum_lp,
+                     "mid_lp": _mid_lp,
+                     "out_lps_first4": _out_lps[:4],
+                     "out_lps_last4": _out_lps[-4:],
+                     "spec_fields": _specf}
+                ), 200
+            except Exception as _e:
+                logger.warning(f"[v39] long probe unexpected: {_e!r}")
+                return jsonify(
+                    {"error": repr(_e), "version": _version}
+                ), 200
+
+        # ------------------------------------------------------------
+        # [v39] /callback/get_draft_probe_stoch
+        # ------------------------------------------------------------
+        # Stochastic probe: temperature=0.8, top_p=0.95, 8 samples;
+        # reports mean/std/min/max of spec_accept_length and
+        # spec_accept_rate across samples to expose draft drift on
+        # realistic distributions (matching training rollout).
+        @app.route("/callback/get_draft_probe_stoch", methods=["POST"])
+        def get_draft_probe_stoch_v39():
+            payload = request.get_json() or {}
+            _version = payload.get("version")
+            _srv = None
+            _probe_ids = [1, 100, 200, 300, 400, 500, 600, 700]
+            _N = 8
+            try:
+                if not self.server_infos:
+                    return jsonify(
+                        {"error": "no server_infos", "version": _version}
+                    ), 200
+                _s0 = self.server_infos[0]
+                _srv = f"{_s0.host}:{_s0.port}"
+                import requests as _rq
+                _url = f"http://{_srv}/generate"
+                _req = {
+                    "input_ids": _probe_ids,
+                    "sampling_params": {
+                        "temperature": 0.8,
+                        "top_p": 0.95,
+                        "top_k": 0,
+                        "max_new_tokens": 128,
+                    },
+                    "return_logprob": False,
+                }
+                _ar_list, _al_list, _hist_list = [], [], []
+                _n_ok = 0
+                for _i in range(_N):
+                    try:
+                        _r = _rq.post(
+                            _url, json=_req, timeout=120.0,
+                            proxies={"http": None, "https": None},
+                        )
+                        if _r.status_code != 200:
+                            continue
+                        _j = _r.json()
+                        _item = _j if isinstance(_j, dict) else (
+                            _j[0] if isinstance(_j, list) and _j else {}
+                        )
+                        _meta = _item.get("meta_info", {}) if isinstance(_item, dict) else {}
+                        _ar = _meta.get("spec_accept_rate", None)
+                        _al = _meta.get("spec_accept_length", None)
+                        _h = _meta.get("spec_accept_histogram", None)
+                        if isinstance(_ar, (int, float)):
+                            _ar_list.append(float(_ar))
+                        if isinstance(_al, (int, float)):
+                            _al_list.append(float(_al))
+                        if isinstance(_h, list):
+                            _hist_list.append(list(_h))
+                        _n_ok += 1
+                    except Exception:
+                        continue
+                def _ms(xs):
+                    if not xs:
+                        return {"n": 0, "mean": None, "std": None,
+                                "min": None, "max": None}
+                    _n = len(xs)
+                    _m = sum(xs) / _n
+                    _v = sum((x - _m) ** 2 for x in xs) / _n
+                    _s = _v ** 0.5
+                    return {"n": _n, "mean": _m, "std": _s,
+                            "min": min(xs), "max": max(xs)}
+                return jsonify(
+                    {"version": _version,
+                     "server": _srv,
+                     "n_ok": _n_ok,
+                     "spec_accept_rate_stats": _ms(_ar_list),
+                     "spec_accept_length_stats": _ms(_al_list),
+                     "spec_accept_rate_samples": _ar_list,
+                     "spec_accept_length_samples": _al_list,
+                     "histograms": _hist_list}
+                ), 200
+            except Exception as _e:
+                logger.warning(f"[v39] stoch probe unexpected: {_e!r}")
+                return jsonify(
+                    {"error": repr(_e), "version": _version}
+                ), 200
+
         @app.errorhandler(Exception)
         def handle_error(e):
             logger.error(
