@@ -202,6 +202,7 @@ class MegatronEngine(TrainEngine):
                     "v28:MTPSigmaDeltaBf16(AREAL_MTP_SIGMA_DELTA_BF16)",
                     "v43:FixedLongProbe+MTPWeightHashDelta+CrossProcFix(AREAL_MTP_V30_DIAG)",
                     "v44:MTPSrcHash+RepeatFixedLongProbe(AREAL_MTP_V30_DIAG)",
+                    "v45:MTPULPGap+DraftIPCStall(AREAL_MTP_V30_DIAG)",
                     "v17:MTPNativeAutoScaler+ConsumerBypass"
                     "(AREAL_MTP_NATIVE_AUTOSCALER,autograd_in_graph)",
                 ]
@@ -3533,6 +3534,45 @@ class MegatronEngine(TrainEngine):
                         _v42_ver,
                     )
                 self._v43_prev_digests = _cur_map_v43
+                # [MTPDraftIPCStall-v45] cumulative stall count
+                # per tensor.  If a hash equals the previous
+                # version's hash, the draft worker saw a
+                # bit-exact copy: stall_count += 1, else reset.
+                try:
+                    if not hasattr(self, "_v45_stall_count"):
+                        self._v45_stall_count = {}
+                    _prev_cur = getattr(
+                        self, "_v45_last_cur_map", None
+                    )
+                    _v45_rows = []
+                    for _n_s, _h_s in _cur_map_v43.items():
+                        if (_prev_cur is not None
+                                and _prev_cur.get(_n_s) == _h_s):
+                            self._v45_stall_count[_n_s] = (
+                                self._v45_stall_count.get(_n_s, 0) + 1
+                            )
+                        else:
+                            self._v45_stall_count[_n_s] = 0
+                        _v45_rows.append(
+                            (_n_s, self._v45_stall_count[_n_s])
+                        )
+                    self._v45_last_cur_map = dict(_cur_map_v43)
+                    _v45_rows.sort(key=lambda r: -r[1])
+                    self.logger.info(
+                        "[MTPDraftIPCStall-v45] version=%s "
+                        "max_stall=%s top5_stalled=%s",
+                        _v42_ver,
+                        (_v45_rows[0][1] if _v45_rows else None),
+                        _v45_rows[:5],
+                    )
+                except Exception as _e_v45_s:
+                    try:
+                        self.logger.info(
+                            "[MTPDraftIPCStall-v45] failure: %r",
+                            _e_v45_s,
+                        )
+                    except Exception:
+                        pass
             except Exception as _e_delta_v43:
                 try:
                     self.logger.info(
@@ -4334,6 +4374,94 @@ class MegatronEngine(TrainEngine):
                         try:
                             self.logger.info(
                                 "[MTPSrcHash-v44] failure: %r", _e_v44s,
+                            )
+                        except Exception:
+                            pass
+                    # [MTPULPGap-v45] Quantify the bf16-ULP gap on
+                    # the Megatron-side fp32 master.  For each MTP
+                    # tensor, we round fp32->bf16 and compare to
+                    # the previous sync's rounded bf16.  If no
+                    # element flipped even one bf16 ULP, the
+                    # downstream draft sees a bit-exact copy of
+                    # the PREVIOUS version, regardless of what
+                    # fp32 master has been doing.  This nails the
+                    # "hidden_layernorm.weight is frozen" obs
+                    # (log.27/28) as a pure quantization ceiling.
+                    try:
+                        import torch as _torch_v45
+                        _v45_ver = None
+                        try:
+                            _v45_ver = int(self.get_version())
+                        except Exception:
+                            _v45_ver = None
+                        if not hasattr(self, "_v45_prev_bf16"):
+                            self._v45_prev_bf16 = {}
+                        if not hasattr(self, "_v45_prev_fp32"):
+                            self._v45_prev_fp32 = {}
+                        _v45_t_fp32 = _mtp_param.detach().float()
+                        _v45_bf16 = _v45_t_fp32.to(_torch_v45.bfloat16)
+                        _v45_prev_b = self._v45_prev_bf16.get(name)
+                        _v45_prev_f = self._v45_prev_fp32.get(name)
+                        if (_v45_prev_b is not None
+                                and _v45_prev_b.shape == _v45_bf16.shape):
+                            _v45_flips = int(
+                                (_v45_bf16 != _v45_prev_b).sum().item()
+                            )
+                        else:
+                            _v45_flips = -1
+                        if (_v45_prev_f is not None
+                                and _v45_prev_f.shape == _v45_t_fp32.shape):
+                            _v45_d = (_v45_t_fp32 - _v45_prev_f).abs()
+                            _v45_drift_max = float(_v45_d.max().item())
+                            _v45_drift_mean = float(_v45_d.mean().item())
+                        else:
+                            _v45_drift_max = -1.0
+                            _v45_drift_mean = -1.0
+                        # bf16 ULP estimator for the tensor's
+                        # dominant magnitude: ULP = 2^(e-7) where
+                        # 2^e <= |x|max < 2^(e+1).  For |x|max=0
+                        # (zero tensor) default 2^-133 (denormal).
+                        _v45_amax = float(
+                            _v45_t_fp32.abs().max().item()
+                        )
+                        if _v45_amax > 0:
+                            import math as _m_v45
+                            _v45_e = _m_v45.floor(
+                                _m_v45.log2(_v45_amax)
+                            )
+                            _v45_ulp_max = 2.0 ** (_v45_e - 7)
+                        else:
+                            _v45_ulp_max = float('nan')
+                        # Estimated syncs until the next ULP flip
+                        # on the largest-magnitude element: ULP /
+                        # per-element drift.
+                        if (_v45_drift_max > 0
+                                and _v45_ulp_max == _v45_ulp_max):
+                            _v45_eta = _v45_ulp_max / _v45_drift_max
+                        else:
+                            _v45_eta = -1.0
+                        self.logger.info(
+                            "[MTPULPGap-v45] version=%s name=%s "
+                            "shape=%s amax=%.6e bf16_ulp_at_amax=%.6e "
+                            "drift_abs_max=%.6e drift_abs_mean=%.6e "
+                            "bf16_flips_vs_prev=%s "
+                            "eta_syncs_to_next_flip=%.2f",
+                            _v45_ver, name, tuple(_v45_t_fp32.shape),
+                            _v45_amax, _v45_ulp_max,
+                            _v45_drift_max, _v45_drift_mean,
+                            _v45_flips, _v45_eta,
+                        )
+                        # keep one-version history
+                        self._v45_prev_bf16[name] = (
+                            _v45_bf16.detach().clone()
+                        )
+                        self._v45_prev_fp32[name] = (
+                            _v45_t_fp32.detach().clone()
+                        )
+                    except Exception as _e_v45:
+                        try:
+                            self.logger.info(
+                                "[MTPULPGap-v45] failure: %r", _e_v45,
                             )
                         except Exception:
                             pass
