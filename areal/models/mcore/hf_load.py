@@ -14,6 +14,7 @@ from megatron.core import parallel_state as mpu
 from megatron.core.fp8_utils import is_float8tensor
 from safetensors import safe_open
 
+from areal.engine.core.model import lang_config
 from areal.engine.megatron_utils.fp8 import (
     FP8BlockwiseTensorHelper,
     dequantize_params,
@@ -31,16 +32,6 @@ def _get_tp_slice(shape, dim, tp_rank, tp_size) -> tuple:
     res = [slice(None) for _ in range(dim)]
     res.append(slice(tp_rank * size_per_tp, (tp_rank + 1) * size_per_tp))
     return tuple(res)
-
-
-def _lang_config(hf_config):
-    """Return the language-model side of an HF config.
-
-    Qwen3-VL (and similar) nest text-model params (num_attention_heads,
-    num_key_value_heads, hidden_size, head_dim) under ``hf_config.text_config``.
-    Qwen2.5-VL and pure text models keep them at the top level.
-    """
-    return getattr(hf_config, "text_config", hf_config)
 
 
 def _get_shape(obj) -> list:
@@ -61,7 +52,7 @@ def _merge_qkv_weights(
 ) -> torch.Tensor | FP8BlockwiseTensorHelper:
     """Merge Q, K, V weights into a single QKV weight tensor."""
     assert len(hf_weights_safe_slice) == 3
-    text_cfg = _lang_config(hf_config)
+    text_cfg = lang_config(hf_config)
     num_key_value_heads = text_cfg.num_key_value_heads
     hidden_dim = text_cfg.hidden_size
     num_attention_heads = text_cfg.num_attention_heads
@@ -102,7 +93,7 @@ def _load_fused_qkv_weight(
     x = hf_weights_safe_slice[0]
     x = x[:] if not isinstance(x, torch.Tensor) else x
 
-    text_cfg = _lang_config(hf_config)
+    text_cfg = lang_config(hf_config)
     num_heads = text_cfg.num_attention_heads
     num_kv_heads = getattr(text_cfg, "num_key_value_heads", num_heads)
     head_dim = x.shape[0] // (num_heads + 2 * num_kv_heads)
@@ -302,7 +293,7 @@ def _weight_to_mcore_tp(
                 tp_size,
             )
         else:
-            text_cfg = _lang_config(hf_config)
+            text_cfg = lang_config(hf_config)
             num_kv_heads = getattr(
                 text_cfg, "num_key_value_heads", text_cfg.num_attention_heads
             )

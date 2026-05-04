@@ -382,6 +382,14 @@ def _vision_qkv_mcore_to_hf(param: Tensor, vision_num_heads: int) -> Tensor:
     """
     hidden_vision = param.shape[0] // 3
     head_dim = hidden_vision // vision_num_heads
+    # Vision encoders for both Qwen2.5-VL and Qwen3-VL set
+    # num_query_groups == num_attention_heads (no GQA on the vision side); a
+    # future VLM that breaks this would silently miscompile vision QKV here.
+    assert head_dim * vision_num_heads * 3 == param.shape[0], (
+        f"_vision_qkv_mcore_to_hf assumes vision has no GQA "
+        f"(num_kv_heads == num_heads). Got param.shape[0]={param.shape[0]}, "
+        f"vision_num_heads={vision_num_heads}, derived head_dim={head_dim}."
+    )
     is_bias = param.ndim == 1
 
     if is_bias:
@@ -518,6 +526,23 @@ def convert_qwen3_vl_to_hf(
     if name == "module.module.language_model.output_layer.weight":
         return [("lm_head.weight", param)]
 
+    # Early-raise on Qwen3-VL-MoE expert / router params before they fall
+    # through to the dense "Unknown Qwen3-VL language-model parameter" branch.
+    # `_CONVERSION_FN_REGISTRY` dispatches via substring matching, so once a
+    # `qwen3_vl_moe` model_type exists it will route here unless `qwen3_vl_moe`
+    # is registered BEFORE `qwen3_vl`.
+    if name.startswith(_LM_PREFIX) and (
+        ".mlp.experts." in name
+        or ".mlp.router." in name
+        or ".pre_mlp_layernorm." in name
+    ):
+        raise NotImplementedError(
+            "Qwen3-VL-MoE is not supported by convert_qwen3_vl_to_hf. "
+            "Implement convert_qwen3_vl_moe_to_hf and register it BEFORE "
+            "'qwen3_vl' in _CONVERSION_FN_REGISTRY (substring matching "
+            "dispatches the first hit)."
+        )
+
     if name.startswith(_LM_PREFIX):
         match = re.match(
             r"module\.module\.language_model\.decoder\.layers\.(\d+)\.(.+)",
@@ -527,13 +552,10 @@ def convert_qwen3_vl_to_hf(
             layer_idx, rest = match.groups()
             if tf_config.num_query_groups is None:
                 raise ValueError("Qwen3-VL text model requires num_query_groups")
-            try:
-                head_dim = (
-                    tf_config.kv_channels
-                    if tf_config.kv_channels is not None
-                    else tf_config.hidden_size // tf_config.num_attention_heads
-                )
-            except (AttributeError, TypeError):
+            kv_channels = getattr(tf_config, "kv_channels", None)
+            if kv_channels is not None:
+                head_dim = kv_channels
+            else:
                 head_dim = tf_config.hidden_size // tf_config.num_attention_heads
             value_num_per_group = (
                 tf_config.num_attention_heads // tf_config.num_query_groups

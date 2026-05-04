@@ -530,20 +530,24 @@ class TestConvertQwen3VLToHF:
 
     @pytest.fixture()
     def tf_config(self):
-        """Mock TransformerConfig with Qwen3-VL-2B-ish text values."""
+        """Mock TransformerConfig matching Qwen/Qwen3-VL-2B-Instruct text_config:
+        hidden=2048, attn_heads=16, kv_heads=8, head_dim=128.
+        """
         cfg = MagicMock()
         cfg.hidden_size = 2048
         cfg.num_attention_heads = 16
-        cfg.num_query_groups = 8  # Qwen3 less aggressive GQA
+        cfg.num_query_groups = 8
         cfg.kv_channels = 128
         return cfg
 
     @pytest.fixture()
     def hf_config(self):
-        """Mock HF config with vision_config for Qwen3-VL."""
+        """Mock HF config matching Qwen/Qwen3-VL-2B-Instruct vision_config:
+        hidden=1024, num_heads=16 (head_dim=64).
+        """
         cfg = MagicMock()
         cfg.vision_config.num_heads = 16
-        cfg.vision_config.hidden_size = 1152
+        cfg.vision_config.hidden_size = 1024
         return cfg
 
     # --- Registry dispatch ---
@@ -553,7 +557,7 @@ class TestConvertQwen3VLToHF:
         not fall through to qwen3 (substring match order)."""
         from areal.engine.megatron_utils.megatron import convert_to_hf
 
-        param = torch.randn(1152)
+        param = torch.randn(1024)
         result = convert_to_hf(
             tf_config,
             "qwen3_vl",
@@ -725,7 +729,7 @@ class TestConvertQwen3VLToHF:
     def test_vision_patch_embed_weight(self, tf_config):
         from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
 
-        param = torch.randn(1152, 3, 2, 16, 16)
+        param = torch.randn(1024, 3, 2, 16, 16)
         result = convert_qwen3_vl_to_hf(
             tf_config,
             "module.module.vision_model.patch_embed.proj.weight",
@@ -737,7 +741,7 @@ class TestConvertQwen3VLToHF:
         """Qwen3-VL adds patch_embed bias (Qwen2.5-VL was bias=False)."""
         from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
 
-        param = torch.randn(1152)
+        param = torch.randn(1024)
         result = convert_qwen3_vl_to_hf(
             tf_config,
             "module.module.vision_model.patch_embed.proj.bias",
@@ -749,7 +753,7 @@ class TestConvertQwen3VLToHF:
         """Qwen3-VL has pos_embed (new vs Qwen2.5-VL)."""
         from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
 
-        param = torch.randn(1024, 1152)
+        param = torch.randn(2304, 1024)
         result = convert_qwen3_vl_to_hf(
             tf_config,
             "module.module.vision_model.pos_embed.weight",
@@ -762,7 +766,7 @@ class TestConvertQwen3VLToHF:
         from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
 
         for kind in ("weight", "bias"):
-            param = torch.randn(1152)
+            param = torch.randn(1024)
             result = convert_qwen3_vl_to_hf(
                 tf_config,
                 f"module.module.vision_model.merger.patch_norm.{kind}",
@@ -790,8 +794,8 @@ class TestConvertQwen3VLToHF:
     def test_vision_block_qkv_weight_reordered(self, tf_config, hf_config):
         from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
 
-        # 3 * hidden_vision = 3 * 1152 = 3456
-        param = torch.randn(3456, 1152)
+        # 3 * hidden_vision = 3 * 1024 = 3072
+        param = torch.randn(3072, 1024)
         result = convert_qwen3_vl_to_hf(
             tf_config,
             "module.module.vision_model.decoder.layers.7.self_attention.linear_qkv.weight",
@@ -804,7 +808,7 @@ class TestConvertQwen3VLToHF:
     def test_vision_block_qkv_bias_reordered(self, tf_config, hf_config):
         from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
 
-        param = torch.randn(3456)
+        param = torch.randn(3072)
         result = convert_qwen3_vl_to_hf(
             tf_config,
             "module.module.vision_model.decoder.layers.0.self_attention.linear_qkv.bias",
@@ -817,7 +821,7 @@ class TestConvertQwen3VLToHF:
     def test_vision_block_qkv_requires_hf_config(self, tf_config):
         from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
 
-        param = torch.randn(3456, 1152)
+        param = torch.randn(3072, 1024)
         with pytest.raises(ValueError, match="vision_config.num_heads"):
             convert_qwen3_vl_to_hf(
                 tf_config,
@@ -828,7 +832,7 @@ class TestConvertQwen3VLToHF:
     def test_vision_block_attn_proj(self, tf_config):
         from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
 
-        for kind, shape in (("weight", (1152, 1152)), ("bias", (1152,))):
+        for kind, shape in (("weight", (1024, 1024)), ("bias", (1024,))):
             param = torch.randn(*shape)
             result = convert_qwen3_vl_to_hf(
                 tf_config,
@@ -842,7 +846,7 @@ class TestConvertQwen3VLToHF:
         from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
 
         for kind in ("weight", "bias"):
-            param = torch.randn(1152)
+            param = torch.randn(1024)
             result = convert_qwen3_vl_to_hf(
                 tf_config,
                 f"module.module.vision_model.decoder.layers.0.self_attention.linear_qkv.layer_norm_{kind}",
@@ -854,7 +858,7 @@ class TestConvertQwen3VLToHF:
         from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
 
         for kind in ("weight", "bias"):
-            param = torch.randn(1152)
+            param = torch.randn(1024)
             result = convert_qwen3_vl_to_hf(
                 tf_config,
                 f"module.module.vision_model.decoder.layers.1.mlp.linear_fc1.layer_norm_{kind}",
@@ -869,7 +873,7 @@ class TestConvertQwen3VLToHF:
         """
         from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
 
-        for kind, shape in (("weight", (4304, 1152)), ("bias", (4304,))):
+        for kind, shape in (("weight", (4096, 1024)), ("bias", (4096,))):
             param = torch.randn(*shape)
             result = convert_qwen3_vl_to_hf(
                 tf_config,
@@ -881,7 +885,7 @@ class TestConvertQwen3VLToHF:
     def test_vision_block_mlp_fc2(self, tf_config):
         from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
 
-        for kind, shape in (("weight", (1152, 4304)), ("bias", (1152,))):
+        for kind, shape in (("weight", (1024, 4096)), ("bias", (1024,))):
             param = torch.randn(*shape)
             result = convert_qwen3_vl_to_hf(
                 tf_config,
@@ -897,7 +901,7 @@ class TestConvertQwen3VLToHF:
         from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
 
         for kind in ("weight", "bias"):
-            param = torch.randn(1152)
+            param = torch.randn(1024)
             result = convert_qwen3_vl_to_hf(
                 tf_config,
                 f"module.module.vision_model.decoder.deepstack_merger_list.{idx}.patch_norm.{kind}",

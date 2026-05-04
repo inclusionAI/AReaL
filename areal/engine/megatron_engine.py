@@ -56,7 +56,11 @@ from areal.engine.core.distributed import (
     init_custom_process_group,
     warmup_process_groups,
 )
-from areal.engine.core.model import disable_dropout_in_model, is_valid_vision_model
+from areal.engine.core.model import (
+    disable_dropout_in_model,
+    is_valid_vision_model,
+    lang_config,
+)
 from areal.engine.megatron_utils.checkpointer import MegatronCheckpointManager
 from areal.engine.megatron_utils.deterministic import set_deterministic_algorithms
 from areal.engine.megatron_utils.fp8 import FP8BlockwiseTensorHelper
@@ -1463,12 +1467,7 @@ class MegatronEngine(TrainEngine):
             duplicated_param_names=self._duplicated_param_names,
             gated_linear_unit=is_glu,
         )
-        # VLMs like Qwen3-VL nest text-model params under hf_config.text_config;
-        # Qwen2.5-VL and pure text models keep them flat. Pad-removal targets the
-        # language-model embedding/output_layer, so always pull vocab_size from
-        # the text-side config when present.
-        text_cfg = getattr(self.hf_config, "text_config", self.hf_config)
-        param = remove_padding(name, param, text_cfg.vocab_size)
+        param = remove_padding(name, param, lang_config(self.hf_config).vocab_size)
 
         if isinstance(param, FP8BlockwiseTensorHelper):
             # FP8 is stored as uint8, so element_size is 1 byte
