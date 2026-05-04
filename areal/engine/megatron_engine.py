@@ -200,7 +200,7 @@ class MegatronEngine(TrainEngine):
                     "v14:LRScaleGuard+WeightDeltaGuard",
                     "v16:MTPSerializeFp32Upcast(AREAL_MTP_FP32_BROADCAST)",
                     "v28:MTPSigmaDeltaBf16(AREAL_MTP_SIGMA_DELTA_BF16)",
-                    "v41:RealPromptProbe+ServerInfoProbe+ProductionWindow(AREAL_MTP_V30_DIAG)",
+                    "v42:FixRealPromptProbeImport+RequestSidePromptCapture+MTPWeightHash(AREAL_MTP_V30_DIAG)",
                     "v17:MTPNativeAutoScaler+ConsumerBypass"
                     "(AREAL_MTP_NATIVE_AUTOSCALER,autograd_in_graph)",
                 ]
@@ -3456,6 +3456,56 @@ class MegatronEngine(TrainEngine):
             f"tensor_dtypes={_tensor_dtypes}, "
             f"tensor_sizes_bytes={_tensor_sizes}"
         )
+        # [MTPWeightHash-v42] Fingerprint each MTP tensor about to be
+        # serialised.  We hash up to 1024 fp32 values with a
+        # per-tensor xor-rotate so the 64-bit digest changes on ANY
+        # modification, without paying for a full-tensor reduction.
+        # The digest stream is monotonic only if the target-side
+        # weights are actually being refreshed between versions,
+        # which lets us discriminate H6 (target/draft sync skew)
+        # from H5 (policy-phase drift) when accept-rate dips.
+        try:
+            import torch as _torch_v42
+            _v42_ver = None
+            try:
+                _v42_ver = int(self.get_version())
+            except Exception:
+                _v42_ver = None
+            _v42_digests = []
+            for _v42_n, _v42_t in mtp_hf_tensors:
+                try:
+                    _flat = _v42_t.detach().reshape(-1)
+                    _k = min(1024, int(_flat.numel()))
+                    if _k > 0:
+                        _sl = _flat[:_k].float().contiguous().cpu()
+                        _bytes = _sl.numpy().tobytes()
+                        _h = 0
+                        for _b in _bytes:
+                            _h = ((_h * 1315423911) ^ int(_b)) & ((1 << 64) - 1)
+                        _s = float(_sl.sum().item())
+                        _a = float(_sl.abs().mean().item())
+                    else:
+                        _h, _s, _a = 0, 0.0, 0.0
+                    _v42_digests.append(
+                        (_v42_n, _h, _s, _a,
+                         tuple(_v42_t.shape), str(_v42_t.dtype))
+                    )
+                except Exception as _e_hash_one:
+                    _v42_digests.append(
+                        (_v42_n, None, None, None, None,
+                         repr(_e_hash_one))
+                    )
+            self.logger.info(
+                "[MTPWeightHash-v42] version=%s n_tensors=%d digests=%s",
+                _v42_ver, len(_v42_digests), _v42_digests,
+            )
+        except Exception as _e_hash_all:
+            try:
+                self.logger.info(
+                    "[MTPWeightHash-v42] probe failure: %r", _e_hash_all,
+                )
+            except Exception:
+                pass
         # [MTPSerializeSendMTP-v26] Sample first 8 values of each MTP
         # tensor so we can prove the actual bytes placed into the
         # SGLang IPC payload. The earlier MTPSendPreBcast-v25 probe
@@ -5727,14 +5777,37 @@ class MegatronEngine(TrainEngine):
                         try:
                             import requests as _rq_rp41
                             _rp_ids = None
+                            # [v42] fix: the class in sglang_remote.py is
+                            # `SGLangBackend`, NOT `SGLangRemote`.  The v41
+                            # import was silently caught by the outer except
+                            # and left _rp_ids=None for every version, so
+                            # RealPromptProbe was unreachable.  Import the
+                            # correct symbol now.
                             try:
                                 from areal.engine.sglang_remote import (
-                                    SGLangRemote as _SGLR41,
+                                    SGLangBackend as _SGLR42,
                                 )
                                 _rp_ids = getattr(
-                                    _SGLR41, "_v41_last_prompt_ids", None
+                                    _SGLR42, "_v41_last_prompt_ids", None
                                 )
-                            except Exception:
+                                _rp_len = getattr(
+                                    _SGLR42, "_v41_last_prompt_len", None
+                                )
+                                _rp_ver = getattr(
+                                    _SGLR42, "_v42_last_prompt_version",
+                                    None,
+                                )
+                                self.logger.info(
+                                    "[RealPromptProbeCapture-v42] "
+                                    "present=%s len=%s prompt_ver=%s",
+                                    _rp_ids is not None,
+                                    _rp_len, _rp_ver,
+                                )
+                            except Exception as _e_imp42:
+                                self.logger.info(
+                                    "[RealPromptProbeCapture-v42] "
+                                    "import-fail: %r", _e_imp42,
+                                )
                                 _rp_ids = None
                             if isinstance(_rp_ids, list) and len(_rp_ids) >= 4:
                                 _rp_resp = _rq_rp41.post(

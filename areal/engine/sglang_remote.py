@@ -75,6 +75,22 @@ class SGLangBackend:
             "stream": False,
         }
 
+        # [v42] request-side prompt capture (replaces broken
+        # response-side `response.get("input_ids")` in
+        # parse_generation_response, which never fires because
+        # SGLang does not echo input_ids in its /generate reply).
+        try:
+            _pids_v42 = req.input_ids
+            if isinstance(_pids_v42, (list, tuple)) and len(_pids_v42) >= 4:
+                _pids_head_v42 = [int(x) for x in list(_pids_v42)[:256]
+                                   if isinstance(x, (int, float))]
+                if _pids_head_v42:
+                    type(self)._v41_last_prompt_ids = _pids_head_v42
+                    type(self)._v41_last_prompt_len = len(_pids_v42)
+                    type(self)._v42_last_prompt_version = int(version)
+        except Exception:
+            pass
+
         # Add return_routed_experts to payload if set
         if req.metadata.get("return_routed_experts", False):
             payload["return_routed_experts"] = True
@@ -190,24 +206,13 @@ class SGLangBackend:
                             self._v41_win_completions = []
                     except Exception as _e_v41w:
                         pass
-                    # [v41] stash last-seen prompt IDs for probe reuse
-                    try:
-                        _pt_v41 = meta_info.get('prompt_tokens', None)
-                        _pti_v41 = None
-                        # SGLang doesn't echo input_ids in meta; instead,
-                        # peek the outer `response` payload for an 'input_ids'
-                        # field if the caller set return_logprob=True.
-                        _resp_in_v41 = response.get('input_ids', None)
-                        if isinstance(_resp_in_v41, list) and _resp_in_v41:
-                            _pti_v41 = [int(x) for x in _resp_in_v41[:256]
-                                         if isinstance(x, int)]
-                        if _pti_v41 is not None:
-                            type(self)._v41_last_prompt_ids = _pti_v41
-                            type(self)._v41_last_prompt_len = (
-                                int(_pt_v41) if isinstance(_pt_v41, (int, float)) else None
-                            )
-                    except Exception as _e_v41p:
-                        pass
+                    # [v42] response-side capture removed.  Prompt IDs are
+                    # now captured in build_generation_request() because
+                    # SGLang does not echo input_ids in the /generate
+                    # response and the old response.get('input_ids') lookup
+                    # never fired, leaving RealPromptProbe permanently
+                    # starved.  Nothing to do here.
+                    pass
                 except Exception as _e:
                     pass
         if stop_reason == "abort" and stop_message.startswith("Abort before prefill"):
