@@ -200,7 +200,7 @@ class MegatronEngine(TrainEngine):
                     "v14:LRScaleGuard+WeightDeltaGuard",
                     "v16:MTPSerializeFp32Upcast(AREAL_MTP_FP32_BROADCAST)",
                     "v28:MTPSigmaDeltaBf16(AREAL_MTP_SIGMA_DELTA_BF16)",
-                    "v39:LongStochProbe+PerLayerMTPNorm(AREAL_MTP_V30_DIAG)",
+                    "v40:AcceptHistTrendAccumulator+FixPerLayerIterAndStochProbe(AREAL_MTP_V30_DIAG)",
                     "v17:MTPNativeAutoScaler+ConsumerBypass"
                     "(AREAL_MTP_NATIVE_AUTOSCALER,autograd_in_graph)",
                 ]
@@ -5582,7 +5582,7 @@ class MegatronEngine(TrainEngine):
                     if mtp_hf_tensors:
                         import torch as _torch_v39
                         _layer_norms = {}
-                        for _n, _f in mtp_hf_tensors.items():
+                        for _n, _f in mtp_hf_tensors:
                             if not hasattr(_f, "dtype"):
                                 continue
                             try:
@@ -5656,6 +5656,73 @@ class MegatronEngine(TrainEngine):
                             _j_l.get("spec_fields"),
                             _j_l.get("error"),
                         )
+                        # [v40] accept-histogram trend accumulator
+                        try:
+                            _hist_v40 = _j_l.get("spec_fields", {}) or {}
+                            _h_v40 = _hist_v40.get("spec_accept_histogram", None)
+                            _al_v40 = _hist_v40.get("spec_accept_length", None)
+                            _ar_v40 = _hist_v40.get("spec_accept_rate", None)
+                            _trail_v40 = getattr(self, "_v40_long_hist_trail", None)
+                            if _trail_v40 is None:
+                                _trail_v40 = []
+                                self._v40_long_hist_trail = _trail_v40
+                            _trail_v40.append(
+                                {
+                                    "v": int(self.get_version()),
+                                    "h": (list(_h_v40) if isinstance(_h_v40, list) else None),
+                                    "al": (float(_al_v40) if isinstance(_al_v40, (int, float)) else None),
+                                    "ar": (float(_ar_v40) if isinstance(_ar_v40, (int, float)) else None),
+                                }
+                            )
+                            # cap trail at 64
+                            if len(_trail_v40) > 64:
+                                del _trail_v40[0: len(_trail_v40) - 64]
+                            # emit compact trend line
+                            _al_seq = [x["al"] for x in _trail_v40]
+                            _ar_seq = [x["ar"] for x in _trail_v40]
+                            _b2_seq = [
+                                (x["h"][2] if isinstance(x["h"], list) and len(x["h"]) > 2 else None)
+                                for x in _trail_v40
+                            ]
+                            _b3_seq = [
+                                (x["h"][3] if isinstance(x["h"], list) and len(x["h"]) > 3 else None)
+                                for x in _trail_v40
+                            ]
+                            # monotonic-decline detector (strict <= with at least one strict <)
+                            def _mono_decline(_seq):
+                                _xs = [x for x in _seq if isinstance(x, (int, float))]
+                                if len(_xs) < 3:
+                                    return None
+                                _lt = all(_xs[_i] <= _xs[_i - 1] for _i in range(1, len(_xs)))
+                                _any_strict = any(_xs[_i] < _xs[_i - 1] for _i in range(1, len(_xs)))
+                                return bool(_lt and _any_strict)
+                            self.logger.info(
+                                "[AcceptHistTrend-v40] n_versions=%d "
+                                "al_seq=%s ar_seq=%s bucket_accept_len3=%s "
+                                "bucket_accept_len4=%s al_mono_decline=%s "
+                                "ar_mono_decline=%s",
+                                len(_trail_v40),
+                                [
+                                    (None if _v is None else round(_v, 4))
+                                    for _v in _al_seq
+                                ],
+                                [
+                                    (None if _v is None else round(_v, 4))
+                                    for _v in _ar_seq
+                                ],
+                                _b2_seq,
+                                _b3_seq,
+                                _mono_decline(_al_seq),
+                                _mono_decline(_ar_seq),
+                            )
+                        except Exception as _e_v40_trail:
+                            try:
+                                self.logger.info(
+                                    "[AcceptHistTrend-v40] accumulator "
+                                    "failure: %r", _e_v40_trail,
+                                )
+                            except Exception:
+                                pass
                     except Exception as _e_l:
                         self.logger.info(
                             "[DraftSpecTrend-v39 long] failure: %r\nTRACEBACK:\n%s",

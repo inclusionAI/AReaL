@@ -1104,7 +1104,7 @@ class RolloutController:
             _version = payload.get("version")
             _srv = None
             _probe_ids = [1, 100, 200, 300, 400, 500, 600, 700]
-            _N = 8
+            _N = 4  # [v40] halved to keep total timing under 240s
             try:
                 if not self.server_infos:
                     return jsonify(
@@ -1117,10 +1117,11 @@ class RolloutController:
                 _req = {
                     "input_ids": _probe_ids,
                     "sampling_params": {
+                        # [v40] drop "top_k": 0 — SGLang rejects 0;
+                        # convention is -1 or omit.  Keep T=0.8 / top_p=0.95.
                         "temperature": 0.8,
                         "top_p": 0.95,
-                        "top_k": 0,
-                        "max_new_tokens": 128,
+                        "max_new_tokens": 64,
                     },
                     "return_logprob": False,
                 }
@@ -1133,6 +1134,15 @@ class RolloutController:
                             proxies={"http": None, "https": None},
                         )
                         if _r.status_code != 200:
+                            try:
+                                logger.warning(
+                                    "[v40] stoch sub-sample %d "
+                                    "status=%d body_head=%r",
+                                    _i, _r.status_code,
+                                    (_r.text[:200] if hasattr(_r, "text") else None),
+                                )
+                            except Exception:
+                                pass
                             continue
                         _j = _r.json()
                         _item = _j if isinstance(_j, dict) else (
@@ -1149,7 +1159,14 @@ class RolloutController:
                         if isinstance(_h, list):
                             _hist_list.append(list(_h))
                         _n_ok += 1
-                    except Exception:
+                    except Exception as _e_samp_v40:
+                        try:
+                            logger.warning(
+                                "[v40] stoch sub-sample %d failure: %r",
+                                _i, _e_samp_v40,
+                            )
+                        except Exception:
+                            pass
                         continue
                 def _ms(xs):
                     if not xs:
