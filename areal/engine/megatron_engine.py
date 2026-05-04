@@ -200,7 +200,7 @@ class MegatronEngine(TrainEngine):
                     "v14:LRScaleGuard+WeightDeltaGuard",
                     "v16:MTPSerializeFp32Upcast(AREAL_MTP_FP32_BROADCAST)",
                     "v28:MTPSigmaDeltaBf16(AREAL_MTP_SIGMA_DELTA_BF16)",
-                    "v37b:ProbeStageTraceback(AREAL_MTP_V30_DIAG)",
+                    "v38:DraftOutputProbe(AREAL_MTP_V30_DIAG)",
                     "v17:MTPNativeAutoScaler+ConsumerBypass"
                     "(AREAL_MTP_NATIVE_AUTOSCALER,autograd_in_graph)",
                 ]
@@ -5411,6 +5411,146 @@ class MegatronEngine(TrainEngine):
                         "[MTPProbeLogprob-v37b] outer failure at "
                         "stage=%s exc=%r\nTRACEBACK:\n%s",
                         _stage_v37b, _e_v37b_out, _tb_out_v37b,
+                    )
+                except Exception:
+                    pass
+        # [DraftOutputProbe-v38] Draft+target OUTPUT SEQUENCE probe.
+        # v37b only reads input_token_logprobs[0] which is pure target.
+        # v38 drives /generate with max_new_tokens=32, top_k=1, T=0
+        # and records output_ids + output logprobs + any meta_info
+        # spec/accept fields, so we can see draft+MTP head effects.
+        # Per-stage try/except + traceback for robustness.
+        try:
+            import os as _os_v38
+            _v38_on = _os_v38.environ.get("AREAL_MTP_V30_DIAG", "1") == "1"
+        except Exception:
+            _v38_on = False
+        if _v38_on:
+            _stage_v38 = "enter"
+            try:
+                import traceback as _tb_v38
+                _stage_v38 = "get_rollout_engine"
+                _re_v38 = self.rollout_engine
+                _stage_v38 = "getattr_controller_addr"
+                _addr_v38 = getattr(_re_v38, "controller_addr", None)
+                _stage_v38 = "get_rank"
+                try:
+                    _rk_v38 = (
+                        torch.distributed.get_rank()
+                        if torch.distributed.is_initialized() else 0
+                    )
+                except Exception:
+                    _rk_v38 = 0
+                if _rk_v38 == 0 and _addr_v38 is not None:
+                    try:
+                        _stage_v38 = "import_requests"
+                        import requests as _rq_v38
+                        _stage_v38 = "build_url"
+                        _probe_url_v38 = (
+                            f"http://{_addr_v38}/callback/"
+                            f"get_draft_probe"
+                        )
+                        _stage_v38 = "build_version_int"
+                        _ver_v38 = int(self.get_version())
+                        _stage_v38 = "http_post"
+                        _resp_v38 = _rq_v38.post(
+                            _probe_url_v38,
+                            json={"version": _ver_v38},
+                            timeout=180.0,
+                            proxies={"http": None, "https": None},
+                        )
+                        _stage_v38 = "get_status"
+                        _status_v38 = _resp_v38.status_code
+                        _stage_v38 = "parse_json"
+                        _jp_v38 = {}
+                        try:
+                            _jp_v38 = _resp_v38.json()
+                        except Exception:
+                            _jp_v38 = {}
+                        _stage_v38 = "extract_fields"
+                        _oi_v38 = _jp_v38.get("out_ids_first8", None)
+                        _oi_len_v38 = _jp_v38.get("out_ids_len", None)
+                        _olps_v38 = _jp_v38.get("out_lps_first4", None)
+                        _last_lp_v38 = _jp_v38.get("last_lp", None)
+                        _sum_lp_v38 = _jp_v38.get("sum_lp", None)
+                        _otext_v38 = _jp_v38.get("out_text_head", None)
+                        _mkeys_v38 = _jp_v38.get("meta_keys", None)
+                        _specf_v38 = _jp_v38.get("spec_fields", None)
+                        _err_v38 = _jp_v38.get("error", None)
+                        _stage_v38 = "compute_d_fields"
+                        _prev_oi_v38 = getattr(
+                            self, "_v38_prev_out_ids", None)
+                        _prev_last_lp_v38 = getattr(
+                            self, "_v38_prev_last_lp", None)
+                        _prev_sum_lp_v38 = getattr(
+                            self, "_v38_prev_sum_lp", None)
+                        _d_oi_v38 = None
+                        if (isinstance(_oi_v38, list)
+                                and isinstance(_prev_oi_v38, list)
+                                and len(_oi_v38) == len(_prev_oi_v38)):
+                            _d_oi_v38 = sum(
+                                1 for _a, _b in zip(_oi_v38, _prev_oi_v38)
+                                if _a != _b
+                            )
+                        _d_last_lp_v38 = None
+                        if (isinstance(_last_lp_v38, (int, float))
+                                and isinstance(_prev_last_lp_v38, (int, float))):
+                            _d_last_lp_v38 = abs(
+                                float(_last_lp_v38)
+                                - float(_prev_last_lp_v38)
+                            )
+                        _d_sum_lp_v38 = None
+                        if (isinstance(_sum_lp_v38, (int, float))
+                                and isinstance(_prev_sum_lp_v38, (int, float))):
+                            _d_sum_lp_v38 = abs(
+                                float(_sum_lp_v38)
+                                - float(_prev_sum_lp_v38)
+                            )
+                        _stage_v38 = "set_prev_attrs"
+                        if isinstance(_oi_v38, list):
+                            self._v38_prev_out_ids = list(_oi_v38)
+                        if isinstance(_last_lp_v38, (int, float)):
+                            self._v38_prev_last_lp = float(_last_lp_v38)
+                        if isinstance(_sum_lp_v38, (int, float)):
+                            self._v38_prev_sum_lp = float(_sum_lp_v38)
+                        _stage_v38 = "logger_info_success"
+                        self.logger.info(
+                            "[DraftOutputProbe-v38] version=%s "
+                            "status=%s out_ids_len=%s out_ids=%s "
+                            "d_out_ids_hamming=%s last_lp=%s "
+                            "d_last_lp=%s sum_lp=%s d_sum_lp=%s "
+                            "out_text_head=%r meta_keys=%s "
+                            "spec_fields=%s err=%s",
+                            _ver_v38, _status_v38,
+                            _oi_len_v38, _oi_v38,
+                            _d_oi_v38,
+                            ("%.6e" % _last_lp_v38) if isinstance(_last_lp_v38, (int, float)) else "NA",
+                            ("%.6e" % _d_last_lp_v38) if isinstance(_d_last_lp_v38, (int, float)) else "NA",
+                            ("%.6e" % _sum_lp_v38) if isinstance(_sum_lp_v38, (int, float)) else "NA",
+                            ("%.6e" % _d_sum_lp_v38) if isinstance(_d_sum_lp_v38, (int, float)) else "NA",
+                            _otext_v38, _mkeys_v38,
+                            _specf_v38, _err_v38,
+                        )
+                    except Exception as _e_v38:
+                        try:
+                            _tb_str_v38 = _tb_v38.format_exc()
+                        except Exception:
+                            _tb_str_v38 = "<traceback unavailable>"
+                        self.logger.info(
+                            "[DraftOutputProbe-v38] inner failure "
+                            "at stage=%s exc=%r\nTRACEBACK:\n%s",
+                            _stage_v38, _e_v38, _tb_str_v38,
+                        )
+            except Exception as _e_v38_out:
+                try:
+                    _tb_out_v38 = _tb_v38.format_exc()
+                except Exception:
+                    _tb_out_v38 = "<traceback unavailable>"
+                try:
+                    self.logger.warning(
+                        "[DraftOutputProbe-v38] outer failure at "
+                        "stage=%s exc=%r\nTRACEBACK:\n%s",
+                        _stage_v38, _e_v38_out, _tb_out_v38,
                     )
                 except Exception:
                     pass

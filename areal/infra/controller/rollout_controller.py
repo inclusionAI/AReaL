@@ -871,6 +871,141 @@ class RolloutController:
                      "server": _srv}
                 ), 200
 
+        # ------------------------------------------------------------
+        # [v38] /callback/get_draft_probe
+        # ------------------------------------------------------------
+        # Output-sequence probe: unlike v33 which reads
+        # input_token_logprobs[0] (target-model only), this probe
+        # drives /generate with max_new_tokens=32, temperature=0,
+        # top_k=1, return_logprob=1 and returns:
+        #   - output_ids   (first 8 generated token ids)
+        #   - output_lps   (per-position logprob of generated tokens)
+        #   - last_lp      (last position logprob)
+        #   - meta_keys    (raw meta_info keys, for field discovery)
+        #   - spec_fields  (any meta_info key containing 'spec' or
+        #                   'accept' or 'verify' or 'draft')
+        # When draft+MTP heads change behavior, output_ids or
+        # output_lps MUST change.  If target is frozen but heads
+        # drift, the joint sequence changes => H3 confirmed.
+        @app.route("/callback/get_draft_probe", methods=["POST"])
+        def get_draft_probe_v38():
+            payload = request.get_json() or {}
+            _version = payload.get("version")
+            _srv = None
+            _probe_ids_v38 = [1, 100, 200, 300, 400, 500, 600, 700]
+            try:
+                if not self.server_infos:
+                    return jsonify(
+                        {"error": "no server_infos",
+                         "version": _version,
+                         "server": None}
+                    ), 200
+                _s0 = self.server_infos[0]
+                _srv = f"{_s0.host}:{_s0.port}"
+                try:
+                    import requests as _rq_v38
+                except Exception as _e_imp38:
+                    return jsonify(
+                        {"error": f"import fail: {_e_imp38!r}",
+                         "version": _version,
+                         "server": _srv}
+                    ), 200
+                _url = f"http://{_srv}/generate"
+                _req = {
+                    "input_ids": _probe_ids_v38,
+                    "sampling_params": {
+                        "temperature": 0.0,
+                        "top_p": 1.0,
+                        "top_k": 1,
+                        "max_new_tokens": 32,
+                    },
+                    "return_logprob": True,
+                    "logprob_start_len": 0,
+                }
+                try:
+                    _r = _rq_v38.post(
+                        _url, json=_req, timeout=120.0,
+                        proxies={"http": None, "https": None},
+                    )
+                except Exception as _e_http38:
+                    return jsonify(
+                        {"error": f"http fail: {_e_http38!r}",
+                         "version": _version,
+                         "server": _srv, "url": _url}
+                    ), 200
+                if _r.status_code != 200:
+                    return jsonify(
+                        {"error": f"sglang status={_r.status_code}",
+                         "version": _version,
+                         "server": _srv,
+                         "body": _r.text[:400]}
+                    ), 200
+                try:
+                    _j = _r.json()
+                except Exception as _e_js38:
+                    return jsonify(
+                        {"error": f"json fail: {_e_js38!r}",
+                         "version": _version,
+                         "server": _srv}
+                    ), 200
+                _item = _j if isinstance(_j, dict) else (
+                    _j[0] if isinstance(_j, list) and _j else {}
+                )
+                _meta = _item.get("meta_info", {}) if isinstance(_item, dict) else {}
+                _out_text = _item.get("text", None) if isinstance(_item, dict) else None
+                _otl = _meta.get("output_token_logprobs", None) if isinstance(_meta, dict) else None
+                _out_ids = []
+                _out_lps = []
+                if isinstance(_otl, list):
+                    for _e in _otl[:32]:
+                        _lp_i = None
+                        _id_i = None
+                        if isinstance(_e, (list, tuple)) and len(_e) >= 2:
+                            _cand_lp = _e[0]
+                            _cand_id = _e[1]
+                            if isinstance(_cand_lp, (int, float)):
+                                _lp_i = float(_cand_lp)
+                            if isinstance(_cand_id, int):
+                                _id_i = int(_cand_id)
+                        if _id_i is not None:
+                            _out_ids.append(_id_i)
+                        if _lp_i is not None:
+                            _out_lps.append(_lp_i)
+                _last_lp = _out_lps[-1] if _out_lps else None
+                _sum_lp = sum(_out_lps) if _out_lps else None
+                _meta_keys = list(_meta.keys()) if isinstance(_meta, dict) else []
+                _spec_fields = {}
+                if isinstance(_meta, dict):
+                    for _k, _v in _meta.items():
+                        _kl = str(_k).lower()
+                        if ("spec" in _kl or "accept" in _kl
+                                or "verify" in _kl or "draft" in _kl
+                                or "jump" in _kl):
+                            try:
+                                _spec_fields[str(_k)] = _v
+                            except Exception:
+                                _spec_fields[str(_k)] = repr(_v)
+                return jsonify(
+                    {"version": _version,
+                     "server": _srv,
+                     "out_ids_first8": _out_ids[:8],
+                     "out_ids_len": len(_out_ids),
+                     "out_lps_first4": _out_lps[:4],
+                     "last_lp": _last_lp,
+                     "sum_lp": _sum_lp,
+                     "out_text_head": (_out_text[:60] if isinstance(_out_text, str) else None),
+                     "meta_keys": _meta_keys,
+                     "spec_fields": _spec_fields}
+                ), 200
+            except Exception as _e38:
+                logger.warning(
+                    f"[v38] get_draft_probe unexpected: {_e38!r}"
+                )
+                return jsonify(
+                    {"error": repr(_e38), "version": _version,
+                     "server": _srv}
+                ), 200
+
         @app.errorhandler(Exception)
         def handle_error(e):
             logger.error(
