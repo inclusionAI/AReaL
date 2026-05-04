@@ -1771,6 +1771,14 @@ class MegatronEngine(TrainEngine):
                 )
         else:
             if self.mcore_config.use_mbridge_save:
+                # when loading model using AreaL's fast hf load, the safetensor_io is never set
+                if (
+                    not hasattr(self.bridge, "safetensor_io")
+                    or self.bridge.safetensor_io is None
+                ):
+                    self.bridge.safetensor_io = self.bridge._get_safetensor_io(
+                        self.config.path
+                    )
                 self.bridge.save_weights(models=self.model, weights_path=path)
             else:
                 save_weights_to_hf_with_mbridge_fast(

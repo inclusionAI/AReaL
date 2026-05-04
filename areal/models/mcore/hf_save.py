@@ -587,7 +587,6 @@ def save_weights_to_hf_with_mbridge_fast(
 
 
 def save_critic_value_head(models, weights_path):
-    # 8. Save ValueHead weights separately for critic models.
     if mpu.is_pipeline_last_stage():
         is_tp_first = mpu.get_tensor_model_parallel_rank() == 0
         is_dp_first = mpu.get_data_parallel_rank(with_context_parallel=True) == 0
