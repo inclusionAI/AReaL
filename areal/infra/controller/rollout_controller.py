@@ -776,7 +776,8 @@ class RolloutController:
             payload = request.get_json() or {}
             _version = payload.get("version")
             _srv = None
-            _prompt_v33 = "The answer is"
+            _prompt_v33 = "fixed_token_seq_v35"
+            _probe_ids_v35 = [1, 100, 200, 300, 400, 500, 600, 700]
             try:
                 if not self.server_infos:
                     return jsonify(
@@ -796,7 +797,7 @@ class RolloutController:
                     ), 200
                 _url = f"http://{_srv}/generate"
                 _req = {
-                    "text": _prompt_v33,
+                    "input_ids": _probe_ids_v35,
                     "sampling_params": {
                         "temperature": 0.0,
                         "top_p": 1.0,
@@ -808,7 +809,7 @@ class RolloutController:
                 }
                 try:
                     _r = _rq_v33c.post(
-                        _url, json=_req, timeout=60.0,
+                        _url, json=_req, timeout=120.0,
                         proxies={"http": None, "https": None},
                     )
                 except Exception as _e_http:

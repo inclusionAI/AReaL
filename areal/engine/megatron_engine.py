@@ -200,7 +200,7 @@ class MegatronEngine(TrainEngine):
                     "v14:LRScaleGuard+WeightDeltaGuard",
                     "v16:MTPSerializeFp32Upcast(AREAL_MTP_FP32_BROADCAST)",
                     "v28:MTPSigmaDeltaBf16(AREAL_MTP_SIGMA_DELTA_BF16)",
-                    "v33:Bf16PayloadNorm+DeterministicProbe(AREAL_MTP_V30_DIAG)",
+                    "v35:ProbeInputIdsFix+LongerTimeout(AREAL_MTP_V30_DIAG)",
                     "v17:MTPNativeAutoScaler+ConsumerBypass"
                     "(AREAL_MTP_NATIVE_AUTOSCALER,autograd_in_graph)",
                 ]
@@ -4848,7 +4848,7 @@ class MegatronEngine(TrainEngine):
                             _resp = _rq_v33.post(
                                 _probe_url,
                                 json={"version": int(meta.version)},
-                                timeout=30.0,
+                                timeout=150.0,
                                 proxies={"http": None, "https": None},
                             )
                             _status = _resp.status_code
