@@ -283,6 +283,11 @@ class TestVisionModelDetection:
 
         assert is_valid_vision_model("qwen2_vl") is True
 
+    def test_qwen3_vl_detected(self):
+        from areal.engine.core.model import is_valid_vision_model
+
+        assert is_valid_vision_model("qwen3_vl") is True
+
     def test_qwen3_not_detected(self):
         from areal.engine.core.model import is_valid_vision_model
 
@@ -520,6 +525,427 @@ class TestConvertQwen25VLToHF:
             )
 
 
+class TestConvertQwen3VLToHF:
+    """Test mcore→HF weight name conversion for Qwen3-VL (dense)."""
+
+    @pytest.fixture()
+    def tf_config(self):
+        """Mock TransformerConfig with Qwen3-VL-2B-ish text values."""
+        cfg = MagicMock()
+        cfg.hidden_size = 2048
+        cfg.num_attention_heads = 16
+        cfg.num_query_groups = 8  # Qwen3 less aggressive GQA
+        cfg.kv_channels = 128
+        return cfg
+
+    @pytest.fixture()
+    def hf_config(self):
+        """Mock HF config with vision_config for Qwen3-VL."""
+        cfg = MagicMock()
+        cfg.vision_config.num_heads = 16
+        cfg.vision_config.hidden_size = 1152
+        return cfg
+
+    # --- Registry dispatch ---
+
+    def test_registry_dispatches_qwen3_vl_before_qwen3(self, tf_config, hf_config):
+        """convert_to_hf with model_name='qwen3_vl' must use the VLM converter,
+        not fall through to qwen3 (substring match order)."""
+        from areal.engine.megatron_utils.megatron import convert_to_hf
+
+        param = torch.randn(1152)
+        result = convert_to_hf(
+            tf_config,
+            "qwen3_vl",
+            "module.module.vision_model.merger.patch_norm.weight",
+            param,
+            hf_config=hf_config,
+        )
+        assert result[0][0] == "model.visual.merger.norm.weight"
+
+    # --- Language model (Qwen3-VL has model.language_model.* prefix) ---
+
+    def test_language_model_embedding_uses_language_model_prefix(self, tf_config):
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
+
+        param = torch.randn(151936, 2048)
+        result = convert_qwen3_vl_to_hf(
+            tf_config,
+            "module.module.language_model.embedding.word_embeddings.weight",
+            param,
+        )
+        assert result == [("model.language_model.embed_tokens.weight", param)]
+
+    def test_language_model_final_norm(self, tf_config):
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
+
+        param = torch.randn(2048)
+        result = convert_qwen3_vl_to_hf(
+            tf_config,
+            "module.module.language_model.decoder.final_layernorm.weight",
+            param,
+        )
+        assert result == [("model.language_model.norm.weight", param)]
+
+    def test_language_model_output_layer(self, tf_config):
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
+
+        param = torch.randn(151936, 2048)
+        result = convert_qwen3_vl_to_hf(
+            tf_config,
+            "module.module.language_model.output_layer.weight",
+            param,
+        )
+        assert result == [("lm_head.weight", param)]
+
+    def test_language_model_qkv_split(self, tf_config):
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
+
+        # value_num_per_group = 16/8 = 2, head_dim = 128
+        # qkv_dim = num_query_groups * (value_num_per_group + 2) * head_dim
+        qkv_dim = tf_config.num_query_groups * (2 + 1 + 1) * tf_config.kv_channels
+        param = torch.randn(qkv_dim, tf_config.hidden_size)
+        result = convert_qwen3_vl_to_hf(
+            tf_config,
+            "module.module.language_model.decoder.layers.5.self_attention.linear_qkv.weight",
+            param,
+        )
+        names = [n for n, _ in result]
+        assert "model.language_model.layers.5.self_attn.q_proj.weight" in names
+        assert "model.language_model.layers.5.self_attn.k_proj.weight" in names
+        assert "model.language_model.layers.5.self_attn.v_proj.weight" in names
+
+    def test_language_model_qkv_bias_split(self, tf_config):
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
+
+        qkv_dim = tf_config.num_query_groups * (2 + 1 + 1) * tf_config.kv_channels
+        param = torch.randn(qkv_dim)
+        result = convert_qwen3_vl_to_hf(
+            tf_config,
+            "module.module.language_model.decoder.layers.0.self_attention.linear_qkv.bias",
+            param,
+        )
+        names = [n for n, _ in result]
+        assert "model.language_model.layers.0.self_attn.q_proj.bias" in names
+        assert "model.language_model.layers.0.self_attn.k_proj.bias" in names
+        assert "model.language_model.layers.0.self_attn.v_proj.bias" in names
+
+    def test_language_model_q_norm(self, tf_config):
+        """Qwen3-specific q_layernorm → self_attn.q_norm."""
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
+
+        param = torch.randn(128)
+        result = convert_qwen3_vl_to_hf(
+            tf_config,
+            "module.module.language_model.decoder.layers.3.self_attention.q_layernorm.weight",
+            param,
+        )
+        assert result == [
+            ("model.language_model.layers.3.self_attn.q_norm.weight", param)
+        ]
+
+    def test_language_model_k_norm(self, tf_config):
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
+
+        param = torch.randn(128)
+        result = convert_qwen3_vl_to_hf(
+            tf_config,
+            "module.module.language_model.decoder.layers.3.self_attention.k_layernorm.weight",
+            param,
+        )
+        assert result == [
+            ("model.language_model.layers.3.self_attn.k_norm.weight", param)
+        ]
+
+    def test_language_model_o_proj(self, tf_config):
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
+
+        param = torch.randn(2048, 2048)
+        result = convert_qwen3_vl_to_hf(
+            tf_config,
+            "module.module.language_model.decoder.layers.0.self_attention.linear_proj.weight",
+            param,
+        )
+        assert result == [
+            ("model.language_model.layers.0.self_attn.o_proj.weight", param)
+        ]
+
+    def test_language_model_input_layernorm(self, tf_config):
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
+
+        param = torch.randn(2048)
+        result = convert_qwen3_vl_to_hf(
+            tf_config,
+            "module.module.language_model.decoder.layers.0.self_attention.linear_qkv.layer_norm_weight",
+            param,
+        )
+        assert result == [
+            ("model.language_model.layers.0.input_layernorm.weight", param)
+        ]
+
+    def test_language_model_post_attention_layernorm(self, tf_config):
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
+
+        param = torch.randn(2048)
+        result = convert_qwen3_vl_to_hf(
+            tf_config,
+            "module.module.language_model.decoder.layers.0.mlp.linear_fc1.layer_norm_weight",
+            param,
+        )
+        assert result == [
+            ("model.language_model.layers.0.post_attention_layernorm.weight", param)
+        ]
+
+    def test_language_model_mlp_fc1_splits_gate_up(self, tf_config):
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
+
+        param = torch.randn(12288, 2048)
+        result = convert_qwen3_vl_to_hf(
+            tf_config,
+            "module.module.language_model.decoder.layers.0.mlp.linear_fc1.weight",
+            param,
+        )
+        names = [n for n, _ in result]
+        assert "model.language_model.layers.0.mlp.gate_proj.weight" in names
+        assert "model.language_model.layers.0.mlp.up_proj.weight" in names
+
+    def test_language_model_mlp_fc2(self, tf_config):
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
+
+        param = torch.randn(2048, 6144)
+        result = convert_qwen3_vl_to_hf(
+            tf_config,
+            "module.module.language_model.decoder.layers.0.mlp.linear_fc2.weight",
+            param,
+        )
+        assert result == [("model.language_model.layers.0.mlp.down_proj.weight", param)]
+
+    # --- Vision model: direct mappings (model.visual.* prefix) ---
+
+    def test_vision_patch_embed_weight(self, tf_config):
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
+
+        param = torch.randn(1152, 3, 2, 16, 16)
+        result = convert_qwen3_vl_to_hf(
+            tf_config,
+            "module.module.vision_model.patch_embed.proj.weight",
+            param,
+        )
+        assert result == [("model.visual.patch_embed.proj.weight", param)]
+
+    def test_vision_patch_embed_bias(self, tf_config):
+        """Qwen3-VL adds patch_embed bias (Qwen2.5-VL was bias=False)."""
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
+
+        param = torch.randn(1152)
+        result = convert_qwen3_vl_to_hf(
+            tf_config,
+            "module.module.vision_model.patch_embed.proj.bias",
+            param,
+        )
+        assert result == [("model.visual.patch_embed.proj.bias", param)]
+
+    def test_vision_pos_embed(self, tf_config):
+        """Qwen3-VL has pos_embed (new vs Qwen2.5-VL)."""
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
+
+        param = torch.randn(1024, 1152)
+        result = convert_qwen3_vl_to_hf(
+            tf_config,
+            "module.module.vision_model.pos_embed.weight",
+            param,
+        )
+        assert result == [("model.visual.pos_embed.weight", param)]
+
+    def test_vision_merger_patch_norm(self, tf_config):
+        """merger.patch_norm.{weight,bias} → merger.norm.{weight,bias}."""
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
+
+        for kind in ("weight", "bias"):
+            param = torch.randn(1152)
+            result = convert_qwen3_vl_to_hf(
+                tf_config,
+                f"module.module.vision_model.merger.patch_norm.{kind}",
+                param,
+            )
+            assert result == [(f"model.visual.merger.norm.{kind}", param)]
+
+    def test_vision_merger_linear_fc1_fc2(self, tf_config):
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
+
+        for fc in ("linear_fc1", "linear_fc2"):
+            for kind in ("weight", "bias"):
+                param = (
+                    torch.randn(4096, 4096) if kind == "weight" else torch.randn(4096)
+                )
+                result = convert_qwen3_vl_to_hf(
+                    tf_config,
+                    f"module.module.vision_model.merger.{fc}.{kind}",
+                    param,
+                )
+                assert result == [(f"model.visual.merger.{fc}.{kind}", param)]
+
+    # --- Vision model: per-layer params ---
+
+    def test_vision_block_qkv_weight_reordered(self, tf_config, hf_config):
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
+
+        # 3 * hidden_vision = 3 * 1152 = 3456
+        param = torch.randn(3456, 1152)
+        result = convert_qwen3_vl_to_hf(
+            tf_config,
+            "module.module.vision_model.decoder.layers.7.self_attention.linear_qkv.weight",
+            param,
+            hf_config=hf_config,
+        )
+        assert result[0][0] == "model.visual.blocks.7.attn.qkv.weight"
+        assert result[0][1].shape == param.shape
+
+    def test_vision_block_qkv_bias_reordered(self, tf_config, hf_config):
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
+
+        param = torch.randn(3456)
+        result = convert_qwen3_vl_to_hf(
+            tf_config,
+            "module.module.vision_model.decoder.layers.0.self_attention.linear_qkv.bias",
+            param,
+            hf_config=hf_config,
+        )
+        assert result[0][0] == "model.visual.blocks.0.attn.qkv.bias"
+        assert result[0][1].shape == param.shape
+
+    def test_vision_block_qkv_requires_hf_config(self, tf_config):
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
+
+        param = torch.randn(3456, 1152)
+        with pytest.raises(ValueError, match="vision_config.num_heads"):
+            convert_qwen3_vl_to_hf(
+                tf_config,
+                "module.module.vision_model.decoder.layers.0.self_attention.linear_qkv.weight",
+                param,
+            )
+
+    def test_vision_block_attn_proj(self, tf_config):
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
+
+        for kind, shape in (("weight", (1152, 1152)), ("bias", (1152,))):
+            param = torch.randn(*shape)
+            result = convert_qwen3_vl_to_hf(
+                tf_config,
+                f"module.module.vision_model.decoder.layers.3.self_attention.linear_proj.{kind}",
+                param,
+            )
+            assert result == [(f"model.visual.blocks.3.attn.proj.{kind}", param)]
+
+    def test_vision_block_norm1_weight_and_bias(self, tf_config):
+        """Qwen3-VL adds norm1.bias (Qwen2.5-VL was weight-only)."""
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
+
+        for kind in ("weight", "bias"):
+            param = torch.randn(1152)
+            result = convert_qwen3_vl_to_hf(
+                tf_config,
+                f"module.module.vision_model.decoder.layers.0.self_attention.linear_qkv.layer_norm_{kind}",
+                param,
+            )
+            assert result == [(f"model.visual.blocks.0.norm1.{kind}", param)]
+
+    def test_vision_block_norm2_weight_and_bias(self, tf_config):
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
+
+        for kind in ("weight", "bias"):
+            param = torch.randn(1152)
+            result = convert_qwen3_vl_to_hf(
+                tf_config,
+                f"module.module.vision_model.decoder.layers.1.mlp.linear_fc1.layer_norm_{kind}",
+                param,
+            )
+            assert result == [(f"model.visual.blocks.1.norm2.{kind}", param)]
+
+    def test_vision_block_mlp_is_NOT_gated(self, tf_config):
+        """Regression guard: Qwen3-VL vision MLP is NOT gated.
+
+        linear_fc1 must map 1:1 (no chunk into gate_proj/up_proj).
+        """
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
+
+        for kind, shape in (("weight", (4304, 1152)), ("bias", (4304,))):
+            param = torch.randn(*shape)
+            result = convert_qwen3_vl_to_hf(
+                tf_config,
+                f"module.module.vision_model.decoder.layers.2.mlp.linear_fc1.{kind}",
+                param,
+            )
+            assert result == [(f"model.visual.blocks.2.mlp.linear_fc1.{kind}", param)]
+
+    def test_vision_block_mlp_fc2(self, tf_config):
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
+
+        for kind, shape in (("weight", (1152, 4304)), ("bias", (1152,))):
+            param = torch.randn(*shape)
+            result = convert_qwen3_vl_to_hf(
+                tf_config,
+                f"module.module.vision_model.decoder.layers.10.mlp.linear_fc2.{kind}",
+                param,
+            )
+            assert result == [(f"model.visual.blocks.10.mlp.linear_fc2.{kind}", param)]
+
+    # --- Deepstack mergers (new in Qwen3-VL) ---
+
+    @pytest.mark.parametrize("idx", [0, 1, 2])
+    def test_deepstack_merger_norm(self, tf_config, idx):
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
+
+        for kind in ("weight", "bias"):
+            param = torch.randn(1152)
+            result = convert_qwen3_vl_to_hf(
+                tf_config,
+                f"module.module.vision_model.decoder.deepstack_merger_list.{idx}.patch_norm.{kind}",
+                param,
+            )
+            assert result == [
+                (f"model.visual.deepstack_merger_list.{idx}.norm.{kind}", param)
+            ]
+
+    @pytest.mark.parametrize("idx", [0, 1, 2])
+    def test_deepstack_merger_linear_fc(self, tf_config, idx):
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
+
+        for fc in ("linear_fc1", "linear_fc2"):
+            for kind, shape in (("weight", (4096, 4096)), ("bias", (4096,))):
+                param = torch.randn(*shape)
+                result = convert_qwen3_vl_to_hf(
+                    tf_config,
+                    f"module.module.vision_model.decoder.deepstack_merger_list.{idx}.{fc}.{kind}",
+                    param,
+                )
+                assert result == [
+                    (f"model.visual.deepstack_merger_list.{idx}.{fc}.{kind}", param)
+                ]
+
+    # --- Error handling ---
+
+    def test_unknown_lang_param_raises(self, tf_config):
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
+
+        with pytest.raises(ValueError, match="Unknown Qwen3-VL language-model"):
+            convert_qwen3_vl_to_hf(
+                tf_config,
+                "module.module.language_model.decoder.layers.0.unknown.weight",
+                torch.randn(10),
+            )
+
+    def test_unknown_param_raises(self, tf_config):
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_to_hf
+
+        with pytest.raises(ValueError, match="Unknown Qwen3-VL parameter"):
+            convert_qwen3_vl_to_hf(
+                tf_config,
+                "module.module.some_unknown.weight",
+                torch.randn(10),
+            )
+
+
 class TestRemovePaddingVLM:
     """Test remove_padding handles VLM language_model prefixed params."""
 
@@ -575,11 +1001,15 @@ def _run_vlm_test(
     nproc: int = 1,
     extra_args: list[str] | None = None,
     timeout: int = 300,
+    env_overrides: dict[str, str] | None = None,
 ):
     """Launch a VLM integration test via torchrun subprocess.
 
     Each test runs in its own process, ensuring complete device memory
     cleanup between tests. This allows the full suite to run on just 2 devices.
+
+    Pass ``env_overrides`` to switch the model under test (e.g. set
+    ``VLM_MODEL_PATH`` for Qwen3-VL).
     """
     from areal.utils.network import find_free_ports
 
@@ -587,6 +1017,8 @@ def _run_vlm_test(
 
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in range(nproc))
+    if env_overrides:
+        env.update(env_overrides)
 
     cmd = [
         "torchrun",
@@ -627,41 +1059,87 @@ def _run_vlm_test(
     assert result == "Passed", f"VLM {test_type} test failed: {result}"
 
 
+# ──────────────────────────────────────────────────────────────────────
+# Per-model env fixtures.
+#
+# Each scenario below runs once for every entry in _VLM_MODELS. To add a new
+# VLM (e.g. qwen3_vl_moe), append one tuple — no test-body changes needed.
+# Override the local path with QWEN25_VL_MODEL_PATH / QWEN3_VL_MODEL_PATH if
+# the model is staged elsewhere on the test machine.
+# ──────────────────────────────────────────────────────────────────────
+
+_VLM_MODELS = [
+    pytest.param(
+        {
+            "VLM_MODEL_PATH": os.environ.get(
+                "QWEN25_VL_MODEL_PATH",
+                "/storage/openpsi/models/Qwen__Qwen2.5-VL-3B-Instruct/",
+            ),
+        },
+        id="qwen25_vl",
+    ),
+    pytest.param(
+        {
+            "VLM_MODEL_PATH": os.environ.get(
+                "QWEN3_VL_MODEL_PATH",
+                "/storage/openpsi/models/Qwen__Qwen3-VL-2B-Instruct/",
+            ),
+        },
+        id="qwen3_vl",
+    ),
+]
+
+
 @pytest.mark.gpu
 @pytest.mark.slow
 @pytest.mark.skipif(not CUDA_AVAILABLE, reason="CUDA not available")
-def test_vlm_engine_initializes(tmp_path_factory):
+@pytest.mark.parametrize("model_env", _VLM_MODELS)
+def test_engine_initializes(model_env, tmp_path_factory):
     """Verify VLM engine detects vision model and loads processor."""
     output = str(tmp_path_factory.mktemp("vlm_test") / "init.out")
-    _run_vlm_test("init", output)
+    _run_vlm_test("init", output, env_overrides=model_env)
 
 
 @pytest.mark.gpu
 @pytest.mark.slow
 @pytest.mark.skipif(not CUDA_AVAILABLE, reason="CUDA not available")
-def test_vlm_simple_forward(tmp_path_factory):
+@pytest.mark.parametrize("model_env", _VLM_MODELS)
+def test_simple_forward(model_env, tmp_path_factory):
     """Verify forward pass with VLM inputs completes."""
     output = str(tmp_path_factory.mktemp("vlm_test") / "forward.out")
-    _run_vlm_test("forward", output)
+    _run_vlm_test("forward", output, env_overrides=model_env)
 
 
 @pytest.mark.gpu
 @pytest.mark.slow
 @pytest.mark.skipif(not CUDA_AVAILABLE, reason="CUDA not available")
-def test_vlm_hf_save_load_weights(tmp_path_factory):
+@pytest.mark.parametrize("model_env", _VLM_MODELS)
+def test_hf_save_load_weights(model_env, tmp_path_factory):
     """Verify save/load preserves VLM weights and saves processor."""
     save_dir = str(tmp_path_factory.mktemp("vlm_save"))
     output = str(tmp_path_factory.mktemp("vlm_test") / "save_load.out")
-    _run_vlm_test("save_load", output, extra_args=[f"--save_dir={save_dir}"])
+    _run_vlm_test(
+        "save_load",
+        output,
+        extra_args=[f"--save_dir={save_dir}"],
+        env_overrides=model_env,
+    )
 
 
 @pytest.mark.gpu
 @pytest.mark.multi_gpu
 @pytest.mark.slow
 @pytest.mark.skipif(not CUDA_AVAILABLE, reason="CUDA not available")
-def test_vlm_train_tensor_parallel(tmp_path_factory):
+@pytest.mark.parametrize("model_env", _VLM_MODELS)
+def test_train_tensor_parallel(model_env, tmp_path_factory):
     """VLM training with TP=2 to avoid single-device OOM."""
     if torch.cuda.device_count() < 2:
         pytest.skip("VLM TP training requires at least 2 GPUs")
     output = str(tmp_path_factory.mktemp("vlm_test") / "train_tp2.out")
-    _run_vlm_test("train", output, backend="megatron:d1p1t2", nproc=2)
+    _run_vlm_test(
+        "train",
+        output,
+        backend="megatron:d1p1t2",
+        nproc=2,
+        env_overrides=model_env,
+    )

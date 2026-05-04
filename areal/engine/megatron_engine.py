@@ -1463,7 +1463,12 @@ class MegatronEngine(TrainEngine):
             duplicated_param_names=self._duplicated_param_names,
             gated_linear_unit=is_glu,
         )
-        param = remove_padding(name, param, self.hf_config.vocab_size)
+        # VLMs like Qwen3-VL nest text-model params under hf_config.text_config;
+        # Qwen2.5-VL and pure text models keep them flat. Pad-removal targets the
+        # language-model embedding/output_layer, so always pull vocab_size from
+        # the text-side config when present.
+        text_cfg = getattr(self.hf_config, "text_config", self.hf_config)
+        param = remove_padding(name, param, text_cfg.vocab_size)
 
         if isinstance(param, FP8BlockwiseTensorHelper):
             # FP8 is stored as uint8, so element_size is 1 byte
