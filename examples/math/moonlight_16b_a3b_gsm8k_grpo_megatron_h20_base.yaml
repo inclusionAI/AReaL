@@ -87,7 +87,7 @@ actor:
     use_precision_aware_optimizer: true
     recompute_granularity: full
     recompute_method: uniform
-    recompute_num_layers: 9
+    recompute_num_layers: 1
     ddp:
       grad_reduce_in_fp32: false                    # ← 保持逐层重计算
   scheduling_spec:
