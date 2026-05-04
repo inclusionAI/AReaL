@@ -204,6 +204,7 @@ class MegatronEngine(TrainEngine):
                     "v44:MTPSrcHash+RepeatFixedLongProbe(AREAL_MTP_V30_DIAG)",
                     "v45:MTPULPGap+DraftIPCStall(AREAL_MTP_V30_DIAG)",
                     "v46:ForceTickBf16+ShipFlips(AREAL_MTP_V46_FORCE_TICK)",
+                    "v47:MTPMasterAmp(AREAL_MTP_V47_MASTER_AMP)",
                     "v17:MTPNativeAutoScaler+ConsumerBypass"
                     "(AREAL_MTP_NATIVE_AUTOSCALER,autograd_in_graph)",
                 ]
@@ -1222,6 +1223,50 @@ class MegatronEngine(TrainEngine):
                 "[SpecDecDiag-v20 D10] snapshot failed: %s", _e_d10,
             )
 
+        # [MTPMasterAmp-v47] pre-step snapshot of MTP fp32 master.
+        # Captured before optimizer.step() so we can compute the
+        # raw Adam delta after the step and amplify it to bf16 ULP
+        # when needed.  Gate: AREAL_MTP_V47_MASTER_AMP (default 1).
+        try:
+            import os as _os_v47pre
+            _v47_on = (
+                _os_v47pre.environ.get(
+                    'AREAL_MTP_V47_MASTER_AMP', '1'
+                ) == '1'
+            )
+        except Exception:
+            _v47_on = True
+        self._v47_pre_master = {}
+        self._v47_pre_data = {}
+        self._v47_on_step = bool(
+            _v47_on and getattr(self, 'enable_mtp_training', False)
+        )
+        if self._v47_on_step and getattr(self, 'model', None) is not None:
+            try:
+                for _mod_v47 in self.model:
+                    for _n_v47, _p_v47 in _mod_v47.named_parameters():
+                        if ('.mtp.' not in _n_v47
+                                and '.mtp_layers.' not in _n_v47):
+                            continue
+                        _mp_v47 = getattr(_p_v47, 'main_param', None)
+                        if _mp_v47 is not None:
+                            try:
+                                self._v47_pre_master[_n_v47] = (
+                                    _mp_v47.detach().clone()
+                                )
+                            except Exception:
+                                pass
+                        try:
+                            self._v47_pre_data[_n_v47] = (
+                                _p_v47.data.detach().clone()
+                            )
+                        except Exception:
+                            pass
+            except Exception as _e_v47pre:
+                self.logger.warning(
+                    '[MTPMasterAmp-v47] pre-snapshot failed: %s',
+                    _e_v47pre,
+                )
         # [MTPGradProbe-v26] Install post-accumulate-grad hook on MTP
         # params (once) so grads are captured at the moment they land,
         # BEFORE Megatron's DistributedOptimizer consumes and frees them.
@@ -1351,6 +1396,163 @@ class MegatronEngine(TrainEngine):
             self.logger.warning("[MTPGradProbe-v25] probe error: %s", _e)
         with trace_scope("megatron_engine.step"):
             update_successful, grad_norm, _ = self.optimizer.step()
+        # [MTPMasterAmp-v47] post-step delta amplification.
+        # For each MTP fp32 master tensor whose Adam step delta
+        # amax is smaller than  beta * bf16_ULP,  rescale the
+        # delta (preserving per-element sign / ratio) so that the
+        # shipped bf16 payload flips at least  beta  of a bucket
+        # each step.  This breaks the bf16 ULP trap at compute
+        # time without distorting Adam's direction (we never
+        # touch the optimizer's internal m / v).
+        if (
+            bool(update_successful)
+            and getattr(self, '_v47_on_step', False)
+            and getattr(self, 'model', None) is not None
+        ):
+            try:
+                import math as _m_v47
+                import os as _os_v47p
+                import torch as _torch_v47p
+                try:
+                    _beta_v47 = float(
+                        _os_v47p.environ.get(
+                            'AREAL_MTP_V47_AMP_BETA', '0.5'
+                        )
+                    )
+                except Exception:
+                    _beta_v47 = 0.5
+                try:
+                    _min_ratio_v47 = float(
+                        _os_v47p.environ.get(
+                            'AREAL_MTP_V47_AMP_MIN_RATIO', '0.5'
+                        )
+                    )
+                except Exception:
+                    _min_ratio_v47 = 0.5
+                _n_amp_v47 = 0
+                _n_skip_v47 = 0
+                _scales_v47 = []
+                for _mod_v47p in self.model:
+                    for _n_v47p, _p_v47p in (
+                        _mod_v47p.named_parameters()
+                    ):
+                        if ('.mtp.' not in _n_v47p
+                                and '.mtp_layers.' not in _n_v47p):
+                            continue
+                        _mp_v47p = getattr(
+                            _p_v47p, 'main_param', None
+                        )
+                        if _mp_v47p is None:
+                            _n_skip_v47 += 1
+                            continue
+                        _pre_v47 = self._v47_pre_master.get(_n_v47p)
+                        if (
+                            _pre_v47 is None
+                            or _pre_v47.shape != _mp_v47p.shape
+                        ):
+                            _n_skip_v47 += 1
+                            continue
+                        _delta_v47 = _mp_v47p.data - _pre_v47
+                        _raw_dmax_v47 = float(
+                            _delta_v47.abs().max().item()
+                        )
+                        _amax_v47 = float(
+                            _mp_v47p.data.abs().max().item()
+                        )
+                        if _amax_v47 <= 0.0 or _raw_dmax_v47 <= 0.0:
+                            _n_skip_v47 += 1
+                            continue
+                        _e_v47 = _m_v47.floor(_m_v47.log2(_amax_v47))
+                        _ulp_v47 = 2.0 ** (_e_v47 - 7)
+                        _target_v47 = _beta_v47 * _ulp_v47
+                        _ratio_v47 = _raw_dmax_v47 / _ulp_v47
+                        if _ratio_v47 >= _min_ratio_v47:
+                            _n_skip_v47 += 1
+                            _log_this = False
+                            _scale_v47 = 1.0
+                            _clipped = False
+                        else:
+                            _scale_v47 = (
+                                _target_v47 / _raw_dmax_v47
+                            )
+                            # cap to avoid runaway if Adam step is
+                            # spuriously tiny (e.g. right after
+                            # warmup) — hard ceiling 1e6.
+                            _clipped = False
+                            if _scale_v47 > 1.0e6:
+                                _scale_v47 = 1.0e6
+                                _clipped = True
+                            # write amplified delta back to fp32
+                            # master, leaving optimizer internals
+                            # (m, v) unchanged.
+                            _new_master_v47 = (
+                                _pre_v47 + _scale_v47 * _delta_v47
+                            )
+                            _mp_v47p.data.copy_(_new_master_v47)
+                            # propagate to the bf16 model param so
+                            # any downstream read path (including
+                            # convert_to_hf) sees the new weight
+                            # right now.
+                            try:
+                                _p_v47p.data.copy_(
+                                    _mp_v47p.data.to(
+                                        _p_v47p.data.dtype
+                                    )
+                                )
+                            except Exception:
+                                pass
+                            _n_amp_v47 += 1
+                            _scales_v47.append(_scale_v47)
+                            _log_this = True
+                        _amp_dmax_v47 = float(
+                            (
+                                _mp_v47p.data - _pre_v47
+                            ).abs().max().item()
+                        )
+                        if _log_this:
+                            self.logger.info(
+                                '[MTPMasterAmp-v47] name=%s '
+                                'pre_amax=%.6e post_amax=%.6e '
+                                'raw_dmax=%.3e amp_dmax=%.3e '
+                                'ulp=%.3e beta=%.3f '
+                                'scale=%.3e clipped=%s',
+                                _n_v47p,
+                                float(_pre_v47.abs().max().item()),
+                                _amax_v47,
+                                _raw_dmax_v47, _amp_dmax_v47,
+                                _ulp_v47, _beta_v47,
+                                _scale_v47, _clipped,
+                            )
+                # summary
+                if _scales_v47:
+                    try:
+                        import statistics as _st_v47
+                        _geo = _m_v47.exp(
+                            _st_v47.fmean(
+                                [_m_v47.log(s) for s in _scales_v47]
+                            )
+                        )
+                    except Exception:
+                        _geo = float('nan')
+                else:
+                    _geo = float('nan')
+                self.logger.info(
+                    '[MTPMasterAmpSummary-v47] '
+                    'n_amplified=%d n_skipped=%d '
+                    'geomean_scale=%s beta=%.3f '
+                    'min_ratio=%.3f',
+                    _n_amp_v47, _n_skip_v47, str(_geo),
+                    _beta_v47, _min_ratio_v47,
+                )
+            except Exception as _e_v47_post:
+                self.logger.warning(
+                    '[MTPMasterAmp-v47] post-step failed: %s',
+                    _e_v47_post,
+                )
+            finally:
+                # release snapshots — memory-bounded.
+                self._v47_pre_master = {}
+                self._v47_pre_data = {}
         # [MTPPostOptim-v25] Diagnostic post-optimizer-step probe.
         try:
             _v25_post_seen = set()
