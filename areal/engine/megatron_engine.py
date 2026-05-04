@@ -1774,8 +1774,6 @@ class MegatronEngine(TrainEngine):
                 self.bridge.save_weights(
                     models=self.model, weights_path=path, memory_efficient=True
                 )
-                if self.config.is_critic:
-                    save_critic_value_head(self.model, path)
             else:
                 save_weights_to_hf_with_mbridge_fast(
                     bridge=self.bridge,
@@ -1784,9 +1782,11 @@ class MegatronEngine(TrainEngine):
                     base_model_path=base_model_path,
                     max_shard_size_byte=int(3e9),
                     max_workers=None,
-                    is_critic=self.config.is_critic,
                     fp8_direct_convert=self.fp8_direct_convert,
                 )
+
+            if self.config.is_critic:
+                save_critic_value_head(self.model, path)
 
         if dist.get_rank() == 0:
             if tokenizer is not None:
