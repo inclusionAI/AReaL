@@ -923,10 +923,10 @@ class MegatronEngineConfig:
         },
     )
 
-    use_mbridge_cpu_save: bool = field(
+    use_mbridge_save: bool = field(
         default=False,
         metadata={
-            "help": "Use CPU-based save instead of all-gather to save device memory."
+            "help": "Use mbridge's save method to save gpu memory when saving weights."
         },
     )
 

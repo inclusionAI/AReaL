@@ -1770,10 +1770,8 @@ class MegatronEngine(TrainEngine):
                     source_path=base_model_path,
                 )
         else:
-            if self.mcore_config.use_mbridge_cpu_save:
-                self.bridge.save_weights(
-                    models=self.model, weights_path=path, memory_efficient=True
-                )
+            if self.mcore_config.use_mbridge_save:
+                self.bridge.save_weights(models=self.model, weights_path=path)
             else:
                 save_weights_to_hf_with_mbridge_fast(
                     bridge=self.bridge,
