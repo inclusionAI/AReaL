@@ -200,7 +200,7 @@ class MegatronEngine(TrainEngine):
                     "v14:LRScaleGuard+WeightDeltaGuard",
                     "v16:MTPSerializeFp32Upcast(AREAL_MTP_FP32_BROADCAST)",
                     "v28:MTPSigmaDeltaBf16(AREAL_MTP_SIGMA_DELTA_BF16)",
-                    "v36:ProbeAfterContinue(AREAL_MTP_V30_DIAG)",
+                    "v37b:ProbeStageTraceback(AREAL_MTP_V30_DIAG)",
                     "v17:MTPNativeAutoScaler+ConsumerBypass"
                     "(AREAL_MTP_NATIVE_AUTOSCALER,autograd_in_graph)",
                 ]
@@ -5291,96 +5291,126 @@ class MegatronEngine(TrainEngine):
 
         current_platform.synchronize()
         dist.barrier(group=self.cpu_group)
-        # [MTPProbeLogprob-v36] Deterministic inference probe AFTER
-        # continue_generation. v33/v35 ran the probe inside
-        # update_weights_from_distributed BEFORE the weight-update
-        # RPCs, which meant SGLang was PAUSED (not serving) and the
-        # /generate request always timed out.  v36 moves the probe
-        # to after continue_generation, when SGLang is live and
-        # serving requests.  This is the only point in the training
-        # loop where the updated weights are guaranteed to be loaded
-        # AND the inference server is accepting requests.
+        # [MTPProbeLogprob-v37b] Deterministic inference probe AFTER
+        # continue_generation, with per-stage try/except + traceback.
+        #
+        # v36 failed universally with
+        #   AttributeError: 'MegatronPPOActor' object has no attribute
+        #   '_weight_version'
+        # because MegatronEngine exposes self._version + get_version(),
+        # never _weight_version.  v37b fixes the attribute and also
+        # wraps every line of the probe in a per-stage try/except so
+        # any future failure logs traceback.format_exc() AND a stage
+        # tag identifying the exact raise site.
         try:
-            import os as _os_v36
-            _v36_on = _os_v36.environ.get("AREAL_MTP_V30_DIAG", "1") == "1"
+            import os as _os_v37b
+            _v37b_on = _os_v37b.environ.get("AREAL_MTP_V30_DIAG", "1") == "1"
         except Exception:
-            _v36_on = False
-        if _v36_on:
+            _v37b_on = False
+        if _v37b_on:
+            _stage_v37b = "enter"
             try:
-                _re_v36 = self.rollout_engine
-                _addr_v36 = getattr(_re_v36, "controller_addr", None)
+                import traceback as _tb_v37b
+                _stage_v37b = "get_rollout_engine"
+                _re_v37b = self.rollout_engine
+                _stage_v37b = "getattr_controller_addr"
+                _addr_v37b = getattr(_re_v37b, "controller_addr", None)
+                _stage_v37b = "get_rank"
                 try:
-                    _rk_v36 = (
+                    _rk_v37b = (
                         torch.distributed.get_rank()
                         if torch.distributed.is_initialized() else 0
                     )
                 except Exception:
-                    _rk_v36 = 0
-                if _rk_v36 == 0:
-                    if _addr_v36 is None:
+                    _rk_v37b = 0
+                if _rk_v37b == 0:
+                    if _addr_v37b is None:
                         self.logger.info(
-                            "[MTPProbeLogprob-v36] unavailable: "
+                            "[MTPProbeLogprob-v37b] unavailable: "
                             "rollout_engine=%s has no controller_addr",
-                            type(_re_v36).__name__,
+                            type(_re_v37b).__name__,
                         )
                     else:
                         try:
-                            import requests as _rq_v36
-                            _probe_url = (
-                                f"http://{_addr_v36}/callback/"
+                            _stage_v37b = "import_requests"
+                            import requests as _rq_v37b
+                            _stage_v37b = "build_url"
+                            _probe_url_v37b = (
+                                f"http://{_addr_v37b}/callback/"
                                 f"get_mtp_probe"
                             )
-                            _resp_v36 = _rq_v36.post(
-                                _probe_url,
-                                json={"version": self._weight_version},
+                            _stage_v37b = "build_version_int"
+                            _ver_v37b = int(self.get_version())
+                            _stage_v37b = "http_post"
+                            _resp_v37b = _rq_v37b.post(
+                                _probe_url_v37b,
+                                json={"version": _ver_v37b},
                                 timeout=150.0,
                                 proxies={"http": None, "https": None},
                             )
-                            _status_v36 = _resp_v36.status_code
-                            _jp_v36 = {}
+                            _stage_v37b = "get_status"
+                            _status_v37b = _resp_v37b.status_code
+                            _stage_v37b = "parse_json"
+                            _jp_v37b = {}
                             try:
-                                _jp_v36 = _resp_v36.json()
+                                _jp_v37b = _resp_v37b.json()
                             except Exception:
-                                _jp_v36 = {}
-                            _lp_v36 = _jp_v36.get("logprob", None)
-                            _srv_v36 = _jp_v36.get("server", None)
-                            _err_v36 = _jp_v36.get("error", None)
-                            _prev_lp_v36 = getattr(
-                                self, "_v36_prev_probe_logprob", None
+                                _jp_v37b = {}
+                            _stage_v37b = "extract_fields"
+                            _lp_v37b = _jp_v37b.get("logprob", None)
+                            _srv_v37b = _jp_v37b.get("server", None)
+                            _err_v37b = _jp_v37b.get("error", None)
+                            _stage_v37b = "get_prev_lp"
+                            _prev_lp_v37b = getattr(
+                                self, "_v37b_prev_probe_logprob", None
                             )
-                            if isinstance(_lp_v36, (int, float)):
-                                self._v36_prev_probe_logprob = float(
-                                    _lp_v36
-                                )
-                                _d_lp_v36 = (
-                                    None if _prev_lp_v36 is None
+                            _stage_v37b = "compute_d_lp"
+                            if isinstance(_lp_v37b, (int, float)):
+                                _d_lp_v37b = (
+                                    None if _prev_lp_v37b is None
                                     else abs(
-                                        float(_lp_v36)
-                                        - float(_prev_lp_v36)
+                                        float(_lp_v37b)
+                                        - float(_prev_lp_v37b)
                                     )
                                 )
                             else:
-                                _d_lp_v36 = None
+                                _d_lp_v37b = None
+                            _stage_v37b = "set_prev_lp_attr"
+                            if isinstance(_lp_v37b, (int, float)):
+                                self._v37b_prev_probe_logprob = float(
+                                    _lp_v37b
+                                )
+                            _stage_v37b = "logger_info_success"
                             self.logger.info(
-                                "[MTPProbeLogprob-v36] version=%s "
+                                "[MTPProbeLogprob-v37b] version=%s "
                                 "status=%s logprob=%s d_logprob=%s "
                                 "server=%s err=%s",
-                                self._weight_version,
-                                _status_v36,
-                                ("%.6e" % _lp_v36) if isinstance(_lp_v36, (int, float)) else "NA",
-                                ("%.6e" % _d_lp_v36) if isinstance(_d_lp_v36, (int, float)) else "NA",
-                                _srv_v36, _err_v36,
+                                _ver_v37b,
+                                _status_v37b,
+                                ("%.6e" % _lp_v37b) if isinstance(_lp_v37b, (int, float)) else "NA",
+                                ("%.6e" % _d_lp_v37b) if isinstance(_d_lp_v37b, (int, float)) else "NA",
+                                _srv_v37b, _err_v37b,
                             )
-                        except Exception as _e_v36:
+                        except Exception as _e_v37b:
+                            try:
+                                _tb_str_v37b = _tb_v37b.format_exc()
+                            except Exception:
+                                _tb_str_v37b = "<traceback unavailable>"
                             self.logger.info(
-                                "[MTPProbeLogprob-v36] http failure: %r",
-                                _e_v36,
+                                "[MTPProbeLogprob-v37b] inner failure "
+                                "at stage=%s exc=%r\nTRACEBACK:\n%s",
+                                _stage_v37b, _e_v37b, _tb_str_v37b,
                             )
-            except Exception as _e_v36_out:
+            except Exception as _e_v37b_out:
+                try:
+                    _tb_out_v37b = _tb_v37b.format_exc()
+                except Exception:
+                    _tb_out_v37b = "<traceback unavailable>"
                 try:
                     self.logger.warning(
-                        "[MTPProbeLogprob-v36] outer failure: %r",
-                        _e_v36_out,
+                        "[MTPProbeLogprob-v37b] outer failure at "
+                        "stage=%s exc=%r\nTRACEBACK:\n%s",
+                        _stage_v37b, _e_v37b_out, _tb_out_v37b,
                     )
                 except Exception:
                     pass
