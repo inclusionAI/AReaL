@@ -203,6 +203,7 @@ class MegatronEngine(TrainEngine):
                     "v43:FixedLongProbe+MTPWeightHashDelta+CrossProcFix(AREAL_MTP_V30_DIAG)",
                     "v44:MTPSrcHash+RepeatFixedLongProbe(AREAL_MTP_V30_DIAG)",
                     "v45:MTPULPGap+DraftIPCStall(AREAL_MTP_V30_DIAG)",
+                    "v46:ForceTickBf16+ShipFlips(AREAL_MTP_V46_FORCE_TICK)",
                     "v17:MTPNativeAutoScaler+ConsumerBypass"
                     "(AREAL_MTP_NATIVE_AUTOSCALER,autograd_in_graph)",
                 ]
@@ -4596,6 +4597,143 @@ class MegatronEngine(TrainEngine):
                             else:
                                 _u = _tn_sd
                                 _had_prev = False
+                            # [MTPForceTickBf16-v46] Cap draft-IPC
+                            # stall at K syncs by promoting residual
+                            # to ±ULP/2 when bf16 has not flipped in
+                            # K_force consecutive syncs.  Preserves
+                            # long-run unbiasedness: the ±ULP/2
+                            # injection is a Σ-Δ quantum that the
+                            # next sync's residual cancels.
+                            try:
+                                _ft_on_v46 = (
+                                    _os_v16.environ.get(
+                                        'AREAL_MTP_V46_FORCE_TICK',
+                                        '1',
+                                    ) == '1'
+                                )
+                            except Exception:
+                                _ft_on_v46 = True
+                            if _ft_on_v46:
+                                try:
+                                    _ft_k_v46 = int(
+                                        _os_v16.environ.get(
+                                            'AREAL_MTP_V46_FORCE_TICK_K',
+                                            '8',
+                                        )
+                                    )
+                                except Exception:
+                                    _ft_k_v46 = 8
+                                try:
+                                    _ft_ratio_v46 = float(
+                                        _os_v16.environ.get(
+                                            'AREAL_MTP_V46_FORCE_TICK_RATIO',
+                                            '0.10',
+                                        )
+                                    )
+                                except Exception:
+                                    _ft_ratio_v46 = 0.10
+                                if not hasattr(
+                                    self, '_mtp_v46_stale'
+                                ):
+                                    self._mtp_v46_stale = {}
+                                if not hasattr(
+                                    self, '_mtp_v46_prev_ship'
+                                ):
+                                    self._mtp_v46_prev_ship = {}
+                                _ft_amax = float(
+                                    _u.abs().max().item()
+                                )
+                                if _ft_amax > 0:
+                                    import math as _m_v46
+                                    _ft_e = _m_v46.floor(
+                                        _m_v46.log2(_ft_amax)
+                                    )
+                                    _ft_ulp = 2.0 ** (_ft_e - 7)
+                                else:
+                                    _ft_ulp = 0.0
+                                _ft_stale = (
+                                    self._mtp_v46_stale.get(_nm_sd, 0)
+                                )
+                                _ft_resid_absmax = 0.0
+                                if (
+                                    _r_prev is not None
+                                    and _r_prev.shape == _tn_sd.shape
+                                ):
+                                    try:
+                                        _ft_resid_absmax = float(
+                                            _r_prev.abs().max().item()
+                                        )
+                                    except Exception:
+                                        _ft_resid_absmax = 0.0
+                                _ft_trigger_stale = (
+                                    _ft_stale >= _ft_k_v46
+                                )
+                                _ft_trigger_ratio = (
+                                    _ft_ulp > 0
+                                    and _ft_ratio_v46 > 0
+                                    and _ft_resid_absmax
+                                    >= _ft_ratio_v46 * _ft_ulp
+                                )
+                                _ft_fired = False
+                                if (
+                                    _ft_trigger_stale
+                                    and _ft_ulp > 0
+                                ):
+                                    # Promote _u by sign(resid or
+                                    # drift) * ULP/2 on the single
+                                    # element with largest |resid|
+                                    # so that RNE flips exactly one
+                                    # bf16 bucket. Minimal, unbiased
+                                    # on average (residual carries
+                                    # opposite sign next sync).
+                                    try:
+                                        _ft_flat = _u.view(-1)
+                                        if _r_prev is not None:
+                                            _ft_signmap = (
+                                                _r_prev.view(-1)
+                                            )
+                                        else:
+                                            _ft_signmap = _ft_flat
+                                        _ft_sign = (
+                                            _torch_v16.sign(_ft_signmap)
+                                        )
+                                        _ft_sign = _torch_v16.where(
+                                            _ft_sign == 0,
+                                            _torch_v16.ones_like(
+                                                _ft_sign
+                                            ),
+                                            _ft_sign,
+                                        )
+                                        _u = (
+                                            _u
+                                            + _ft_sign.view_as(_u)
+                                            * (0.5 * _ft_ulp)
+                                        )
+                                        _ft_fired = True
+                                    except Exception:
+                                        _ft_fired = False
+                                self._mtp_v46_stale[_nm_sd] = (
+                                    0 if _ft_fired else _ft_stale
+                                )
+                                # store diag for post-loop log
+                                if not hasattr(
+                                    self, '_mtp_v46_fire_log'
+                                ):
+                                    self._mtp_v46_fire_log = []
+                                if (
+                                    _ft_fired
+                                    or _ft_trigger_ratio
+                                    or _ft_trigger_stale
+                                ):
+                                    self._mtp_v46_fire_log.append(
+                                        (
+                                            _nm_sd,
+                                            _ft_stale,
+                                            _ft_resid_absmax,
+                                            _ft_ulp,
+                                            _ft_fired,
+                                        )
+                                    )
                             # RNE fp32 -> bf16 and retrieve actual
                             # quantized fp32 value for residual calc.
                             _bf16 = _u.to(_torch_v16.bfloat16)
@@ -4625,6 +4763,70 @@ class MegatronEngine(TrainEngine):
                             mtp_hf_tensors[_i] = (
                                 _nm_sd, _bf16.contiguous(),
                             )
+                            # [MTPShipFlips-v46] update stale
+                            # counter: if shipped bf16 payload
+                            # matches previous version's shipped
+                            # payload bit-for-bit, stale += 1.
+                            try:
+                                _ship_prev_v46 = (
+                                    self._mtp_v46_prev_ship.get(
+                                        _nm_sd
+                                    )
+                                    if hasattr(
+                                        self, '_mtp_v46_prev_ship'
+                                    )
+                                    else None
+                                )
+                                _ship_flips_v46 = -1
+                                if (
+                                    _ship_prev_v46 is not None
+                                    and _ship_prev_v46.shape
+                                    == _bf16.shape
+                                ):
+                                    _ship_flips_v46 = int(
+                                        (
+                                            _bf16 != _ship_prev_v46
+                                        ).sum().item()
+                                    )
+                                    if _ship_flips_v46 == 0:
+                                        self._mtp_v46_stale[_nm_sd] = (
+                                            self._mtp_v46_stale.get(
+                                                _nm_sd, 0
+                                            ) + 1
+                                        )
+                                    else:
+                                        self._mtp_v46_stale[_nm_sd] = 0
+                                self._mtp_v46_prev_ship[_nm_sd] = (
+                                    _bf16.detach().clone()
+                                )
+                                # log per-tensor only if it fired
+                                # or was previously stale.
+                                if (
+                                    _ft_fired
+                                    or _ship_flips_v46 == 0
+                                ):
+                                    self.logger.info(
+                                        '[MTPShipFlips-v46] '
+                                        'name=%s ship_flips=%s '
+                                        'stale=%s force_fired=%s '
+                                        'ulp=%.3e resid_absmax=%.3e',
+                                        _nm_sd, _ship_flips_v46,
+                                        self._mtp_v46_stale.get(
+                                            _nm_sd, 0
+                                        ),
+                                        _ft_fired,
+                                        _ft_ulp if _ft_on_v46 else 0.0,
+                                        _ft_resid_absmax if _ft_on_v46 else 0.0,
+                                    )
+                            except Exception as _e_sf_v46:
+                                try:
+                                    self.logger.info(
+                                        '[MTPShipFlips-v46] '
+                                        'failure name=%s err=%r',
+                                        _nm_sd, _e_sf_v46,
+                                    )
+                                except Exception:
+                                    pass
                             _sd_applied += 1
                             if _shift_cnt > 0:
                                 _sd_total_shifted += _shift_cnt
