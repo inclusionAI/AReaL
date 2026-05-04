@@ -923,6 +923,13 @@ class MegatronEngineConfig:
         },
     )
 
+    use_mbridge_cpu_save: bool = field(
+        default=False,
+        metadata={
+            "help": "Use CPU-based save instead of all-gather to save device memory."
+        },
+    )
+
 
 class SchedulingStrategyType(str, Enum):
     separation = "separation"
