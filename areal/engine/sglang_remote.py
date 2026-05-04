@@ -75,21 +75,14 @@ class SGLangBackend:
             "stream": False,
         }
 
-        # [v42] request-side prompt capture (replaces broken
-        # response-side `response.get("input_ids")` in
-        # parse_generation_response, which never fires because
-        # SGLang does not echo input_ids in its /generate reply).
-        try:
-            _pids_v42 = req.input_ids
-            if isinstance(_pids_v42, (list, tuple)) and len(_pids_v42) >= 4:
-                _pids_head_v42 = [int(x) for x in list(_pids_v42)[:256]
-                                   if isinstance(x, (int, float))]
-                if _pids_head_v42:
-                    type(self)._v41_last_prompt_ids = _pids_head_v42
-                    type(self)._v41_last_prompt_len = len(_pids_v42)
-                    type(self)._v42_last_prompt_version = int(version)
-        except Exception:
-            pass
+        # [v43] request-side prompt capture removed.
+        # It lived in the inference-worker process while the
+        # corresponding trainer-side read lives in the
+        # MegatronEngine process, so the class attribute never
+        # crossed the process boundary (log.26 confirmed
+        # present=False on every version).  v43 replaces the
+        # whole probe with a process-local synthetic FixedLong
+        # prompt in megatron_engine.py; nothing to stash here.
 
         # Add return_routed_experts to payload if set
         if req.metadata.get("return_routed_experts", False):
@@ -206,12 +199,10 @@ class SGLangBackend:
                             self._v41_win_completions = []
                     except Exception as _e_v41w:
                         pass
-                    # [v42] response-side capture removed.  Prompt IDs are
-                    # now captured in build_generation_request() because
-                    # SGLang does not echo input_ids in the /generate
-                    # response and the old response.get('input_ids') lookup
-                    # never fired, leaving RealPromptProbe permanently
-                    # starved.  Nothing to do here.
+                    # [v43] prompt capture removed from both request
+                    # and response paths (cross-process state bug).
+                    # Downstream probe now uses a deterministic
+                    # synthetic prompt instead of a cached real one.
                     pass
                 except Exception as _e:
                     pass

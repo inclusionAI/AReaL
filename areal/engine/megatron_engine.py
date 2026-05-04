@@ -200,7 +200,7 @@ class MegatronEngine(TrainEngine):
                     "v14:LRScaleGuard+WeightDeltaGuard",
                     "v16:MTPSerializeFp32Upcast(AREAL_MTP_FP32_BROADCAST)",
                     "v28:MTPSigmaDeltaBf16(AREAL_MTP_SIGMA_DELTA_BF16)",
-                    "v42:FixRealPromptProbeImport+RequestSidePromptCapture+MTPWeightHash(AREAL_MTP_V30_DIAG)",
+                    "v43:FixedLongProbe+MTPWeightHashDelta+CrossProcFix(AREAL_MTP_V30_DIAG)",
                     "v17:MTPNativeAutoScaler+ConsumerBypass"
                     "(AREAL_MTP_NATIVE_AUTOSCALER,autograd_in_graph)",
                 ]
@@ -3499,6 +3499,47 @@ class MegatronEngine(TrainEngine):
                 "[MTPWeightHash-v42] version=%s n_tensors=%d digests=%s",
                 _v42_ver, len(_v42_digests), _v42_digests,
             )
+            # [v43] delta detector across versions
+            try:
+                _cur_map_v43 = {}
+                for _d in _v42_digests:
+                    if isinstance(_d, tuple) and len(_d) >= 2:
+                        _cur_map_v43[_d[0]] = _d[1]
+                _prev_map_v43 = getattr(self, "_v43_prev_digests", None)
+                if isinstance(_prev_map_v43, dict):
+                    _changed_v43 = []
+                    _same_v43 = []
+                    for _n, _h in _cur_map_v43.items():
+                        _ph = _prev_map_v43.get(_n)
+                        if _ph is None:
+                            continue
+                        if _ph == _h:
+                            _same_v43.append(_n)
+                        else:
+                            _changed_v43.append(_n)
+                    self.logger.info(
+                        "[MTPWeightHashDelta-v43] version=%s "
+                        "n_total=%d n_changed=%d n_same=%d "
+                        "changed=%s same=%s",
+                        _v42_ver, len(_cur_map_v43),
+                        len(_changed_v43), len(_same_v43),
+                        _changed_v43, _same_v43,
+                    )
+                else:
+                    self.logger.info(
+                        "[MTPWeightHashDelta-v43] version=%s baseline "
+                        "(no prior digest map)",
+                        _v42_ver,
+                    )
+                self._v43_prev_digests = _cur_map_v43
+            except Exception as _e_delta_v43:
+                try:
+                    self.logger.info(
+                        "[MTPWeightHashDelta-v43] failure: %r",
+                        _e_delta_v43,
+                    )
+                except Exception:
+                    pass
         except Exception as _e_hash_all:
             try:
                 self.logger.info(
@@ -5773,71 +5814,59 @@ class MegatronEngine(TrainEngine):
                                 )
                             except Exception:
                                 pass
-                        # [v41] realistic-prompt probe reuse
+                        # [v43] FixedLongProbe: deterministic 128-token
+                        # synthetic prompt.  Same IDs every version, so
+                        # AR is a pure function of (target + draft)
+                        # weights.  Discriminator:
+                        #   production AR dip + FixedLong AR flat  -> H5
+                        #   production AR dip + FixedLong AR dip   -> H6
+                        # The probe reuses the existing controller
+                        # endpoint /callback/get_draft_probe_long via
+                        # input_ids_override.
                         try:
-                            import requests as _rq_rp41
-                            _rp_ids = None
-                            # [v42] fix: the class in sglang_remote.py is
-                            # `SGLangBackend`, NOT `SGLangRemote`.  The v41
-                            # import was silently caught by the outer except
-                            # and left _rp_ids=None for every version, so
-                            # RealPromptProbe was unreachable.  Import the
-                            # correct symbol now.
+                            import requests as _rq_fl43
+                            _fl_ids_v43 = [
+                                int((i * 37 + 5009) % 50000) for i in range(128)
+                            ]
+                            _fl_resp = _rq_fl43.post(
+                                f"http://{_addr_v39}/callback/get_draft_probe_long",
+                                json={"version": _ver,
+                                      "input_ids_override": _fl_ids_v43},
+                                timeout=240.0,
+                                proxies={"http": None, "https": None},
+                            )
+                            _fl_j = _fl_resp.json() if _fl_resp.status_code == 200 else {}
+                            _fl_spec = _fl_j.get("spec_fields") or {}
+                            _fl_rate = None
                             try:
-                                from areal.engine.sglang_remote import (
-                                    SGLangBackend as _SGLR42,
-                                )
-                                _rp_ids = getattr(
-                                    _SGLR42, "_v41_last_prompt_ids", None
-                                )
-                                _rp_len = getattr(
-                                    _SGLR42, "_v41_last_prompt_len", None
-                                )
-                                _rp_ver = getattr(
-                                    _SGLR42, "_v42_last_prompt_version",
-                                    None,
-                                )
-                                self.logger.info(
-                                    "[RealPromptProbeCapture-v42] "
-                                    "present=%s len=%s prompt_ver=%s",
-                                    _rp_ids is not None,
-                                    _rp_len, _rp_ver,
-                                )
-                            except Exception as _e_imp42:
-                                self.logger.info(
-                                    "[RealPromptProbeCapture-v42] "
-                                    "import-fail: %r", _e_imp42,
-                                )
-                                _rp_ids = None
-                            if isinstance(_rp_ids, list) and len(_rp_ids) >= 4:
-                                _rp_resp = _rq_rp41.post(
-                                    f"http://{_addr_v39}/callback/get_draft_probe_long",
-                                    json={"version": _ver, "input_ids_override": _rp_ids[:256]},
-                                    timeout=240.0,
-                                    proxies={"http": None, "https": None},
-                                )
-                                _rp_j = _rp_resp.json() if _rp_resp.status_code == 200 else {}
-                                self.logger.info(
-                                    "[RealPromptProbe-v41] version=%s status=%s "
-                                    "probe_ids_len=%s probe_ids_head=%s "
-                                    "out_ids_len=%s spec=%s",
-                                    _ver, _rp_resp.status_code,
-                                    _rp_j.get("probe_ids_len"),
-                                    _rp_j.get("probe_ids_head"),
-                                    _rp_j.get("out_ids_len"),
-                                    _rp_j.get("spec_fields"),
-                                )
-                            else:
-                                self.logger.info(
-                                    "[RealPromptProbe-v41] version=%s skipped "
-                                    "(no production prompt cached yet)",
-                                    _ver,
-                                )
-                        except Exception as _e_rp41:
+                                _atn = _fl_spec.get("spec_accept_token_num")
+                                _dtn = _fl_spec.get("spec_draft_token_num")
+                                if (isinstance(_atn, (int, float))
+                                        and isinstance(_dtn, (int, float))
+                                        and _dtn > 0):
+                                    _fl_rate = float(_atn) / float(_dtn)
+                            except Exception:
+                                _fl_rate = None
+                            self.logger.info(
+                                "[FixedLongProbe-v43] version=%s status=%s "
+                                "probe_ids_len=%s probe_ids_head=%s "
+                                "out_ids_len=%s sum_lp=%s mid_lp=%s "
+                                "spec_accept_rate=%s spec=%s",
+                                _ver, _fl_resp.status_code,
+                                _fl_j.get("probe_ids_len"),
+                                _fl_j.get("probe_ids_head"),
+                                _fl_j.get("out_ids_len"),
+                                _fl_j.get("sum_lp"),
+                                _fl_j.get("mid_lp"),
+                                ("%.4f" % _fl_rate) if _fl_rate is not None
+                                else "NA",
+                                _fl_spec,
+                            )
+                        except Exception as _e_fl43:
                             try:
                                 self.logger.info(
-                                    "[RealPromptProbe-v41] failure: %r",
-                                    _e_rp41,
+                                    "[FixedLongProbe-v43] failure: %r",
+                                    _e_fl43,
                                 )
                             except Exception:
                                 pass
