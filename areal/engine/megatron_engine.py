@@ -200,7 +200,7 @@ class MegatronEngine(TrainEngine):
                     "v14:LRScaleGuard+WeightDeltaGuard",
                     "v16:MTPSerializeFp32Upcast(AREAL_MTP_FP32_BROADCAST)",
                     "v28:MTPSigmaDeltaBf16(AREAL_MTP_SIGMA_DELTA_BF16)",
-                    "v35:ProbeInputIdsFix+LongerTimeout(AREAL_MTP_V30_DIAG)",
+                    "v36:ProbeAfterContinue(AREAL_MTP_V30_DIAG)",
                     "v17:MTPNativeAutoScaler+ConsumerBypass"
                     "(AREAL_MTP_NATIVE_AUTOSCALER,autograd_in_graph)",
                 ]
@@ -4814,85 +4814,6 @@ class MegatronEngine(TrainEngine):
                     )
                 except Exception:
                     pass
-        # [MTPProbeLogprob-v33] Deterministic inference probe via
-        # /callback/get_mtp_probe.  Replaces the architecturally-
-        # broken v32 /callback/get_mtp_weight_norm path. The probe
-        # posts a fixed prompt with temperature=0, top_p=1, top_k=1,
-        # max_new_tokens=1, return_logprob=1 to server_infos[0] and
-        # returns the first input_token_logprob.
-        if _v31_on and mtp_hf_tensors:
-            try:
-                _re_p = self.rollout_engine
-                _addr_p = getattr(_re_p, "controller_addr", None)
-                try:
-                    _rk_p = (
-                        torch.distributed.get_rank()
-                        if torch.distributed.is_initialized() else 0
-                    )
-                except Exception:
-                    _rk_p = 0
-                if _rk_p == 0:
-                    if _addr_p is None:
-                        self.logger.info(
-                            "[MTPProbeLogprob-v33] unavailable: "
-                            "rollout_engine=%s has no controller_addr",
-                            type(_re_p).__name__,
-                        )
-                    else:
-                        try:
-                            import requests as _rq_v33
-                            _probe_url = (
-                                f"http://{_addr_p}/callback/"
-                                f"get_mtp_probe"
-                            )
-                            _resp = _rq_v33.post(
-                                _probe_url,
-                                json={"version": int(meta.version)},
-                                timeout=150.0,
-                                proxies={"http": None, "https": None},
-                            )
-                            _status = _resp.status_code
-                            _jp = {}
-                            try:
-                                _jp = _resp.json()
-                            except Exception:
-                                _jp = {}
-                            _lp = _jp.get("logprob", None)
-                            _server = _jp.get("server", None)
-                            _err = _jp.get("error", None)
-                            _prev_lp = getattr(
-                                self, "_v33_prev_probe_logprob", None
-                            )
-                            if isinstance(_lp, (int, float)):
-                                self._v33_prev_probe_logprob = float(_lp)
-                                _d_lp = (
-                                    None if _prev_lp is None
-                                    else abs(float(_lp) - float(_prev_lp))
-                                )
-                            else:
-                                _d_lp = None
-                            self.logger.info(
-                                "[MTPProbeLogprob-v33] version=%s "
-                                "status=%s logprob=%s d_logprob=%s "
-                                "server=%s err=%s",
-                                str(meta.version), _status,
-                                ("%.6e" % _lp) if isinstance(_lp, (int, float)) else "NA",
-                                ("%.6e" % _d_lp) if isinstance(_d_lp, (int, float)) else "NA",
-                                _server, _err,
-                            )
-                        except Exception as _e_p:
-                            self.logger.info(
-                                "[MTPProbeLogprob-v33] http failure: %r",
-                                _e_p,
-                            )
-            except Exception as _e_p_out:
-                try:
-                    self.logger.warning(
-                        "[MTPProbeLogprob-v33] outer failure: %r",
-                        _e_p_out,
-                    )
-                except Exception:
-                    pass
         if mtp_hf_tensors:
             # [v5-F3] Compute norms for ALL tensors (was: only first 5).
             # [v5-F5] Track prev norm per-tensor to surface drift direction
@@ -5370,6 +5291,99 @@ class MegatronEngine(TrainEngine):
 
         current_platform.synchronize()
         dist.barrier(group=self.cpu_group)
+        # [MTPProbeLogprob-v36] Deterministic inference probe AFTER
+        # continue_generation. v33/v35 ran the probe inside
+        # update_weights_from_distributed BEFORE the weight-update
+        # RPCs, which meant SGLang was PAUSED (not serving) and the
+        # /generate request always timed out.  v36 moves the probe
+        # to after continue_generation, when SGLang is live and
+        # serving requests.  This is the only point in the training
+        # loop where the updated weights are guaranteed to be loaded
+        # AND the inference server is accepting requests.
+        try:
+            import os as _os_v36
+            _v36_on = _os_v36.environ.get("AREAL_MTP_V30_DIAG", "1") == "1"
+        except Exception:
+            _v36_on = False
+        if _v36_on:
+            try:
+                _re_v36 = self.rollout_engine
+                _addr_v36 = getattr(_re_v36, "controller_addr", None)
+                try:
+                    _rk_v36 = (
+                        torch.distributed.get_rank()
+                        if torch.distributed.is_initialized() else 0
+                    )
+                except Exception:
+                    _rk_v36 = 0
+                if _rk_v36 == 0:
+                    if _addr_v36 is None:
+                        self.logger.info(
+                            "[MTPProbeLogprob-v36] unavailable: "
+                            "rollout_engine=%s has no controller_addr",
+                            type(_re_v36).__name__,
+                        )
+                    else:
+                        try:
+                            import requests as _rq_v36
+                            _probe_url = (
+                                f"http://{_addr_v36}/callback/"
+                                f"get_mtp_probe"
+                            )
+                            _resp_v36 = _rq_v36.post(
+                                _probe_url,
+                                json={"version": self._weight_version},
+                                timeout=150.0,
+                                proxies={"http": None, "https": None},
+                            )
+                            _status_v36 = _resp_v36.status_code
+                            _jp_v36 = {}
+                            try:
+                                _jp_v36 = _resp_v36.json()
+                            except Exception:
+                                _jp_v36 = {}
+                            _lp_v36 = _jp_v36.get("logprob", None)
+                            _srv_v36 = _jp_v36.get("server", None)
+                            _err_v36 = _jp_v36.get("error", None)
+                            _prev_lp_v36 = getattr(
+                                self, "_v36_prev_probe_logprob", None
+                            )
+                            if isinstance(_lp_v36, (int, float)):
+                                self._v36_prev_probe_logprob = float(
+                                    _lp_v36
+                                )
+                                _d_lp_v36 = (
+                                    None if _prev_lp_v36 is None
+                                    else abs(
+                                        float(_lp_v36)
+                                        - float(_prev_lp_v36)
+                                    )
+                                )
+                            else:
+                                _d_lp_v36 = None
+                            self.logger.info(
+                                "[MTPProbeLogprob-v36] version=%s "
+                                "status=%s logprob=%s d_logprob=%s "
+                                "server=%s err=%s",
+                                self._weight_version,
+                                _status_v36,
+                                ("%.6e" % _lp_v36) if isinstance(_lp_v36, (int, float)) else "NA",
+                                ("%.6e" % _d_lp_v36) if isinstance(_d_lp_v36, (int, float)) else "NA",
+                                _srv_v36, _err_v36,
+                            )
+                        except Exception as _e_v36:
+                            self.logger.info(
+                                "[MTPProbeLogprob-v36] http failure: %r",
+                                _e_v36,
+                            )
+            except Exception as _e_v36_out:
+                try:
+                    self.logger.warning(
+                        "[MTPProbeLogprob-v36] outer failure: %r",
+                        _e_v36_out,
+                    )
+                except Exception:
+                    pass
         self.logger.info(
             f"[DiagUW] _update_weights_from_distributed FULLY COMPLETED "
             f"in {_diag_time.time() - _diag_t0:.3f}s"
