@@ -201,6 +201,7 @@ class MegatronEngine(TrainEngine):
                     "v16:MTPSerializeFp32Upcast(AREAL_MTP_FP32_BROADCAST)",
                     "v28:MTPSigmaDeltaBf16(AREAL_MTP_SIGMA_DELTA_BF16)",
                     "v43:FixedLongProbe+MTPWeightHashDelta+CrossProcFix(AREAL_MTP_V30_DIAG)",
+                    "v44:MTPSrcHash+RepeatFixedLongProbe(AREAL_MTP_V30_DIAG)",
                     "v17:MTPNativeAutoScaler+ConsumerBypass"
                     "(AREAL_MTP_NATIVE_AUTOSCALER,autograd_in_graph)",
                 ]
@@ -4292,6 +4293,50 @@ class MegatronEngine(TrainEngine):
                 if _collect_mtp_for_draft and _mtp_param is not None:
                     _mtp_model_name = self.hf_config.model_type
                     _prev_count = len(mtp_hf_tensors)
+                    # [MTPSrcHash-v44] hash Megatron-side collected
+                    # tensor BEFORE convert_to_hf so we can tell if
+                    # hidden_layernorm.weight (digest identical across
+                    # all v43 versions) is frozen at Megatron source
+                    # (training/grad issue) or during HF export path.
+                    try:
+                        import torch as _torch_v44s
+                        _v44s_ver = None
+                        try:
+                            _v44s_ver = int(self.get_version())
+                        except Exception:
+                            _v44s_ver = None
+                        _v44s_flat = _mtp_param.detach().reshape(-1)
+                        _v44s_k = min(1024, int(_v44s_flat.numel()))
+                        if _v44s_k > 0:
+                            _v44s_sl = (
+                                _v44s_flat[:_v44s_k].float().contiguous().cpu()
+                            )
+                            _v44s_bytes = _v44s_sl.numpy().tobytes()
+                            _v44s_h = 0
+                            for _b in _v44s_bytes:
+                                _v44s_h = (
+                                    (_v44s_h * 1315423911) ^ int(_b)
+                                ) & ((1 << 64) - 1)
+                            _v44s_sum = float(_v44s_sl.sum().item())
+                            _v44s_am = float(_v44s_sl.abs().mean().item())
+                        else:
+                            _v44s_h, _v44s_sum, _v44s_am = 0, 0.0, 0.0
+                        self.logger.info(
+                            "[MTPSrcHash-v44] version=%s name=%s "
+                            "src_dtype=%s src_shape=%s hash=%s "
+                            "sum_first1024=%s abs_mean_first1024=%s",
+                            _v44s_ver, name,
+                            str(_mtp_param.dtype),
+                            tuple(_mtp_param.shape),
+                            _v44s_h, _v44s_sum, _v44s_am,
+                        )
+                    except Exception as _e_v44s:
+                        try:
+                            self.logger.info(
+                                "[MTPSrcHash-v44] failure: %r", _e_v44s,
+                            )
+                        except Exception:
+                            pass
                     mtp_hf_tensors.extend(
                         convert_to_hf(
                             self.tf_config,
@@ -5867,6 +5912,59 @@ class MegatronEngine(TrainEngine):
                                 self.logger.info(
                                     "[FixedLongProbe-v43] failure: %r",
                                     _e_fl43,
+                                )
+                            except Exception:
+                                pass
+                        # [RepeatFixedLongProbe-v44] fire the SAME
+                        # deterministic 128-token prompt again to
+                        # measure within-version stochastic variance.
+                        # If run-1 vs run-2 differ wildly, the AR
+                        # dip is temperature/KV-cache noise, not a
+                        # weight-state shift.
+                        try:
+                            import requests as _rq_rfl44
+                            _rfl_ids_v44 = [
+                                int((i * 37 + 5009) % 50000) for i in range(128)
+                            ]
+                            _rfl_resp = _rq_rfl44.post(
+                                f"http://{_addr_v39}/callback/get_draft_probe_long",
+                                json={"version": _ver,
+                                      "input_ids_override": _rfl_ids_v44},
+                                timeout=240.0,
+                                proxies={"http": None, "https": None},
+                            )
+                            _rfl_j = (
+                                _rfl_resp.json()
+                                if _rfl_resp.status_code == 200 else {}
+                            )
+                            _rfl_spec = _rfl_j.get("spec_fields") or {}
+                            _rfl_rate = None
+                            try:
+                                _atn2 = _rfl_spec.get("spec_accept_token_num")
+                                _dtn2 = _rfl_spec.get("spec_draft_token_num")
+                                if (isinstance(_atn2, (int, float))
+                                        and isinstance(_dtn2, (int, float))
+                                        and _dtn2 > 0):
+                                    _rfl_rate = float(_atn2) / float(_dtn2)
+                            except Exception:
+                                _rfl_rate = None
+                            self.logger.info(
+                                "[RepeatFixedLongProbe-v44] version=%s "
+                                "status=%s out_ids_len=%s sum_lp=%s "
+                                "mid_lp=%s spec_accept_rate=%s spec=%s",
+                                _ver, _rfl_resp.status_code,
+                                _rfl_j.get("out_ids_len"),
+                                _rfl_j.get("sum_lp"),
+                                _rfl_j.get("mid_lp"),
+                                ("%.4f" % _rfl_rate) if _rfl_rate is not None
+                                else "NA",
+                                _rfl_spec,
+                            )
+                        except Exception as _e_rfl44:
+                            try:
+                                self.logger.info(
+                                    "[RepeatFixedLongProbe-v44] failure: %r",
+                                    _e_rfl44,
                                 )
                             except Exception:
                                 pass
