@@ -157,6 +157,57 @@ class SGLangBackend:
                         rate, self._spec_dec_ema_short, self._spec_dec_ema_long,
                         self._spec_dec_rate_count, self._spec_dec_rate_sum / self._spec_dec_rate_count,
                     )
+                    # [v41] production window snapshot (256-wide)
+                    try:
+                        _win_size_v41 = 256
+                        if not hasattr(self, '_v41_win_rates'):
+                            self._v41_win_rates = []
+                            self._v41_win_completions = []
+                            self._v41_win_prev_start = 0
+                        self._v41_win_rates.append(float(rate))
+                        _ctok_v41 = meta_info.get('completion_tokens', None)
+                        if isinstance(_ctok_v41, (int, float)):
+                            self._v41_win_completions.append(int(_ctok_v41))
+                        if len(self._v41_win_rates) >= _win_size_v41:
+                            _wr = self._v41_win_rates
+                            _wc = self._v41_win_completions
+                            _m_r = sum(_wr) / len(_wr)
+                            _m_c = (sum(_wc) / len(_wc)) if _wc else None
+                            _vr = sum((x - _m_r) ** 2 for x in _wr) / len(_wr)
+                            _sr = _vr ** 0.5
+                            _gn = int(self._spec_dec_rate_count)
+                            logger.info(
+                                '[ProductionAcceptWindow-v41] '
+                                'win=[%d..%d] n=%d rate_mean=%.4f '
+                                'rate_std=%.4f completion_mean=%s '
+                                'rate_min=%.4f rate_max=%.4f',
+                                _gn - len(_wr) + 1, _gn,
+                                len(_wr), _m_r, _sr,
+                                ('%.2f' % _m_c) if _m_c is not None else 'NA',
+                                min(_wr), max(_wr),
+                            )
+                            self._v41_win_rates = []
+                            self._v41_win_completions = []
+                    except Exception as _e_v41w:
+                        pass
+                    # [v41] stash last-seen prompt IDs for probe reuse
+                    try:
+                        _pt_v41 = meta_info.get('prompt_tokens', None)
+                        _pti_v41 = None
+                        # SGLang doesn't echo input_ids in meta; instead,
+                        # peek the outer `response` payload for an 'input_ids'
+                        # field if the caller set return_logprob=True.
+                        _resp_in_v41 = response.get('input_ids', None)
+                        if isinstance(_resp_in_v41, list) and _resp_in_v41:
+                            _pti_v41 = [int(x) for x in _resp_in_v41[:256]
+                                         if isinstance(x, int)]
+                        if _pti_v41 is not None:
+                            type(self)._v41_last_prompt_ids = _pti_v41
+                            type(self)._v41_last_prompt_len = (
+                                int(_pt_v41) if isinstance(_pt_v41, (int, float)) else None
+                            )
+                    except Exception as _e_v41p:
+                        pass
                 except Exception as _e:
                     pass
         if stop_reason == "abort" and stop_message.startswith("Abort before prefill"):

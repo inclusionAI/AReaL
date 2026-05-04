@@ -200,7 +200,7 @@ class MegatronEngine(TrainEngine):
                     "v14:LRScaleGuard+WeightDeltaGuard",
                     "v16:MTPSerializeFp32Upcast(AREAL_MTP_FP32_BROADCAST)",
                     "v28:MTPSigmaDeltaBf16(AREAL_MTP_SIGMA_DELTA_BF16)",
-                    "v40:AcceptHistTrendAccumulator+FixPerLayerIterAndStochProbe(AREAL_MTP_V30_DIAG)",
+                    "v41:RealPromptProbe+ServerInfoProbe+ProductionWindow(AREAL_MTP_V30_DIAG)",
                     "v17:MTPNativeAutoScaler+ConsumerBypass"
                     "(AREAL_MTP_NATIVE_AUTOSCALER,autograd_in_graph)",
                 ]
@@ -5720,6 +5720,75 @@ class MegatronEngine(TrainEngine):
                                 self.logger.info(
                                     "[AcceptHistTrend-v40] accumulator "
                                     "failure: %r", _e_v40_trail,
+                                )
+                            except Exception:
+                                pass
+                        # [v41] realistic-prompt probe reuse
+                        try:
+                            import requests as _rq_rp41
+                            _rp_ids = None
+                            try:
+                                from areal.engine.sglang_remote import (
+                                    SGLangRemote as _SGLR41,
+                                )
+                                _rp_ids = getattr(
+                                    _SGLR41, "_v41_last_prompt_ids", None
+                                )
+                            except Exception:
+                                _rp_ids = None
+                            if isinstance(_rp_ids, list) and len(_rp_ids) >= 4:
+                                _rp_resp = _rq_rp41.post(
+                                    f"http://{_addr_v39}/callback/get_draft_probe_long",
+                                    json={"version": _ver, "input_ids_override": _rp_ids[:256]},
+                                    timeout=240.0,
+                                    proxies={"http": None, "https": None},
+                                )
+                                _rp_j = _rp_resp.json() if _rp_resp.status_code == 200 else {}
+                                self.logger.info(
+                                    "[RealPromptProbe-v41] version=%s status=%s "
+                                    "probe_ids_len=%s probe_ids_head=%s "
+                                    "out_ids_len=%s spec=%s",
+                                    _ver, _rp_resp.status_code,
+                                    _rp_j.get("probe_ids_len"),
+                                    _rp_j.get("probe_ids_head"),
+                                    _rp_j.get("out_ids_len"),
+                                    _rp_j.get("spec_fields"),
+                                )
+                            else:
+                                self.logger.info(
+                                    "[RealPromptProbe-v41] version=%s skipped "
+                                    "(no production prompt cached yet)",
+                                    _ver,
+                                )
+                        except Exception as _e_rp41:
+                            try:
+                                self.logger.info(
+                                    "[RealPromptProbe-v41] failure: %r",
+                                    _e_rp41,
+                                )
+                            except Exception:
+                                pass
+                        # [v41] server-info probe
+                        try:
+                            import requests as _rq_si41
+                            _si_resp = _rq_si41.post(
+                                f"http://{_addr_v39}/callback/get_server_info_v41",
+                                json={"version": _ver},
+                                timeout=60.0,
+                                proxies={"http": None, "https": None},
+                            )
+                            _si_j = _si_resp.json() if _si_resp.status_code == 200 else {}
+                            self.logger.info(
+                                "[ServerInfoProbe-v41] version=%s status=%s "
+                                "servers=%s",
+                                _ver, _si_resp.status_code,
+                                _si_j.get("servers"),
+                            )
+                        except Exception as _e_si41:
+                            try:
+                                self.logger.info(
+                                    "[ServerInfoProbe-v41] failure: %r",
+                                    _e_si41,
                                 )
                             except Exception:
                                 pass

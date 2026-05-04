@@ -1018,6 +1018,12 @@ class RolloutController:
             _version = payload.get("version")
             _srv = None
             _probe_ids = [1, 100, 200, 300, 400, 500, 600, 700]
+            # [v41] honor caller override for realistic-prompt probe
+            _override_v41 = payload.get("input_ids_override")
+            if isinstance(_override_v41, list) and _override_v41:
+                _probe_ids = [int(x) for x in _override_v41 if isinstance(x, int)]
+                if not _probe_ids:
+                    _probe_ids = [1, 100, 200, 300, 400, 500, 600, 700]
             try:
                 if not self.server_infos:
                     return jsonify(
@@ -1076,6 +1082,8 @@ class RolloutController:
                 return jsonify(
                     {"version": _version,
                      "server": _srv,
+                     "probe_ids_len": len(_probe_ids),
+                     "probe_ids_head": _probe_ids[:8],
                      "out_ids_first16": _out_ids[:16],
                      "out_ids_last16": _out_ids[-16:] if len(_out_ids) >= 16 else _out_ids,
                      "out_ids_len": len(_out_ids),
@@ -1192,6 +1200,56 @@ class RolloutController:
                 logger.warning(f"[v39] stoch probe unexpected: {_e!r}")
                 return jsonify(
                     {"error": repr(_e), "version": _version}
+                ), 200
+
+        # ------------------------------------------------------------
+        # [v41] /callback/get_server_info_v41
+        # Hit SGLang /get_server_info to pull cumulative spec counters
+        # at the server level, independent of per-request.
+        # ------------------------------------------------------------
+        @app.route("/callback/get_server_info_v41", methods=["POST"])
+        def get_server_info_v41():
+            payload = request.get_json() or {}
+            _version = payload.get("version")
+            try:
+                if not self.server_infos:
+                    return jsonify(
+                        {"error": "no server_infos", "version": _version}
+                    ), 200
+                import requests as _rq41
+                _acc = []
+                for _s in self.server_infos:
+                    _srv = f"{_s.host}:{_s.port}"
+                    try:
+                        _r = _rq41.get(
+                            f"http://{_srv}/get_server_info",
+                            timeout=30.0,
+                            proxies={"http": None, "https": None},
+                        )
+                        if _r.status_code == 200:
+                            _j = _r.json() if _r.headers.get(
+                                "Content-Type", ""
+                            ).startswith("application/json") else {}
+                            # extract only fields of interest to keep
+                            # log line short
+                            _keep = {}
+                            for _k, _v in (_j or {}).items():
+                                _kl = str(_k).lower()
+                                if ("spec" in _kl or "draft" in _kl
+                                        or "accept" in _kl or "token" in _kl
+                                        or "version" in _kl or "weight" in _kl):
+                                    _keep[str(_k)] = _v
+                            _acc.append({"server": _srv, "info": _keep})
+                        else:
+                            _acc.append({"server": _srv, "status": _r.status_code,
+                                         "body_head": _r.text[:200]})
+                    except Exception as _e41s:
+                        _acc.append({"server": _srv, "err": repr(_e41s)})
+                return jsonify({"version": _version, "servers": _acc}), 200
+            except Exception as _e41:
+                logger.warning(f"[v41] server_info unexpected: {_e41!r}")
+                return jsonify(
+                    {"error": repr(_e41), "version": _version}
                 ), 200
 
         @app.errorhandler(Exception)
