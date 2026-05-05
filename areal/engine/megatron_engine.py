@@ -208,7 +208,8 @@ class MegatronEngine(TrainEngine):
                     "v48:MTPMasterCarry(AREAL_MTP_V48_MASTER_CARRY)",
                     "v49:MTPLossClipTight+GradFp32Coerce+LossBoost(AREAL_MTP_V49_CLIP_TIGHT,AREAL_MTP_V49_GRAD_FP32_COERCE,AREAL_MTP_V49_LOSS_BOOST)",
                     "v50:MTPNativePassthrough(default-on; set AREAL_MTP_NATIVE_AUTOSCALER=0 to fall back to legacy FIFO)",
-                    "v51:MTPGradClipNorm(default-on; AREAL_MTP_V51_GRAD_CLIP_NORM=<float>, default=1.0)",
+                    "v51:MTPGradClipNorm(diag-only; AREAL_MTP_V51_GRAD_CLIP_NORM, default=0 after v52)",
+                    "v52:MTPSourceLossCap(default-on; AREAL_MTP_V52_LOSS_CAP_RATIO=<float>, default=2.0)",
                     "v17:MTPNativeAutoScaler+ConsumerBypass"
                     "(AREAL_MTP_NATIVE_AUTOSCALER,autograd_in_graph)",
                 ]
@@ -1507,7 +1508,7 @@ class MegatronEngine(TrainEngine):
         try:
             import os as _os_v51c
             _v51_thr = float(_os_v51c.environ.get(
-                'AREAL_MTP_V51_GRAD_CLIP_NORM', '1.0'))
+                'AREAL_MTP_V51_GRAD_CLIP_NORM', '0'))
         except Exception:
             _v51_thr = 1.0
         if (
@@ -2350,6 +2351,63 @@ class MegatronEngine(TrainEngine):
                                         _mtp_loss_to_store = mtp_loss_scale * mtp_loss
                                     else:
                                         _mtp_loss_to_store = mtp_loss_scale * mtp_loss / num_tokens
+                                    # [MTPSourceLossCap-v52] Adaptive source-side soft-cap on
+                                    # _mtp_loss_to_store BEFORE it is appended to FIFO and BEFORE
+                                    # MTPLossAutoScaler.apply. v51 clipped main_grad after backward
+                                    # but Adam's m/sqrt(v) normalisation made that ineffective
+                                    # (log.34: max|delta|=0.63 at v9 almost unchanged vs log.33=0.64).
+                                    # v52 scales the loss ITSELF, which autograd propagates as a
+                                    # magnitude reduction on the injected gradient without touching
+                                    # direction -- effective for both the FIFO/legacy path and the
+                                    # v50 passthrough path. Threshold tracks an EMA of |sum(loss)|;
+                                    # default cap = ratio * EMA, ratio via
+                                    # AREAL_MTP_V52_LOSS_CAP_RATIO (default 2.0).
+                                    # Disable: AREAL_MTP_V52_LOSS_CAP_RATIO=0
+                                    try:
+                                        import os as _os_v52s
+                                        _v52_ratio = float(_os_v52s.environ.get(
+                                            'AREAL_MTP_V52_LOSS_CAP_RATIO', '2.0'))
+                                    except Exception:
+                                        _v52_ratio = 2.0
+                                    if _v52_ratio > 0.0:
+                                        try:
+                                            _v52_abs_sum = float(
+                                                _mtp_loss_to_store.detach().float().abs().sum().item()
+                                            )
+                                            _v52_ema_prev = getattr(
+                                                _engine_ref, '_v52_loss_abs_sum_ema', None)
+                                            if _v52_ema_prev is None or _v52_ema_prev <= 0.0:
+                                                _v52_ema = _v52_abs_sum
+                                            else:
+                                                _v52_ema = 0.95 * _v52_ema_prev + 0.05 * _v52_abs_sum
+                                            _engine_ref._v52_loss_abs_sum_ema = _v52_ema
+                                            _v52_cap = _v52_ratio * _v52_ema
+                                            _v52_capped = False
+                                            _v52_scale = 1.0
+                                            if (_v52_cap > 0.0
+                                                    and _v52_abs_sum > _v52_cap):
+                                                _v52_scale = _v52_cap / (_v52_abs_sum + 1e-12)
+                                                _mtp_loss_to_store = (
+                                                    _mtp_loss_to_store * _v52_scale)
+                                                _v52_capped = True
+                                            _v52_ctr = getattr(
+                                                _engine_ref, '_v52_cap_ctr', 0) + 1
+                                            _engine_ref._v52_cap_ctr = _v52_ctr
+                                            if (_v52_ctr <= 5 or _v52_ctr % 50 == 0
+                                                    or _v52_capped):
+                                                _logger.info(
+                                                    '[MTPSourceLossCap-v52] call=%d '
+                                                    'abs_sum=%.4e ema=%.4e cap=%.4e '
+                                                    'ratio=%.2f capped=%s scale=%.4e',
+                                                    _v52_ctr, _v52_abs_sum, _v52_ema,
+                                                    _v52_cap, _v52_ratio, _v52_capped,
+                                                    _v52_scale,
+                                                )
+                                        except Exception as _e_v52s:
+                                            _logger.warning(
+                                                '[MTPSourceLossCap-v52] failed: %s',
+                                                _e_v52s,
+                                            )
                                     _engine_ref._mtp_loss_for_backward.append(_mtp_loss_to_store)
 
                                     # ---  BEGIN ---
