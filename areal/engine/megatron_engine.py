@@ -210,6 +210,7 @@ class MegatronEngine(TrainEngine):
                     "v50:MTPNativePassthrough(default-on; set AREAL_MTP_NATIVE_AUTOSCALER=0 to fall back to legacy FIFO)",
                     "v51:MTPGradClipNorm(diag-only; AREAL_MTP_V51_GRAD_CLIP_NORM, default=0 after v52)",
                     "v52:MTPSourceLossCap(default-on; AREAL_MTP_V52_LOSS_CAP_RATIO=<float>, default=2.0)",
+                    "v53:MTPSharedWeightIsolate(detach output_weight for MTP output_layer)",
                     "v17:MTPNativeAutoScaler+ConsumerBypass"
                     "(AREAL_MTP_NATIVE_AUTOSCALER,autograd_in_graph)",
                 ]
@@ -2180,6 +2181,29 @@ class MegatronEngine(TrainEngine):
                                     self_model.shared_embedding_or_output_weight()
                                 )
 
+                            # ----------------------------------------------------------------
+                            # [MTPSharedWeightIsolate-v53]
+                            # When share_embeddings_and_output_weights=True the returned
+                            # `output_weight` IS the shared parameter tensor. If we pass it
+                            # directly to `output_layer(weight=...)` inside the MTP loop
+                            # below, the MTP CE backward will accumulate gradient on that
+                            # shared parameter, contaminating:
+                            #   - the embedding lookup used by the main model, and
+                            #   - the sglang spec-decoding weight sync (mtp_hf_tensors),
+                            # which empirically drives spec_accept_rate / PAW to collapse
+                            # within ~13 versions (see round 12 log comparison).
+                            #
+                            # Fix: snapshot a *detached* view of the weight specifically
+                            # for the MTP branch. The main-path `output_layer(... weight=
+                            # output_weight ...)` call below is LEFT UNTOUCHED so GRPO
+                            # gradient on lm_head / embedding is preserved exactly.
+                            # ----------------------------------------------------------------
+                            _mtp_output_weight_v53 = (
+                                output_weight.detach()
+                                if output_weight is not None
+                                else None
+                            )
+
                             if mtp_in_postprocess:
                                 hidden_states = self_model.mtp(
                                     input_ids=input_ids,
@@ -2237,7 +2261,10 @@ class MegatronEngine(TrainEngine):
                                             hidden_states.requires_grad)
                                     mtp_logits, _ = self_model.output_layer(
                                         _mtp_hs,
-                                        weight=output_weight,
+                                        # [MTPSharedWeightIsolate-v53] detached weight
+                                        # prevents MTP CE grad from contaminating
+                                        # shared embedding / lm_head parameter.
+                                        weight=_mtp_output_weight_v53,
                                         runtime_gather_output=runtime_gather_output,
                                     )
                                     # Diagnostic: verify gradient chain is intact
