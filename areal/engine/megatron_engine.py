@@ -213,6 +213,7 @@ class MegatronEngine(TrainEngine):
                     "v53:MTPSharedWeightIsolate(detach output_weight for MTP output_layer)",
                     "v54:MTPFreezeGate+DraftEMA+SpecDecFlowLog(AREAL_MTP_V54_FREEZE[default=0],AREAL_MTP_V54_DRAFT_EMA[default=0.0],AREAL_MTP_V54_SPEC_FLOW_LOG[default=1])",
                     "v55:MTPLRBoost(AREAL_MTP_V55_MTP_LR_BOOST[default=1.0])",
+                    "v56:MTPShipSummaryFix+GradTrace+LossTrace(AREAL_MTP_V56_GRAD_TRACE[default=1],AREAL_MTP_V56_LOSS_TRACE[default=1])",
                     "v17:MTPNativeAutoScaler+ConsumerBypass"
                     "(AREAL_MTP_NATIVE_AUTOSCALER,autograd_in_graph)",
                 ]
@@ -1669,6 +1670,205 @@ class MegatronEngine(TrainEngine):
                 )
             except Exception:
                 pass
+        # [MTPGradTrace-v56] Detailed per-MTP-param grad trace.
+        # Captures `.grad`, `.main_param.grad`, and `.main_param.main_grad`
+        # exactly as they arrive from backward, BEFORE the v54 freeze
+        # block (which would zero them) and BEFORE the v55 LR boost
+        # block (which would scale them).  Default ON: gated by
+        # AREAL_MTP_V56_GRAD_TRACE (default='1').
+        try:
+            import os as _os_v56g
+            _v56_grad_on = (
+                _os_v56g.environ.get(
+                    'AREAL_MTP_V56_GRAD_TRACE', '1',
+                ) == '1'
+                and getattr(self, 'enable_mtp_training', False)
+                and getattr(self, 'model', None) is not None
+            )
+            if _v56_grad_on:
+                try:
+                    import torch as _torch_v56g
+                    import torch.distributed as _dist_v56g
+                    _v56g_rank = (
+                        _dist_v56g.get_rank()
+                        if _dist_v56g.is_initialized() else 0
+                    )
+                except Exception:
+                    _torch_v56g = None
+                    _v56g_rank = 0
+                _v56g_emb_ptrs = set()
+                try:
+                    for _mod_e in self.model:
+                        for _ne, _pe in _mod_e.named_parameters():
+                            if (
+                                'embedding' in _ne
+                                or 'word_embeddings' in _ne
+                            ):
+                                try:
+                                    _v56g_emb_ptrs.add(int(_pe.data_ptr()))
+                                except Exception:
+                                    pass
+                except Exception:
+                    pass
+                _v56g_n = 0
+                _v56g_n_with_grad = 0
+                _v56g_n_with_main_grad = 0
+                _v56g_n_shared = 0
+                _v56g_any_nan = False
+                _v56g_any_inf = False
+                for _mod_v56g in self.model:
+                    for _n_v56g, _p_v56g in (
+                        _mod_v56g.named_parameters()
+                    ):
+                        if not (
+                            '.mtp.' in _n_v56g
+                            or '.mtp_layers.' in _n_v56g
+                            or '.enorm' in _n_v56g
+                            or '.hnorm' in _n_v56g
+                            or '.eh_proj' in _n_v56g
+                            or '.shared_head.' in _n_v56g
+                        ):
+                            continue
+                        _v56g_n += 1
+                        _g = getattr(_p_v56g, 'grad', None)
+                        _g_present = _g is not None
+                        _g_dtype = str(getattr(_g, 'dtype', None))
+                        _g_numel = (
+                            int(_g.numel()) if _g_present else 0
+                        )
+                        _g_norm = -1.0
+                        _g_amax = -1.0
+                        _g_isfinite = True
+                        if _g_present:
+                            try:
+                                _gd = _g.detach().float()
+                                _g_norm = float(_gd.norm().item())
+                                _g_amax = float(
+                                    _gd.abs().max().item()
+                                )
+                                _g_isfinite = bool(
+                                    _torch_v56g.isfinite(_gd).all().item()
+                                ) if _torch_v56g is not None else True
+                                if _torch_v56g is not None:
+                                    if bool(
+                                        _torch_v56g.isnan(_gd).any().item()
+                                    ):
+                                        _v56g_any_nan = True
+                                    if bool(
+                                        _torch_v56g.isinf(_gd).any().item()
+                                    ):
+                                        _v56g_any_inf = True
+                                _v56g_n_with_grad += 1
+                            except Exception:
+                                pass
+                        _mp = getattr(_p_v56g, 'main_param', None)
+                        _mp_present = _mp is not None
+                        _mp_dtype = str(getattr(_mp, 'dtype', None))
+                        _mp_grad = (
+                            getattr(_mp, 'grad', None)
+                            if _mp_present else None
+                        )
+                        _mp_grad_present = _mp_grad is not None
+                        _mp_grad_norm = -1.0
+                        if _mp_grad_present:
+                            try:
+                                _mp_grad_norm = float(
+                                    _mp_grad.detach().float()
+                                        .norm().item()
+                                )
+                            except Exception:
+                                pass
+                        _main_grad = (
+                            getattr(_mp, 'main_grad', None)
+                            if _mp_present else None
+                        )
+                        _mg_present = _main_grad is not None
+                        _mg_dtype = str(getattr(_main_grad, 'dtype', None))
+                        _mg_norm = -1.0
+                        _mg_amax = -1.0
+                        _mg_isfinite = True
+                        if _mg_present:
+                            try:
+                                _mgd = _main_grad.detach().float()
+                                _mg_norm = float(_mgd.norm().item())
+                                _mg_amax = float(
+                                    _mgd.abs().max().item()
+                                )
+                                _mg_isfinite = bool(
+                                    _torch_v56g.isfinite(_mgd)
+                                        .all().item()
+                                ) if _torch_v56g is not None else True
+                                if _torch_v56g is not None:
+                                    if bool(
+                                        _torch_v56g.isnan(_mgd)
+                                            .any().item()
+                                    ):
+                                        _v56g_any_nan = True
+                                    if bool(
+                                        _torch_v56g.isinf(_mgd)
+                                            .any().item()
+                                    ):
+                                        _v56g_any_inf = True
+                                _v56g_n_with_main_grad += 1
+                            except Exception:
+                                pass
+                        _shared = False
+                        try:
+                            _shared = (
+                                int(_p_v56g.data_ptr())
+                                in _v56g_emb_ptrs
+                            )
+                        except Exception:
+                            pass
+                        if _shared:
+                            _v56g_n_shared += 1
+                        _gf = getattr(_p_v56g, 'grad_fn', None)
+                        self.logger.info(
+                            '[MTPGradTrace-v56] rank=%d name=%s '
+                            'grad_present=%s grad_dtype=%s '
+                            'grad_numel=%d grad_norm=%.6e '
+                            'grad_amax=%.6e grad_isfinite=%s '
+                            'main_param_present=%s '
+                            'main_param_dtype=%s '
+                            'main_param_grad_present=%s '
+                            'main_param_grad_norm=%.6e '
+                            'main_grad_present=%s '
+                            'main_grad_dtype=%s '
+                            'main_grad_norm=%.6e '
+                            'main_grad_amax=%.6e '
+                            'main_grad_isfinite=%s '
+                            'grad_fn_present=%s requires_grad=%s '
+                            'is_leaf=%s shared_tensor=%s',
+                            _v56g_rank, _n_v56g,
+                            str(_g_present), _g_dtype,
+                            _g_numel, _g_norm,
+                            _g_amax, str(_g_isfinite),
+                            str(_mp_present), _mp_dtype,
+                            str(_mp_grad_present), _mp_grad_norm,
+                            str(_mg_present), _mg_dtype,
+                            _mg_norm, _mg_amax, str(_mg_isfinite),
+                            str(_gf is not None),
+                            str(bool(_p_v56g.requires_grad)),
+                            str(bool(_p_v56g.is_leaf)),
+                            str(_shared),
+                        )
+                if _v56g_rank == 0:
+                    self.logger.info(
+                        '[MTPGradTrace-v56] summary n_mtp=%d '
+                        'n_with_grad=%d n_with_main_grad=%d '
+                        'n_shared_tensor=%d any_nan=%s any_inf=%s',
+                        _v56g_n, _v56g_n_with_grad,
+                        _v56g_n_with_main_grad, _v56g_n_shared,
+                        str(_v56g_any_nan), str(_v56g_any_inf),
+                    )
+        except Exception as _e_v56g:
+            try:
+                self.logger.warning(
+                    '[MTPGradTrace-v56] grad trace failed: %r',
+                    _e_v56g,
+                )
+            except Exception:
+                pass
         # [MTPFreezeGate-v54] Disambiguation/mitigation control.
         # When AREAL_MTP_V54_FREEZE=1 (default '0'=off), zero every
         # MTP parameter's .grad AND its main_param.grad/main_grad
@@ -1905,6 +2105,108 @@ class MegatronEngine(TrainEngine):
             try:
                 self.logger.warning(
                     '[MTPLRBoost-v55] boost failed: %r', _e_v55b,
+                )
+            except Exception:
+                pass
+        # [MTPLossTrace-v56] Best-effort defensive trace of any MTP
+        # loss state stored on `self`, run right before optimizer.step().
+        # Gated by AREAL_MTP_V56_LOSS_TRACE (default='1').
+        try:
+            import os as _os_v56l
+            _v56_loss_on = (
+                _os_v56l.environ.get(
+                    'AREAL_MTP_V56_LOSS_TRACE', '1',
+                ) == '1'
+            )
+            if _v56_loss_on:
+                try:
+                    import torch as _torch_v56l
+                except Exception:
+                    _torch_v56l = None
+                _v56l_keys = []
+                _v56l_found = []
+                try:
+                    _v56l_attrs = [
+                        _a for _a in dir(self)
+                        if (
+                            ('mtp' in _a.lower()
+                             and 'loss' in _a.lower())
+                            or _a in (
+                                'total_loss', '_last_mtp_loss',
+                                'mtp_loss',
+                                '_mtp_loss_for_backward',
+                                '_mtp_loss_value',
+                            )
+                        )
+                    ]
+                except Exception:
+                    _v56l_attrs = []
+                for _a in _v56l_attrs:
+                    try:
+                        _v = getattr(self, _a, None)
+                    except Exception:
+                        continue
+                    if _v is None:
+                        continue
+                    _v56l_keys.append(_a)
+                    _is_tensor = (
+                        _torch_v56l is not None
+                        and isinstance(_v, _torch_v56l.Tensor)
+                    )
+                    if _is_tensor:
+                        try:
+                            _val = (
+                                float(_v.detach().float().mean().item())
+                                if _v.numel() > 0 else float('nan')
+                            )
+                        except Exception:
+                            _val = float('nan')
+                        _v56l_found.append(_a)
+                        try:
+                            self.logger.info(
+                                '[MTPLossTrace-v56] attr=%s '
+                                'kind=tensor value=%.6e dtype=%s '
+                                'numel=%d requires_grad=%s '
+                                'grad_fn_present=%s',
+                                _a, _val, str(_v.dtype),
+                                int(_v.numel()),
+                                str(bool(_v.requires_grad)),
+                                str(
+                                    getattr(_v, 'grad_fn', None)
+                                    is not None
+                                ),
+                            )
+                        except Exception:
+                            pass
+                    elif isinstance(_v, (int, float)):
+                        _v56l_found.append(_a)
+                        try:
+                            self.logger.info(
+                                '[MTPLossTrace-v56] attr=%s '
+                                'kind=scalar value=%s',
+                                _a, str(_v),
+                            )
+                        except Exception:
+                            pass
+                    elif isinstance(_v, (list, tuple)):
+                        try:
+                            self.logger.info(
+                                '[MTPLossTrace-v56] attr=%s '
+                                'kind=%s len=%d',
+                                _a, type(_v).__name__, len(_v),
+                            )
+                        except Exception:
+                            pass
+                self.logger.info(
+                    '[MTPLossTrace-v56] found=%s keys=%s',
+                    str(bool(_v56l_found)),
+                    str(_v56l_keys),
+                )
+        except Exception as _e_v56l:
+            try:
+                self.logger.warning(
+                    '[MTPLossTrace-v56] loss trace failed: %r',
+                    _e_v56l,
                 )
             except Exception:
                 pass
@@ -4248,8 +4550,18 @@ class MegatronEngine(TrainEngine):
                 _v54_ship_first = None
                 _v54_ship_first_l2 = -1.0
                 _v54_ship_mtp_only = 0
+                # [MTPShipSummaryFix-v56] Iterate the REAL MTP wire
+                # payload (`mtp_hf_tensors`, stashed on self at the
+                # `_update_weights_from_distributed` call site) instead
+                # of `converted_named_tensors` (which is the main-model
+                # bucket payload during the MTP wire path).  This fixes
+                # the v54 ship_summary log that always reported
+                # n_mtp_shipped=0.
+                _v56_ship_iter = list(
+                    getattr(self, '_v56_mtp_hf_tensors', []) or []
+                )
                 for _v54_si, (_v54_sn, _v54_st) in enumerate(
-                    converted_named_tensors
+                    _v56_ship_iter
                 ):
                     _is_mtp = (
                         '.enorm' in _v54_sn
@@ -4257,6 +4569,10 @@ class MegatronEngine(TrainEngine):
                         or '.eh_proj' in _v54_sn
                         or '.shared_head.' in _v54_sn
                         or '.mtp_layers.' in _v54_sn
+                        # [MTPShipSummaryFix-v56] Items in mtp_hf_tensors
+                        # are already MTP-only, so accept anything that
+                        # came from that list as MTP wire payload.
+                        or True
                     )
                     if not _is_mtp:
                         continue
@@ -4300,6 +4616,7 @@ class MegatronEngine(TrainEngine):
                     )
                 self.logger.info(
                     '[SpecDecFlow-v54] stage=ship_summary '
+                    '[MTPShipSummaryFix-v56] '
                     'version=%s n_mtp_shipped=%d '
                     'total_bytes=%d wire_norm=%.6e '
                     'd_wire_norm=%.6e first=%s first_l2=%.6e '
@@ -6729,6 +7046,16 @@ class MegatronEngine(TrainEngine):
                 f"{len(converted_named_tensors)} tensors at elapsed="
                 f"{_diag_time.time() - _diag_t0:.3f}s"
             )
+            # [MTPShipSummaryFix-v56] Stash the actual MTP wire payload
+            # (`mtp_hf_tensors`) on self so the v54 ship-stage diagnostic
+            # block inside `_update_bucket_weights_from_distributed` can
+            # iterate the *correct* list (the one truly broadcast to the
+            # inference engine), not `converted_named_tensors` which holds
+            # main-model bucket payload during the MTP wire path.
+            try:
+                self._v56_mtp_hf_tensors = list(mtp_hf_tensors)
+            except Exception:
+                self._v56_mtp_hf_tensors = []
             self._update_bucket_weights_from_distributed(meta, converted_named_tensors)
             self.logger.info(
                 f"[DiagUW] _update_bucket_weights_from_distributed completed at elapsed="
