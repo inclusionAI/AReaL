@@ -211,6 +211,7 @@ class MegatronEngine(TrainEngine):
                     "v51:MTPGradClipNorm(diag-only; AREAL_MTP_V51_GRAD_CLIP_NORM, default=0 after v52)",
                     "v52:MTPSourceLossCap(default-on; AREAL_MTP_V52_LOSS_CAP_RATIO=<float>, default=2.0)",
                     "v53:MTPSharedWeightIsolate(detach output_weight for MTP output_layer)",
+                    "v54:MTPFreezeGate+DraftEMA+SpecDecFlowLog(AREAL_MTP_V54_FREEZE[default=0],AREAL_MTP_V54_DRAFT_EMA[default=0.0],AREAL_MTP_V54_SPEC_FLOW_LOG[default=1])",
                     "v17:MTPNativeAutoScaler+ConsumerBypass"
                     "(AREAL_MTP_NATIVE_AUTOSCALER,autograd_in_graph)",
                 ]
@@ -1560,8 +1561,307 @@ class MegatronEngine(TrainEngine):
                 self.logger.warning(
                     '[MTPGradClipNorm-v51] failed: %s', _e_v51c,
                 )
+        # [SpecDecFlow-v54] PRE_STEP stage — per-MTP-param grad
+        # diagnostics BEFORE optimizer step.  Captures what the
+        # optimizer is about to apply.  Default ON.
+        try:
+            import os as _os_v54p
+            _v54_flow_on = (
+                _os_v54p.environ.get(
+                    'AREAL_MTP_V54_SPEC_FLOW_LOG', '1',
+                ) == '1'
+                and getattr(self, 'enable_mtp_training', False)
+                and getattr(self, 'model', None) is not None
+            )
+            if _v54_flow_on:
+                _v54_pre_seen = 0
+                _v54_pre_with_grad = 0
+                _v54_pre_mp_avail = 0
+                _v54_pre_mg_avail = 0
+                _v54_pre_grad_norm_sq = 0.0
+                if not hasattr(self, '_v54_pre_snap'):
+                    self._v54_pre_snap = {}
+                for _mod_v54p in self.model:
+                    for _n_v54p, _p_v54p in (
+                        _mod_v54p.named_parameters()
+                    ):
+                        if ('.mtp.' not in _n_v54p
+                                and '.mtp_layers.' not in _n_v54p):
+                            continue
+                        _v54_pre_seen += 1
+                        _g_v54p = getattr(_p_v54p, 'grad', None)
+                        _g_norm_v54p = -1.0
+                        _g_amax_v54p = -1.0
+                        if _g_v54p is not None:
+                            try:
+                                _g_norm_v54p = float(
+                                    _g_v54p.detach().float()
+                                        .norm().item()
+                                )
+                                _g_amax_v54p = float(
+                                    _g_v54p.detach().abs()
+                                        .max().item()
+                                )
+                                _v54_pre_grad_norm_sq += (
+                                    _g_norm_v54p * _g_norm_v54p
+                                )
+                                _v54_pre_with_grad += 1
+                            except Exception:
+                                pass
+                        _mp_v54p = getattr(
+                            _p_v54p, 'main_param', None,
+                        )
+                        _mg_amax_v54p = -1.0
+                        if _mp_v54p is not None:
+                            _v54_pre_mp_avail += 1
+                            _mg_v54p = getattr(
+                                _mp_v54p, 'main_grad', None,
+                            )
+                            if _mg_v54p is None:
+                                _mg_v54p = getattr(
+                                    _mp_v54p, 'grad', None,
+                                )
+                            if _mg_v54p is not None:
+                                _v54_pre_mg_avail += 1
+                                try:
+                                    _mg_amax_v54p = float(
+                                        _mg_v54p.detach().abs()
+                                            .max().item()
+                                    )
+                                except Exception:
+                                    pass
+                            try:
+                                self._v54_pre_snap[_n_v54p] = (
+                                    _mp_v54p.detach().float().clone()
+                                )
+                            except Exception:
+                                pass
+                        self.logger.info(
+                            '[SpecDecFlow-v54] stage=pre_step '
+                            'name=%s shape=%s dtype=%s '
+                            'grad_norm=%.6e grad_amax=%.6e '
+                            'main_param_present=%s '
+                            'main_grad_amax=%.6e',
+                            _n_v54p,
+                            str(tuple(_p_v54p.shape)),
+                            str(_p_v54p.dtype),
+                            _g_norm_v54p, _g_amax_v54p,
+                            str(_mp_v54p is not None),
+                            _mg_amax_v54p,
+                        )
+                _v54_pre_grad_norm = (
+                    _v54_pre_grad_norm_sq ** 0.5
+                )
+                self.logger.info(
+                    '[SpecDecFlow-v54] stage=pre_step_summary '
+                    'n_mtp_params=%d n_with_grad=%d '
+                    'n_main_param=%d n_main_grad=%d '
+                    'mtp_grad_norm=%.6e',
+                    _v54_pre_seen, _v54_pre_with_grad,
+                    _v54_pre_mp_avail, _v54_pre_mg_avail,
+                    _v54_pre_grad_norm,
+                )
+        except Exception as _e_v54p:
+            try:
+                self.logger.warning(
+                    '[SpecDecFlow-v54] pre_step failed: %r', _e_v54p,
+                )
+            except Exception:
+                pass
+        # [MTPFreezeGate-v54] Disambiguation/mitigation control.
+        # When AREAL_MTP_V54_FREEZE=1 (default '0'=off), zero every
+        # MTP parameter's .grad AND its main_param.grad/main_grad
+        # right before the Megatron distributed-optimizer step.
+        # This cleanly freezes every MTP tensor (enorm/hnorm/
+        # eh_proj/transformer_layer/final_layernorm/shared_head),
+        # leaving the rest of the model to be trained normally by
+        # GRPO.  Any subsequent shipment to sglang will contain
+        # bit-identical MTP weights.
+        #
+        # Usage: set AREAL_MTP_V54_FREEZE=1 for one run.  If
+        #   rollout/spec_accept_rate stops declining, MTP weight
+        #   drift (H1) is the cause and EMA should be tuned.
+        #   If the rate still declines, main-model GRPO drift of
+        #   the hidden-state distribution (H2) is the cause and a
+        #   different mitigation is needed.
+        try:
+            import os as _os_v54f
+            _v54_freeze = (
+                _os_v54f.environ.get('AREAL_MTP_V54_FREEZE', '0')
+                == '1'
+                and getattr(self, 'enable_mtp_training', False)
+                and getattr(self, 'model', None) is not None
+            )
+            self._v54_freeze_engaged = bool(_v54_freeze)
+            if _v54_freeze:
+                _v54_n_zeroed = 0
+                for _mod_v54f in self.model:
+                    for _n_v54f, _p_v54f in (
+                        _mod_v54f.named_parameters()
+                    ):
+                        if ('.mtp.' not in _n_v54f
+                                and '.mtp_layers.' not in _n_v54f):
+                            continue
+                        try:
+                            if _p_v54f.grad is not None:
+                                _p_v54f.grad.detach().zero_()
+                        except Exception:
+                            pass
+                        _mp_v54f = getattr(
+                            _p_v54f, 'main_param', None,
+                        )
+                        if _mp_v54f is not None:
+                            try:
+                                _mg_v54f = getattr(
+                                    _mp_v54f, 'grad', None,
+                                )
+                                if _mg_v54f is not None:
+                                    _mg_v54f.detach().zero_()
+                            except Exception:
+                                pass
+                            _mgf_v54f = getattr(
+                                _mp_v54f, 'main_grad', None,
+                            )
+                            if _mgf_v54f is not None:
+                                try:
+                                    _mgf_v54f.detach().zero_()
+                                except Exception:
+                                    pass
+                        _v54_n_zeroed += 1
+                        self.logger.info(
+                            '[SpecDecFlow-v54] stage=freeze '
+                            'name=%s zeroed=True', _n_v54f,
+                        )
+                self.logger.info(
+                    '[SpecDecFlow-v54] stage=freeze_summary '
+                    'n_zeroed=%d', _v54_n_zeroed,
+                )
+                self.logger.info(
+                    '[MTPFreezeGate-v54] zeroed grads for %d MTP '
+                    'params before optimizer.step()', _v54_n_zeroed,
+                )
+        except Exception as _e_v54f:
+            try:
+                self.logger.warning(
+                    '[MTPFreezeGate-v54] gate failed: %r', _e_v54f,
+                )
+            except Exception:
+                pass
         with trace_scope("megatron_engine.step"):
             update_successful, grad_norm, _ = self.optimizer.step()
+        # [SpecDecFlow-v54] POST_STEP stage — per-MTP-param delta
+        # diagnostics AFTER optimizer step.  Captures what the
+        # optimizer actually applied (fp32 master delta).
+        try:
+            import os as _os_v54q
+            _v54_flow_on2 = (
+                _os_v54q.environ.get(
+                    'AREAL_MTP_V54_SPEC_FLOW_LOG', '1',
+                ) == '1'
+                and bool(update_successful)
+                and getattr(self, 'enable_mtp_training', False)
+                and getattr(self, 'model', None) is not None
+            )
+            if _v54_flow_on2:
+                _v54_post_seen = 0
+                _v54_post_stalled = 0
+                _v54_post_max_delta = 0.0
+                _v54_post_max_name = ''
+                for _mod_v54q in self.model:
+                    for _n_v54q, _p_v54q in (
+                        _mod_v54q.named_parameters()
+                    ):
+                        if ('.mtp.' not in _n_v54q
+                                and '.mtp_layers.' not in _n_v54q):
+                            continue
+                        _v54_post_seen += 1
+                        _mp_v54q = getattr(
+                            _p_v54q, 'main_param', None,
+                        )
+                        _delta_amax = -1.0
+                        _delta_l2 = -1.0
+                        _post_amax = -1.0
+                        _bf16_cast_diff = -1.0
+                        if _mp_v54q is not None:
+                            try:
+                                _pre_v54q = getattr(
+                                    self, '_v54_pre_snap', {},
+                                ).get(_n_v54q)
+                                _cur_fp32 = (
+                                    _mp_v54q.detach().float()
+                                )
+                                _post_amax = float(
+                                    _cur_fp32.abs().max().item()
+                                )
+                                if (
+                                    _pre_v54q is not None
+                                    and _pre_v54q.shape
+                                    == _cur_fp32.shape
+                                ):
+                                    _d = _cur_fp32 - _pre_v54q
+                                    _delta_amax = float(
+                                        _d.abs().max().item()
+                                    )
+                                    _delta_l2 = float(
+                                        _d.norm().item()
+                                    )
+                                    if _delta_amax == 0.0:
+                                        _v54_post_stalled += 1
+                                    if _delta_amax > (
+                                        _v54_post_max_delta
+                                    ):
+                                        _v54_post_max_delta = (
+                                            _delta_amax
+                                        )
+                                        _v54_post_max_name = (
+                                            _n_v54q
+                                        )
+                                try:
+                                    _bf = _p_v54q.data.detach()
+                                    _bf16_cast_diff = float(
+                                        (
+                                            _cur_fp32
+                                            - _bf.float()
+                                        ).abs().max().item()
+                                    )
+                                except Exception:
+                                    pass
+                            except Exception:
+                                pass
+                        self.logger.info(
+                            '[SpecDecFlow-v54] stage=post_step '
+                            'name=%s post_amax=%.6e '
+                            'delta_amax=%.6e delta_l2=%.6e '
+                            'bf16_cast_diff=%.6e',
+                            _n_v54q, _post_amax,
+                            _delta_amax, _delta_l2,
+                            _bf16_cast_diff,
+                        )
+                self.logger.info(
+                    '[SpecDecFlow-v54] stage=post_step_summary '
+                    'n_mtp_params=%d n_stalled=%d '
+                    'max_delta=%.6e max_delta_name=%s '
+                    'freeze_engaged=%s',
+                    _v54_post_seen, _v54_post_stalled,
+                    _v54_post_max_delta,
+                    _v54_post_max_name,
+                    str(getattr(
+                        self, '_v54_freeze_engaged', False,
+                    )),
+                )
+                # release pre-snapshot
+                try:
+                    self._v54_pre_snap = {}
+                except Exception:
+                    pass
+        except Exception as _e_v54q:
+            try:
+                self.logger.warning(
+                    '[SpecDecFlow-v54] post_step failed: %r',
+                    _e_v54q,
+                )
+            except Exception:
+                pass
         # [MTPMasterAmp-v47] post-step delta amplification.
         # For each MTP fp32 master tensor whose Adam step delta
         # amax is smaller than  beta * bf16_ULP,  rescale the
@@ -3660,6 +3960,212 @@ class MegatronEngine(TrainEngine):
             self.logger.warning(
                 "[MTPSendPreBcast-v25] probe error: %s", _e_v25s,
             )
+        # [MTPDraftEMA-v54] Optional EMA smoothing of the bf16 wire
+        # payload shipped to sglang, applied right before the RPC
+        # update_weights_from_distributed() call.  alpha in (0,1)
+        # produces:
+        #   W_ship[t] = (1-alpha) * W_ship[t-1] + alpha * W_train[t]
+        # dampening per-step MTP update noise as seen by the EAGLE
+        # draft head.  alpha==0.0 (default) or alpha==1.0 is
+        # pass-through (feature disabled / no smoothing).
+        _v54_ema_applied_names = set()
+        try:
+            import os as _os_v54e
+            _v54_alpha_raw = _os_v54e.environ.get(
+                'AREAL_MTP_V54_DRAFT_EMA', '0.0',
+            )
+            try:
+                _v54_alpha = float(_v54_alpha_raw)
+            except Exception:
+                _v54_alpha = 0.0
+            _v54_ema_on = (0.0 < _v54_alpha < 1.0)
+            self._v54_ema_alpha = _v54_alpha
+            self._v54_ema_enabled = _v54_ema_on
+            if _v54_ema_on:
+                if not hasattr(self, '_v54_ema_state'):
+                    self._v54_ema_state = {}
+                _v54_ema_n = 0
+                for _v54_idx, _v54_np in enumerate(
+                    converted_named_tensors
+                ):
+                    _v54_name, _v54_param = _v54_np
+                    if not (
+                        '.enorm' in _v54_name
+                        or '.hnorm' in _v54_name
+                        or '.eh_proj' in _v54_name
+                        or '.shared_head.' in _v54_name
+                        or '.mtp_layers.' in _v54_name
+                    ):
+                        continue
+                    try:
+                        _v54_cur = _v54_param.data
+                        _v54_prev = self._v54_ema_state.get(_v54_name)
+                        _v54_pre_norm = float(
+                            _v54_cur.float().norm().item()
+                        )
+                        if (
+                            _v54_prev is not None
+                            and _v54_prev.shape == _v54_cur.shape
+                        ):
+                            _v54_smoothed = (
+                                (1.0 - _v54_alpha) * _v54_prev.to(
+                                    torch.float32
+                                )
+                                + _v54_alpha * _v54_cur.to(
+                                    torch.float32
+                                )
+                            )
+                            _v54_smoothed = _v54_smoothed.to(
+                                _v54_cur.dtype
+                            ).contiguous()
+                            _v54_param.data.copy_(_v54_smoothed)
+                            self._v54_ema_state[_v54_name] = (
+                                _v54_smoothed.detach().clone()
+                            )
+                            _v54_ema_applied_names.add(_v54_name)
+                            _v54_ema_n += 1
+                            _v54_post_norm = float(
+                                _v54_param.data.float()
+                                    .norm().item()
+                            )
+                            self.logger.info(
+                                '[SpecDecFlow-v54] stage=ema '
+                                'name=%s alpha=%.4f '
+                                'pre_norm=%.6e post_norm=%.6e '
+                                'applied=True',
+                                _v54_name, _v54_alpha,
+                                _v54_pre_norm, _v54_post_norm,
+                            )
+                        else:
+                            self._v54_ema_state[_v54_name] = (
+                                _v54_cur.detach().clone()
+                            )
+                            self.logger.info(
+                                '[SpecDecFlow-v54] stage=ema '
+                                'name=%s alpha=%.4f '
+                                'pre_norm=%.6e post_norm=%.6e '
+                                'applied=False reason=seed',
+                                _v54_name, _v54_alpha,
+                                _v54_pre_norm, _v54_pre_norm,
+                            )
+                    except Exception:
+                        continue
+                self.logger.info(
+                    '[MTPDraftEMA-v54] applied alpha=%.4f to %d '
+                    'MTP wire tensors (cache_size=%d)',
+                    _v54_alpha, _v54_ema_n,
+                    len(self._v54_ema_state),
+                )
+                self.logger.info(
+                    '[SpecDecFlow-v54] stage=ema_summary '
+                    'alpha=%.4f n_applied=%d cache_size=%d',
+                    _v54_alpha, _v54_ema_n,
+                    len(self._v54_ema_state),
+                )
+        except Exception as _e_v54e:
+            try:
+                self.logger.warning(
+                    '[MTPDraftEMA-v54] gate failed: %r', _e_v54e,
+                )
+            except Exception:
+                pass
+        # [SpecDecFlow-v54] SHIP stage — per-MTP-wire-tensor payload
+        # diagnostics right before dist.broadcast(). Answers:
+        # 'exactly which bytes are shipped to sglang this version?'.
+        try:
+            import os as _os_v54s
+            _v54_flow_on3 = (
+                _os_v54s.environ.get(
+                    'AREAL_MTP_V54_SPEC_FLOW_LOG', '1',
+                ) == '1'
+            )
+            if _v54_flow_on3:
+                _v54_ship_n = 0
+                _v54_ship_bytes = 0
+                _v54_ship_sq = 0.0
+                _v54_ship_cnt = 0
+                _v54_ship_first = None
+                _v54_ship_first_l2 = -1.0
+                _v54_ship_mtp_only = 0
+                for _v54_si, (_v54_sn, _v54_st) in enumerate(
+                    converted_named_tensors
+                ):
+                    _is_mtp = (
+                        '.enorm' in _v54_sn
+                        or '.hnorm' in _v54_sn
+                        or '.eh_proj' in _v54_sn
+                        or '.shared_head.' in _v54_sn
+                        or '.mtp_layers.' in _v54_sn
+                    )
+                    if not _is_mtp:
+                        continue
+                    _v54_ship_mtp_only += 1
+                    try:
+                        _td = _v54_st.detach()
+                        _tf = _td.float()
+                        _l2 = float(_tf.norm().item())
+                        _am = float(_tf.abs().mean().item())
+                        _ax = float(_tf.abs().max().item())
+                        _v54_ship_sq += _l2 * _l2
+                        _v54_ship_cnt += int(_tf.numel())
+                        _v54_ship_bytes += int(
+                            _td.numel() * _td.element_size()
+                        )
+                        _v54_ship_n += 1
+                        if _v54_ship_first is None:
+                            _v54_ship_first = _v54_sn
+                            _v54_ship_first_l2 = _l2
+                        self.logger.info(
+                            '[SpecDecFlow-v54] stage=ship '
+                            'idx=%d name=%s dtype=%s shape=%s '
+                            'l2=%.6e abs_mean=%.6e abs_max=%.6e '
+                            'ema_applied=%s',
+                            _v54_si, _v54_sn, str(_td.dtype),
+                            str(tuple(_td.shape)),
+                            _l2, _am, _ax,
+                            str(_v54_sn in _v54_ema_applied_names),
+                        )
+                    except Exception:
+                        continue
+                _v54_wire_norm = _v54_ship_sq ** 0.5
+                _v54_prev_wire = getattr(
+                    self, '_v54_prev_wire_norm', None,
+                )
+                self._v54_prev_wire_norm = _v54_wire_norm
+                _v54_d_wire = -1.0
+                if _v54_prev_wire is not None:
+                    _v54_d_wire = abs(
+                        _v54_wire_norm - _v54_prev_wire
+                    )
+                self.logger.info(
+                    '[SpecDecFlow-v54] stage=ship_summary '
+                    'version=%s n_mtp_shipped=%d '
+                    'total_bytes=%d wire_norm=%.6e '
+                    'd_wire_norm=%.6e first=%s first_l2=%.6e '
+                    'ema_enabled=%s ema_alpha=%.4f '
+                    'freeze_engaged=%s',
+                    str(getattr(meta, 'version', 'NA')),
+                    _v54_ship_n, _v54_ship_bytes,
+                    _v54_wire_norm, _v54_d_wire,
+                    str(_v54_ship_first),
+                    _v54_ship_first_l2,
+                    str(getattr(
+                        self, '_v54_ema_enabled', False,
+                    )),
+                    float(getattr(
+                        self, '_v54_ema_alpha', 0.0,
+                    )),
+                    str(getattr(
+                        self, '_v54_freeze_engaged', False,
+                    )),
+                )
+        except Exception as _e_v54s:
+            try:
+                self.logger.warning(
+                    '[SpecDecFlow-v54] ship failed: %r', _e_v54s,
+                )
+            except Exception:
+                pass
         _t_post0 = _diag_time.time()
         fut = self.rollout_engine.update_weights_from_distributed(meta, param_specs)
         self.logger.info(
