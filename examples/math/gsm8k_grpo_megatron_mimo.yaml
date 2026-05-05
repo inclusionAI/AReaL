@@ -95,6 +95,8 @@ actor:
   megatron:
     mtp_num_layers: 1
     mtp_loss_scaling_factor: 0.2
+    ddp:
+      grad_reduce_in_fp32: true
     
 ref:
   backend: ${actor.backend}

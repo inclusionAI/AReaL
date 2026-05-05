@@ -206,6 +206,8 @@ class MegatronEngine(TrainEngine):
                     "v46:ForceTickBf16+ShipFlips(AREAL_MTP_V46_FORCE_TICK)",
                     "v47:MTPMasterAmp(AREAL_MTP_V47_MASTER_AMP)",
                     "v48:MTPMasterCarry(AREAL_MTP_V48_MASTER_CARRY)",
+                    "v49:MTPLossClipTight+GradFp32Coerce+LossBoost(AREAL_MTP_V49_CLIP_TIGHT,AREAL_MTP_V49_GRAD_FP32_COERCE,AREAL_MTP_V49_LOSS_BOOST)",
+                    "v50:MTPNativePassthrough(default-on; set AREAL_MTP_NATIVE_AUTOSCALER=0 to fall back to legacy FIFO)",
                     "v17:MTPNativeAutoScaler+ConsumerBypass"
                     "(AREAL_MTP_NATIVE_AUTOSCALER,autograd_in_graph)",
                 ]
@@ -218,7 +220,7 @@ class MegatronEngine(TrainEngine):
                             "AREAL_MTP_SIGMA_DELTA_BF16", "1"),
                     "AREAL_MTP_NATIVE_AUTOSCALER":
                         _os_banner.environ.get(
-                            "AREAL_MTP_NATIVE_AUTOSCALER", "0"),
+                            "AREAL_MTP_NATIVE_AUTOSCALER", "1"),
                     "AREAL_MTP_V30_DIAG":
                         _os_banner.environ.get(
                             "AREAL_MTP_V30_DIAG", "1"),
@@ -1435,6 +1437,59 @@ class MegatronEngine(TrainEngine):
                         )
         except Exception as _e:
             self.logger.warning("[MTPGradProbe-v25] probe error: %s", _e)
+        # [MTPGradFp32Coerce-v50] Belt-and-suspenders fp32 upcast of MTP main_grad
+        # before optimizer.step. Passthrough (v50) aligns scale with slime/verl
+        # but bf16 grad accumulation bucket still truncates small updates across
+        # ~54 microbatches. Slime mitigates this with --accumulate-allreduce-grads
+        # -in-fp32; here we do the runtime equivalent on MTP params only.
+        # Gate: AREAL_MTP_V50_GRAD_FP32_COERCE (default "1").
+        try:
+            import os as _os_v50g
+            _v50_gfp32 = (
+                _os_v50g.environ.get('AREAL_MTP_V50_GRAD_FP32_COERCE', '1') == '1'
+            )
+        except Exception:
+            _v50_gfp32 = True
+        if (
+            _v50_gfp32
+            and getattr(self, 'enable_mtp_training', False)
+            and getattr(self, 'model', None) is not None
+        ):
+            try:
+                import torch as _torch_v50g
+                _v50g_n = 0
+                _v50g_amax = 0.0
+                _v50g_name = ''
+                for _mod_v50g in self.model:
+                    for _n_v50g, _p_v50g in _mod_v50g.named_parameters():
+                        if ('.mtp.' not in _n_v50g
+                                and '.mtp_layers.' not in _n_v50g):
+                            continue
+                        _mg_v50g = getattr(_p_v50g, 'main_grad', None)
+                        if _mg_v50g is None:
+                            continue
+                        if _mg_v50g.dtype == _torch_v50g.float32:
+                            continue
+                        try:
+                            _fp32 = _mg_v50g.to(_torch_v50g.float32)
+                            _p_v50g.main_grad = _fp32
+                            _v50g_n += 1
+                            _a = float(_fp32.abs().max().item())
+                            if _a > _v50g_amax:
+                                _v50g_amax = _a
+                                _v50g_name = _n_v50g
+                        except Exception:
+                            pass
+                if _v50g_n > 0:
+                    self.logger.info(
+                        '[MTPGradFp32Coerce-v50] coerced=%d '
+                        'max_grad_amax=%.3e max_name=%s',
+                        _v50g_n, _v50g_amax, _v50g_name,
+                    )
+            except Exception as _e_v50g:
+                self.logger.warning(
+                    '[MTPGradFp32Coerce-v50] failed: %s', _e_v50g,
+                )
         with trace_scope("megatron_engine.step"):
             update_successful, grad_norm, _ = self.optimizer.step()
         # [MTPMasterAmp-v47] post-step delta amplification.
@@ -2247,16 +2302,26 @@ class MegatronEngine(TrainEngine):
                                     # Gated so the legacy behaviour remains
                                     # bit-exact by default. Enable with
                                     #   AREAL_MTP_NATIVE_AUTOSCALER=1
+                                    # [v50:MTPNativePassthrough] default-on.
+                                    # Passthrough via MTPLossAutoScaler.apply is the
+                                    # verl/slime-aligned path and in Megatron-Core 0.16.0
+                                    # it is the ONLY numerically correct path: schedules.py
+                                    # sets main_loss_backward_scale = loss_scale /
+                                    # num_microbatches automatically after every
+                                    # forward_step, so the FIFO + DoubleScale inverse
+                                    # mechanism is strictly redundant and introduces
+                                    # bf16 rounding jitter. Set AREAL_MTP_NATIVE_AUTOSCALER=0
+                                    # to fall back to legacy FIFO (diagnostic only).
                                     try:
                                         import os as _os_v17
                                         _v17_on = (
                                             _os_v17.environ.get(
                                                 "AREAL_MTP_NATIVE_AUTOSCALER",
-                                                "0",
+                                                "1",
                                             ) == "1"
                                         )
                                     except Exception:
-                                        _v17_on = False
+                                        _v17_on = True
                                     if _v17_on:
                                         try:
                                             from megatron.core.transformer.multi_token_prediction import (
