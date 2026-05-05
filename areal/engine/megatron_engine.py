@@ -208,6 +208,7 @@ class MegatronEngine(TrainEngine):
                     "v48:MTPMasterCarry(AREAL_MTP_V48_MASTER_CARRY)",
                     "v49:MTPLossClipTight+GradFp32Coerce+LossBoost(AREAL_MTP_V49_CLIP_TIGHT,AREAL_MTP_V49_GRAD_FP32_COERCE,AREAL_MTP_V49_LOSS_BOOST)",
                     "v50:MTPNativePassthrough(default-on; set AREAL_MTP_NATIVE_AUTOSCALER=0 to fall back to legacy FIFO)",
+                    "v51:MTPGradClipNorm(default-on; AREAL_MTP_V51_GRAD_CLIP_NORM=<float>, default=1.0)",
                     "v17:MTPNativeAutoScaler+ConsumerBypass"
                     "(AREAL_MTP_NATIVE_AUTOSCALER,autograd_in_graph)",
                 ]
@@ -1489,6 +1490,73 @@ class MegatronEngine(TrainEngine):
             except Exception as _e_v50g:
                 self.logger.warning(
                     '[MTPGradFp32Coerce-v50] failed: %s', _e_v50g,
+                )
+        # [MTPGradClipNorm-v51] Per-component gradient L2-norm clipping for
+        # MTP parameters only, applied AFTER fp32 coerce and BEFORE
+        # optimizer.step(). Megatron-Core's `gradient_clipping=1.0` is a
+        # GLOBAL (backbone+MTP joint) norm, which lets MTP grad dominate
+        # when backbone grad is small (KL-regularised RL). slime mitigates
+        # this via `check_mtp_loss(max=1.0)` + `accumulate-allreduce-grads-
+        # in-fp32`; the latter is now on (YAML grad_reduce_in_fp32=true)
+        # but log.33 still shows per-step max|delta|=0.59-0.64 at v9-v13,
+        # correlated with PAW crashes v10=0.005 / v14=0.008. v51 adds the
+        # missing MTP-only norm clip so big spikes through MTPLossAutoScaler
+        # cannot push the draft head into a divergent region.
+        # Threshold: AREAL_MTP_V51_GRAD_CLIP_NORM (default 1.0).
+        # Disable: AREAL_MTP_V51_GRAD_CLIP_NORM=0
+        try:
+            import os as _os_v51c
+            _v51_thr = float(_os_v51c.environ.get(
+                'AREAL_MTP_V51_GRAD_CLIP_NORM', '1.0'))
+        except Exception:
+            _v51_thr = 1.0
+        if (
+            _v51_thr > 0.0
+            and getattr(self, 'enable_mtp_training', False)
+            and getattr(self, 'model', None) is not None
+        ):
+            try:
+                import torch as _torch_v51c
+                _v51_grads = []
+                _v51_names = []
+                for _mod_v51c in self.model:
+                    for _n_v51c, _p_v51c in _mod_v51c.named_parameters():
+                        if ('.mtp.' not in _n_v51c
+                                and '.mtp_layers.' not in _n_v51c):
+                            continue
+                        _mg_v51c = getattr(_p_v51c, 'main_grad', None)
+                        if _mg_v51c is None:
+                            continue
+                        _v51_grads.append(_mg_v51c)
+                        _v51_names.append(_n_v51c)
+                if _v51_grads:
+                    _v51_total_sq = _torch_v51c.zeros(
+                        (), dtype=_torch_v51c.float32,
+                        device=_v51_grads[0].device)
+                    for _g in _v51_grads:
+                        _v51_total_sq = _v51_total_sq + (
+                            _g.detach().float().pow(2).sum())
+                    _v51_norm = float(_v51_total_sq.sqrt().item())
+                    _v51_clipped = False
+                    _v51_scale = 1.0
+                    if _v51_norm > _v51_thr and _v51_norm > 0.0:
+                        _v51_scale = _v51_thr / (_v51_norm + 1e-12)
+                        for _g in _v51_grads:
+                            _g.mul_(_v51_scale)
+                        _v51_clipped = True
+                    _gs_v51 = getattr(self, '_global_step', 0)
+                    if (_gs_v51 <= 5 or _gs_v51 % 50 == 0
+                            or _v51_clipped):
+                        self.logger.info(
+                            '[MTPGradClipNorm-v51] step=%d n_params=%d '
+                            'mtp_grad_norm=%.4e threshold=%.4e '
+                            'clipped=%s scale=%.4e',
+                            _gs_v51, len(_v51_grads), _v51_norm,
+                            _v51_thr, _v51_clipped, _v51_scale,
+                        )
+            except Exception as _e_v51c:
+                self.logger.warning(
+                    '[MTPGradClipNorm-v51] failed: %s', _e_v51c,
                 )
         with trace_scope("megatron_engine.step"):
             update_successful, grad_norm, _ = self.optimizer.step()
