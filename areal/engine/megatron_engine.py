@@ -205,6 +205,7 @@ class MegatronEngine(TrainEngine):
                     "v45:MTPULPGap+DraftIPCStall(AREAL_MTP_V30_DIAG)",
                     "v46:ForceTickBf16+ShipFlips(AREAL_MTP_V46_FORCE_TICK)",
                     "v47:MTPMasterAmp(AREAL_MTP_V47_MASTER_AMP)",
+                    "v48:MTPMasterCarry(AREAL_MTP_V48_MASTER_CARRY)",
                     "v17:MTPNativeAutoScaler+ConsumerBypass"
                     "(AREAL_MTP_NATIVE_AUTOSCALER,autograd_in_graph)",
                 ]
@@ -1223,6 +1224,46 @@ class MegatronEngine(TrainEngine):
                 "[SpecDecDiag-v20 D10] snapshot failed: %s", _e_d10,
             )
 
+        # [MTPMasterCarry-v48] pre-step snapshot of MTP fp32 master.
+        # Mirrors v47 snapshot but is used by a residual-carry post-step
+        # that NEVER scales the Adam delta (see block below).  Gate:
+        # AREAL_MTP_V48_MASTER_CARRY (default '1').
+        try:
+            import os as _os_v48pre
+            _v48_on = (
+                _os_v48pre.environ.get(
+                    'AREAL_MTP_V48_MASTER_CARRY', '1'
+                ) == '1'
+            )
+        except Exception:
+            _v48_on = True
+        self._v48_pre_master = {}
+        self._v48_on_step = bool(
+            _v48_on and getattr(self, 'enable_mtp_training', False)
+        )
+        if (
+            self._v48_on_step
+            and getattr(self, 'model', None) is not None
+        ):
+            try:
+                for _mod_v48 in self.model:
+                    for _n_v48, _p_v48 in _mod_v48.named_parameters():
+                        if ('.mtp.' not in _n_v48
+                                and '.mtp_layers.' not in _n_v48):
+                            continue
+                        _mp_v48 = getattr(_p_v48, 'main_param', None)
+                        if _mp_v48 is not None:
+                            try:
+                                self._v48_pre_master[_n_v48] = (
+                                    _mp_v48.detach().clone()
+                                )
+                            except Exception:
+                                pass
+            except Exception as _e_v48pre:
+                self.logger.warning(
+                    '[MTPMasterCarry-v48] pre-snapshot failed: %s',
+                    _e_v48pre,
+                )
         # [MTPMasterAmp-v47] pre-step snapshot of MTP fp32 master.
         # Captured before optimizer.step() so we can compute the
         # raw Adam delta after the step and amplify it to bf16 ULP
@@ -1231,11 +1272,11 @@ class MegatronEngine(TrainEngine):
             import os as _os_v47pre
             _v47_on = (
                 _os_v47pre.environ.get(
-                    'AREAL_MTP_V47_MASTER_AMP', '1'
+                    'AREAL_MTP_V47_MASTER_AMP', '0'
                 ) == '1'
             )
         except Exception:
-            _v47_on = True
+            _v47_on = False
         self._v47_pre_master = {}
         self._v47_pre_data = {}
         self._v47_on_step = bool(
@@ -1553,6 +1594,119 @@ class MegatronEngine(TrainEngine):
                 # release snapshots — memory-bounded.
                 self._v47_pre_master = {}
                 self._v47_pre_data = {}
+        # [MTPMasterCarry-v48] master-side Sigma-Delta residual carry.
+        # This is the v48 replacement for v47 (which scaled the whole delta
+        # by a tensor-wise scalar and destroyed model alignment in log.31).
+        # Here we NEVER touch the magnitude/direction of the Adam delta.
+        # Instead we maintain per-parameter fp32 residual and only flip the
+        # bf16 bucket for the elements whose accumulated residual exceeds
+        # +/- ULP/2, exactly like the ship-side v28 Σ-Δ but on the compute
+        # (master) side where it actually matters.
+        if (
+            bool(update_successful)
+            and getattr(self, '_v48_on_step', False)
+            and getattr(self, 'model', None) is not None
+        ):
+            try:
+                import torch as _torch_v48
+                if not hasattr(self, '_v48_residual'):
+                    self._v48_residual = {}
+                _n_flipped_v48 = 0
+                _n_seen_v48 = 0
+                _max_res_ratio_v48 = 0.0
+                _max_res_name_v48 = ''
+                for _mod_v48p in self.model:
+                    for _n_v48p, _p_v48p in (
+                        _mod_v48p.named_parameters()
+                    ):
+                        if ('.mtp.' not in _n_v48p
+                                and '.mtp_layers.' not in _n_v48p):
+                            continue
+                        _mp_v48p = getattr(
+                            _p_v48p, 'main_param', None
+                        )
+                        if _mp_v48p is None:
+                            continue
+                        _n_seen_v48 += 1
+                        # residual is fp32, same shape as main_param.
+                        _res = self._v48_residual.get(_n_v48p)
+                        if _res is None or _res.shape != _mp_v48p.shape:
+                            _res = _torch_v48.zeros_like(
+                                _mp_v48p.data,
+                                dtype=_torch_v48.float32,
+                            )
+                            self._v48_residual[_n_v48p] = _res
+                        # accumulate: want = fp32_master + residual
+                        _fp32_new = _mp_v48p.data.to(_torch_v48.float32)
+                        _want = _fp32_new + _res
+                        _bf16_dtype = _p_v48p.data.dtype
+                        _bf16_new = _want.to(_bf16_dtype)
+                        # new residual captures quantization loss (fp32 level)
+                        _new_res = _want - _bf16_new.to(_torch_v48.float32)
+                        # count how many bf16 elements flip relative to
+                        # "no-carry" rounding of fp32_new alone
+                        try:
+                            _bf16_baseline = _fp32_new.to(_bf16_dtype)
+                            _n_flip_this = int(
+                                (
+                                    _bf16_new.to(_torch_v48.float32)
+                                    != _bf16_baseline.to(_torch_v48.float32)
+                                ).sum().item()
+                            )
+                        except Exception:
+                            _n_flip_this = -1
+                        # write back: master stays fp32-accurate; bf16 is
+                        # quantized-with-accumulated-residual.
+                        _mp_v48p.data.copy_(_want.to(_mp_v48p.dtype))
+                        try:
+                            _p_v48p.data.copy_(_bf16_new)
+                        except Exception:
+                            pass
+                        self._v48_residual[_n_v48p] = _new_res
+                        # record residual magnitude ratio vs ULP
+                        try:
+                            import math as _m_v48ip
+                            _amax = float(
+                                _mp_v48p.data.abs().max().item()
+                            )
+                            if _amax > 0.0:
+                                _e = _m_v48ip.floor(_m_v48ip.log2(_amax))
+                                _ulp = 2.0 ** (_e - 7)
+                                _rmax = float(
+                                    _new_res.abs().max().item()
+                                )
+                                _ratio = _rmax / max(_ulp, 1e-30)
+                                if _ratio > _max_res_ratio_v48:
+                                    _max_res_ratio_v48 = _ratio
+                                    _max_res_name_v48 = _n_v48p
+                                # per-tensor log, cheap (O(#mtp params))
+                                self.logger.info(
+                                    '[MTPMasterCarry-v48] name=%s '
+                                    'amax=%.3e ulp=%.3e '
+                                    'res_amax=%.3e res_ratio=%.3f '
+                                    'flips=%d',
+                                    _n_v48p, _amax, _ulp, _rmax,
+                                    _ratio, _n_flip_this,
+                                )
+                        except Exception:
+                            pass
+                        if _n_flip_this > 0:
+                            _n_flipped_v48 += 1
+                self.logger.info(
+                    '[MTPMasterCarrySummary-v48] '
+                    'n_seen=%d n_flipped_any=%d '
+                    'max_res_ratio=%.3f max_res_name=%s',
+                    _n_seen_v48, _n_flipped_v48,
+                    _max_res_ratio_v48, _max_res_name_v48,
+                )
+            except Exception as _e_v48_post:
+                self.logger.warning(
+                    '[MTPMasterCarry-v48] post-step failed: %s',
+                    _e_v48_post,
+                )
+            finally:
+                # release pre-snapshot to bound memory
+                self._v48_pre_master = {}
         # [MTPPostOptim-v25] Diagnostic post-optimizer-step probe.
         try:
             _v25_post_seen = set()
