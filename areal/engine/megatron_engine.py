@@ -212,6 +212,7 @@ class MegatronEngine(TrainEngine):
                     "v52:MTPSourceLossCap(default-on; AREAL_MTP_V52_LOSS_CAP_RATIO=<float>, default=2.0)",
                     "v53:MTPSharedWeightIsolate(detach output_weight for MTP output_layer)",
                     "v54:MTPFreezeGate+DraftEMA+SpecDecFlowLog(AREAL_MTP_V54_FREEZE[default=0],AREAL_MTP_V54_DRAFT_EMA[default=0.0],AREAL_MTP_V54_SPEC_FLOW_LOG[default=1])",
+                    "v55:MTPLRBoost(AREAL_MTP_V55_MTP_LR_BOOST[default=1.0])",
                     "v17:MTPNativeAutoScaler+ConsumerBypass"
                     "(AREAL_MTP_NATIVE_AUTOSCALER,autograd_in_graph)",
                 ]
@@ -1744,6 +1745,166 @@ class MegatronEngine(TrainEngine):
             try:
                 self.logger.warning(
                     '[MTPFreezeGate-v54] gate failed: %r', _e_v54f,
+                )
+            except Exception:
+                pass
+        # [MTPLRBoost-v55] Boost MTP gradient learning rate by a
+        # configurable multiplier just before optimizer.step().
+        # Evidence-driven minimal fix: log.42 (Run A, v54 freeze=1)
+        # vs log.41 (Run B, v53) confirmed H2 — decline is
+        # dominated by main-model hidden-state drift, not MTP
+        # weight drift.  In slime / verl-style EAGLE RL training
+        # the draft (MTP) head needs to track main-model drift
+        # faster than vanilla co-training allows; the standard
+        # pattern is an MTP-specific LR multiplier so the draft
+        # head learns faster than the target.
+        # Default 1.0 = exact baseline (full no-op).  Skip
+        # entirely when v54 freeze is engaged (cannot scale
+        # zeroed grads meaningfully).
+        try:
+            import os as _os_v55b
+            _v55_mult_raw = _os_v55b.environ.get(
+                'AREAL_MTP_V55_MTP_LR_BOOST', '1.0',
+            )
+            try:
+                _v55_mult = float(_v55_mult_raw)
+            except Exception:
+                _v55_mult = 1.0
+            _v55_freeze_engaged = bool(
+                getattr(self, '_v54_freeze_engaged', False)
+            )
+            _v55_active = (
+                _v55_mult > 1.0
+                and not _v55_freeze_engaged
+                and getattr(self, 'enable_mtp_training', False)
+                and getattr(self, 'model', None) is not None
+            )
+            self._v55_lr_boost_active = bool(_v55_active)
+            self._v55_lr_boost_mult = float(_v55_mult)
+            if _v55_mult > 1.0 and _v55_freeze_engaged:
+                try:
+                    self.logger.info(
+                        '[MTPLRBoost-v55] '
+                        'skipped reason=freeze_engaged'
+                    )
+                except Exception:
+                    pass
+            elif _v55_active:
+                _v55_n_scaled = 0
+                _v55_pre_sq = 0.0
+                _v55_post_sq = 0.0
+                for _mod_v55 in self.model:
+                    for _n_v55, _p_v55 in (
+                        _mod_v55.named_parameters()
+                    ):
+                        if ('.mtp.' not in _n_v55
+                                and '.mtp_layers.' not in _n_v55):
+                            continue
+                        _v55_scaled_any = False
+                        try:
+                            _g_v55 = getattr(_p_v55, 'grad', None)
+                            if _g_v55 is not None:
+                                _gn = float(
+                                    _g_v55.detach().float()
+                                        .norm().item()
+                                )
+                                _v55_pre_sq += _gn * _gn
+                                _g_v55.detach().mul_(_v55_mult)
+                                _gn2 = float(
+                                    _g_v55.detach().float()
+                                        .norm().item()
+                                )
+                                _v55_post_sq += _gn2 * _gn2
+                                _v55_scaled_any = True
+                        except Exception:
+                            pass
+                        _mp_v55 = getattr(
+                            _p_v55, 'main_param', None,
+                        )
+                        if _mp_v55 is not None:
+                            try:
+                                _mg_v55 = getattr(
+                                    _mp_v55, 'grad', None,
+                                )
+                                if _mg_v55 is not None:
+                                    if not _v55_scaled_any:
+                                        _gn = float(
+                                            _mg_v55.detach()
+                                                .float().norm()
+                                                .item()
+                                        )
+                                        _v55_pre_sq += _gn * _gn
+                                        _mg_v55.detach().mul_(
+                                            _v55_mult
+                                        )
+                                        _gn2 = float(
+                                            _mg_v55.detach()
+                                                .float().norm()
+                                                .item()
+                                        )
+                                        _v55_post_sq += (
+                                            _gn2 * _gn2
+                                        )
+                                        _v55_scaled_any = True
+                                    else:
+                                        _mg_v55.detach().mul_(
+                                            _v55_mult
+                                        )
+                            except Exception:
+                                pass
+                            try:
+                                _mgf_v55 = getattr(
+                                    _mp_v55, 'main_grad', None,
+                                )
+                                if _mgf_v55 is not None:
+                                    if not _v55_scaled_any:
+                                        _gn = float(
+                                            _mgf_v55.detach()
+                                                .float().norm()
+                                                .item()
+                                        )
+                                        _v55_pre_sq += _gn * _gn
+                                        _mgf_v55.detach().mul_(
+                                            _v55_mult
+                                        )
+                                        _gn2 = float(
+                                            _mgf_v55.detach()
+                                                .float().norm()
+                                                .item()
+                                        )
+                                        _v55_post_sq += (
+                                            _gn2 * _gn2
+                                        )
+                                        _v55_scaled_any = True
+                                    else:
+                                        _mgf_v55.detach().mul_(
+                                            _v55_mult
+                                        )
+                            except Exception:
+                                pass
+                        if _v55_scaled_any:
+                            _v55_n_scaled += 1
+                _v55_pre_norm = _v55_pre_sq ** 0.5
+                _v55_post_norm = _v55_post_sq ** 0.5
+                try:
+                    self.logger.info(
+                        '[MTPLRBoost-v55] mult=%.4f '
+                        'n_scaled=%d mtp_grad_norm_pre=%.6e '
+                        'mtp_grad_norm_post=%.6e',
+                        _v55_mult, _v55_n_scaled,
+                        _v55_pre_norm, _v55_post_norm,
+                    )
+                    self.logger.info(
+                        '[SpecDecFlow-v54] stage=lr_boost '
+                        'mult=%.4f n_scaled=%d',
+                        _v55_mult, _v55_n_scaled,
+                    )
+                except Exception:
+                    pass
+        except Exception as _e_v55b:
+            try:
+                self.logger.warning(
+                    '[MTPLRBoost-v55] boost failed: %r', _e_v55b,
                 )
             except Exception:
                 pass
