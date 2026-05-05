@@ -599,12 +599,37 @@ def save_weights_to_hf_with_mbridge_fast(
                         f"from local_name={s.local_name!r}"
                     )
                 layer_idx, fc_kind, local_idx_str = m.groups()
-                # Recover the rank-local idx (0..num_experts_per_rank-1) from
-                # the global idx baked into global_name above.
-                local_id = int(local_idx_str) - num_experts_per_rank * ep_rank
+                # ``local_name`` carries the rank-local TEGroupedLinear suffix
+                # (``weight0..weight{num_experts_per_rank-1}``). ``global_name``
+                # was rewritten above to bake in the global expert id; for the
+                # sort/iteration order within each (layer, fc) group the local
+                # idx is sufficient and avoids the rank-dependent offset.
+                local_id = int(local_idx_str)
                 groups.setdefault((layer_idx, fc_kind), []).append((local_id, s))
             for k in groups:
                 groups[k].sort(key=lambda t: t[0])
+
+            # Invariant check across the EP group: every rank must see the same
+            # set of (layer, fc) groups with the same per-group expert count.
+            # Without this, a future refactor that injects a vision-tower expert
+            # spec on some ranks only — or a VPP layout where local layers
+            # differ across EP ranks — would silently mismatch the
+            # ``all_gather_into_tensor`` collective below and either hang or
+            # scramble tensors across layers. One cheap ``all_gather_object``
+            # eliminates that class of silent-corruption-on-future-refactor
+            # failures.
+            group_keys = tuple(sorted(groups.keys()))
+            ep_keys: list[tuple | None] = [None] * ep_size
+            dist.all_gather_object(ep_keys, group_keys, group=ep_group)
+            assert all(k == group_keys for k in ep_keys), (
+                f"EP rank divergence in (layer, fc) groups: "
+                f"rank {ep_rank} sees {group_keys}, peers see {ep_keys}"
+            )
+            for k, specs_with_idx in groups.items():
+                assert len(specs_with_idx) == num_experts_per_rank, (
+                    f"layer {k} has {len(specs_with_idx)} local experts on "
+                    f"ep_rank {ep_rank}, expected {num_experts_per_rank}"
+                )
 
             for (layer_idx, fc_kind), specs_with_idx in groups.items():
                 local_specs = [s for _, s in specs_with_idx]
