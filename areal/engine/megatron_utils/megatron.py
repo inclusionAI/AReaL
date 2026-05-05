@@ -382,6 +382,14 @@ def _vision_qkv_mcore_to_hf(param: Tensor, vision_num_heads: int) -> Tensor:
     """
     hidden_vision = param.shape[0] // 3
     head_dim = hidden_vision // vision_num_heads
+    # Vision encoders for both Qwen2.5-VL and Qwen3-VL set
+    # num_query_groups == num_attention_heads (no GQA on the vision side); a
+    # future VLM that breaks this would silently miscompile vision QKV here.
+    assert head_dim * vision_num_heads * 3 == param.shape[0], (
+        f"_vision_qkv_mcore_to_hf assumes vision has no GQA "
+        f"(num_kv_heads == num_heads). Got param.shape[0]={param.shape[0]}, "
+        f"vision_num_heads={vision_num_heads}, derived head_dim={head_dim}."
+    )
     is_bias = param.ndim == 1
 
     if is_bias:
@@ -483,6 +491,217 @@ def convert_qwen2_5_vl_to_hf(
             return [(f"visual.blocks.{layer_idx}.norm2.weight", param)]
 
     raise ValueError(f"Unknown parameter name: {name}")
+
+
+def convert_qwen3_vl_to_hf(
+    tf_config: TransformerConfig,
+    name: str,
+    param: Parameter | Tensor | FP8BlockwiseTensorHelper,
+    hf_config=None,
+):
+    """Convert Qwen3-VL Megatron parameters to HuggingFace format.
+
+    Handles dense Qwen3-VL only; Qwen3-VL-MoE is a follow-up.
+
+    HF naming differs from Qwen2.5-VL:
+    - Vision: ``model.visual.*`` (extra ``model.`` prefix)
+    - Language: ``model.language_model.layers.*`` (extra ``language_model``)
+    - Text Q/K norms: ``self_attn.{q,k}_norm.weight`` (vs Qwen2's missing q/k norm)
+    - Vision MLP is non-gated: ``linear_fc1`` / ``linear_fc2`` map 1:1 (no chunk).
+    - Vision norms have bias; vision merger uses ``patch_norm`` and
+      ``linear_fc{1,2}`` directly (no separate projection encoder).
+    - New tensors: ``model.visual.pos_embed``, ``patch_embed.proj.bias``,
+      ``deepstack_merger_list.{i}.{norm,linear_fc1,linear_fc2}``.
+
+    The mapping mirrors mbridge.models.qwen3_vl.Qwen3VLBridge (the source of
+    truth used by ``update_weights``).
+    """
+
+    # ---- Language model (Qwen3 text) ----
+    _LM_PREFIX = "module.module.language_model."
+    if name == "module.module.language_model.embedding.word_embeddings.weight":
+        return [("model.language_model.embed_tokens.weight", param)]
+    if name == "module.module.language_model.decoder.final_layernorm.weight":
+        return [("model.language_model.norm.weight", param)]
+    if name == "module.module.language_model.output_layer.weight":
+        return [("lm_head.weight", param)]
+
+    # Early-raise on Qwen3-VL-MoE expert / router params before they fall
+    # through to the dense "Unknown Qwen3-VL language-model parameter" branch.
+    # `_CONVERSION_FN_REGISTRY` dispatches via substring matching, so once a
+    # `qwen3_vl_moe` model_type exists it will route here unless `qwen3_vl_moe`
+    # is registered BEFORE `qwen3_vl`.
+    if name.startswith(_LM_PREFIX) and (
+        ".mlp.experts." in name
+        or ".mlp.router." in name
+        or ".pre_mlp_layernorm." in name
+    ):
+        raise NotImplementedError(
+            "Qwen3-VL-MoE is not supported by convert_qwen3_vl_to_hf. "
+            "Implement convert_qwen3_vl_moe_to_hf and register it BEFORE "
+            "'qwen3_vl' in _CONVERSION_FN_REGISTRY (substring matching "
+            "dispatches the first hit)."
+        )
+
+    if name.startswith(_LM_PREFIX):
+        match = re.match(
+            r"module\.module\.language_model\.decoder\.layers\.(\d+)\.(.+)",
+            name,
+        )
+        if match:
+            layer_idx, rest = match.groups()
+            if tf_config.num_query_groups is None:
+                raise ValueError("Qwen3-VL text model requires num_query_groups")
+            kv_channels = getattr(tf_config, "kv_channels", None)
+            if kv_channels is not None:
+                head_dim = kv_channels
+            else:
+                head_dim = tf_config.hidden_size // tf_config.num_attention_heads
+            value_num_per_group = (
+                tf_config.num_attention_heads // tf_config.num_query_groups
+            )
+
+            base = f"model.language_model.layers.{layer_idx}"
+
+            if rest == "self_attention.linear_proj.weight":
+                return [(f"{base}.self_attn.o_proj.weight", param)]
+            if rest == "self_attention.linear_qkv.weight":
+                p = param.view(
+                    tf_config.num_query_groups, -1, head_dim, tf_config.hidden_size
+                )
+                q, k, v = torch.split(
+                    p, split_size_or_sections=[value_num_per_group, 1, 1], dim=1
+                )
+                return [
+                    (
+                        f"{base}.self_attn.q_proj.weight",
+                        q.reshape(-1, tf_config.hidden_size),
+                    ),
+                    (
+                        f"{base}.self_attn.k_proj.weight",
+                        k.reshape(-1, tf_config.hidden_size),
+                    ),
+                    (
+                        f"{base}.self_attn.v_proj.weight",
+                        v.reshape(-1, tf_config.hidden_size),
+                    ),
+                ]
+            if rest == "self_attention.linear_qkv.bias":
+                p = param.view(tf_config.num_query_groups, -1)
+                q, k, v = torch.split(
+                    p,
+                    split_size_or_sections=[
+                        value_num_per_group * head_dim,
+                        head_dim,
+                        head_dim,
+                    ],
+                    dim=1,
+                )
+                return [
+                    (f"{base}.self_attn.q_proj.bias", q.contiguous().flatten()),
+                    (f"{base}.self_attn.k_proj.bias", k.contiguous().flatten()),
+                    (f"{base}.self_attn.v_proj.bias", v.contiguous().flatten()),
+                ]
+            if rest == "self_attention.linear_qkv.layer_norm_weight":
+                return [(f"{base}.input_layernorm.weight", param)]
+            if rest == "self_attention.q_layernorm.weight":
+                return [(f"{base}.self_attn.q_norm.weight", param)]
+            if rest == "self_attention.k_layernorm.weight":
+                return [(f"{base}.self_attn.k_norm.weight", param)]
+            if rest == "mlp.linear_fc1.weight":
+                gate, up = param.chunk(2, dim=0)
+                return [
+                    (f"{base}.mlp.gate_proj.weight", gate),
+                    (f"{base}.mlp.up_proj.weight", up),
+                ]
+            if rest == "mlp.linear_fc1.layer_norm_weight":
+                return [(f"{base}.post_attention_layernorm.weight", param)]
+            if rest == "mlp.linear_fc2.weight":
+                return [(f"{base}.mlp.down_proj.weight", param)]
+
+        raise ValueError(f"Unknown Qwen3-VL language-model parameter: {name}")
+
+    # ---- Vision model (mbridge mcore format) ----
+    _VISION_DIRECT = {
+        "module.module.vision_model.patch_embed.proj.weight": "model.visual.patch_embed.proj.weight",
+        "module.module.vision_model.patch_embed.proj.bias": "model.visual.patch_embed.proj.bias",
+        "module.module.vision_model.pos_embed.weight": "model.visual.pos_embed.weight",
+        "module.module.vision_model.merger.patch_norm.weight": "model.visual.merger.norm.weight",
+        "module.module.vision_model.merger.patch_norm.bias": "model.visual.merger.norm.bias",
+        "module.module.vision_model.merger.linear_fc1.weight": "model.visual.merger.linear_fc1.weight",
+        "module.module.vision_model.merger.linear_fc1.bias": "model.visual.merger.linear_fc1.bias",
+        "module.module.vision_model.merger.linear_fc2.weight": "model.visual.merger.linear_fc2.weight",
+        "module.module.vision_model.merger.linear_fc2.bias": "model.visual.merger.linear_fc2.bias",
+    }
+    if name in _VISION_DIRECT:
+        return [(_VISION_DIRECT[name], param)]
+
+    # Vision blocks
+    match = re.match(
+        r"module\.module\.vision_model\.decoder\.layers\.(\d+)\.(.+)", name
+    )
+    if match:
+        layer_idx, rest = match.groups()
+        base = f"model.visual.blocks.{layer_idx}"
+
+        if rest in (
+            "self_attention.linear_qkv.weight",
+            "self_attention.linear_qkv.bias",
+        ):
+            vision_num_heads = getattr(
+                getattr(hf_config, "vision_config", None), "num_heads", None
+            )
+            if vision_num_heads is None:
+                raise ValueError(
+                    "hf_config.vision_config.num_heads is required for vision QKV "
+                    "conversion. Pass hf_config to convert_to_hf()."
+                )
+            param = _vision_qkv_mcore_to_hf(param, vision_num_heads)
+            kind = "weight" if rest.endswith("weight") else "bias"
+            return [(f"{base}.attn.qkv.{kind}", param)]
+        if rest == "self_attention.linear_proj.weight":
+            return [(f"{base}.attn.proj.weight", param)]
+        if rest == "self_attention.linear_proj.bias":
+            return [(f"{base}.attn.proj.bias", param)]
+        if rest == "self_attention.linear_qkv.layer_norm_weight":
+            return [(f"{base}.norm1.weight", param)]
+        if rest == "self_attention.linear_qkv.layer_norm_bias":
+            return [(f"{base}.norm1.bias", param)]
+        # Qwen3-VL vision MLP is non-gated: 1:1 mapping (no chunk)
+        if rest == "mlp.linear_fc1.weight":
+            return [(f"{base}.mlp.linear_fc1.weight", param)]
+        if rest == "mlp.linear_fc1.bias":
+            return [(f"{base}.mlp.linear_fc1.bias", param)]
+        if rest == "mlp.linear_fc2.weight":
+            return [(f"{base}.mlp.linear_fc2.weight", param)]
+        if rest == "mlp.linear_fc2.bias":
+            return [(f"{base}.mlp.linear_fc2.bias", param)]
+        if rest == "mlp.linear_fc1.layer_norm_weight":
+            return [(f"{base}.norm2.weight", param)]
+        if rest == "mlp.linear_fc1.layer_norm_bias":
+            return [(f"{base}.norm2.bias", param)]
+
+    # Deepstack mergers
+    match = re.match(
+        r"module\.module\.vision_model\.decoder\.deepstack_merger_list\.(\d+)\.(.+)",
+        name,
+    )
+    if match:
+        idx, rest = match.groups()
+        base = f"model.visual.deepstack_merger_list.{idx}"
+        if rest == "patch_norm.weight":
+            return [(f"{base}.norm.weight", param)]
+        if rest == "patch_norm.bias":
+            return [(f"{base}.norm.bias", param)]
+        if rest in (
+            "linear_fc1.weight",
+            "linear_fc1.bias",
+            "linear_fc2.weight",
+            "linear_fc2.bias",
+        ):
+            return [(f"{base}.{rest}", param)]
+
+    raise ValueError(f"Unknown Qwen3-VL parameter: {name}")
 
 
 # Adapted from slime
@@ -932,6 +1151,7 @@ _CONVERSION_FN_REGISTRY = {
     "qwen2_lora": convert_qwen3_lora_to_hf,
     "qwen3_moe_lora": convert_qwen3_moe_lora_to_hf,
     "qwen2_5_vl": convert_qwen2_5_vl_to_hf,
+    "qwen3_vl": convert_qwen3_vl_to_hf,
     "qwen3_moe": convert_qwen3moe_to_hf,
     "qwen2": convert_qwen2_to_hf,
     "qwen3": convert_qwen2_to_hf,

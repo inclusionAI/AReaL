@@ -30,6 +30,18 @@ def is_qwen_vl_model(model_type: str) -> bool:
     return is_qwen2_vl_model(model_type) or is_qwen3_vl_model(model_type)
 
 
+def lang_config(hf_config):
+    """Return the language-model side of a (possibly nested) HF config.
+
+    Qwen3-VL and similar VLMs nest text-model attributes (vocab_size,
+    num_attention_heads, num_key_value_heads, hidden_size, head_dim) under
+    ``hf_config.text_config``. Qwen2.5-VL and pure text models keep them
+    flat. Use this anywhere the caller wants a language-side attribute and
+    doesn't know the model family up front.
+    """
+    return getattr(hf_config, "text_config", hf_config)
+
+
 def is_gemma3_model(model_type: str) -> bool:
     return model_type in ["gemma3"]
 

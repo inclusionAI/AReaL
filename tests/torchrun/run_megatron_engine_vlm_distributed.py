@@ -3,6 +3,15 @@
 Launched via torchrun from test_megatron_engine_vlm.py. All integration
 tests run as subprocesses so the parent pytest process never allocates
 GPU memory, allowing the full suite to run on just 2 GPUs.
+
+Supports any registered VLM whose ``hf_config`` exposes ``vision_config``
+with ``patch_size``, ``temporal_patch_size``, ``spatial_merge_size``,
+``in_channels``, and ``image_token_id`` — ``mock_vlm_input`` reads patch
+geometry from ``engine.hf_config`` so this script works for both
+Qwen2.5-VL (patch=14) and Qwen3-VL (patch=16) without code-side
+branching. Pick the model via the ``VLM_MODEL_PATH`` env var; default
+is ``DENSE_MODEL_PATHS["qwen2_5_vl"]`` from ``areal.utils.testing_utils``
+(local path preferred, HF Hub fallback).
 """
 
 import argparse
@@ -12,8 +21,6 @@ from typing import Any
 
 import torch
 import torch.distributed as dist
-
-from tests.utils import get_model_path
 
 from areal.api import FinetuneSpec, SaveLoadMeta
 from areal.api.alloc_mode import ModelAllocation
@@ -25,14 +32,9 @@ from areal.api.cli_args import (
 )
 from areal.engine import MegatronEngine
 from areal.utils.data import broadcast_tensor_container
+from areal.utils.testing_utils import DENSE_MODEL_PATHS
 
-VLM_MODEL_PATH = get_model_path(
-    os.environ.get(
-        "QWEN25_VL_MODEL_PATH",
-        "/storage/openpsi/models/Qwen__Qwen2.5-VL-3B-Instruct/",
-    ),
-    "Qwen/Qwen2.5-VL-3B-Instruct",
-)
+VLM_MODEL_PATH = os.environ.get("VLM_MODEL_PATH", DENSE_MODEL_PATHS["qwen2_5_vl"])
 
 
 def write_result(path: str, result: str):
@@ -40,16 +42,26 @@ def write_result(path: str, result: str):
         f.write(result)
 
 
-def mock_vlm_input(device: str) -> dict[str, Any]:
-    """Create mock VLM input with vision tokens."""
-    PATCH_DIM = 3 * 2 * 14 * 14  # 1176
-    SPATIAL_MERGE_SIZE = 2
-    IMAGE_TOKEN_ID = 151655
+def mock_vlm_input(engine: "MegatronEngine") -> dict[str, Any]:
+    """Create mock VLM input with vision tokens.
+
+    Pulls patch geometry from ``engine.hf_config`` so this works for both
+    Qwen2.5-VL (patch_size=14) and Qwen3-VL (patch_size=16).
+    """
+    vc = engine.hf_config.vision_config
+    patch_size = getattr(vc, "patch_size", 14)
+    temporal_patch_size = getattr(vc, "temporal_patch_size", 2)
+    spatial_merge_size = getattr(vc, "spatial_merge_size", 2)
+    in_channels = getattr(vc, "in_channels", 3)
+    image_token_id = getattr(engine.hf_config, "image_token_id", 151655)
+    device = engine.device
+
+    patch_dim = in_channels * temporal_patch_size * patch_size * patch_size
 
     grid_t, grid_h, grid_w = 1, 4, 4
     total_patches = grid_t * grid_h * grid_w
     num_image_tokens = (
-        grid_t * (grid_h // SPATIAL_MERGE_SIZE) * (grid_w // SPATIAL_MERGE_SIZE)
+        grid_t * (grid_h // spatial_merge_size) * (grid_w // spatial_merge_size)
     )
 
     batch_size = 1
@@ -57,12 +69,12 @@ def mock_vlm_input(device: str) -> dict[str, Any]:
     seq_len = num_text_tokens + num_image_tokens
 
     text_tokens = torch.randint(0, 1000, (num_text_tokens,), dtype=torch.long)
-    image_tokens = torch.full((num_image_tokens,), IMAGE_TOKEN_ID, dtype=torch.long)
+    image_tokens = torch.full((num_image_tokens,), image_token_id, dtype=torch.long)
     input_ids = torch.cat([text_tokens, image_tokens]).unsqueeze(0).to(device)
     attention_mask = torch.ones(batch_size, seq_len, dtype=torch.bool, device=device)
 
     pixel_values = torch.randn(
-        total_patches, PATCH_DIM, dtype=torch.float32, device=device
+        total_patches, patch_dim, dtype=torch.float32, device=device
     )
     image_grid_thw = torch.tensor(
         [[grid_t, grid_h, grid_w]], dtype=torch.long, device=device
@@ -99,7 +111,7 @@ def make_vlm_engine(backend: str, init_optimizer: bool = False) -> MegatronEngin
 
 def _make_input(engine: MegatronEngine) -> dict[str, Any]:
     """Create mock input and broadcast across model-parallel ranks."""
-    input_ = mock_vlm_input(device=engine.device)
+    input_ = mock_vlm_input(engine)
     return broadcast_tensor_container(
         input_,
         src_rank=engine.current_data_parallel_head(),

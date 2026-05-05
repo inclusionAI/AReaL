@@ -14,6 +14,7 @@ from megatron.core import parallel_state as mpu
 from megatron.core.fp8_utils import is_float8tensor
 from safetensors import safe_open
 
+from areal.engine.core.model import lang_config
 from areal.engine.megatron_utils.fp8 import (
     FP8BlockwiseTensorHelper,
     dequantize_params,
@@ -51,10 +52,11 @@ def _merge_qkv_weights(
 ) -> torch.Tensor | FP8BlockwiseTensorHelper:
     """Merge Q, K, V weights into a single QKV weight tensor."""
     assert len(hf_weights_safe_slice) == 3
-    num_key_value_heads = hf_config.num_key_value_heads
-    hidden_dim = hf_config.hidden_size
-    num_attention_heads = hf_config.num_attention_heads
-    head_dim = getattr(hf_config, "head_dim", hidden_dim // num_attention_heads)
+    text_cfg = lang_config(hf_config)
+    num_key_value_heads = text_cfg.num_key_value_heads
+    hidden_dim = text_cfg.hidden_size
+    num_attention_heads = text_cfg.num_attention_heads
+    head_dim = getattr(text_cfg, "head_dim", hidden_dim // num_attention_heads)
     group_dim = head_dim * num_attention_heads // num_key_value_heads
     q, k, v = hf_weights_safe_slice
     # q k v might be tp split
@@ -91,8 +93,9 @@ def _load_fused_qkv_weight(
     x = hf_weights_safe_slice[0]
     x = x[:] if not isinstance(x, torch.Tensor) else x
 
-    num_heads = hf_config.num_attention_heads
-    num_kv_heads = getattr(hf_config, "num_key_value_heads", num_heads)
+    text_cfg = lang_config(hf_config)
+    num_heads = text_cfg.num_attention_heads
+    num_kv_heads = getattr(text_cfg, "num_key_value_heads", num_heads)
     head_dim = x.shape[0] // (num_heads + 2 * num_kv_heads)
     is_bias = x.dim() == 1
 
@@ -290,10 +293,11 @@ def _weight_to_mcore_tp(
                 tp_size,
             )
         else:
+            text_cfg = lang_config(hf_config)
             num_kv_heads = getattr(
-                hf_config, "num_key_value_heads", hf_config.num_attention_heads
+                text_cfg, "num_key_value_heads", text_cfg.num_attention_heads
             )
-            if num_kv_heads == hf_config.num_attention_heads:
+            if num_kv_heads == text_cfg.num_attention_heads:
                 # Fused QKV weight (e.g., Lightning Attention query_key_value)
                 # Already in megatron interleaved format [H, 3, D] — just TP-slice
                 res = _load_fused_qkv_weight(
@@ -304,7 +308,7 @@ def _weight_to_mcore_tp(
                 # Split into separate Q, K, V then merge into mcore format.
                 x = hf_weights_safe_slice[0]
                 x = x[:] if not isinstance(x, torch.Tensor) else x
-                num_heads = hf_config.num_attention_heads
+                num_heads = text_cfg.num_attention_heads
                 head_dim = x.shape[0] // (num_heads + 2 * num_kv_heads)
                 q = x[: num_heads * head_dim]
                 k = x[num_heads * head_dim : (num_heads + num_kv_heads) * head_dim]
