@@ -188,6 +188,9 @@ api_key.json
 *.pdf
 *.swp
 
+!geo_edit/qualitative_example/**/*.jpg
+!geo_edit/qualitative_example/**/*.pdf
+
 .vscode/
 wandb/
 outputs/
