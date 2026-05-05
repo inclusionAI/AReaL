@@ -273,6 +273,20 @@ class TestVisionModelDetection:
 
         assert is_valid_vision_model("qwen3_vl") is True
 
+    def test_qwen3_vl_moe_detected(self):
+        from areal.engine.core.model import (
+            is_qwen3_vl_model,
+            is_qwen3_vl_moe_model,
+            is_valid_vision_model,
+        )
+
+        assert is_valid_vision_model("qwen3_vl_moe") is True
+        assert is_qwen3_vl_moe_model("qwen3_vl_moe") is True
+        # Family-level helper covers both dense and MoE.
+        assert is_qwen3_vl_model("qwen3_vl_moe") is True
+        assert is_qwen3_vl_model("qwen3_vl") is True
+        assert is_qwen3_vl_moe_model("qwen3_vl") is False
+
     def test_qwen3_not_detected(self):
         from areal.engine.core.model import is_valid_vision_model
 
@@ -929,6 +943,279 @@ class TestConvertQwen3VLToHF:
 
         with pytest.raises(ValueError, match="Unknown Qwen3-VL parameter"):
             convert_qwen3_vl_to_hf(
+                tf_config,
+                "module.module.some_unknown.weight",
+                torch.randn(10),
+            )
+
+
+class TestConvertQwen3VLMoEToHF:
+    """Test mcore→HF weight name conversion for Qwen3-VL-MoE.
+
+    Qwen3-VL-MoE shares vision tower + language attention with dense
+    Qwen3-VL; this class focuses on MoE-specific tensors (experts, router,
+    pre_mlp_layernorm) plus registry-ordering and a few cross-cutting
+    regression guards.
+    """
+
+    @pytest.fixture()
+    def tf_config(self):
+        """Mock TransformerConfig matching Qwen/Qwen3-VL-30B-A3B-Instruct text_config:
+        hidden=2048, attn_heads=32, kv_heads=4, head_dim=128.
+        """
+        cfg = MagicMock()
+        cfg.hidden_size = 2048
+        cfg.num_attention_heads = 32
+        cfg.num_query_groups = 4
+        cfg.kv_channels = 128
+        return cfg
+
+    @pytest.fixture()
+    def hf_config(self):
+        """Mock HF config matching Qwen/Qwen3-VL-30B-A3B-Instruct vision_config."""
+        cfg = MagicMock()
+        cfg.vision_config.num_heads = 16
+        cfg.vision_config.hidden_size = 1152
+        return cfg
+
+    # --- Registry dispatch (must hit MoE converter before dense) ---
+
+    def test_registry_dispatches_qwen3_vl_moe_before_qwen3_vl(
+        self, tf_config, hf_config
+    ):
+        """``qwen3_vl_moe`` model_name must dispatch to the MoE converter, not
+        fall through to ``qwen3_vl`` / ``qwen3_moe`` / ``qwen3`` (substring match
+        order). MoE-specific names like ``mlp.experts.linear_fc1.weight0`` would
+        otherwise raise ``Unknown Qwen3-VL language-model parameter``.
+        """
+        from areal.engine.megatron_utils.megatron import convert_to_hf
+
+        param = torch.randn(1536, 2048)  # 2 * expert_dim x hidden
+        result = convert_to_hf(
+            tf_config,
+            "qwen3_vl_moe",
+            "module.module.language_model.decoder.layers.0.mlp.experts.linear_fc1.weight5",
+            param,
+            hf_config=hf_config,
+        )
+        names = [n for n, _ in result]
+        assert "model.language_model.layers.0.mlp.experts.5.gate_proj.weight" in names
+        assert "model.language_model.layers.0.mlp.experts.5.up_proj.weight" in names
+
+    def test_registry_dense_still_routes_to_dense(self, tf_config, hf_config):
+        """Sanity: ``qwen3_vl`` model_name still dispatches to dense converter
+        even after MoE entry is inserted. Dense MLP fc1 must chunk gate/up.
+        """
+        from areal.engine.megatron_utils.megatron import convert_to_hf
+
+        param = torch.randn(12288, 2048)
+        result = convert_to_hf(
+            tf_config,
+            "qwen3_vl",
+            "module.module.language_model.decoder.layers.0.mlp.linear_fc1.weight",
+            param,
+            hf_config=hf_config,
+        )
+        names = [n for n, _ in result]
+        assert "model.language_model.layers.0.mlp.gate_proj.weight" in names
+        assert "model.language_model.layers.0.mlp.up_proj.weight" in names
+
+    # --- Shared global / attention paths (regression guards on factoring) ---
+
+    def test_lm_global_embedding_shared_with_dense(self, tf_config):
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_moe_to_hf
+
+        param = torch.randn(151936, 2048)
+        result = convert_qwen3_vl_moe_to_hf(
+            tf_config,
+            "module.module.language_model.embedding.word_embeddings.weight",
+            param,
+        )
+        assert result == [("model.language_model.embed_tokens.weight", param)]
+
+    def test_lm_attention_qkv_split_shared_with_dense(self, tf_config):
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_moe_to_hf
+
+        # value_num_per_group = 32/4 = 8, head_dim = 128
+        qkv_dim = tf_config.num_query_groups * (8 + 1 + 1) * tf_config.kv_channels
+        param = torch.randn(qkv_dim, tf_config.hidden_size)
+        result = convert_qwen3_vl_moe_to_hf(
+            tf_config,
+            "module.module.language_model.decoder.layers.4.self_attention.linear_qkv.weight",
+            param,
+        )
+        names = [n for n, _ in result]
+        assert "model.language_model.layers.4.self_attn.q_proj.weight" in names
+        assert "model.language_model.layers.4.self_attn.k_proj.weight" in names
+        assert "model.language_model.layers.4.self_attn.v_proj.weight" in names
+
+    def test_lm_attention_q_norm_shared_with_dense(self, tf_config):
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_moe_to_hf
+
+        param = torch.randn(128)
+        result = convert_qwen3_vl_moe_to_hf(
+            tf_config,
+            "module.module.language_model.decoder.layers.7.self_attention.q_layernorm.weight",
+            param,
+        )
+        assert result == [
+            ("model.language_model.layers.7.self_attn.q_norm.weight", param)
+        ]
+
+    # --- MoE-specific: experts, router, pre_mlp_layernorm ---
+
+    def test_expert_fc1_chunks_gate_up_per_expert(self, tf_config):
+        """Per-expert ``linear_fc1.weight{idx}`` chunks into gate_proj and
+        up_proj at the per-expert HF path.
+        """
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_moe_to_hf
+
+        param = torch.randn(1536, 2048)
+        result = convert_qwen3_vl_moe_to_hf(
+            tf_config,
+            "module.module.language_model.decoder.layers.3.mlp.experts.linear_fc1.weight12",
+            param,
+        )
+        assert len(result) == 2
+        names = [n for n, _ in result]
+        assert "model.language_model.layers.3.mlp.experts.12.gate_proj.weight" in names
+        assert "model.language_model.layers.3.mlp.experts.12.up_proj.weight" in names
+
+    def test_expert_fc2_passthrough_per_expert(self, tf_config):
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_moe_to_hf
+
+        param = torch.randn(2048, 768)
+        result = convert_qwen3_vl_moe_to_hf(
+            tf_config,
+            "module.module.language_model.decoder.layers.3.mlp.experts.linear_fc2.weight12",
+            param,
+        )
+        assert result == [
+            ("model.language_model.layers.3.mlp.experts.12.down_proj.weight", param)
+        ]
+
+    def test_router_renamed_to_mlp_gate(self, tf_config):
+        """``mlp.router.weight`` → HF ``mlp.gate.weight`` (NOT ``mlp.router.weight``)."""
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_moe_to_hf
+
+        param = torch.randn(128, 2048)
+        result = convert_qwen3_vl_moe_to_hf(
+            tf_config,
+            "module.module.language_model.decoder.layers.0.mlp.router.weight",
+            param,
+        )
+        assert result == [("model.language_model.layers.0.mlp.gate.weight", param)]
+
+    def test_pre_mlp_layernorm_renamed_to_post_attention(self, tf_config):
+        """``pre_mlp_layernorm.weight`` → HF ``post_attention_layernorm.weight``."""
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_moe_to_hf
+
+        param = torch.randn(2048)
+        result = convert_qwen3_vl_moe_to_hf(
+            tf_config,
+            "module.module.language_model.decoder.layers.5.pre_mlp_layernorm.weight",
+            param,
+        )
+        assert result == [
+            ("model.language_model.layers.5.post_attention_layernorm.weight", param)
+        ]
+
+    def test_dense_mlp_fallback_for_mixed_sparse_step(self, tf_config):
+        """Layers left non-sparse by ``decoder_sparse_step > 1`` keep the dense
+        MLP path. Qwen3-VL-30B-A3B-Instruct uses ``decoder_sparse_step=1`` so
+        these branches are dead for that checkpoint, but they must exist for
+        future variants with mixed dense/sparse layouts.
+        """
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_moe_to_hf
+
+        # linear_fc1: chunk gate/up
+        param = torch.randn(12288, 2048)
+        result = convert_qwen3_vl_moe_to_hf(
+            tf_config,
+            "module.module.language_model.decoder.layers.0.mlp.linear_fc1.weight",
+            param,
+        )
+        names = [n for n, _ in result]
+        assert "model.language_model.layers.0.mlp.gate_proj.weight" in names
+        assert "model.language_model.layers.0.mlp.up_proj.weight" in names
+
+        # linear_fc1.layer_norm_weight: post_attention_layernorm
+        ln_param = torch.randn(2048)
+        result = convert_qwen3_vl_moe_to_hf(
+            tf_config,
+            "module.module.language_model.decoder.layers.0.mlp.linear_fc1.layer_norm_weight",
+            ln_param,
+        )
+        assert result == [
+            ("model.language_model.layers.0.post_attention_layernorm.weight", ln_param)
+        ]
+
+        # linear_fc2: down_proj passthrough
+        fc2_param = torch.randn(2048, 6144)
+        result = convert_qwen3_vl_moe_to_hf(
+            tf_config,
+            "module.module.language_model.decoder.layers.0.mlp.linear_fc2.weight",
+            fc2_param,
+        )
+        assert result == [
+            ("model.language_model.layers.0.mlp.down_proj.weight", fc2_param)
+        ]
+
+    # --- Vision tower (delegates to shared helper) ---
+
+    def test_vision_block_qkv_reordered_via_shared_helper(self, tf_config, hf_config):
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_moe_to_hf
+
+        # 3 * hidden_vision = 3 * 1152 = 3456
+        param = torch.randn(3456, 1152)
+        result = convert_qwen3_vl_moe_to_hf(
+            tf_config,
+            "module.module.vision_model.decoder.layers.7.self_attention.linear_qkv.weight",
+            param,
+            hf_config=hf_config,
+        )
+        assert result[0][0] == "model.visual.blocks.7.attn.qkv.weight"
+        assert result[0][1].shape == param.shape
+
+    def test_deepstack_merger_via_shared_helper(self, tf_config):
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_moe_to_hf
+
+        param = torch.randn(1152)
+        result = convert_qwen3_vl_moe_to_hf(
+            tf_config,
+            "module.module.vision_model.decoder.deepstack_merger_list.1.patch_norm.weight",
+            param,
+        )
+        assert result == [("model.visual.deepstack_merger_list.1.norm.weight", param)]
+
+    # --- Error handling ---
+
+    def test_unknown_lang_param_raises(self, tf_config):
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_moe_to_hf
+
+        with pytest.raises(ValueError, match="Unknown Qwen3-VL-MoE language-model"):
+            convert_qwen3_vl_moe_to_hf(
+                tf_config,
+                "module.module.language_model.decoder.layers.0.unknown.weight",
+                torch.randn(10),
+            )
+
+    def test_unknown_expert_kind_raises(self, tf_config):
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_moe_to_hf
+
+        with pytest.raises(ValueError, match="Unknown Qwen3-VL-MoE expert"):
+            convert_qwen3_vl_moe_to_hf(
+                tf_config,
+                "module.module.language_model.decoder.layers.0.mlp.experts.linear_fc99.weight0",
+                torch.randn(10),
+            )
+
+    def test_unknown_top_level_param_raises(self, tf_config):
+        """Non-LM, non-vision names should raise via the shared vision helper."""
+        from areal.engine.megatron_utils.megatron import convert_qwen3_vl_moe_to_hf
+
+        with pytest.raises(ValueError, match="Unknown Qwen3-VL parameter"):
+            convert_qwen3_vl_moe_to_hf(
                 tf_config,
                 "module.module.some_unknown.weight",
                 torch.randn(10),

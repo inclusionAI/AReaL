@@ -89,7 +89,20 @@ def mock_vlm_input(engine: "MegatronEngine") -> dict[str, Any]:
     }
 
 
-def make_vlm_engine(backend: str, init_optimizer: bool = False) -> MegatronEngine:
+def make_vlm_engine(
+    backend: str,
+    init_optimizer: bool = False,
+    wrap_with_ddp: bool = True,
+) -> MegatronEngine:
+    """Build a MegatronEngine for VLM tests.
+
+    ``wrap_with_ddp=False`` skips the DDP grad-buffer allocation (~2× model
+    bf16 bytes per rank). Forward-only / save-only paths don't need grads
+    and benefit from the memory headroom — important for 30B+ MoE models
+    where the grad buffer pushes per-GPU usage near 80 GB and tiny NCCL
+    coordination allocations can fail when other processes hold a few
+    hundred MB on the same device.
+    """
     bridge_type = os.environ.get("AREAL_TEST_BRIDGE_TYPE", "mbridge")
     config = TrainEngineConfig(
         backend=backend,
@@ -98,7 +111,9 @@ def make_vlm_engine(backend: str, init_optimizer: bool = False) -> MegatronEngin
         path=VLM_MODEL_PATH,
         mb_spec=MicroBatchSpec(max_tokens_per_mb=4096),
         optimizer=OptimizerConfig() if init_optimizer else None,
-        megatron=MegatronEngineConfig(bridge_type=bridge_type),
+        megatron=MegatronEngineConfig(
+            bridge_type=bridge_type, wrap_with_ddp=wrap_with_ddp
+        ),
         gradient_checkpointing=True,
     )
     alloc_mode = ModelAllocation.from_str(backend)
@@ -143,7 +158,9 @@ def test_vlm_init(backend: str, output: str | None = None):
 def test_vlm_forward(backend: str, output: str | None = None):
     """Test VLM eval forward pass."""
     rank = int(os.environ["RANK"])
-    engine = make_vlm_engine(backend, init_optimizer=False)
+    # No DDP grad buffer — forward is inference-only. Saves ~2× model bytes
+    # per rank and avoids NCCL OOMs at the GPU-memory boundary on 30B+ MoE.
+    engine = make_vlm_engine(backend, init_optimizer=False, wrap_with_ddp=False)
     bcasted_input = _make_input(engine)
 
     engine.eval()
@@ -195,6 +212,63 @@ def test_vlm_save_load(backend: str, save_dir: str, output: str | None = None):
     print(f"rank {rank}: test_vlm_save_load({backend}) Done.")
 
 
+def test_vlm_dcp_save_load(backend: str, output: str | None = None):
+    """Test VLM DCP save/load round-trip on parameters only.
+
+    Parameter-only round-trip (no forward), so it works for any registered
+    VLM regardless of input shape. Mirrors ``test_simple_dcp_save_load`` in
+    ``run_megatron_engine_distributed.py`` but uses ``make_vlm_engine`` to
+    pull processor/tokenizer through the engine init.
+    """
+    import copy
+    import tempfile
+
+    rank = int(os.environ["RANK"])
+    base_dir = tempfile.gettempdir()
+    save_path = Path(base_dir) / "megatron_vlm_simple_dcp_test"
+    if rank == 0:
+        save_path.mkdir(parents=True, exist_ok=True)
+    # No barrier here — the process group is not initialized yet;
+    # ``make_vlm_engine`` calls ``create_process_group`` + ``initialize``
+    # which barrier internally before any rank touches ``save_path``.
+
+    engine = make_vlm_engine(backend, init_optimizer=True)
+
+    meta = SaveLoadMeta(
+        path=save_path,
+        weight_format="dcp",
+        tokenizer=engine.tokenizer,
+        with_optim=False,
+        base_model_path=None,
+    )
+
+    with torch.no_grad():
+        engine.eval()
+        params = copy.deepcopy(dict(engine.model.named_parameters()))
+        engine.save(meta)
+
+        for p in engine.model.parameters():
+            p.data.zero_()
+
+        engine.load(meta)
+
+        succ = True
+        for name, param in engine.model.named_parameters():
+            if not torch.allclose(param, params[name]):
+                diff = torch.abs(params[name] - param)
+                print(
+                    f"rank {rank} diff of {name}: max={torch.max(diff)} "
+                    f"avg={torch.mean(diff)} count={torch.count_nonzero(diff)}"
+                )
+                succ = False
+        assert succ, "Weights should be identical after DCP save/load"
+
+    _cleanup(engine)
+    if rank == 0 and output is not None:
+        write_result(output, "Passed")
+    print(f"rank {rank}: test_vlm_dcp_save_load({backend}) Done.")
+
+
 def test_vlm_train(backend: str, output: str | None = None):
     """Test VLM training step."""
     rank = int(os.environ["RANK"])
@@ -238,7 +312,7 @@ def main():
     parser.add_argument(
         "--test_type",
         type=str,
-        choices=["init", "forward", "save_load", "train"],
+        choices=["init", "forward", "save_load", "dcp_save_load", "train"],
         default="train",
     )
     args = parser.parse_args()
@@ -250,6 +324,8 @@ def main():
     elif args.test_type == "save_load":
         assert args.save_dir is not None, "--save_dir required for save_load test"
         test_vlm_save_load(args.backend, args.save_dir, output=args.output)
+    elif args.test_type == "dcp_save_load":
+        test_vlm_dcp_save_load(args.backend, output=args.output)
     elif args.test_type == "train":
         test_vlm_train(args.backend, output=args.output)
     else:

@@ -119,6 +119,10 @@ MOE_MODEL_PATHS = {
         "/storage/openpsi/models/Qwen__Qwen3.5-35B-A3B",
         "Qwen/Qwen3.5-35B-A3B",
     ),
+    "qwen3_vl_moe": get_model_path(
+        "/storage/openpsi/models/Qwen__Qwen3-VL-30B-A3B-Instruct/",
+        "Qwen/Qwen3-VL-30B-A3B-Instruct",
+    ),
 }
 
 # Combined for backward compatibility

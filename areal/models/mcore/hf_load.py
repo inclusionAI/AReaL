@@ -170,6 +170,80 @@ def _slice_moe_expert_weight(
     return x[_get_tp_slice(shape, dim=partition_dim, tp_rank=tp_rank, tp_size=tp_size)]
 
 
+def _parse_local_expert_idx(mcore_weights_name: str) -> int:
+    """Extract the per-rank-local expert index from an mcore expert param name.
+
+    mcore weight names for grouped MoE end with ``weight{idx}`` where ``idx`` is
+    the rank-local expert index (0..num_experts_per_rank-1). The global expert
+    index is ``idx + (num_moe_experts // ep_size) * ep_rank``.
+    """
+    return int(mcore_weights_name.split(".weight")[-1])
+
+
+def _slice_moe_expert_fc1_stacked_gate_up(
+    hf_weights_safe_slice: list,
+    mcore_weights_name: str,
+    num_moe_experts: int,
+    ep_rank: int,
+    ep_size: int,
+    tp_rank: int,
+    tp_size: int,
+) -> torch.Tensor:
+    """Slice a per-expert ``linear_fc1.weight{idx}`` shard from a 3D stacked
+    HF ``gate_up_proj`` of shape ``[E, hidden, 2*expert_dim]``.
+
+    Used for Qwen3-VL-MoE-style MoE checkpoints whose HF format keeps experts
+    grouped under one tensor (vs Qwen3-MoE which exposes per-expert flat keys).
+    Mirrors mbridge ``Qwen3VBaseBridge._weight_to_mcore_format`` MoE branch
+    (``base_bridge.py:322-331``) plus AReaL's TP slicing of the gate/up halves.
+    """
+    assert len(hf_weights_safe_slice) == 1
+    stacked = hf_weights_safe_slice[0]
+    local_idx = _parse_local_expert_idx(mcore_weights_name)
+    num_experts_per_rank = num_moe_experts // ep_size
+    global_idx = local_idx + num_experts_per_rank * ep_rank
+    expert = stacked[global_idx]  # [hidden, 2*expert_dim]
+    if not isinstance(expert, torch.Tensor):
+        expert = expert[:]
+    expert_t = expert.T.contiguous()  # [2*expert_dim, hidden]
+    gate, up = expert_t.chunk(2, dim=0)  # each [expert_dim, hidden]
+    gate = gate[
+        _get_tp_slice(_get_shape(gate), dim=0, tp_rank=tp_rank, tp_size=tp_size)
+    ]
+    up = up[_get_tp_slice(_get_shape(up), dim=0, tp_rank=tp_rank, tp_size=tp_size)]
+    return torch.cat([gate, up], dim=0)
+
+
+def _slice_moe_expert_fc2_stacked_down(
+    hf_weights_safe_slice: list,
+    mcore_weights_name: str,
+    num_moe_experts: int,
+    ep_rank: int,
+    ep_size: int,
+    tp_rank: int,
+    tp_size: int,
+) -> torch.Tensor:
+    """Slice a per-expert ``linear_fc2.weight{idx}`` shard from a 3D stacked
+    HF ``down_proj`` of shape ``[E, expert_dim, hidden]``.
+
+    After expert slice + transpose the result is ``[hidden, expert_dim]``,
+    matching mcore's per-expert ``linear_fc2`` layout. TP shards along dim 1
+    (input/expert_dim axis), the same axis ``_slice_moe_expert_weight`` uses.
+    """
+    assert len(hf_weights_safe_slice) == 1
+    stacked = hf_weights_safe_slice[0]
+    local_idx = _parse_local_expert_idx(mcore_weights_name)
+    num_experts_per_rank = num_moe_experts // ep_size
+    global_idx = local_idx + num_experts_per_rank * ep_rank
+    expert = stacked[global_idx]  # [expert_dim, hidden]
+    if not isinstance(expert, torch.Tensor):
+        expert = expert[:]
+    expert_t = expert.T.contiguous()  # [hidden, expert_dim]
+    return expert_t[
+        _get_tp_slice(_get_shape(expert_t), dim=1, tp_rank=tp_rank, tp_size=tp_size)
+    ]
+
+
 def _slice_generic_weight(
     mcore_param_shape: list,
     hf_weights_safe_slice: list,
@@ -327,13 +401,45 @@ def _weight_to_mcore_tp(
         if len(hf_weights_safe_slice) == 2:
             # SwiGLU: merge separate gate_proj + up_proj
             res = _merge_gate_up_weights(hf_weights_safe_slice, tp_rank, tp_size)
+        elif (
+            "mlp.experts.linear_fc1.weight" in mcore_weights_name
+            and len(hf_weights_safe_slice) == 1
+            and len(_get_shape(hf_weights_safe_slice[0])) == 3
+        ):
+            # Stacked MoE expert (e.g., Qwen3-VL-MoE ``gate_up_proj`` shape
+            # ``[E, hidden, 2*expert_dim]``). Slice per-expert + transpose +
+            # gate/up TP-split. ``num_moe_experts`` lives on the bridge config.
+            res = _slice_moe_expert_fc1_stacked_gate_up(
+                hf_weights_safe_slice,
+                mcore_weights_name,
+                num_moe_experts=lang_config(hf_config).num_experts,
+                ep_rank=mpu.get_expert_model_parallel_rank(),
+                ep_size=mpu.get_expert_model_parallel_world_size(),
+                tp_rank=tp_rank,
+                tp_size=tp_size,
+            )
         else:
             # Single fc1 weight (e.g., vision encoder MLP without gate/up split)
             res = _slice_generic_weight(
                 mcore_param_shape, hf_weights_safe_slice, tp_rank, tp_size
             )
     elif "mlp.experts.linear_fc2.weight" in mcore_weights_name:
-        res = _slice_moe_expert_weight(hf_weights_safe_slice, tp_rank, tp_size)
+        if (
+            len(hf_weights_safe_slice) == 1
+            and len(_get_shape(hf_weights_safe_slice[0])) == 3
+        ):
+            # Stacked MoE expert ``down_proj`` shape ``[E, expert_dim, hidden]``.
+            res = _slice_moe_expert_fc2_stacked_down(
+                hf_weights_safe_slice,
+                mcore_weights_name,
+                num_moe_experts=lang_config(hf_config).num_experts,
+                ep_rank=mpu.get_expert_model_parallel_rank(),
+                ep_size=mpu.get_expert_model_parallel_world_size(),
+                tp_rank=tp_rank,
+                tp_size=tp_size,
+            )
+        else:
+            res = _slice_moe_expert_weight(hf_weights_safe_slice, tp_rank, tp_size)
     else:
         res = _slice_generic_weight(
             mcore_param_shape, hf_weights_safe_slice, tp_rank, tp_size

@@ -4,7 +4,8 @@
 
 All tests in this file launch ``tests/torchrun/run_megatron_engine_vlm_distributed.py``
 as a torchrun subprocess so the parent pytest process never allocates GPU
-memory. The full suite runs on as few as 2 devices.
+memory. The full suite runs on as few as 2 devices for the dense parametric
+tests; Qwen3-VL-MoE tests need 8.
 
 CPU-only unit tests for the converters / detection helpers live in
 ``tests/test_megatron_engine_vlm.py``.
@@ -20,7 +21,7 @@ import torch
 
 from areal.api.alloc_mode import ModelAllocation
 from areal.utils.network import find_free_ports
-from areal.utils.testing_utils import DENSE_MODEL_PATHS
+from areal.utils.testing_utils import DENSE_MODEL_PATHS, MOE_MODEL_PATHS
 
 _TORCHRUN_SCRIPT = (
     pathlib.Path(__file__).parent
@@ -117,6 +118,14 @@ _VLM_MODELS = [
         {"VLM_MODEL_PATH": DENSE_MODEL_PATHS["qwen3_vl"]},
         id="qwen3_vl",
     ),
+    pytest.param(
+        {"VLM_MODEL_PATH": MOE_MODEL_PATHS["qwen3_vl_moe"]},
+        id="qwen3_vl_moe",
+        marks=pytest.mark.skipif(
+            torch.cuda.device_count() < 8,
+            reason="Qwen3-VL-MoE-30B-A3B requires at least 8 GPUs",
+        ),
+    ),
 ]
 
 
@@ -171,4 +180,55 @@ def test_train_tensor_parallel(model_env, tmp_path_factory):
         output,
         backend="megatron:d1p1t2",
         env_overrides=model_env,
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Qwen3-VL-MoE: 30B-A3B-Instruct under hybrid (attn|ffn) allocation.
+# CP > 1 is forbidden for VLMs (megatron_engine.py:347).
+# ──────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.multi_gpu
+@pytest.mark.slow
+@pytest.mark.skipif(not CUDA_AVAILABLE, reason="CUDA not available")
+def test_qwen3vl_moe_expert_parallel(tmp_path_factory):
+    """Forward smoke test for Qwen3-VL-MoE under ``(attn:d2t4|ffn:d2e4)``.
+
+    Allocation: attn DP=2 TP=4 (8 GPUs); ffn DP=2 EP=4 (8 GPUs). World sizes
+    must match — earlier ``(attn:d2t2|ffn:d2e4)`` raised
+    ``InvalidAllocationModeError`` (attn=4 vs ffn=8). Validates the hybrid
+    attn/ffn parser, EP-aware weight init, and VLM forward path.
+    """
+    if torch.cuda.device_count() < 8:
+        pytest.skip("Qwen3-VL-MoE expert parallel requires 8 GPUs to run")
+    output = str(
+        tmp_path_factory.mktemp("test_output") / "qwen3vl_moe_expert_parallel.out"
+    )
+    _run_vlm_test(
+        "forward",
+        output,
+        backend="megatron:(attn:d2t4|ffn:d2e4)",
+        env_overrides={"VLM_MODEL_PATH": MOE_MODEL_PATHS["qwen3_vl_moe"]},
+    )
+
+
+@pytest.mark.multi_gpu
+@pytest.mark.slow
+@pytest.mark.skipif(not CUDA_AVAILABLE, reason="CUDA not available")
+def test_qwen3vl_moe_dcp_save_load(tmp_path_factory):
+    """DCP save/load round-trip for Qwen3-VL-MoE under ``(attn:d2p1t4|ffn:d1p1t2e4)``.
+
+    Allocation: attn DP=2 PP=1 TP=4 (8 GPUs); ffn DP=1 PP=1 TP=2 EP=4 (8 GPUs).
+    Drops the ``cp=2`` segment from the dense Qwen3-MoE analog because VLM
+    forbids CP>1 (megatron_engine.py:347).
+    """
+    if torch.cuda.device_count() < 8:
+        pytest.skip("Qwen3-VL-MoE DCP save load requires 8 GPUs to run")
+    output = str(tmp_path_factory.mktemp("test_output") / "qwen3vl_moe_save_load.out")
+    _run_vlm_test(
+        "dcp_save_load",
+        output,
+        backend="megatron:(attn:d2p1t4|ffn:d1p1t2e4)",
+        env_overrides={"VLM_MODEL_PATH": MOE_MODEL_PATHS["qwen3_vl_moe"]},
     )
