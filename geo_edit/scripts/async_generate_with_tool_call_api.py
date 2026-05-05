@@ -58,6 +58,7 @@ def _init_worker(
     enabled_agent_names: "list | None" = None,
     no_image_compression: bool = False,
     temperature: float = 1.0,
+    max_output_tokens: "int | None" = None,
 ):
     from typing import cast, Literal
 
@@ -88,7 +89,7 @@ def _init_worker(
 
         connect_to_ray_agents(_WORKER_TOOL_ROUTER, enabled_agent_names)
 
-    max_output_tokens = None
+    max_output_tokens = max_output_tokens
     if model_type in {"Google", "OpenAI"} and not api_key:
         raise ValueError("API key must be provided for Google/OpenAI models.")
 
@@ -438,6 +439,9 @@ def main():
     parser.add_argument(
         "--temperature", type=float, default=1.0, help="Sampling temperature.",
     )
+    parser.add_argument(
+        "--max_output_tokens", type=int, default=None, help="Per-call max generation tokens.",
+    )
     args = parser.parse_args()
     if args.model_type in {"Google", "OpenAI"} and not args.api_key:
         raise ValueError("API key must be provided for Google/OpenAI models.")
@@ -521,6 +525,7 @@ def main():
             enabled_agent_names,
             args.no_image_compression,
             args.temperature,
+            args.max_output_tokens,
         ),
     ) as pool:
         inflight = []  # list[(task_id, AsyncResult)]

@@ -40,6 +40,7 @@ from geo_edit.utils.stats import save_global_meta_info
 logger = setup_logger(__name__)
 
 SYSTEM_PROMPT = VLLM_NO_TOOL_SYSTEM_PROMPT
+MINIMAL_SYSTEM_PROMPT = "Please wrap your final answer in <answer></answer> tags."
 
 # Fixed parameters
 TEMPERATURE = 1.0
@@ -66,18 +67,22 @@ def _init_worker(
     no_image_compression: bool = False,
     temperature: float = TEMPERATURE,
     max_output_tokens: int | None = None,
+    minimal_prompt: bool = False,
 ):
     global _WORKER_AGENT, _WORKER_OUTPUT_PATH, _WORKER_MODEL_TYPE, _WORKER_API_MODE, _WORKER_NO_IMAGE_COMPRESSION
 
     _WORKER_NO_IMAGE_COMPRESSION = no_image_compression
 
     tool_router = ToolRouter(tool_mode="direct")
+    effective_system_prompt = (
+        MINIMAL_SYSTEM_PROMPT if minimal_prompt else SYSTEM_PROMPT.strip()
+    )
     agent_configs = build_api_agent_configs(
         tool_router,
         api_mode=api_mode,
         temperature=temperature,
         max_output_tokens=max_output_tokens,
-        system_prompt=SYSTEM_PROMPT.strip(),
+        system_prompt=effective_system_prompt,
         reasoning_level="low"
     )
 
@@ -174,6 +179,108 @@ def _run_one_task(task_payload: dict):
     return False, None
 
 
+def _build_prompt_for_item(dataset_spec, item, minimal: bool, visworld_original: bool = False, direct_answer: bool = False):
+    """Return the user prompt string for one dataset item.
+
+    Modes:
+      * ``direct_answer=True`` -> original dataset prompt/question + a
+        dataset-specific "answer directly with <format>, wrap in
+        <answer></answer>" instruction. Works for all 7 new-bench datasets.
+      * ``visworld_original=True`` -> raw ``item['prompt']`` + category suffix
+        from the official VisWorld eval (paperfolding/cube/mmsi/ballgame).
+        No role intro, no <answer></answer> directive.
+      * ``minimal=True`` -> strip every template preamble; emit raw question
+        + a single-line "wrap your final answer in <answer></answer>" instr.
+      * else -> use the dataset_spec template as configured.
+    """
+    ds_name = dataset_spec.name
+
+    if direct_answer:
+        # Pull raw question/prompt and optional options block.
+        values = {}
+        for template_key, source in dataset_spec.template_fields.items():
+            values[template_key] = source(item) if callable(source) else (item[source] if source in item else "")
+        raw_q = str(values.get("question") or values.get("prompt") or "").strip()
+        opts = values.get("options_text") or ""
+        opts = str(opts).strip()
+
+        # Build body (question + options)
+        if opts:
+            if opts.lower().startswith("options:"):
+                body = f"{raw_q}\n\n{opts}" if raw_q else opts
+            else:
+                body = f"{raw_q}\n\nOptions:\n{opts}" if raw_q else f"Options:\n{opts}"
+        else:
+            body = raw_q
+
+        # Dataset-specific "answer directly" suffix
+        if ds_name == "visworld_eval":
+            category = str(item.get("category", "")).strip().lower()
+            if category in ("paperfolding", "ballgame"):
+                suffix = ("Please answer directly with a single number and nothing else. "
+                          "Wrap your answer in <answer></answer> tags.")
+            elif category in ("cube", "mmsi"):
+                suffix = ("Please answer directly with only the letter of the correct option and nothing else. "
+                          "Wrap your answer in <answer></answer> tags.")
+            else:
+                suffix = "Please answer directly with only the final answer. Wrap your answer in <answer></answer> tags."
+        elif ds_name == "babyvision":
+            if str(item.get("ansType", "")).lower() == "choice":
+                suffix = ("Please answer directly with only the letter of the correct option (A, B, C, or D) and nothing else. "
+                          "Wrap your answer in <answer></answer> tags.")
+            else:
+                suffix = ("Please answer directly with only the final answer and nothing else. "
+                          "Wrap your answer in <answer></answer> tags.")
+        elif ds_name == "vstar_bench":
+            suffix = ("Please answer directly with only the letter of the correct option (A, B, C, or D) and nothing else. "
+                      "Wrap your answer in <answer></answer> tags.")
+        elif ds_name == "mapeval_visual":
+            suffix = ("Please answer directly with only the number of the correct option (1, 2, 3, ...) and nothing else. "
+                      "If none of the options are correct or the question cannot be answered, answer with 0. "
+                      "Wrap your answer in <answer></answer> tags.")
+        else:
+            suffix = "Please answer directly with only the final answer. Wrap your answer in <answer></answer> tags."
+
+        return f"{body}\n{suffix}" if body else suffix
+
+    if visworld_original:
+        prompt = str(item.get("prompt", "")).strip()
+        category = str(item.get("category", "")).strip().lower()
+        if category == "paperfolding":
+            prompt += "\nPlease answer directly with a single number and nothing else."
+        elif category in ("cube", "mmsi"):
+            prompt += "\nPlease answer directly with only the letter of the correct option and nothing else."
+        elif category == "multihop":
+            prompt += "\nPlease answer directly with only the letter of the correct option (if applicable), or a single short phrase."
+        elif category == "maze":
+            prompt += " where x and y are normalized pixel coordinates in the range [0, 1000]. x denotes the horizontal position from left to right, and y denotes the vertical position from top to bottom."
+        return prompt
+
+    if not minimal:
+        return dataset_spec.build_prompt(item, use_tools=False)
+
+    values = {}
+    for template_key, source in dataset_spec.template_fields.items():
+        values[template_key] = source(item) if callable(source) else (item[source] if source in item else "")
+
+    parts = []
+    if values.get("question"):
+        parts.append(str(values["question"]).strip())
+    if values.get("prompt") and not parts:
+        parts.append(str(values["prompt"]).strip())
+    opts = values.get("options_text")
+    if opts:
+        opts = str(opts).strip()
+        # Some formatters already include an "Options:\n" header; don't double-prefix.
+        if opts.lower().startswith("options:"):
+            parts.append(opts)
+        else:
+            parts.append(f"Options:\n{opts}")
+
+    body = "\n\n".join(p for p in parts if p)
+    return f"{body}\n\nPlease wrap your final answer in <answer></answer> tags."
+
+
 def main():
     import argparse
 
@@ -195,6 +302,9 @@ def main():
     )
     parser.add_argument("--temperature", type=float, default=TEMPERATURE, help="Sampling temperature.")
     parser.add_argument("--max_output_tokens", type=int, default=None, help="Max completion tokens per request (default: server/model default).")
+    parser.add_argument("--minimal_prompt", action="store_true", help="Strip all system/role/instruction fluff. Send only raw question (+ options if MCQ) with a minimal 'wrap your final answer in <answer></answer> tags' directive.")
+    parser.add_argument("--direct_answer", action="store_true", help="Use dataset-specific 'answer directly' instructions + require <answer></answer> wrapping. Overrides dataset templates.")
+    parser.add_argument("--visworld_original_prompt", action="store_true", help="(VisWorld only) Use raw prompt + official category suffix (paperfolding/cube/mmsi/ballgame), no <answer> wrapper.")
     args = parser.parse_args()
 
     if args.model_type == "OpenAI" and not args.api_key:
@@ -237,7 +347,7 @@ def main():
     with ctx.Pool(
         processes=n_workers,
         initializer=_init_worker,
-        initargs=(args.model_name_or_path, args.model_type, args.api_base, args.api_mode, args.api_key, args.no_image_compression, args.temperature, args.max_output_tokens),
+        initargs=(args.model_name_or_path, args.model_type, args.api_base, args.api_mode, args.api_key, args.no_image_compression, args.temperature, args.max_output_tokens, args.minimal_prompt),
     ) as pool:
         inflight = []
         submit_idx = 0
@@ -316,7 +426,12 @@ def main():
                 payload = {
                     "id": task_id,
                     "task_save_dir": task_save_dir,
-                    "prompt": dataset_spec.build_prompt(item, use_tools=False),
+                    "prompt": _build_prompt_for_item(
+                        dataset_spec, item,
+                        minimal=args.minimal_prompt,
+                        visworld_original=args.visworld_original_prompt,
+                        direct_answer=args.direct_answer,
+                    ),
                     "answer": dataset_spec.get_answer(item),
                     "image_path": image_path,
                     "text_only": text_only,

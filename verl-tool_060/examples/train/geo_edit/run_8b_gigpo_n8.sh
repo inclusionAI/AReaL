@@ -9,7 +9,7 @@ model_name=${MODEL_PATH:-/storage/openpsi/models/lcy_image_edit/sft_workspace/qw
 
 train_data="[$WORKSPACE/train.parquet,$WORKSPACE/omnispatial_rl_train.parquet]"
 val_data="[$WORKSPACE/val.parquet,$WORKSPACE/omnispatial_rl_val.parquet]"
-run_name="8b-gigpo-v5-0502-n8"
+run_name="8b-gigpo-v5-0503-n8"
 rl_alg=gigpo
 
 n_gpus_per_node=8

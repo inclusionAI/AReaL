@@ -40,9 +40,21 @@ def parse_coordinates(text: str) -> List[Tuple[float, float]]:
         return [(float(x), float(y)) for x, y in pairs]
 
     nums = re.findall(r"[\d.]+", body)
-    if len(nums) >= 4 and len(nums) % 2 == 0:
+    clean = []
+    for n in nums:
+        if not any(ch.isdigit() for ch in n):
+            continue
+        try:
+            clean.append(float(n))
+        except ValueError:
+            n2 = n.rstrip(".").lstrip(".")
+            try:
+                clean.append(float(n2))
+            except ValueError:
+                continue
+    if len(clean) >= 4 and len(clean) % 2 == 0:
         return [
-            (float(nums[i]), float(nums[i + 1])) for i in range(0, len(nums), 2)
+            (clean[i], clean[i + 1]) for i in range(0, len(clean), 2)
         ]
 
     return []
