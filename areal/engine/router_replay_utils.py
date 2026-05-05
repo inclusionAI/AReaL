@@ -820,6 +820,73 @@ def set_router_replay_data(
         offset, end = local_info["start"], local_info["end"]
         router_list = RouterReplayHelper.get_micro_batch_router_list(tf_config, vp_rank)
 
+        # ---------- R3 diagnostics: PP=2 root-cause hunt ----------
+        # Print the full PP-rank slicing decision so the next log can
+        # trivially confirm:
+        #   * tf_config.num_layers stays GLOBAL (27) under Megatron-Core PP
+        #     -- if it ever becomes local (14/13), index_by_layer would
+        #     still report True but ``idx=layer_idx`` would over-shoot.
+        #   * offset/end honors get_transformer_layer_offset.
+        #   * The set of MoE layers in [offset, end) matches the rollout
+        #     layer-axis convention (absolute layer index, with layer 0
+        #     dense and recorded as zeros).
+        #   * RouterReplay.router_instances is local-per-process: the
+        #     selected slice (creation_order list) tells us which routers
+        #     this PP rank actually owns.
+        try:
+            if _r3_verbose() and _r3_should_log("set_router_replay_data/PP_LAYOUT"):
+                moe_layers_in_range = [
+                    i for i in range(offset, end) if is_moe_layer(tf_config, i)
+                ]
+                non_moe_layers_in_range = [
+                    i for i in range(offset, end) if not is_moe_layer(tf_config, i)
+                ]
+                vp_size = getattr(
+                    tf_config, "virtual_pipeline_model_parallel_size", None
+                )
+                # Cheap audit: nnz of dim-0 slice for ALL layer indices
+                # (helps prove rollout's L-axis-0 is the dense layer and
+                # really is all-zero, vs. silently shifted).
+                with torch.no_grad():
+                    per_layer_nnz = [
+                        int((layers_topk[L] != 0).any(dim=-1).sum().item())
+                        if L < layers_topk.shape[0] else -1
+                        for L in range(min(layers_topk.shape[0], 32))
+                    ]
+                logger.info(
+                    "[R3-STAGE3/set_router_replay_data] PP_LAYOUT trace_id=%d %s "
+                    "tf_config.num_layers=%d vp_size=%s moe_layer_freq=%s "
+                    "first_k_dense_replace=%s "
+                    "local_info={start:%d, end:%d, count:%d} "
+                    "moe_layers_in_range=%s non_moe_layers_in_range=%s "
+                    "len(router_list)=%d total_router_instances=%d "
+                    "selected_router_creation_orders=%s "
+                    "selected_router_creator_ranks=%s "
+                    "layers_topk_dim0=%d index_by_layer=%s "
+                    "per_layer_any_nnz_first32=%s",
+                    _r3_current_trace_id(),
+                    _r3_pp_tp_info(tf_config, vp_rank),
+                    tf_config.num_layers,
+                    vp_size,
+                    getattr(tf_config, "moe_layer_freq", None),
+                    getattr(tf_config, "first_k_dense_replace", None),
+                    offset,
+                    end,
+                    local_info["count"],
+                    moe_layers_in_range,
+                    non_moe_layers_in_range,
+                    len(router_list),
+                    len(RouterReplay.router_instances),
+                    [getattr(r, "creation_order", -1) for r in router_list],
+                    [getattr(r, "creator_rank", -1) for r in router_list],
+                    layers_topk.shape[0],
+                    len(layers_topk) == tf_config.num_layers,
+                    per_layer_nnz,
+                )
+        except Exception:
+            logger.exception("[R3-STAGE3/PP_LAYOUT] diag log failed")
+        # ----------------------------------------------------------
+
         if len(router_list) == 0:
             logger.warning(
                 "[R3] set_router_replay_data: no RouterReplay instances found "
@@ -870,6 +937,8 @@ def set_router_replay_data(
                         _r3_zero_row_stats(slab),
                         _r3_tensor_sig(f"target[L={layer_idx}]", slab),
                         hex(_r3_hash64(slab)),
+                        getattr(router, "creation_order", -1),
+                        moe_idx,
                     )
                 )
             router_offset += 1
@@ -892,15 +961,23 @@ def set_router_replay_data(
             logger.info(
                 "[R3-STAGE3/set_router_replay_data] DISPATCH trace_id=%d %s "
                 "router_offset=%d len(router_list)=%d index_by_layer=%s "
-                "first_layers=%s ... (total dispatched=%d)",
+                "first_layers=%s all_layers_to_router_map=%s "
+                "... (total dispatched=%d)",
                 _r3_current_trace_id(),
                 _r3_pp_tp_info(tf_config, vp_rank),
                 router_offset,
                 len(router_list),
                 index_by_layer,
                 [
-                    (lidx, j, zr, sig, h) for lidx, j, zr, sig, h in head
+                    (lidx, j, zr, sig, h, co, mi)
+                    for lidx, j, zr, sig, h, co, mi in head
                 ],
+                # Full (layer_idx, slab_idx_used, router_creation_order,
+                # moe_ordinal) tuple for every dispatched layer. This is
+                # the definitive cross-check: PP0 must be [(1,1,0,0),
+                # (2,2,1,1), ..., (13,13,12,12)] and PP1 must be
+                # [(14,14,0,13), ..., (26,26,12,25)] on Moonlight.
+                [(lidx, j, co, mi) for lidx, j, _, _, _, co, mi in dispatched],
                 len(dispatched),
             )
 
@@ -957,6 +1034,38 @@ def setup_per_microbatch_replay_backward() -> None:
 def clear_router_replay() -> None:
     """Clear all RouterReplay state after a full forward-backward pass."""
     n_instances = len(RouterReplay.router_instances)
+    # ---------- R3 diagnostics: dump pre-clear queue lengths so leftover
+    # backward pops (a smoking gun for missing recompute under PP=2 1F1B)
+    # are always visible.
+    try:
+        if _r3_verbose() and _r3_should_log("clear_router_replay/snapshot"):
+            fwd_qs = [
+                len(getattr(r, "replay_backward_list", []) or [])
+                for r in RouterReplay.router_instances
+            ]
+            mask_qs = [
+                len(getattr(r, "replay_backward_mask_list", []) or [])
+                for r in RouterReplay.router_instances
+            ]
+            push_qs = [
+                len(getattr(r, "replay_push_meta_list", []) or [])
+                for r in RouterReplay.router_instances
+            ]
+            n_nonempty = sum(1 for q in fwd_qs if q > 0)
+            logger.info(
+                "[R3-STAGE3c/clear_router_replay] PRE_CLEAR_SNAPSHOT %s "
+                "n_instances=%d n_with_residual_fwd_q=%d "
+                "fwd_q_lens=%s mask_q_lens=%s push_meta_q_lens=%s",
+                _r3_pp_tp_info(),
+                n_instances,
+                n_nonempty,
+                fwd_qs,
+                mask_qs,
+                push_qs,
+            )
+    except Exception:
+        logger.exception("[R3-STAGE3c/clear_router_replay] diag log failed")
+    # -----------------------------------------------------------------
     RouterReplay.clear_global_indices()
     RouterReplay.clear_global_router_replay_action()
     logger.debug("[R3] Router replay state cleared (%d instances).", n_instances)

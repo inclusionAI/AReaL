@@ -87,6 +87,15 @@ class RouterReplay:
     # Set by the engine patch before forward_backward_func.
     pp_size: int = 1
 
+    # ---------- R3 diagnostics (PP=2 root-cause hunt) ----------
+    # Per forward_backward_batch aggregate counters.  Keys set by the
+    # REPLAY_BACKWARD/consume path and the forward-hook; values are reset
+    # at FB entry by _r3_forward_backward_batch and dumped at FB exit.
+    # This gives one END-OF-FB summary line to diff PP=1 vs PP=2 runs.
+    # Always class-level dict (no cross-rank comm — each rank maintains
+    # its own, which is the correctness unit).
+    _r3_fb_stats: dict[str, int] = {}
+
     # ------------------------------------------------------------------
     # Class-level (static) helpers
     # ------------------------------------------------------------------
@@ -160,6 +169,22 @@ class RouterReplay:
         # back to the live router output so they produce no replay signal.
         self.target_valid_mask: torch.Tensor | None = None
         self.replay_backward_mask_list: list[torch.Tensor | None] = []
+        # ---------- R3 diagnostics (PP=2 root-cause hunt) ----------
+        # Per-push metadata ring -- parallel to ``replay_backward_list`` so
+        # the BACKWARD consumer can compare the popped slab against the
+        # slab that was REGISTERED AT THAT PUSH (not the most recent
+        # target, which under 1F1B scheduling has been overwritten by a
+        # later mb). This cleanly separates "logging artifact" from "real
+        # backward queue corruption". See code-rules/distributed.md hang
+        # section -- the metadata ring is local state, no cross-rank comm.
+        self.replay_push_meta_list: list[dict] = []
+        self.creation_order: int = len(RouterReplay.router_instances)
+        try:
+            import torch.distributed as _dist
+            self.creator_rank: int = _dist.get_rank() if _dist.is_initialized() else -1
+        except Exception:
+            self.creator_rank = -1
+        # ------------------------------------------------------------
         RouterReplay.router_instances.append(self)
 
     def set_target_indices(
@@ -182,6 +207,42 @@ class RouterReplay:
         self.target_valid_mask = valid_mask
         self.replay_backward_list.append(topk_indices)
         self.replay_backward_mask_list.append(valid_mask)
+        # ---------- R3 diagnostics: capture push metadata at the SAME
+        # call site so REPLAY_BACKWARD/consume can later prove that the
+        # popped slab equals the slab that was originally pushed (the
+        # only correctness criterion). Hashing here is gated by
+        # _r3_should_log so steady-state cost is one int + one None.
+        # ---------------------------------------------------------------
+        try:
+            from areal.engine.router_replay_utils import (
+                _r3_current_trace_id as _tid,
+                _r3_hash64 as _h64,
+                _r3_should_log as _sl,
+                _r3_verbose as _v,
+            )
+            if _v() and _sl("RouterReplay.set_target_indices/push_meta"):
+                _slab_h = hex(_h64(topk_indices))
+                _mask_h = (
+                    hex(_h64(valid_mask.to(torch.int32)))
+                    if valid_mask is not None else "None"
+                )
+                self.replay_push_meta_list.append({
+                    "push_id": getattr(self, "_r3_push_counter", 0),
+                    "trace_id": _tid(),
+                    "slab_hash": _slab_h,
+                    "mask_hash": _mask_h,
+                    "slab_shape": tuple(topk_indices.shape),
+                })
+                self._r3_push_counter = getattr(self, "_r3_push_counter", 0) + 1
+            else:
+                # Always append a placeholder so list lengths stay locked
+                # to ``replay_backward_list``; pop side will skip None.
+                self.replay_push_meta_list.append(None)
+        except Exception:
+            try:
+                self.replay_push_meta_list.append(None)
+            except Exception:
+                pass
         # Cheap diagnostic: record every set in first few layers/mb. Gated
         # via _r3_should_log so steady-state overhead is ~one integer
         # increment.
@@ -232,11 +293,33 @@ class RouterReplay:
         self.recorded_topk_idx = topk_indices
 
     def clear_indices(self) -> None:
+        # ---------- R3 diagnostics: dump tail-state queue sizes BEFORE
+        # clearing so residual queues (a smoking gun for lost backward
+        # pops under PP=2 1F1B) are always visible in logs.
+        try:
+            from areal.engine.router_replay_utils import (
+                _r3_pp_tp_info,
+                _r3_should_log,
+                _r3_verbose,
+            )
+            if _r3_verbose() and _r3_should_log("RouterReplay.clear_indices/tail_state"):
+                logger.info(
+                    "[R3-STAGE3c/clear_indices] %s inst#%d fwd_q=%d "
+                    "mask_q=%d push_meta_q=%d",
+                    _r3_pp_tp_info(),
+                    self.creation_order,
+                    len(self.replay_backward_list),
+                    len(self.replay_backward_mask_list),
+                    len(getattr(self, "replay_push_meta_list", []) or []),
+                )
+        except Exception:
+            pass
         self.recorded_topk_idx = None
         self.target_topk_idx = None
         self.target_valid_mask = None
         self.replay_backward_list = []
         self.replay_backward_mask_list = []
+        self.replay_push_meta_list = []
 
     def set_router_replay_action(self, action: RouterReplayAction) -> None:
         self.router_replay_action = action
@@ -459,6 +542,17 @@ def _patched_topk_routing_with_score_function(
                 bw_valid_mask = bw_mask_list.pop(0)
             else:
                 bw_valid_mask = None
+            # ---------- R3 diagnostics: pop the matching push-meta entry
+            # so the divergence verdict below compares popped-slab against
+            # the slab that was REGISTERED AT PUSH TIME (the real
+            # correctness criterion under 1F1B PP scheduling).
+            _push_meta_list = getattr(router_replay, "replay_push_meta_list", None)
+            _bw_push_meta = None
+            if _push_meta_list:
+                try:
+                    _bw_push_meta = _push_meta_list.pop(0)
+                except IndexError:
+                    _bw_push_meta = None
             # ---- R3 deep-trace: log backward pop order + hashes ----
             try:
                 from areal.engine.router_replay_utils import (
@@ -510,7 +604,8 @@ def _patched_topk_routing_with_score_function(
                         "popped_slab_hash=%s popped_mask_hash=%s "
                         "current_target_hash=%s divergence=%s "
                         "queue_len_before=%d queue_len_after=%d "
-                        "mask_queue_len_before=%d mask_queue_len_after=%d",
+                        "mask_queue_len_before=%d mask_queue_len_after=%d "
+                        "push_meta=%s divergence_v2=%s",
                         _tid(),
                         _inst_idx,
                         tuple(scores.shape),
@@ -527,11 +622,74 @@ def _patched_topk_routing_with_score_function(
                             getattr(router_replay, "replay_backward_mask_list", [])
                             or []
                         ),
+                        _bw_push_meta,
+                        # divergence_v2 is the DEFINITIVE verdict: it
+                        # compares popped slab against the slab recorded
+                        # at the matching push site, not against the
+                        # most recent (potentially overwritten) target.
+                        # MATCH here = backward queue is correct under PP.
+                        (
+                            "NO_PUSH_META"
+                            if _bw_push_meta is None
+                            else (
+                                "MATCH"
+                                if _bw_push_meta.get("slab_hash") == _popped_slab_hash
+                                else "REAL_MISMATCH"
+                            )
+                        ),
                     )
             except Exception:
                 logger.exception(
                     "[R3-STAGE4/REPLAY_BACKWARD/consume] trace log failed"
                 )
+            # ---------- R3 diagnostics: FB-level aggregate counters
+            # (gated by _r3_verbose so prod path is untouched). Counters
+            # are reset at _r3_forward_backward_batch entry and dumped at
+            # exit, giving one summary line per FB call.
+            try:
+                from areal.engine.router_replay_utils import (
+                    _r3_hash64 as _h64x,
+                    _r3_verbose as _vx,
+                )
+                if _vx():
+                    _stats = RouterReplay._r3_fb_stats
+                    if router_replay.target_topk_idx is None:
+                        _stats["divergence_v1_none"] = (
+                            _stats.get("divergence_v1_none", 0) + 1
+                        )
+                    else:
+                        _v1_match = (
+                            router_replay.target_topk_idx.shape == top_indices.shape
+                            and _h64x(
+                                router_replay.target_topk_idx.to(top_indices.device)
+                            ) == _h64x(top_indices)
+                        )
+                        _stats["divergence_v1_match" if _v1_match
+                               else "divergence_v1_diverge"] = (
+                            _stats.get(
+                                "divergence_v1_match" if _v1_match
+                                else "divergence_v1_diverge", 0,
+                            ) + 1
+                        )
+                    if _bw_push_meta is None:
+                        _stats["divergence_v2_no_meta"] = (
+                            _stats.get("divergence_v2_no_meta", 0) + 1
+                        )
+                    else:
+                        _v2_match = (
+                            _bw_push_meta.get("slab_hash")
+                            == hex(_h64x(top_indices))
+                        )
+                        _stats["divergence_v2_match" if _v2_match
+                               else "divergence_v2_real_mismatch"] = (
+                            _stats.get(
+                                "divergence_v2_match" if _v2_match
+                                else "divergence_v2_real_mismatch", 0,
+                            ) + 1
+                        )
+                    _stats["bw_pop_total"] = _stats.get("bw_pop_total", 0) + 1
+            except Exception:
+                pass
             if (
                 bw_valid_mask is not None
                 and bw_valid_mask.shape[0] == top_indices.shape[0]

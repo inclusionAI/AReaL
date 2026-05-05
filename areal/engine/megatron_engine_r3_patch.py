@@ -71,6 +71,51 @@ def patch_megatron_engine_for_r3(
     engine._r3_original_forward_backward_batch = engine.forward_backward_batch
     engine._r3_pending_routed_experts = None
 
+    # ---------- R3 diagnostics: one-shot config snapshot so the NEXT
+    # run's log unambiguously records the PP layout Megatron-Core
+    # actually saw (num_layers, vp_size, pp_size, local offset/end,
+    # router_instance count per PP rank).  This answers D2/D3/D5 in a
+    # single early-startup line without polluting hot paths.
+    try:
+        from areal.engine.router_replay_patch import RouterReplay as _RR
+        from areal.engine.router_replay_utils import (
+            _r3_pp_tp_info as _ppi,
+            _r3_verbose as _v,
+            get_current_rank_layer_info as _info,
+            is_moe_layer as _ism,
+        )
+        if _v():
+            _tf = engine.tf_config
+            _li = _info(_tf)
+            _moe_list = [i for i in range(_li["start"], _li["end"]) if _ism(_tf, i)]
+            _dense_list = [
+                i for i in range(_li["start"], _li["end"]) if not _ism(_tf, i)
+            ]
+            logger.info(
+                "[R3-STAGE0/patch_megatron_engine_for_r3] ENGINE_SNAPSHOT %s "
+                "tf_config.num_layers=%d pp_size=%d vp_size=%s "
+                "moe_layer_freq=%s first_k_dense_replace=%s "
+                "local={start:%d end:%d count:%d} "
+                "moe_layers_in_range=%s non_moe_layers_in_range=%s "
+                "total_router_instances=%d "
+                "inst_creator_ranks=%s",
+                _ppi(_tf),
+                _tf.num_layers,
+                getattr(_tf, "pipeline_model_parallel_size", 1),
+                getattr(_tf, "virtual_pipeline_model_parallel_size", None),
+                getattr(_tf, "moe_layer_freq", None),
+                getattr(_tf, "first_k_dense_replace", None),
+                _li["start"], _li["end"], _li["count"],
+                _moe_list, _dense_list,
+                len(_RR.router_instances),
+                [getattr(r, "creator_rank", -1) for r in _RR.router_instances],
+            )
+    except Exception:
+        logger.exception(
+            "[R3-STAGE0/patch_megatron_engine_for_r3] snapshot log failed"
+        )
+    # --------------------------------------------------------------
+
     # Bind the wrapped method
     engine.forward_backward_batch = types.MethodType(
         _r3_forward_backward_batch, engine
@@ -451,20 +496,33 @@ def _r3_forward_backward_batch(
                 _r3_verbose,
             )
             if _r3_verbose():
+                # ---------- R3 diagnostics: D6 -- cross-PP batch-hash
+                # consistency. Print FULL global hash + per-sample hashes
+                # so PP rank 0 and PP rank 1 at the same trace_id can be
+                # diff'd offline. If hashes differ, the side-channel
+                # broadcast/scatter is wrong (root cause); if identical,
+                # PP-input parity is proved and we can rule out D6.
+                _full_hash = hex(_r3_hash64(routed_experts_batch))
+                _all_per_sample = _r3_per_sample_hashes(
+                    routed_experts_batch, max_rows=4096,
+                )
+                _all_per_sample_hex = [hex(h) for h in _all_per_sample]
                 logger.info(
                     "[R3-STAGE3/_r3_forward_backward_batch] "
                     "SIDE_CHANNEL_CONSUME trace_id=%s %s forward_only=%s "
                     "shape=%s hash=%s per_sample_hash[:16]=%s "
-                    "per_sample_nnz[:16]=%s per_sample_real_len[:16]=%s",
+                    "per_sample_nnz[:16]=%s per_sample_real_len[:16]=%s "
+                    "n_samples_total=%d full_per_sample_hash=%s",
                     _consumed_trace_id,
                     _r3_pp_tp_info(),
                     forward_only,
                     routed_experts_batch.shape,
-                    hex(_r3_hash64(routed_experts_batch)),
-                    [hex(h) for h in _r3_per_sample_hashes(
-                        routed_experts_batch, max_rows=16)],
+                    _full_hash,
+                    _all_per_sample_hex[:16],
                     _r3_per_sample_nnz(routed_experts_batch, max_rows=16),
                     _r3_per_sample_seq_real_len(routed_experts_batch, max_rows=16),
+                    len(_all_per_sample),
+                    _all_per_sample_hex,
                 )
         except Exception:
             logger.exception(
@@ -698,6 +756,56 @@ def _r3_forward_backward_batch(
                             model_config,
                             seq_align_to=_seq_align_to,
                         )
+                        # ---------- R3 diagnostics: per-mb queue-depth
+                        # snapshot RIGHT AFTER the dispatch finishes.
+                        # Under PP=1 every router has fwd_q==1 here; under
+                        # PP=2 1F1B the depth oscillates 1..PP_size.
+                        try:
+                            from areal.engine.router_replay_patch import (
+                                RouterReplay as _RR,
+                            )
+                            from areal.engine.router_replay_utils import (
+                                _r3_should_log as _sl2,
+                                _r3_verbose as _v2,
+                            )
+                            if _v2() and _sl2(
+                                "_R3MicroBatchIterator/post_dispatch_queue_audit"
+                            ):
+                                router_list = (
+                                    RouterReplayHelper.get_micro_batch_router_list(
+                                        model_config
+                                    )
+                                )
+                                fwd_qs = [
+                                    len(getattr(r, "replay_backward_list", []) or [])
+                                    for r in router_list
+                                ]
+                                push_qs = [
+                                    len(
+                                        getattr(r, "replay_push_meta_list", []) or []
+                                    )
+                                    for r in router_list
+                                ]
+                                logger.info(
+                                    "[R3-STAGE3/_R3MicroBatchIterator] "
+                                    "POST_DISPATCH_QUEUE_AUDIT mb_idx=%d %s "
+                                    "n_routers=%d fwd_q_lens=%s push_meta_q_lens=%s "
+                                    "max_fwd_q=%d min_fwd_q=%d "
+                                    "lens_locked=%s",
+                                    idx,
+                                    _r3_pp_tp_info(),
+                                    len(router_list),
+                                    fwd_qs,
+                                    push_qs,
+                                    max(fwd_qs) if fwd_qs else -1,
+                                    min(fwd_qs) if fwd_qs else -1,
+                                    fwd_qs == push_qs,
+                                )
+                        except Exception:
+                            logger.exception(
+                                "[R3-STAGE3/_R3MicroBatchIterator] "
+                                "POST_DISPATCH_QUEUE_AUDIT diag log failed"
+                            )
                     except Exception:
                         logger.warning(
                             "[R3] Failed to setup replay for micro-batch %d.",
@@ -739,9 +847,19 @@ def _r3_forward_backward_batch(
     # 4. Register a forward hook for REPLAY_FORWARD -> REPLAY_BACKWARD toggle.
     # ------------------------------------------------------------------
     hook_handles = []
+    # ---------- R3 diagnostics: D8 -- track which model chunks fire
+    # the post-forward hook. Under PP=2 + VP, multiple model chunks
+    # share the fbfunc; if any chunk's hook misses, the action toggle
+    # is skipped and backward pops see REPLAY_FORWARD, silently
+    # returning live routing. A mismatch between len(self.model) and
+    # hook_fire_counts[chunk_id] is a smoking gun.
+    _r3_hook_fire_counts: dict[int, int] = {}
+    _r3_toggle_count = {"n": 0}
 
     def _r3_post_forward_hook(module, input, output):
         """Switch from REPLAY_FORWARD to REPLAY_BACKWARD after model forward."""
+        _chunk_id = id(module)
+        _r3_hook_fire_counts[_chunk_id] = _r3_hook_fire_counts.get(_chunk_id, 0) + 1
         if RouterReplayHelper.is_replay_forward_action(model_config):
             router_list = RouterReplayHelper.get_micro_batch_router_list(
                 model_config
@@ -750,17 +868,52 @@ def _r3_forward_backward_batch(
                 router.set_router_replay_action(
                     RouterReplayAction.REPLAY_BACKWARD
                 )
+            _r3_toggle_count["n"] += 1
             if _r3_verbose() and _r3_should_log("_r3_post_forward_hook"):
                 logger.info(
                     "[R3-STAGE3/_r3_post_forward_hook] TOGGLE forward->backward "
-                    "%s n_routers=%d",
+                    "%s n_routers=%d mb_counter=%d chunk_id=%d "
+                    "fire_count_this_chunk=%d total_toggles=%d "
+                    "n_chunks_seen=%d",
                     _r3_pp_tp_info(),
                     len(router_list),
+                    getattr(self, "_r3_mb_counter", -1),
+                    _chunk_id,
+                    _r3_hook_fire_counts[_chunk_id],
+                    _r3_toggle_count["n"],
+                    len(_r3_hook_fire_counts),
+                )
+        else:
+            # Hook fired but action was not REPLAY_FORWARD -- this is
+            # expected after the first toggle under 1F1B (subsequent mbs
+            # see REPLAY_BACKWARD until the iterator flips them back).
+            # We still log rarely to confirm behavior.
+            if _r3_verbose() and _r3_should_log(
+                "_r3_post_forward_hook/no_toggle"
+            ):
+                logger.info(
+                    "[R3-STAGE3/_r3_post_forward_hook] NO_TOGGLE "
+                    "(already backward or cleared) %s mb_counter=%d "
+                    "chunk_id=%d fire_count_this_chunk=%d "
+                    "n_chunks_seen=%d",
+                    _r3_pp_tp_info(),
+                    getattr(self, "_r3_mb_counter", -1),
+                    _chunk_id,
+                    _r3_hook_fire_counts[_chunk_id],
+                    len(_r3_hook_fire_counts),
                 )
 
     for model_chunk in self.model:
         handle = model_chunk.register_forward_hook(_r3_post_forward_hook)
         hook_handles.append(handle)
+
+    # ---------- R3 diagnostics: reset FB-level aggregate counters so
+    # the end-of-FB summary reflects only this call. Safe to reset
+    # unconditionally: consumers read the dict inside the FB span.
+    try:
+        RouterReplay._r3_fb_stats = {}
+    except Exception:
+        pass
 
     try:
         self._r3_original_forward_backward_batch(
@@ -773,6 +926,50 @@ def _r3_forward_backward_batch(
         # Restore the original class on this instance (undo the per-instance
         # class swap done above). The original class was never modified.
         mb_list.__class__ = _r3_original_mb_list_class
+
+        # ---------- R3 diagnostics: END_OF_FB summary. One line per
+        # forward_backward_batch call aggregating:
+        #   * divergence_v1 (MATCH vs popped-vs-latest-target; under
+        #     PP=2 1F1B, DIVERGE is EXPECTED — logging artifact).
+        #   * divergence_v2 (MATCH vs popped-vs-own-push; under any
+        #     PP layout MATCH is REQUIRED — REAL_MISMATCH is a bug).
+        #   * hook fire counts per model-chunk: if unequal, one chunk
+        #     missed its toggle (D8 smoking gun).
+        #   * final queue residue across all routers (D9 smoking gun).
+        try:
+            if _r3_verbose() and _r3_should_log("_r3_forward_backward_batch/EXIT_SUMMARY"):
+                from areal.engine.router_replay_patch import RouterReplay as _RR
+                _fwd_q = [
+                    len(getattr(r, "replay_backward_list", []) or [])
+                    for r in _RR.router_instances
+                ]
+                _push_q = [
+                    len(getattr(r, "replay_push_meta_list", []) or [])
+                    for r in _RR.router_instances
+                ]
+                logger.info(
+                    "[R3-STAGE3/_r3_forward_backward_batch] EXIT_SUMMARY %s "
+                    "n_mbs=%d forward_only=%s trace_id=%s "
+                    "fb_stats=%s n_model_chunks=%d hook_fire_counts=%s "
+                    "total_toggles=%d residual_fwd_q=%s residual_push_q=%s "
+                    "residual_max=%d",
+                    _r3_pp_tp_info(),
+                    len(mb_list),
+                    forward_only,
+                    _consumed_trace_id,
+                    dict(_RR._r3_fb_stats),
+                    len(self.model),
+                    dict(_r3_hook_fire_counts),
+                    _r3_toggle_count["n"],
+                    _fwd_q,
+                    _push_q,
+                    max(_fwd_q) if _fwd_q else -1,
+                )
+        except Exception:
+            logger.exception(
+                "[R3-STAGE3/_r3_forward_backward_batch] "
+                "EXIT_SUMMARY diag log failed"
+            )
 
         clear_router_replay()
         self._r3_per_mb_experts = None
