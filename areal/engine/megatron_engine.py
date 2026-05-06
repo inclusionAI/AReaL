@@ -1485,6 +1485,26 @@ class MegatronEngine(TrainEngine):
         os.environ["TORCHELASTIC_USE_AGENT_STORE"] = str(False)
 
         if gen_pp_size > 1:
+            # Per-PP-rank weight sync requires a 1:1 mapping between training
+            # PP stages and inference (sglang) PP stages, because each training
+            # PP head creates exactly the group update_weight_group_{train_pp_rank}
+            # and each sglang PP stage joins update_weight_group_{gen_pp_rank}.
+            # If the two sizes differ:
+            #   * train_pp_size > gen_pp_size: training heads with
+            #     train_pp_rank >= gen_pp_size create a group sglang never joins
+            #     -> rendezvous hang;
+            #   * train_pp_size < gen_pp_size: sglang stages with
+            #     gen_pp_rank >= train_pp_size find no training source
+            #     -> rendezvous hang.
+            # Fail fast here on every rank with a clear error.
+            train_pp_size = self.parallel_strategy.pipeline_parallel_size
+            if train_pp_size != gen_pp_size:
+                raise ValueError(
+                    f"Per-PP-rank weight sync requires train_pp_size == gen_pp_size, "
+                    f"got train_pp_size={train_pp_size}, gen_pp_size={gen_pp_size}. "
+                    f"Set the inference allocation pp_size to match the training "
+                    f"pipeline_parallel_size."
+                )
             # PP>1: every PP source rank (dp=0, tp=0) creates its own per-PP-rank
             # NCCL group. The group contains only the inference workers at the
             # corresponding PP rank (TP * DP workers) plus one training rank.

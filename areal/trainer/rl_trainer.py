@@ -976,6 +976,7 @@ class PPOTrainer:
             server_args = SGLangConfig.build_args(
                 sglang_config=self.config.sglang,
                 tp_size=self.rollout_alloc.parallel.tp_size,
+                pp_size=self.rollout_alloc.parallel.pp_size,
                 base_gpu_id=0,
             )
         elif rollout_backend == "vllm":

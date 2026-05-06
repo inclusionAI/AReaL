@@ -145,83 +145,101 @@ def _init_per_pp_weight_update_groups(
     engine: ArchonEngine,
     gen_pp_size: int,
 ) -> None:
-    """Create per-PP-rank NCCL groups for sglang PP > 1.
+    """Create one NCCL weight-update group per inference PP stage.
 
-    Each sglang PP rank gets its own NCCL group. The archon training engine
-    (which is the single source of full model weights) joins ALL groups as rank 0,
-    broadcasting the appropriate weight slices to each PP stage.
+    Mirrors the Megatron pattern: each training PP-stage head
+    (``dp=cp=tp=0``, ``pp_rank=k``) creates ONLY its own
+    ``update_weight_group_{k}`` group, joined by the inference workers at
+    sglang PP rank ``k`` plus this single training rank as ``rank=0``.
 
-    This matches the pattern used by FSDP and Megatron engines.
+    Requirements:
+        * ``train_pp_size == gen_pp_size``: every sglang PP stage has a
+          matching training PP-stage head that holds the parameters for
+          that stage.
     """
+    assert meta.gen_allocation is not None
+
+    train_pp_rank = engine.pipeline_parallel_rank()
     if not engine.is_pipeline_parallel_head():
+        # Non-PP-head ranks (dp>0, tp>0, or cp>0) do not participate in any
+        # weight update NCCL group. Record the expected group name so that
+        # any later cleanup or destroy path can iterate over it without
+        # special-casing this rank.
+        for pp_rank in range(gen_pp_size):
+            state.group_names.append(f"update_weight_group_{pp_rank}")
+        state.group_name = f"update_weight_group_{train_pp_rank}"
+        state.master_addr = ""
+        state.master_port = 0
         logger.debug(
-            "[ArchonWeightSync] Non-PP-head rank, skipping per-PP group creation."
+            "[ArchonWeightSync] Non-PP-head rank (train_pp_rank=%d); "
+            "skipping per-PP group creation.",
+            train_pp_rank,
         )
         return
 
-    assert meta.gen_allocation is not None
+    if train_pp_rank >= gen_pp_size:
+        raise ValueError(
+            f"Archon train_pp_rank={train_pp_rank} exceeds gen_pp_size="
+            f"{gen_pp_size}; train_pp_size and gen_pp_size must match for "
+            f"per-PP-rank weight sync."
+        )
+
     gen_world_size = meta.gen_allocation.parallel.world_size
-    # per_pp_world_size = total_gen_workers / pp_stages
-    # This equals n_servers * tp_size (workers at each PP stage)
+    # per_pp_world_size = workers at one PP stage = n_servers * tp_size.
     per_pp_world_size = gen_world_size // gen_pp_size
 
+    pp_rank = train_pp_rank
+    group_name = f"update_weight_group_{pp_rank}"
+    master_addr = gethostip()
+    master_port = find_free_ports(1)[0]
+    world_size = per_pp_world_size + 1  # +1 for this training-PP-stage head
+
+    # Populate both the single-group aliases AND the per-stage lists with
+    # exactly one entry: the group this stage head owns. Destroy/cleanup
+    # paths can iterate over ``state.group_names`` uniformly across single-
+    # group and per-stage modes.
+    state.group_names = [group_name]
+    state.master_addrs = [master_addr]
+    state.master_ports = [master_port]
+
+    pp_meta = copy.copy(meta)
+    pp_meta.nccl_master_address = master_addr
+    pp_meta.nccl_master_port = master_port
+    pp_meta.nccl_group_name = group_name
+
+    init_method = f"tcp://{format_host_for_url(master_addr)}:{master_port}"
     engine.logger.info(
-        f"[ArchonWeightSync] Creating per-PP-rank groups: gen_pp_size={gen_pp_size}, "
-        f"gen_world_size={gen_world_size}, "
-        f"per_pp_world_size={per_pp_world_size}, "
-        f"tp_size={meta.gen_allocation.parallel.tp_size}"
+        f"[ArchonWeightSync] Initializing per-PP group: pp_rank={pp_rank}, "
+        f"group={group_name}, init_method={init_method}, "
+        f"world_size={world_size}"
     )
 
-    host_addr = gethostip()
-    free_ports = find_free_ports(gen_pp_size)
+    with engine.engine_lock:
+        fut = engine.rollout_engine.init_weights_update_group(pp_meta)
 
-    for pp_rank in range(gen_pp_size):
-        group_name = f"update_weight_group_{pp_rank}"
-        master_addr = host_addr
-        master_port = free_ports[pp_rank]
-        world_size = per_pp_world_size + 1  # +1 for the training engine rank
-
-        state.group_names.append(group_name)
-        state.master_addrs.append(master_addr)
-        state.master_ports.append(master_port)
-
-        pp_meta = copy.copy(meta)
-        pp_meta.nccl_master_address = master_addr
-        pp_meta.nccl_master_port = master_port
-        pp_meta.nccl_group_name = group_name
-
-        init_method = f"tcp://{format_host_for_url(master_addr)}:{master_port}"
-        engine.logger.info(
-            f"[ArchonWeightSync] Initializing per-PP group: pp_rank={pp_rank}, "
-            f"group={group_name}, init_method={init_method}, "
-            f"world_size={world_size}"
+        group = init_custom_process_group(
+            backend=current_platform.communication_backend,
+            world_size=world_size,
+            init_method=init_method,
+            rank=0,
+            group_name=group_name,
+            timeout=DIST_GROUP_DEFAULT_TIMEOUT,
         )
+        state.groups = [group]
 
-        with engine.engine_lock:
-            fut = engine.rollout_engine.init_weights_update_group(pp_meta)
+        fut.result()
 
-            group = init_custom_process_group(
-                backend=current_platform.communication_backend,
-                world_size=world_size,
-                init_method=init_method,
-                rank=0,
-                group_name=group_name,
-                timeout=DIST_GROUP_DEFAULT_TIMEOUT,
-            )
-            state.groups.append(group)
+    engine.logger.debug(
+        f"[ArchonWeightSync] Per-PP group initialized: pp_rank={pp_rank}, "
+        f"group={group_name}"
+    )
 
-            fut.result()
-
-        engine.logger.debug(
-            f"[ArchonWeightSync] Per-PP group initialized: pp_rank={pp_rank}, "
-            f"group={group_name}"
-        )
-
-    # Set single-group aliases to the first group for backward compatibility
-    state.group_name = state.group_names[0]
-    state.master_addr = state.master_addrs[0]
-    state.master_port = state.master_ports[0]
-    state.group = state.groups[0]
+    # Single-group aliases point at this stage's own group (for backward
+    # compatibility with single-group code paths).
+    state.group_name = group_name
+    state.master_addr = master_addr
+    state.master_port = master_port
+    state.group = group
 
 
 def _get_full_tensor(param: nn.Parameter) -> torch.Tensor:
@@ -250,8 +268,10 @@ def update_weights_from_distributed(
 ) -> None:
     """Update weights by broadcasting from training engine to inference engine.
 
-    When multi-group mode is active (sglang PP > 1), broadcasts weights to
-    each per-PP-rank group sequentially. Otherwise uses the original single-group path.
+    When the inference side uses pipeline parallelism (gen_pp_size > 1), each
+    training PP-stage head broadcasts only its own stage's parameters via its
+    own ``update_weight_group_{pp_rank}`` group (Megatron-style). Otherwise
+    uses the original single-group path.
     """
     assert engine.rollout_engine is not None
 
@@ -260,12 +280,14 @@ def update_weights_from_distributed(
 
     dist.barrier(group=engine.cpu_group)
 
-    if len(state.groups) > 1:
+    gen_pp_size = meta.gen_allocation.parallel.pp_size if meta.gen_allocation else 1
+    if gen_pp_size > 1:
         logger.debug(
-            f"[ArchonWeightSync] update_weights: multi-group mode, "
-            f"{len(state.groups)} groups"
+            f"[ArchonWeightSync] update_weights: per-PP-stage mode, "
+            f"train_pp_rank={engine.pipeline_parallel_rank()}, "
+            f"owned_groups={len(state.groups)}"
         )
-        _update_weights_multi_group(state, meta, engine)
+        _update_weights_per_stage(state, meta, engine)
     else:
         logger.debug("[ArchonWeightSync] update_weights: single-group mode")
         meta.nccl_master_address = state.master_addr
@@ -327,26 +349,43 @@ def _update_weights_single_group(
         )
 
 
-def _update_weights_multi_group(
+def _update_weights_per_stage(
     state: WeightSyncState,
     meta: WeightUpdateMeta,
     engine: ArchonEngine,
 ) -> None:
-    """Multi-group weight update path for sglang PP > 1.
+    """Per-PP-stage weight update path for sglang PP > 1.
 
-    Broadcasts all weights to each per-PP-rank group sequentially.
-    Each sglang PP rank receives all parameters; the sglang side is responsible
-    for filtering which parameters belong to its PP stage.
+    Each training PP-stage head broadcasts ONLY the parameters that live on
+    its own stage, through its own ``update_weight_group_{pp_rank}`` group.
+    Non-PP-head ranks (dp>0, tp>0, cp>0) own no group and skip this path.
+
+    This mirrors the Megatron weight-sync layout: the inference side at PP
+    rank ``k`` receives parameters from training PP rank ``k`` only.
     """
     weight_chunked_mem_size = meta.weight_chunked_mem_mb * 1024 * 1024
 
-    # Collect all named tensors first
-    all_named_tensors: list[tuple[str, torch.Tensor]] = []
+    is_pp_head = engine.is_pipeline_parallel_head() and bool(state.groups)
+
+    if is_pp_head:
+        group = state.groups[0]
+        group_name = state.group_names[0]
+        master_addr = state.master_addrs[0]
+        master_port = state.master_ports[0]
+
+        pp_meta = copy.copy(meta)
+        pp_meta.nccl_master_address = master_addr
+        pp_meta.nccl_master_port = master_port
+        pp_meta.nccl_group_name = group_name
+
+    buffer_size = 0
+    named_tensors: list[tuple[str, torch.Tensor]] = []
+    total_tensors = 0
 
     for name, param in engine._get_model_name_parameters():
         tensor = _get_full_tensor(param)
 
-        if not engine.is_pipeline_parallel_head():
+        if not is_pp_head:
             continue
 
         if engine.state_dict_adapter is not None:
@@ -355,33 +394,6 @@ def _update_weights_multi_group(
             hf_pairs = [(name, tensor)]
 
         for hf_name, hf_tensor in hf_pairs:
-            all_named_tensors.append((hf_name, hf_tensor))
-
-    logger.debug(
-        f"[ArchonWeightSync] Multi-group update: {len(all_named_tensors)} tensors "
-        f"to broadcast to {len(state.groups)} groups"
-    )
-
-    # Broadcast to each PP group sequentially
-    for group_idx in range(len(state.groups)):
-        group_name = state.group_names[group_idx]
-        group = state.groups[group_idx]
-        master_addr = state.master_addrs[group_idx]
-        master_port = state.master_ports[group_idx]
-
-        pp_meta = copy.copy(meta)
-        pp_meta.nccl_master_address = master_addr
-        pp_meta.nccl_master_port = master_port
-        pp_meta.nccl_group_name = group_name
-
-        logger.debug(
-            f"[ArchonWeightSync] Broadcasting to group {group_idx}: group={group_name}"
-        )
-
-        buffer_size = 0
-        named_tensors: list[tuple[str, torch.Tensor]] = []
-
-        for hf_name, hf_tensor in all_named_tensors:
             tensor_size = hf_tensor.numel() * hf_tensor.element_size()
 
             if tensor_size + buffer_size > weight_chunked_mem_size:
@@ -397,19 +409,21 @@ def _update_weights_multi_group(
 
             named_tensors.append((hf_name, hf_tensor))
             buffer_size += tensor_size
+            total_tensors += 1
 
-        if named_tensors:
-            _update_bucket_weights_multi_group(
-                group,
-                pp_meta,
-                engine.rollout_engine,
-                engine.engine_lock,
-                named_tensors,
-            )
+    if named_tensors:
+        _update_bucket_weights_multi_group(
+            group,
+            pp_meta,
+            engine.rollout_engine,
+            engine.engine_lock,
+            named_tensors,
+        )
 
+    if is_pp_head:
         logger.debug(
-            f"[ArchonWeightSync] Finished broadcasting to group {group_idx}: "
-            f"group={group_name}"
+            f"[ArchonWeightSync] Per-stage broadcast finished: "
+            f"group={group_name}, tensors={total_tensors}"
         )
 
 

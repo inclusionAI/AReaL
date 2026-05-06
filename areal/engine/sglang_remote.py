@@ -229,14 +229,22 @@ class SGLangBackend:
             pp_rank = int(group_name.rsplit("_", 1)[-1])
 
             tp_size = gen_parallel.tp_size
-            # n_servers = total DP instances (sglang server replicas).
-            # gen_parallel.world_size = tp_size * pp_size * n_servers
-            n_servers = gen_parallel.world_size // (tp_size * gen_parallel.pp_size)
+            pp_size = gen_parallel.pp_size
+            # gen_parallel.world_size = dp_size * tp_size * pp_size on the
+            # inference side. n_servers (number of sglang server replicas)
+            # therefore equals dp_size whether or not DP-attention is
+            # configured: the AReaL allocation always materialises one server
+            # replica per DP shard, each running ``tp_size * pp_size`` workers.
+            n_servers = gen_parallel.world_size // (tp_size * pp_size)
 
-            # Only TP workers at this PP rank join, so rank_offset uses tp_size.
+            # Each server contributes exactly ``tp_size`` workers per PP stage.
+            # Across all replicas this PP stage has ``n_servers * tp_size``
+            # inference workers (= dp_size * tp_size), all of which join the
+            # per-PP NCCL group together with the trainer.
             rank_offset = 1 + server_idx * tp_size
 
-            # world_size for this group: TP workers across all DP at this PP rank + 1.
+            # world_size for this group: TP workers across all DP replicas at
+            # this PP rank + 1 (trainer).
             world_size = n_servers * tp_size + 1
 
             payload = {
