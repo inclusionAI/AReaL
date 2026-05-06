@@ -3,7 +3,6 @@
 from typing import Any
 
 import torch
-import torch.distributed as dist
 
 from areal.api import TrainEngine
 from areal.experimental.training_service.controller.controller import (
@@ -94,95 +93,35 @@ def compute_packed_sft_loss(
     logprobs = torch.where(loss_mask, logprobs, 0)
 
     device = logprobs.device
-    # NOTE: The returned `loss` scalar is what `forward_backward_func` uses for
-    # backward. Under CP-local loss, each CP rank computes its own local mean
-    # loss and backward; Megatron's CP ring-attention handles the cross-rank
-    # gradient coupling. We therefore must NOT replace this with a globally
-    # averaged loss here -- doing so would change the gradient on CP shards.
-    # The stats reported below are a separate concern and are made CP-invariant
-    # via per-key reduce_group overrides (see #1242 follow-up).
     loss = -logprobs.sum() / (1e-5 + loss_mask.count_nonzero())
-
-    # CP-related process groups (populated by MegatronEngine when CP > 1).
-    #   `_cp_reduce_group`    : context-parallel group, used to aggregate
-    #                           per-sequence partial sums into a full-sequence
-    #                           view so ppl / seqlogp match the pre-CP-local
-    #                           reporting semantics.
-    #   `_cp_dp_reduce_group` : DP + CP group, passed as per-key `reduce_group`
-    #                           to `stats_tracker.stat` so that ratio metrics
-    #                           (loss / entropy / vocab_*) whose numerator and
-    #                           denominator live on CP-local tensors reduce
-    #                           across DP + CP at export time, yielding a
-    #                           globally averaged value instead of a CP-slice
-    #                           average. Scalar reductions only; does NOT
-    #                           reintroduce the expensive logits all-gather.
-    cp_reduce_group = input_.get("_cp_reduce_group")
-    cp_dp_reduce_group = input_.get("_cp_dp_reduce_group")
 
     with torch.no_grad():
         batch_size = cu_seqlens.shape[0] - 1
-        # Collect per-sequence partial sums first, then CP-reduce once at the
-        # end to avoid one collective per sequence. Contributions from CP ranks
-        # other than this one are zero locally and get added in the all-reduce.
-        seq_logp_sum = torch.zeros(batch_size, dtype=torch.float64, device=device)
-        seq_valid_count = torch.zeros(batch_size, dtype=torch.int64, device=device)
+        seqlogp = torch.zeros(batch_size, dtype=torch.float64, device=device)
+        n_seqs = torch.zeros(batch_size, dtype=torch.bool, device=device)
         for i in range(batch_size):
             m = loss_mask[cu_seqlens[i] : cu_seqlens[i + 1]]
             logp = logprobs[cu_seqlens[i] : cu_seqlens[i + 1]]
-            seq_logp_sum[i] = torch.where(m, logp.detach(), 0.0).sum().double()
-            seq_valid_count[i] = m.sum()
+            valid_tokens = int(m.count_nonzero().item())
+            if valid_tokens == 0:
+                continue
+            n_seqs[i] = True
+            seqlogp[i] = torch.where(m, logp.detach(), 0.0).sum() / valid_tokens
 
-        if cp_reduce_group is not None:
-            # Sum partial contributions across CP ranks so each element of
-            # `seq_logp_sum` / `seq_valid_count` reflects the full sequence
-            # rather than this rank's CP slice. Tensors are tiny (batch_size).
-            dist.all_reduce(seq_logp_sum, group=cp_reduce_group)
-            dist.all_reduce(seq_valid_count, group=cp_reduce_group)
-
-        n_seqs = seq_valid_count > 0
-        safe_valid = seq_valid_count.clamp(min=1).double()
-        seqlogp = torch.where(
-            n_seqs, seq_logp_sum / safe_valid, torch.zeros_like(seq_logp_sum)
-        )
-
-    ## Logging stats
-    # Use the pre-CP-split loss_mask (when available) for token-count
-    # denominators so these metrics are invariant to CP topology. The local
-    # loss_mask is also recorded as `n_valid_tokens_local` because
-    # `stats_tracker.stat` requires denominators whose shape matches the
-    # recorded tensor, and `logprobs` / `vocab_*` are CP-local. See #1242.
-    global_loss_mask = input_.get("_global_loss_mask", loss_mask)
     stats_tracker.denominator(
         n_seqs=n_seqs,
-        n_tokens=torch.ones(
-            global_loss_mask.shape[0], dtype=torch.bool, device=global_loss_mask.device
-        ),
-        n_valid_tokens=global_loss_mask,
-        prompt_tokens=global_loss_mask.logical_not(),
-        n_tokens_local=torch.ones(logprobs.shape[0], dtype=torch.bool, device=device),
-        n_valid_tokens_local=loss_mask,
+        n_tokens=torch.ones(logprobs.shape[0], dtype=torch.bool, device=device),
+        n_valid_tokens=loss_mask,
+        prompt_tokens=loss_mask.logical_not(),
     )
-    # `ppl` is already CP-invariant (seqlogp was CP-reduced above), and
-    # `n_seqs` is DP-distinct but CP-replicated, so the default DP-only
-    # reduce at export time gives the correct global per-sequence ppl.
     stats_tracker.stat(ppl=(-seqlogp).exp().float(), denominator="n_seqs")
-    # loss / vocab_* live on CP-local tensors. Overriding the reduce_group to
-    # DP + CP means the scalar numerator (sum of `-logprobs * mask`) and scalar
-    # denominator (sum of `mask`) are all-reduced across DP + CP, yielding the
-    # global weighted average. No tensor gather is involved -- the collectives
-    # see only scalars.
-    stats_tracker.stat(
-        loss=-logprobs.detach(),
-        denominator="n_valid_tokens_local",
-        reduce_group=cp_dp_reduce_group,
-    )
+    stats_tracker.stat(loss=-logprobs.detach(), denominator="n_valid_tokens")
 
     if vocab_min_logits is not None and vocab_max_logits is not None:
         stats_tracker.stat(
             vocab_min_logits=vocab_min_logits,
             vocab_max_logits=vocab_max_logits,
-            denominator="n_tokens_local",
-            reduce_group=cp_dp_reduce_group,
+            denominator="n_tokens",
         )
 
     return loss

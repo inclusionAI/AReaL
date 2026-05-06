@@ -75,6 +75,7 @@ from areal.engine.megatron_utils.packed_context_parallel import (
     _is_multi_modal_payload_key,
     extract_vision_from_multi_modal,
     packed_context_parallel_forward,
+    reassemble_cp_packed_logprobs,
     split_packed_seqs_for_context_parallel,
 )
 from areal.engine.megatron_utils.pipeline_parallel import (
@@ -863,31 +864,11 @@ class MegatronEngine(TrainEngine):
                     cp_labels = split_packed_seqs_for_context_parallel(
                         rolled_ids, padded_cu_seqlens
                     )
-                    cp_loss_mask = split_packed_seqs_for_context_parallel(
-                        mb_input.padded_mb["loss_mask"], padded_cu_seqlens
-                    )
-                    cp_cu_seqlens = padded_cu_seqlens // cp_size
                     cp_inputs = dict(mb_input.orig_mb)
-                    # Preserve the pre-CP-split loss_mask so downstream loss
-                    # functions can record CP-invariant token-count denominators
-                    # (n_tokens / n_valid_tokens / prompt_tokens). See #1242.
-                    cp_inputs["_global_loss_mask"] = mb_input.orig_mb[
-                        "loss_mask"
-                    ].bool()
-                    # Expose CP-related process groups so the loss function can
-                    # (a) aggregate per-sequence stats (seqlogp / ppl) across
-                    # CP ranks that hold different slices of the same sequence,
-                    # and (b) reduce ratio-style stats (loss/entropy/vocab_*)
-                    # across DP + CP at export time so they are CP-invariant,
-                    # matching the pre-#1223 reporting semantics without
-                    # reintroducing the expensive logits all-gather.
-                    cp_inputs["_cp_reduce_group"] = mpu.get_context_parallel_group()
-                    cp_inputs["_cp_dp_reduce_group"] = mpu.get_data_parallel_group(
-                        with_context_parallel=True
-                    )
                     cp_inputs["_cp_local_labels"] = cp_labels
-                    cp_inputs["loss_mask"] = cp_loss_mask
-                    cp_inputs["cu_seqlens"] = cp_cu_seqlens
+                    cp_inputs["_cp_padded_cu_seqlens"] = padded_cu_seqlens
+                    cp_inputs["_cp_padding_length"] = mb_input.padding_length
+                    cp_inputs["_cp_old_cu_seqlens"] = mb_input.old_cu_seqlens
                     return output, functools.partial(_process_output, cp_inputs)
                 else:
                     output = unpad_logits(
@@ -928,9 +909,15 @@ class MegatronEngine(TrainEngine):
         # Step 1: Prepare micro-batches
         mb_list = self._prepare_mb_list(input_batched).to(self.device)
 
-        # Step 2: Compute total loss weight
+        # Step 2: Compute total loss weight.
+        # Use DP+CP group: after CP all-gather each rank computes the full-sequence
+        # loss, so all_gather's backward (reduce_scatter) sums cp_size identical
+        # gradients, amplifying by cp_size. Including CP in the weight all-reduce
+        # introduces a matching cp_size factor in the denominator, cancelling out.
         total_loss_weight = compute_total_loss_weight(
-            mb_list, loss_weight_fn, mpu.get_data_parallel_group()
+            mb_list,
+            loss_weight_fn,
+            mpu.get_data_parallel_group(with_context_parallel=True),
         )
 
         # Step 3: Forward-backward using Megatron's pipeline function.
@@ -983,9 +970,11 @@ class MegatronEngine(TrainEngine):
         # Step 1: Prepare micro-batches
         mb_list = self._prepare_mb_list(input_batched).to(self.device)
 
-        # Step 2: Compute total loss weight
+        # Step 2: Compute total loss weight (DP+CP, see train_batch comment).
         total_loss_weight = compute_total_loss_weight(
-            mb_list, loss_weight_fn, mpu.get_data_parallel_group()
+            mb_list,
+            loss_weight_fn,
+            mpu.get_data_parallel_group(with_context_parallel=True),
         )
 
         # Step 3: Forward using Megatron's pipeline function, collecting losses
@@ -1991,6 +1980,7 @@ class MegatronEngine(TrainEngine):
                 )
             else:
                 cp_local_labels = inputs.get("_cp_local_labels")
+                cp_padded_cu_seqlens = inputs.get("_cp_padded_cu_seqlens")
                 if cp_local_labels is not None:
                     labels = cp_local_labels
                 else:
@@ -2005,6 +1995,48 @@ class MegatronEngine(TrainEngine):
                 )
                 vocab_min_logits = output.detach().min(-1).values.float()
                 vocab_max_logits = output.detach().max(-1).values.float()
+                if cp_padded_cu_seqlens is not None:
+                    logprobs = reassemble_cp_packed_logprobs(
+                        logprobs, cp_padded_cu_seqlens
+                    )
+                    entropy = reassemble_cp_packed_logprobs(
+                        entropy, cp_padded_cu_seqlens
+                    )
+                    vocab_min_logits = reassemble_cp_packed_logprobs(
+                        vocab_min_logits, cp_padded_cu_seqlens
+                    )
+                    vocab_max_logits = reassemble_cp_packed_logprobs(
+                        vocab_max_logits, cp_padded_cu_seqlens
+                    )
+                    cp_padding_length = inputs.get("_cp_padding_length", 0)
+                    cp_old_cu_seqlens = inputs.get("_cp_old_cu_seqlens")
+                    logprobs = unpad_logits(
+                        logprobs,
+                        cp_padding_length,
+                        cp_padded_cu_seqlens,
+                        cp_old_cu_seqlens,
+                    )
+                    entropy = unpad_logits(
+                        entropy,
+                        cp_padding_length,
+                        cp_padded_cu_seqlens,
+                        cp_old_cu_seqlens,
+                    )
+                    vocab_min_logits = unpad_logits(
+                        vocab_min_logits,
+                        cp_padding_length,
+                        cp_padded_cu_seqlens,
+                        cp_old_cu_seqlens,
+                    )
+                    vocab_max_logits = unpad_logits(
+                        vocab_max_logits,
+                        cp_padding_length,
+                        cp_padded_cu_seqlens,
+                        cp_old_cu_seqlens,
+                    )
+                    inputs = {
+                        k: v for k, v in inputs.items() if not k.startswith("_cp_")
+                    }
             loss = loss_fn(
                 logprobs,
                 entropy,

@@ -4,6 +4,7 @@ from typing import Any
 
 import torch
 import torch.distributed as dist
+import torch.distributed.nn.functional as dist_F
 from megatron.core import parallel_state as mpu
 from megatron.core.packed_seq_params import PackedSeqParams
 
@@ -104,6 +105,84 @@ def split_packed_seqs_for_context_parallel(
             remain_start:remain_end
         ]
     return splitted
+
+
+def _build_cp_reassemble_indices(
+    padded_cu_seqlens: torch.Tensor,
+    cp_size: int,
+) -> torch.Tensor:
+    """Build the index mapping from concatenated CP chunks to original order.
+
+    Returns a 1D LongTensor of length ``output_len`` where ``indices[dst] = src``
+    means the token at position ``dst`` in the full sequence comes from position
+    ``src`` in the flattened ``torch.cat(gathered_list)`` tensor.
+    """
+    input_lens = padded_cu_seqlens[1:] - padded_cu_seqlens[:-1]
+    batch_size = input_lens.shape[0]
+    output_len = int(padded_cu_seqlens[-1].item())
+    local_len = output_len // cp_size
+
+    indices = torch.empty(output_len, dtype=torch.long, device=padded_cu_seqlens.device)
+
+    for i in range(batch_size):
+        seq_len = int(input_lens[i].item())
+        chunk_size = seq_len // cp_size
+        half_chunk = chunk_size // 2
+        local_start = int(padded_cu_seqlens[i].item()) // cp_size
+        full_start = int(padded_cu_seqlens[i].item())
+
+        for j in range(cp_size):
+            src_offset = j * local_len + local_start
+            # first_half → positions [j*H, (j+1)*H) in full sequence
+            for k in range(half_chunk):
+                indices[full_start + j * half_chunk + k] = src_offset + k
+            # second_half → mirror positions [L-(j+1)*H, L-j*H)
+            for k in range(half_chunk):
+                indices[full_start + seq_len - (j + 1) * half_chunk + k] = (
+                    src_offset + half_chunk + k
+                )
+
+    return indices
+
+
+def reassemble_cp_packed_logprobs(
+    local_tensor: torch.Tensor,
+    padded_cu_seqlens: torch.Tensor,
+) -> torch.Tensor:
+    """All-gather CP-local 1D tensors and reassemble in original sequence order.
+
+    This is the differentiable inverse of ``split_packed_seqs_for_context_parallel``.
+    It uses ``torch.distributed.nn.functional.all_gather`` (backward = reduce_scatter)
+    followed by advanced indexing (differentiable permutation) so that gradients
+    flow correctly back to each CP rank's local logprobs.
+
+    Args:
+        local_tensor: 1D tensor of shape ``(total_packed_len // cp_size,)`` holding
+            this rank's CP-local values (e.g. logprobs, entropy, vocab stats).
+        padded_cu_seqlens: Cumulative sequence lengths in the *padded* (pre-split)
+            layout, of shape ``(batch_size + 1,)``.
+
+    Returns:
+        Full-sequence 1D tensor of shape ``(total_packed_len,)`` with values placed
+        back in original token order. Gradients flow back through the all-gather.
+    """
+    cp_size = mpu.get_context_parallel_world_size()
+    if cp_size <= 1:
+        return local_tensor
+
+    cp_group = mpu.get_context_parallel_group()
+
+    # Differentiable all-gather: backward is reduce_scatter(sum).
+    gathered_list = dist_F.all_gather(local_tensor, group=cp_group)
+
+    # Concatenate all gathered chunks into a single flat tensor.
+    # cat is differentiable (backward splits gradients back to each chunk).
+    gathered_flat = torch.cat(gathered_list, dim=0)
+
+    # Build index mapping and apply via advanced indexing (differentiable).
+    # indices[dst] = src means output[dst] = gathered_flat[src].
+    indices = _build_cp_reassemble_indices(padded_cu_seqlens, cp_size)
+    return gathered_flat[indices]
 
 
 def postprocess_packed_seqs_context_parallel(
