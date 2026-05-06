@@ -531,6 +531,7 @@ class TestArchonPerStageInit:
             def is_pipeline_parallel_head(self):
                 return True
 
+            @property
             def pipeline_parallel_rank(self):
                 return self._pp_rank
 
@@ -575,6 +576,7 @@ class TestArchonPerStageInit:
             def is_pipeline_parallel_head(self):
                 return False
 
+            @property
             def pipeline_parallel_rank(self):
                 return 0
 
@@ -736,6 +738,7 @@ class TestArchonPPSizeMismatchValidation:
         def is_pipeline_parallel_head(self):
             return self._is_head
 
+        @property
         def pipeline_parallel_rank(self):
             return self._pp_rank
 
