@@ -18,7 +18,7 @@ scheduler:
   type: null
 
 rollout:
-  backend: "sglang:d1p1t1"
+  backend: "sglang:d1p1t2"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   max_concurrent_rollouts: 16
