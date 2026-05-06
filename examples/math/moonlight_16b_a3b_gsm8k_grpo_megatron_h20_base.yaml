@@ -18,7 +18,7 @@ scheduler:
   type: null
 
 rollout:
-  backend: "sglang:d1p1t2"
+  backend: "sglang:d1p1t1"
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   max_concurrent_rollouts: 16
@@ -39,7 +39,7 @@ gconfig:
   temperature: 1.0
 
 actor:
-  backend: "megatron:(attn:d1p2t2|ffn:d1p2t1e2)"    # ← PP=2, attn TP=2, ffn EP=2
+  backend: "megatron:(attn:d1p1t2c2|ffn:d1p1t2e2)"    # ← PP=1, attn TP=2 CP=2, ffn EP=2
   # backend: "megatron:(attn:d1p1t4|ffn:d1p1t1e4)" 
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
