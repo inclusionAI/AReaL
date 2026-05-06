@@ -641,7 +641,6 @@ https://docs.vllm.ai/en/stable/api/index.html for detailed documentation.
 | `distributed_executor_backend` | string                 | `"mp"`                                                              | -           |
 | `max_num_seqs`                 | integer                | `256`                                                               | -           |
 | `block_size`                   | integer                | `16`                                                                | -           |
-| `swap_space`                   | integer                | `4`                                                                 | -           |
 | `cpu_offload_gb`               | float                  | `0`                                                                 | -           |
 | `disable_sliding_window`       | boolean                | `True`                                                              | -           |
 | `max_model_len`                | integer \| None        | `32768`                                                             | -           |

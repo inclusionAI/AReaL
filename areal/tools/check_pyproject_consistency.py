@@ -41,6 +41,7 @@ ESCAPABLE_PACKAGES: frozenset[str] = frozenset(
         "openai",
         "soundfile",
         "peft",
+        "transformers",
     }
 )
 
@@ -266,7 +267,12 @@ class _Checker:
     # ── [tool.uv] (top-level) ──────────────────────────────────────────
 
     def check_tool_uv(self, uv_a: dict, uv_b: dict) -> None:
-        special_keys = {"override-dependencies", "sources", "conflicts"}
+        special_keys = {
+            "override-dependencies",
+            "sources",
+            "conflicts",
+            "dependency-metadata",
+        }
 
         self.check_override_deps(
             uv_a.get("override-dependencies", []),
