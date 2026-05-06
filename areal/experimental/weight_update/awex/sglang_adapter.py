@@ -2,8 +2,10 @@
 # pyright: reportMissingImports=false
 from __future__ import annotations
 
+import gc
 import math
 import os
+import time
 from typing import Any
 
 import torch
@@ -20,7 +22,12 @@ from awex.sharding.sglang_sharding import (
     get_sglang_sharding_strategy,
 )
 from awex.transfer.nccl_comm import batch_send_recv, nccl_build_recv_ops
+from awex.transfer.nccl_stream_batch import NcclColocateStreamBatchTransport
 from awex.transfer.transfer_plan import TransferPlan, TransferPlanBuilder
+from awex.util.tensor_util import (
+    cuda_ipc_deserialize,
+    reconstruct_tensors_from_groups,
+)
 
 from areal.experimental.weight_update.awex import fetch_kv_metadata
 from areal.experimental.weight_update.inference_adapter import (
@@ -45,6 +52,7 @@ class AwexSGLangAdapter(AwexInferenceAdapter):
         self._transfer_rank: int | None = None
         self._rank_info: RankInfo | None = None
         self._parameters: dict[str, torch.Tensor] | None = None
+        self._released_tags: set[str] = set()
 
     def _get_model(self) -> torch.nn.Module:
         return self._scheduler.tp_worker.model_runner.model
@@ -402,3 +410,180 @@ class AwexSGLangAdapter(AwexInferenceAdapter):
         self._transfer_rank = None
         self._rank_info = None
         self._parameters = None
+
+    # ── Colocated weight transfer methods ─────────────────────────────────
+
+    def init_colocate_weight_update(
+        self,
+        pair_name: str,
+        kv_store_url: str,
+        transfer_rank: int,
+        infer_world_size: int,
+        train_world_size: int,
+        num_engines: int,
+        master_port: int,
+    ) -> None:
+        self._colocate_pair_name = pair_name
+        self._colocate_kv_store_url = kv_store_url
+        self._transfer_rank = transfer_rank
+        self._colocate_infer_world_size = infer_world_size
+        self._colocate_train_world_size = train_world_size
+
+        infer_meta, train_meta = fetch_kv_metadata(kv_store_url, pair_name)
+
+        builder = TransferPlanBuilder(
+            infer_world_size=infer_world_size,
+            train_world_size=train_world_size,
+            num_infer_engines=num_engines,
+        )
+
+        train_to_infer = {}
+        infer_to_train = {}
+        for i in range(min(infer_world_size, train_world_size)):
+            train_rank = infer_world_size + i
+            train_to_infer[train_rank] = i
+            infer_to_train[i] = train_rank
+        self._train_to_infer_device_mapping = train_to_infer
+        self._infer_to_train_device_mapping = infer_to_train
+
+        self._send_transfer_plan = builder.build_local_transfer_plan(
+            infer_meta,
+            train_meta,
+            global_transfer_rank=infer_to_train[transfer_rank],
+        )
+        self._recv_transfer_plan = builder.build_local_transfer_plan(
+            infer_meta,
+            train_meta,
+            global_transfer_rank=transfer_rank,
+        )
+
+        os.environ["TORCHELASTIC_USE_AGENT_STORE"] = str(False)
+        self._weights_update_group = init_weights_update_group(
+            master_address="127.0.0.1",
+            master_port=master_port,
+            rank=transfer_rank,
+            world_size=infer_world_size,
+            group_name=f"awex_colocate_{pair_name}",
+            role="inference",
+        )
+
+        self._colocate_transport = NcclColocateStreamBatchTransport(
+            transfer_rank, infer_world_size
+        )
+
+        logger.info(
+            "Initialized colocate weight update for pair '%s', "
+            "transfer_rank=%d, infer_world_size=%d",
+            pair_name,
+            transfer_rank,
+            infer_world_size,
+        )
+
+    def execute_colocate_weight_update(self, version: int) -> None:
+        import httpx
+
+        kv_store_url = self._colocate_kv_store_url
+        pair_name = self._colocate_pair_name
+        transfer_rank = self._transfer_rank
+
+        # Paired training rank: inference rank i pairs with training rank
+        # infer_world_size + i.
+        paired_train_rank = self._infer_to_train_device_mapping[transfer_rank]
+        kv_key = f"colocate_weights_rank{paired_train_rank}_{version}"
+
+        client = httpx.Client()
+        deadline = time.monotonic() + 120.0
+        serialized_hex = None
+        while time.monotonic() < deadline:
+            resp = client.get(
+                f"{kv_store_url}/weight_meta/{pair_name}/{kv_key}",
+                timeout=5.0,
+            )
+            if resp.status_code == 200:
+                serialized_hex = resp.json()["value"]
+                break
+            time.sleep(0.1)
+        if serialized_hex is None:
+            client.close()
+            raise TimeoutError(
+                f"Training did not put colocate weights within 120s (key={kv_key})"
+            )
+
+        serialized_weights = bytes.fromhex(serialized_hex)
+        group_shared, metadata, names = cuda_ipc_deserialize(serialized_weights)
+        torch.cuda.synchronize()
+        tensors = reconstruct_tensors_from_groups(group_shared, metadata)
+        torch.cuda.synchronize()
+        deserialized_weights = dict(zip(names, tensors))
+
+        recv_parameters = self.get_local_shard_parameters()
+
+        rank_info = self._build_rank_info()
+        rank_coordinate = f"infer_{rank_info.global_rank}"
+
+        self._colocate_transport.update_weights_in_colocate_mode(
+            self._train_to_infer_device_mapping,
+            self._infer_to_train_device_mapping,
+            transfer_rank,
+            rank_coordinate,
+            self._colocate_infer_world_size,
+            self._send_transfer_plan,
+            self._recv_transfer_plan,
+            self._weights_update_group,
+            deserialized_weights,
+            recv_parameters,
+            step_id=version,
+        )
+
+        done_key = f"colocate_done_rank{paired_train_rank}_{version}"
+        client.put(
+            f"{kv_store_url}/weight_meta/{pair_name}/{done_key}",
+            json={"value": True},
+            headers={"Authorization": "Bearer areal-admin-key"},
+            timeout=10.0,
+        )
+        client.close()
+
+        del deserialized_weights, group_shared, tensors, serialized_weights
+        torch.cuda.synchronize()
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        logger.info(
+            "Colocate weight update completed for v%d, rank %d",
+            version,
+            transfer_rank,
+        )
+
+    # Tags understood by SGLang's native release/resume_memory_occupation.
+    _SGLANG_MEMORY_TAGS = {"kv_cache"}
+
+    def release_memory(self, tags: list[str] | None = None) -> None:
+        from sglang.srt.managers.io_struct import ReleaseMemoryOccupationReqInput
+
+        native_tags = (
+            [t for t in tags if t in self._SGLANG_MEMORY_TAGS] if tags else None
+        )
+        if native_tags:
+            req = ReleaseMemoryOccupationReqInput(tags=native_tags)
+            self._scheduler.release_memory_occupation(req)
+            self._released_tags.update(native_tags)
+        logger.info("release_memory completed with tags=%s", tags)
+
+    def resume_memory(self, tags: list[str] | None = None) -> None:
+        from sglang.srt.managers.io_struct import ResumeMemoryOccupationReqInput
+
+        native_tags = (
+            [
+                t
+                for t in tags
+                if t in self._SGLANG_MEMORY_TAGS and t in self._released_tags
+            ]
+            if tags
+            else None
+        )
+        if native_tags:
+            req = ResumeMemoryOccupationReqInput(tags=native_tags)
+            self._scheduler.resume_memory_occupation(req)
+            self._released_tags.difference_update(native_tags)
+        logger.info("resume_memory completed with tags=%s", tags)

@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+import gc
 import os
+import time
 from typing import TYPE_CHECKING
 
 import torch
@@ -15,6 +17,10 @@ from awex.sharding.param_sharding import ShardingType
 from awex.sharding.rank_info import RankInfo
 from awex.transfer.nccl_comm import batch_send_recv, nccl_build_send_ops
 from awex.transfer.transfer_plan import TransferPlan, TransferPlanBuilder
+from awex.util.tensor_util import (
+    cuda_ipc_serialize,
+    group_tensors_by_shape_and_dtype,
+)
 
 from areal.experimental.weight_update.awex import fetch_kv_metadata
 from areal.experimental.weight_update.nccl_group import (
@@ -51,6 +57,9 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
         self._transfer_plan: TransferPlan | None = None
         self._weights_update_group = None
         self._transfer_rank: int | None = None
+        self._offloaded_optimizer_states: dict = {}
+        self._offloaded_weights: dict[str, torch.Tensor] = {}
+        self._released_tags: set[str] = set()
 
     @property
     def parallelism_strategy(self) -> dict:
@@ -121,9 +130,16 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
         return result
 
     def save_parameters(self, save_path: str, names: list[str] | None = None) -> None:
-        params = self.get_local_shard_parameters(names)
-        cpu_params = {k: v.detach().cpu().clone() for k, v in params.items()}
-        torch.save(cpu_params, save_path)
+        weights_offloaded = "weights" in self._released_tags
+        if weights_offloaded:
+            self.resume_memory(tags=["weights"])
+        try:
+            params = self.get_local_shard_parameters(names)
+            cpu_params = {k: v.detach().cpu().clone() for k, v in params.items()}
+            torch.save(cpu_params, save_path)
+        finally:
+            if weights_offloaded:
+                self.release_memory(tags=["weights"])
 
     def init_weight_update_group(
         self,
@@ -276,3 +292,223 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
                 if tie_word_embeddings and hf_name == "lm_head.weight":
                     continue
                 yield hf_name, tensor.detach()
+
+    # ── Colocated weight transfer methods ─────────────────────────────────
+
+    def init_colocate_weight_update(
+        self,
+        pair_name: str,
+        kv_store_url: str,
+        transfer_rank: int,
+        infer_world_size: int,
+        train_world_size: int,
+        num_engines: int,
+        master_port: int,
+    ) -> None:
+        self._colocate_pair_name = pair_name
+        self._colocate_kv_store_url = kv_store_url
+        self._colocate_transfer_rank = transfer_rank
+        self._colocate_infer_world_size = infer_world_size
+        logger.info(
+            "Initialized colocate weight update for pair '%s', transfer_rank=%d",
+            pair_name,
+            transfer_rank,
+        )
+
+    def execute_colocate_weight_update(self, version: int) -> None:
+        import httpx
+
+        kv_store_url = self._colocate_kv_store_url
+        pair_name = self._colocate_pair_name
+        transfer_rank = self._colocate_transfer_rank
+
+        weights_offloaded = "weights" in self._released_tags
+        if weights_offloaded:
+            self.resume_memory(tags=["weights"])
+
+        params = self.get_local_shard_parameters()
+        tensors = list(params.values())
+        names = list(params.keys())
+
+        group_tensors, metadata = group_tensors_by_shape_and_dtype(tensors)
+        torch.cuda.synchronize()
+
+        del tensors
+
+        group_shared = [t.share_memory_() for t in group_tensors]
+        serialized_weights = cuda_ipc_serialize((group_shared, metadata, names))
+        torch.cuda.synchronize()
+
+        kv_key = f"colocate_weights_rank{transfer_rank}_{version}"
+
+        client = httpx.Client()
+        client.put(
+            f"{kv_store_url}/weight_meta/{pair_name}/{kv_key}",
+            json={"value": serialized_weights.hex()},
+            headers={"Authorization": "Bearer areal-admin-key"},
+            timeout=120.0,
+        )
+        client.close()
+
+        logger.info(
+            "Serialized %d params (%d groups) for colocate transfer v%d, rank %d",
+            len(names),
+            len(group_shared),
+            version,
+            transfer_rank,
+        )
+
+        done_key = f"colocate_done_rank{transfer_rank}_{version}"
+        deadline = time.monotonic() + 120.0
+        reader = httpx.Client()
+        while time.monotonic() < deadline:
+            resp = reader.get(
+                f"{kv_store_url}/weight_meta/{pair_name}/{done_key}",
+                timeout=5.0,
+            )
+            if resp.status_code == 200:
+                break
+            time.sleep(0.1)
+        else:
+            reader.close()
+            raise TimeoutError(
+                f"Inference did not signal completion within 120s (key={done_key})"
+            )
+        reader.close()
+
+        del group_shared, group_tensors, serialized_weights
+        torch.cuda.synchronize()
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        if weights_offloaded:
+            self.release_memory(tags=["weights"])
+
+    def release_memory(self, tags: list[str] | None = None) -> None:
+        """Release GPU memory for specified tags by offloading to CPU.
+
+        Supported tags:
+            - "optimizer": Offload optimizer state tensors (exp_avg, exp_avg_sq, etc.)
+            - "weights": Offload model parameters
+        """
+        tags = tags or ["optimizer", "weights"]
+        tags_to_release = [t for t in tags if t not in self._released_tags]
+        if not tags_to_release:
+            logger.info("release_memory: tags=%s already released, skipping", tags)
+            return
+
+        logger.info("release_memory: offloading tags=%s", tags_to_release)
+
+        if "optimizer" in tags_to_release:
+            self._offload_optimizer_states()
+            self._released_tags.add("optimizer")
+
+        if "weights" in tags_to_release:
+            self._offload_model_weights()
+            self._released_tags.add("weights")
+
+        torch.cuda.synchronize()
+        gc.collect()
+        torch.cuda.empty_cache()
+        logger.info("release_memory: done for tags=%s", tags_to_release)
+
+    def resume_memory(self, tags: list[str] | None = None) -> None:
+        """Resume GPU memory for specified tags by reloading from CPU.
+
+        Supported tags:
+            - "optimizer": Reload optimizer state tensors to GPU
+            - "weights": Reload model parameters to GPU
+        """
+        tags = tags or ["optimizer", "weights"]
+        tags_to_resume = [t for t in tags if t in self._released_tags]
+        if not tags_to_resume:
+            logger.info("resume_memory: tags=%s not released, skipping", tags)
+            return
+
+        logger.info("resume_memory: reloading tags=%s", tags_to_resume)
+
+        if "weights" in tags_to_resume:
+            self._reload_model_weights()
+            self._released_tags.discard("weights")
+
+        if "optimizer" in tags_to_resume:
+            self._reload_optimizer_states()
+            self._released_tags.discard("optimizer")
+
+        torch.cuda.synchronize()
+        logger.info("resume_memory: done for tags=%s", tags_to_resume)
+
+    def _offload_optimizer_states(self) -> None:
+        """Move optimizer state tensors to CPU, keeping references for reload."""
+        optimizer = self._engine.optimizer
+        if optimizer is None:
+            logger.warning("No optimizer found, skipping optimizer offload")
+            return
+
+        # Megatron's ChainedOptimizer wraps per-model-chunk optimizers;
+        # each in turn wraps a base torch optimizer holding the state dict.
+        inner_optimizers = getattr(optimizer, "optimizers", [optimizer])
+        for opt in inner_optimizers:
+            base_opt = getattr(opt, "optimizer", opt)
+            for param, state in base_opt.state.items():
+                cpu_state: dict[str, torch.Tensor] = {}
+                for key, val in state.items():
+                    if isinstance(val, torch.Tensor) and val.is_cuda:
+                        cpu_state[key] = val.data
+                        state[key] = torch.empty(0, device="cpu")
+                if cpu_state:
+                    self._offloaded_optimizer_states[param] = cpu_state
+
+        logger.info(
+            "Offloaded optimizer states for %d params",
+            len(self._offloaded_optimizer_states),
+        )
+
+    def _reload_optimizer_states(self) -> None:
+        """Restore optimizer state tensors from CPU back to GPU."""
+        if not self._offloaded_optimizer_states:
+            return
+
+        optimizer = self._engine.optimizer
+        if optimizer is None:
+            return
+
+        inner_optimizers = getattr(optimizer, "optimizers", [optimizer])
+        for opt in inner_optimizers:
+            base_opt = getattr(opt, "optimizer", opt)
+            for param, state in base_opt.state.items():
+                if param in self._offloaded_optimizer_states:
+                    cpu_state = self._offloaded_optimizer_states[param]
+                    for key, val in cpu_state.items():
+                        state[key] = val.to(param.device, non_blocking=True)
+
+        self._offloaded_optimizer_states.clear()
+        logger.info("Reloaded optimizer states to GPU")
+
+    def _offload_model_weights(self) -> None:
+        """Move model parameters to CPU, keeping references for reload."""
+        if self._engine.model is None:
+            return
+
+        for name, param in self._engine.model.named_parameters():
+            if param.is_cuda:
+                self._offloaded_weights[name] = param.data
+                param.data = torch.empty(0, device="cpu")
+
+        logger.info(
+            "Offloaded %d model weight tensors to CPU",
+            len(self._offloaded_weights),
+        )
+
+    def _reload_model_weights(self) -> None:
+        """Restore model parameters from CPU back to GPU."""
+        if not self._offloaded_weights:
+            return
+
+        device = self._engine.device
+        for name, param in self._engine.model.named_parameters():
+            if name in self._offloaded_weights:
+                param.data = self._offloaded_weights[name].to(device, non_blocking=True)
+
+        self._offloaded_weights.clear()
+        logger.info("Reloaded model weights to GPU")
