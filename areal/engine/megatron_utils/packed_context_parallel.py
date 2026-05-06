@@ -121,8 +121,9 @@ def _build_cp_reassemble_indices(
     batch_size = input_lens.shape[0]
     output_len = int(padded_cu_seqlens[-1].item())
     local_len = output_len // cp_size
+    device = padded_cu_seqlens.device
 
-    indices = torch.empty(output_len, dtype=torch.long, device=padded_cu_seqlens.device)
+    indices = torch.empty(output_len, dtype=torch.long, device=device)
 
     for i in range(batch_size):
         seq_len = int(input_lens[i].item())
@@ -131,16 +132,15 @@ def _build_cp_reassemble_indices(
         local_start = int(padded_cu_seqlens[i].item()) // cp_size
         full_start = int(padded_cu_seqlens[i].item())
 
+        k = torch.arange(half_chunk, device=device)
         for j in range(cp_size):
             src_offset = j * local_len + local_start
-            # first_half → positions [j*H, (j+1)*H) in full sequence
-            for k in range(half_chunk):
-                indices[full_start + j * half_chunk + k] = src_offset + k
-            # second_half → mirror positions [L-(j+1)*H, L-j*H)
-            for k in range(half_chunk):
-                indices[full_start + seq_len - (j + 1) * half_chunk + k] = (
-                    src_offset + half_chunk + k
-                )
+            # first half → positions [j*H, (j+1)*H) in full sequence
+            indices[full_start + j * half_chunk + k] = src_offset + k
+            # second half → mirror positions [L-(j+1)*H, L-j*H)
+            indices[full_start + seq_len - (j + 1) * half_chunk + k] = (
+                src_offset + half_chunk + k
+            )
 
     return indices
 

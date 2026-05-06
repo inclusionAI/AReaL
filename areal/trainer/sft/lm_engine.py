@@ -94,7 +94,6 @@ def compute_packed_sft_loss(
 
     device = logprobs.device
     loss = -logprobs.sum() / (1e-5 + loss_mask.count_nonzero())
-
     with torch.no_grad():
         batch_size = cu_seqlens.shape[0] - 1
         seqlogp = torch.zeros(batch_size, dtype=torch.float64, device=device)
@@ -104,10 +103,15 @@ def compute_packed_sft_loss(
             logp = logprobs[cu_seqlens[i] : cu_seqlens[i + 1]]
             valid_tokens = int(m.count_nonzero().item())
             if valid_tokens == 0:
+                # This is a padded dummy sequence created in `padded_mb_input`.
+                # When Ulysses SP is enabled, padded inputs are passed into the loss function.
+                # So we skip it.
                 continue
+
             n_seqs[i] = True
             seqlogp[i] = torch.where(m, logp.detach(), 0.0).sum() / valid_tokens
 
+    ## Logging stats
     stats_tracker.denominator(
         n_seqs=n_seqs,
         n_tokens=torch.ones(logprobs.shape[0], dtype=torch.bool, device=device),
