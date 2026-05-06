@@ -543,10 +543,12 @@ def set_router_replay_data(
 
     1. Use ``cu_seqlens`` to extract each sample's real tokens from the
        left-aligned ``layers_topk_idx``.
-    2. Pack tokens contiguously with per-sequence TP alignment padding
+    2. Pack tokens contiguously with per-sequence TP/CP alignment padding
        (each sequence padded to a multiple of ``seq_align_to``).
-    3. ``scatter_to_sequence_parallel_region`` to split across TP/SP ranks.
-    4. Permute to ``(num_layers, local_tokens, topk)`` and distribute to
+    3. When ``cp_size > 1``, CP-interleave-split dim-0 to match
+       ``preprocess_packed_seqs_context_parallel``.
+    4. ``scatter_to_sequence_parallel_region`` to split across TP/SP ranks.
+    5. Permute to ``(num_layers, local_tokens, topk)`` and distribute to
        RouterReplay instances.
 
     Args:
@@ -775,9 +777,50 @@ def set_router_replay_data(
                 _r3_tensor_sig("packed", packed),
             )
 
-        # Step 2: Scatter to SP ranks
+        # Step 2: CP split (before TP scatter).
+        #
+        # When ``cp_size > 1``, megatron-core's
+        # ``preprocess_packed_seqs_context_parallel`` has already
+        # interleaved-split the model's token axis so each CP rank only sees
+        # ``total_aligned / cp_size`` tokens.  Router replay indices MUST
+        # match that layout before the TP scatter; otherwise each TP rank
+        # would end up with ``cp_size``x too many rows and overwrite the
+        # wrong positions.  We reuse ``split_packed_seqs_for_context_parallel``
+        # with the PADDED ``cu_seqlens`` the caller provided (see caller
+        # comment "Pass the PADDED cu_seqlens (with TP alignment) ...").
+        #
+        # Contract: ``cu_seqlens`` here describes the SAME packed layout as
+        # ``packed`` (dim-0 aligned), which is what the engine passes in.
         packed = packed.to(device)
         valid_mask = valid_mask.to(device)
+        cp_size = getattr(mpu, "get_context_parallel_world_size", lambda: 1)()
+        if cp_size > 1:
+            from areal.engine.megatron_utils.packed_context_parallel import (
+                split_packed_seqs_for_context_parallel,
+            )
+            cu_seqlens_dev = cu_seqlens.to(device)
+            packed = split_packed_seqs_for_context_parallel(packed, cu_seqlens_dev)
+            # Preserve bool semantics: split as int32 then recast.
+            valid_mask = split_packed_seqs_for_context_parallel(
+                valid_mask.to(torch.int32), cu_seqlens_dev
+            ).bool()
+            if _r3_verbose() and _r3_should_log("set_router_replay_data/CP_SPLIT"):
+                with torch.no_grad():
+                    n_after_cp_valid = int(valid_mask.sum().item())
+                logger.info(
+                    "[R3-STAGE3/set_router_replay_data] CP_SPLIT trace_id=%d %s "
+                    "cp_size=%d post_cp_packed=%s post_cp_valid=%d/%d "
+                    "post_cp_packed_hash=%s",
+                    _r3_current_trace_id(),
+                    _r3_pp_tp_info(tf_config, vp_rank),
+                    cp_size,
+                    _r3_tensor_sig("packed_after_cp", packed),
+                    n_after_cp_valid,
+                    valid_mask.numel(),
+                    hex(_r3_hash64(packed)),
+                )
+
+        # Step 3: Scatter to SP ranks (TP)
         tp_size = mpu.get_tensor_model_parallel_world_size()
         if tp_size > 1:
             from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region
@@ -794,7 +837,7 @@ def set_router_replay_data(
         # local_tokens: (local_tokens_count, num_layers, topk)
         # local_mask:   (local_tokens_count,)
 
-        # Step 3: Permute to (num_layers, local_tokens_count, topk)
+        # Step 4: Permute to (num_layers, local_tokens_count, topk)
         layers_topk = local_tokens.permute(1, 0, 2)
 
         if _r3_verbose() and _r3_should_log("set_router_replay_data/SCATTER"):
@@ -815,7 +858,7 @@ def set_router_replay_data(
                 hex(_r3_hash64(local_mask.to(torch.int32))),
             )
 
-        # Step 4: Distribute to RouterReplay instances for local PP layers
+        # Step 5: Distribute to RouterReplay instances for local PP layers
         local_info = get_current_rank_layer_info(tf_config, vp_rank)
         offset, end = local_info["start"], local_info["end"]
         router_list = RouterReplayHelper.get_micro_batch_router_list(tf_config, vp_rank)
