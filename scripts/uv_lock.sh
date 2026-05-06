@@ -34,7 +34,7 @@ trap cleanup EXIT
 cd "${REPO_ROOT}"
 
 echo "[AReaL] Generating default lockfile from pyproject.toml..."
-uv lock
+uv lock -v
 
 cp "${DEFAULT_PYPROJECT}" "${TMP_DIR}/pyproject.toml.bak"
 cp "${DEFAULT_LOCK}" "${TMP_DIR}/uv.lock.bak"
@@ -42,7 +42,7 @@ cp "${DEFAULT_LOCK}" "${TMP_DIR}/uv.lock.bak"
 echo "[AReaL] Generating vLLM lockfile from pyproject.vllm.toml..."
 cp "${VLLM_PYPROJECT}" "${DEFAULT_PYPROJECT}"
 cp "${VLLM_LOCK}" "${DEFAULT_LOCK}"
-uv lock
+uv lock -v
 cp "${DEFAULT_LOCK}" "${VLLM_LOCK}"
 
 echo "[AReaL] Done. Updated files:"

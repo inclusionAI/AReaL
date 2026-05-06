@@ -5,7 +5,7 @@
 Manages the full lifecycle: create RPCGuard workers → fork DataWorkers,
 Router, Gateway → register datasets → serve batches → shutdown.
 
-Follows the same patterns as ``GatewayInferenceController``.
+Follows the same patterns as ``RolloutControllerV2``.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ logger = logging.getLogger("DataController")
 class DataController:
     """Controller for the distributed data loading service.
 
-    API follows ``TrainController`` / ``GatewayInferenceController`` patterns:
+    API follows ``TrainController`` / ``RolloutControllerV2`` patterns:
     ``__init__(config, scheduler)`` then ``initialize(role, ...)``.
     """
 

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
-"""GatewayInferenceController — parallel implementation to RolloutController.
+"""RolloutControllerV2 — parallel implementation to RolloutController.
 
 Routes inference and pause/continue traffic through the gateway HTTP stack
 (Gateway → Router → Data Proxy → inference backend).
@@ -11,6 +11,7 @@ server processes are forked through RPCGuard (a lightweight process manager).
 from __future__ import annotations
 
 import asyncio
+import copy
 import os
 import sys
 import threading
@@ -29,16 +30,15 @@ from openai.types.chat import ChatCompletion, ChatCompletionChunk
 if TYPE_CHECKING:
     from areal.api.scheduler_api import Scheduler, Worker
 
+from areal.api.cli_args import InferenceEngineConfig
 from areal.api.io_struct import LocalInfServerInfo
-from areal.experimental.inference_service.controller.config import (
-    GatewayControllerConfig,
-)
 from areal.utils import logging
 from areal.utils.network import format_hostport
 
-logger = logging.getLogger("GatewayInferenceController")
+logger = logging.getLogger("RolloutControllerV2")
 
 _MAX_COMPLETED_ONLINE_RESULTS = 1024
+_DEFAULT_SERVICE_LOG_LEVEL = "info"
 
 
 @dataclass
@@ -49,7 +49,7 @@ class _OnlineWaiter:
 class _DummyDataLoader:
     """Minimal dataloader that yields a single batch of empty dicts.
 
-    Used by :meth:`GatewayInferenceController.prepare_batch` when
+    Used by :meth:`RolloutControllerV2.prepare_batch` when
     ``dataloader`` is ``None`` (online-agent mode).
     """
 
@@ -60,7 +60,7 @@ class _DummyDataLoader:
         yield [{} for _ in range(self.batch_size)]
 
 
-class GatewayInferenceController:
+class RolloutControllerV2:
     """Inference controller that routes everything through the gateway HTTP stack.
 
     This is a **parallel** implementation to ``RolloutController`` (NOT a
@@ -80,15 +80,15 @@ class GatewayInferenceController:
 
     def __init__(
         self,
-        config: GatewayControllerConfig,
+        config: InferenceEngineConfig,
         scheduler: Scheduler,
     ) -> None:
-        if config.admin_api_key is None:
+        if config.admin_api_key is None or not config.admin_api_key.strip():
             raise ValueError(
-                "GatewayControllerConfig.admin_api_key must be set (not None)"
+                "InferenceEngineConfig.admin_api_key must be set (not None or empty)"
             )
         if not config.model:
-            raise ValueError("GatewayControllerConfig.model must not be empty")
+            raise ValueError("InferenceEngineConfig.model must not be empty")
         self.config = config
         self.scheduler = scheduler
 
@@ -169,7 +169,8 @@ class GatewayInferenceController:
 
         # Shared HTTP clients
         self._sync_client = httpx.Client(timeout=30.0)
-        self._async_client = httpx.AsyncClient(timeout=config.request_timeout)
+        self._async_client: httpx.AsyncClient | None = None
+        self._async_client_loop: asyncio.AbstractEventLoop | None = None
         self._destroyed = False
 
         # Proxy compatibility (no-ops — gateway IS the proxy)
@@ -203,7 +204,6 @@ class GatewayInferenceController:
         self._register_data_proxies_in_router()
 
         # Create WorkflowExecutor directly (no intermediate engine)
-        from areal.api.cli_args import InferenceEngineConfig
         from areal.infra.remote_inf_engine import RemoteInfEngine
         from areal.infra.workflow_executor import WorkflowExecutor
 
@@ -226,7 +226,7 @@ class GatewayInferenceController:
             max_staleness=self.config.max_head_offpolicyness,
         )
 
-        logger.info("GatewayInferenceController initialized (role=%s)", role)
+        logger.info("RolloutControllerV2 initialized (role=%s)", role)
 
         if self.config.model:
             self.register_model(
@@ -268,6 +268,7 @@ class GatewayInferenceController:
 
         cfg = self.config
         admin_api_key = self.config.admin_api_key
+        agent_cfg = self._agent_config
 
         if self.external_mode:
             dp_size = 1
@@ -352,10 +353,9 @@ class GatewayInferenceController:
             if inf_backend == "sglang":
                 from areal.api.cli_args import SGLangConfig
 
-                sglang_config = SGLangConfig(
-                    model_path=cfg.model_path or cfg.tokenizer_path,
-                )
+                sglang_config = SGLangConfig()
                 if server_args:
+                    sglang_config = copy.deepcopy(sglang_config)
                     for k, v in server_args.items():
                         if hasattr(sglang_config, k):
                             setattr(sglang_config, k, v)
@@ -389,17 +389,19 @@ class GatewayInferenceController:
             elif inf_backend == "vllm":
                 from areal.api.cli_args import vLLMConfig
 
-                vllm_config = vLLMConfig(model=cfg.model_path or cfg.tokenizer_path)
-                for k, v in (server_args or {}).items():
-                    if hasattr(vllm_config, k):
-                        setattr(vllm_config, k, v)
-                    else:
-                        logger.warning(
-                            "vLLMConfig has no attribute %r, ignoring "
-                            "server_args entry (value=%r)",
-                            k,
-                            v,
-                        )
+                vllm_config = vLLMConfig()
+                if server_args:
+                    vllm_config = copy.deepcopy(vllm_config)
+                    for k, v in server_args.items():
+                        if hasattr(vllm_config, k):
+                            setattr(vllm_config, k, v)
+                        else:
+                            logger.warning(
+                                "vLLMConfig has no attribute %r, ignoring "
+                                "server_args entry (value=%r)",
+                                k,
+                                v,
+                            )
 
                 def _build_launch_cmd(
                     host: str | None,
@@ -550,7 +552,7 @@ class GatewayInferenceController:
             "--poll-interval",
             str(cfg.poll_interval),
             "--log-level",
-            cfg.log_level,
+            _DEFAULT_SERVICE_LOG_LEVEL,
         ]
 
         guard_addr_0 = f"http://{format_hostport(self.workers[0].ip, int(self.workers[0].worker_ports[0]))}"
@@ -575,24 +577,24 @@ class GatewayInferenceController:
             "--admin-api-key",
             admin_api_key,
             "--log-level",
-            cfg.log_level,
+            _DEFAULT_SERVICE_LOG_LEVEL,
             "--request-timeout",
             str(cfg.request_timeout),
             "--set-reward-finish-timeout",
-            str(cfg.set_reward_finish_timeout),
+            str(cfg.agent.set_reward_finish_timeout),
             "--callback-server-addr",
             f"http://{self.callback_addr}",
             "--tool-call-parser",
-            cfg.tool_call_parser,
+            agent_cfg.tool_call_parser,
             "--reasoning-parser",
-            cfg.reasoning_parser,
+            agent_cfg.reasoning_parser,
             "--chat-template-type",
-            cfg.chat_template_type,
+            agent_cfg.chat_template_type,
         ]
-        if cfg.engine_max_tokens is not None:
+        if agent_cfg.engine_max_tokens is not None:
             data_proxy_base_cmd += [
                 "--engine-max-tokens",
-                str(cfg.engine_max_tokens),
+                str(agent_cfg.engine_max_tokens),
             ]
 
         for group_idx in range(dp_size):
@@ -641,7 +643,7 @@ class GatewayInferenceController:
             "--forward-timeout",
             str(cfg.request_timeout),
             "--log-level",
-            cfg.log_level,
+            _DEFAULT_SERVICE_LOG_LEVEL,
         ]
 
         gw_host, gw_port = self._fork_on_guard(
@@ -909,13 +911,15 @@ class GatewayInferenceController:
 
         # Close shared HTTP clients after all kill requests have been sent
         self._sync_client.close()
-        try:
-            from areal.infra.utils.concurrent import run_async_task
+        if self._async_client is not None:
+            try:
+                from areal.infra.utils.concurrent import run_async_task
 
-            run_async_task(self._async_client.aclose)
-        except Exception:
-            # Best-effort cleanup on the destroy path.
-            pass
+                run_async_task(self._async_client.aclose)
+            except Exception:
+                pass
+            self._async_client = None
+            self._async_client_loop = None
 
         # RPCGuard's shutdown `finally` block automatically kills all
         # forked children, so explicit teardown above is best-effort.
@@ -987,9 +991,7 @@ class GatewayInferenceController:
 
     def get_capacity(self) -> int:
         if self.staleness_manager is None:
-            raise RuntimeError(
-                "GatewayInferenceController.initialize() must be called first"
-            )
+            raise RuntimeError("RolloutControllerV2.initialize() must be called first")
         return self.staleness_manager.get_capacity()
 
     # -- Submit / Wait / Batch ---------------------------------------------
@@ -1080,9 +1082,7 @@ class GatewayInferenceController:
             A list of trajectory dicts (one per completed rollout).
         """
         if not self._gateway_addr:
-            raise RuntimeError(
-                "GatewayInferenceController.initialize() must be called first"
-            )
+            raise RuntimeError("RolloutControllerV2.initialize() must be called first")
         if data is None:
             if batch_size is None:
                 raise ValueError(
@@ -1151,9 +1151,7 @@ class GatewayInferenceController:
             A list of trajectory dicts (matching ``RolloutController`` API).
         """
         if not self._gateway_addr:
-            raise RuntimeError(
-                "GatewayInferenceController.initialize() must be called first"
-            )
+            raise RuntimeError("RolloutControllerV2.initialize() must be called first")
         if dataloader is None:
             if batch_size is None:
                 raise ValueError(
@@ -1430,9 +1428,7 @@ class GatewayInferenceController:
     @property
     def workflow_executor(self):
         if self._workflow_executor is None:
-            raise RuntimeError(
-                "GatewayInferenceController.initialize() must be called first"
-            )
+            raise RuntimeError("RolloutControllerV2.initialize() must be called first")
         return self._workflow_executor
 
     @property
@@ -1462,10 +1458,10 @@ class GatewayInferenceController:
                 "Gateway address is unavailable; initialize the controller first"
             )
 
-        openai_cfg = self.config
-        admin_api_key = openai_cfg.admin_api_key
-        turn_discount = openai_cfg.turn_discount
-        export_style = openai_cfg.export_style
+        agent_cfg = self._agent_config
+        admin_api_key = self.config.admin_api_key
+        turn_discount = agent_cfg.turn_discount
+        export_style = agent_cfg.export_style
 
         return InferenceServiceWorkflow(
             controller=self,
@@ -1549,13 +1545,13 @@ class GatewayInferenceController:
         # (c) Reject RolloutWorkflow classes and instances
         if isinstance(agent, type) and issubclass(agent, RolloutWorkflow):
             raise TypeError(
-                "GatewayInferenceController only accepts agent classes or instances with a "
+                "RolloutControllerV2 only accepts agent classes or instances with a "
                 "run() method or None for online mode; direct RolloutWorkflow "
                 "classes are not supported"
             )
         if isinstance(agent, RolloutWorkflow):
             raise TypeError(
-                "GatewayInferenceController only accepts agent classes or instances with a "
+                "RolloutControllerV2 only accepts agent classes or instances with a "
                 "run() method or None for online mode; direct RolloutWorkflow "
                 "instances are not supported"
             )
@@ -1598,6 +1594,10 @@ class GatewayInferenceController:
                 raise TypeError(f"Imported {should_accept_fn!r} is not callable")
             return cast(Callable[[dict[str, Any]], bool], func)
         raise TypeError(f"Invalid should_accept_fn type: {type(should_accept_fn)}")
+
+    @property
+    def _agent_config(self):
+        return self.config.agent
 
     # -- Internal HTTP helpers ---------------------------------------------
 
@@ -1689,6 +1689,21 @@ class GatewayInferenceController:
         except httpx.HTTPError as exc:
             raise RuntimeError(f"Failed to POST {endpoint}: {exc}") from exc
 
+    async def _get_async_client(self) -> httpx.AsyncClient:
+        """Return the shared async HTTP client, recreating it when the event loop changes.
+
+        ``run_async_task`` creates a fresh event loop per invocation via
+        ``asyncio.run()``.  TCP connections are tied to the loop that opened
+        them, so we must recreate the client when the loop changes.  Within
+        a single loop lifetime all callers (e.g. concurrent ``asyncio.gather``
+        calls) share one client and its connection pool.
+        """
+        current_loop = asyncio.get_running_loop()
+        if self._async_client is None or self._async_client_loop is not current_loop:
+            self._async_client = httpx.AsyncClient(timeout=self.config.request_timeout)
+            self._async_client_loop = current_loop
+        return self._async_client
+
     async def _async_gateway_http_post(
         self, endpoint: str, payload: dict[str, Any]
     ) -> None:
@@ -1700,7 +1715,8 @@ class GatewayInferenceController:
         """
         url = f"{self._gateway_addr}{endpoint}"
         try:
-            resp = await self._async_client.post(
+            client = await self._get_async_client()
+            resp = await client.post(
                 url,
                 json=payload,
                 headers={"Authorization": f"Bearer {self.config.admin_api_key}"},

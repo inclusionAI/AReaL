@@ -28,7 +28,7 @@ from openai.types.responses import Response
 from openai.types.responses.response_create_params import ResponseCreateParams
 from pydantic import BaseModel
 
-from areal.api.cli_args import NameResolveConfig, OpenAIProxyConfig
+from areal.api.cli_args import NameResolveConfig
 from areal.experimental.openai.client import ArealOpenAI
 from areal.infra.rpc.serialization import deserialize_value, serialize_value
 from areal.utils import name_resolve, names, seeding
@@ -263,24 +263,22 @@ def _setup_openai_client():
     global _openai_client, _session_timeout_seconds, _admin_api_key
     config = _engine.config
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
-    openai_cfg = config.openai or OpenAIProxyConfig()
+    agent_cfg = config.agent
     _openai_client = ArealOpenAI(
         engine=_engine,
         tokenizer=tokenizer,
-        tool_call_parser=openai_cfg.tool_call_parser,
-        reasoning_parser=openai_cfg.reasoning_parser,
-        engine_max_tokens=openai_cfg.engine_max_tokens,
-        chat_template_type=openai_cfg.chat_template_type,
+        tool_call_parser=agent_cfg.tool_call_parser,
+        reasoning_parser=agent_cfg.reasoning_parser,
+        engine_max_tokens=agent_cfg.engine_max_tokens,
+        chat_template_type=agent_cfg.chat_template_type,
     )
-    # Set session timeout from config
-    _session_timeout_seconds = openai_cfg.session_timeout_seconds
-    # Set admin API key from config
+    _session_timeout_seconds = agent_cfg.session_timeout_seconds
     with _lock:
-        _admin_api_key = openai_cfg.admin_api_key
+        _admin_api_key = agent_cfg.admin_api_key
         if _admin_api_key == DEFAULT_ADMIN_API_KEY:
             logger.warning(
                 "Using default admin API key. Change 'admin_api_key' in "
-                "OpenAIProxyConfig for non-local deployments."
+                "AgentConfig for non-local deployments."
             )
 
 

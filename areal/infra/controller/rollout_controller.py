@@ -448,16 +448,17 @@ class RolloutController:
             logger.warning("Proxy gateway already running")
             return
 
-        from areal.api.cli_args import OpenAIProxyConfig
         from areal.experimental.openai.proxy.proxy_gateway import (
             create_proxy_gateway_app,
         )
 
-        openai_cfg = self.config.openai or OpenAIProxyConfig()
+        agent_cfg = self.config.agent
 
         app = create_proxy_gateway_app(
             proxy_addrs=self.proxy_addrs,
-            admin_api_key=openai_cfg.admin_api_key,
+            admin_api_key=agent_cfg.admin_api_key
+            if agent_cfg is not None
+            else "areal-admin-key",
         )
 
         self._proxy_gateway_port = find_free_ports(1)[0]

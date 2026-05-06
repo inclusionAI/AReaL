@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from areal.api.io_struct import (
     HttpGenerationResult,
     HttpRequest,
+    detect_image_mime,
     get_versioned_lora_name,
 )
 
@@ -73,8 +74,9 @@ class VLLMBridgeBackend:
                                 raise ValueError(
                                     "Not enough images in req.image_data to match image_url entries."
                                 ) from exc
+                            mime = detect_image_mime(base64_img)
                             content["image_url"] = {
-                                "url": f"data:image/jpeg;base64,{base64_img}"
+                                "url": f"data:{mime};base64,{base64_img}"
                             }
             payload["messages"] = parsed_input.copy()
             payload["logprobs"] = True

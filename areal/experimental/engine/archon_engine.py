@@ -555,7 +555,9 @@ class ArchonEngine(TrainEngine):
 
         self.forward_backward_batch(mb_list, process_output, forward_only=False)
 
-        return self.optimizer_step()
+        stats = self.optimizer_step()
+        stats["num_micro_batches"] = len(mb_list.mbs)
+        return stats
 
     @torch.no_grad()
     def eval_batch(
@@ -718,8 +720,23 @@ class ArchonEngine(TrainEngine):
             dynamic_bs=dynamic_bs,
         )
 
-    def clear_batches(self, *args):
-        """Placeholder method of single-controller API."""
+    def clear_batches(self, shard_ids: list[str]) -> None:
+        """Drain this worker's client-side RTensor fetch buffer.
+
+        Called via RPC by ``TrainController.clear_batches`` at step end so
+        cross-node consumer DP heads release cached tensors. See #1209.
+        Upstream ``TrainController.clear_batches`` guards against empty
+        input, so ``shard_ids`` is always a non-empty ``list[str]``.
+        """
+        from areal.infra.rpc.rtensor import clear_fetch_buffer
+
+        clear_fetch_buffer(shard_ids)
+
+    def fetch_buffer_stats(self) -> dict[str, int]:
+        """Expose local fetch-buffer stats for post-step drain verification."""
+        from areal.infra.rpc.rtensor import fetch_buffer_stats
+
+        return fetch_buffer_stats()
 
     def update_weights(self, meta: WeightUpdateMeta):
         """Update weights to inference engine."""
@@ -1204,9 +1221,14 @@ class ArchonEngine(TrainEngine):
         mb_list.mbs = [pack_tensor_dict(mb) for mb in mb_list.mbs]
 
         # LCM ensures page-aligned memory and exact CP slicing without extra padding.
+        model_config = (
+            self.model_config.text_config
+            if hasattr(self.model_config, "text_config")
+            else self.model_config
+        )
         page_size = max(
             DEFAULT_PAGE_SIZE_BYTES
-            // self.model_config.hidden_size
+            // model_config.hidden_size
             // torch.empty([], dtype=self.param_dtype).element_size(),
             1,
         )

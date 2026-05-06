@@ -151,6 +151,9 @@ class InfBridge:
             resp = await self._client.get(url, timeout=_timeout)
         else:
             resp = await self._client.post(url, json=http_req.payload, timeout=_timeout)
+        if resp.status_code >= 400:
+            body = resp.text[:500]
+            logger.error("Backend returned %d for %s: %s", resp.status_code, url, body)
         resp.raise_for_status()
         return resp.json()
 

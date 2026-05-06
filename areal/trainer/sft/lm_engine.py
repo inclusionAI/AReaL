@@ -111,7 +111,7 @@ def compute_packed_sft_loss(
             n_seqs[i] = True
             seqlogp[i] = torch.where(m, logp.detach(), 0.0).sum() / valid_tokens
 
-    ## Loggin stats
+    ## Logging stats
     stats_tracker.denominator(
         n_seqs=n_seqs,
         n_tokens=torch.ones(logprobs.shape[0], dtype=torch.bool, device=device),

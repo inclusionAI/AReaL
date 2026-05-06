@@ -26,7 +26,6 @@ from areal.utils.constants import (
     PROX_LOGP_METHOD_RECOMPUTE,
     PROX_LOGP_METHODS_ALL,
 )
-from areal.utils.pkg_version import is_version_less
 from areal.utils.seqpack import PACKING_ALGORITHMS
 
 if TYPE_CHECKING:
@@ -556,7 +555,7 @@ class ArchonEngineConfig:
 
     # Whether to enable torch.compile
     enable_compile: bool = field(
-        default=True,
+        default=False,
         metadata={"help": "Enable torch.compile for TransformerBlocks."},
     )
 
@@ -920,6 +919,13 @@ class MegatronEngineConfig:
         metadata={
             "help": "Bridge backend for MegatronEngine. Choices: 'mbridge' or 'megatron-bridge'.",
             "choices": ["mbridge", "megatron-bridge"],
+        },
+    )
+
+    use_mbridge_save: bool = field(
+        default=False,
+        metadata={
+            "help": "Use mbridge's save method to save gpu memory when saving weights."
         },
     )
 
@@ -1631,7 +1637,6 @@ class vLLMConfig:
     max_num_seqs: int = 256
     # kv_cache_type: str = "auto"
     block_size: int = 16
-    swap_space: int = 4
     cpu_offload_gb: float = 0
     disable_sliding_window: bool = True
     max_model_len: int | None = 32768
@@ -1879,17 +1884,50 @@ class SGLangConfig:
             args["host"] = host
         if port is not None:
             args["port"] = port
-        if not pkg_version.is_version_greater_or_equal("sglang", "0.4.9.post2"):
-            raise RuntimeError("Needs sglang>=0.4.9.post2 to run the code.")
-        if is_version_less("sglang", "0.4.10.post2"):
-            args.pop("max_loaded_loras", None)
+        if not pkg_version.is_version_greater_or_equal("sglang", "0.5.10.post1"):
+            raise RuntimeError("Needs sglang>=0.5.10.post1 to run the code.")
         return args
 
 
 @dataclass
-class OpenAIProxyConfig:
-    """Configuration for OpenAI proxy when using agent workflows."""
+class AgentConfig:
+    """Configuration for agent workflows and the experimental agent service controller.
 
+    Consolidates proxy settings (mode, parsers, export) with agent-service
+    orchestration (scheduling, auth) into a single flat dataclass.
+    """
+
+    agent_cls_path: str = field(
+        default="",
+        metadata={
+            "help": "Fully-qualified import path for the AgentRunnable implementation."
+        },
+    )
+    admin_api_key: str = field(
+        default="areal-admin-key",
+        metadata={
+            "help": (
+                "Admin API key for the proxy server and agent-service inter-service auth. "
+                "Used to authenticate management operations (grant_capacity, start_session). "
+                "Cannot be used for chat completions. Each session gets a unique "
+                "API key allocated via start_session. "
+                "WARNING: Change this from the default for non-local deployments."
+            ),
+        },
+    )
+    scheduling_spec: tuple[SchedulingSpec, ...] = field(
+        default_factory=lambda: (
+            SchedulingSpec(
+                gpu=0,
+                cmd="python -m areal.experimental.agent_service.guard",
+            ),
+        ),
+        metadata={
+            "help": "Scheduling spec for agent-service guard workers. Must contain exactly one SchedulingSpec. Use scheduling_spec[0].env_vars for child-process environment variables."
+        },
+    )
+
+    # -- Proxy / workflow settings (formerly OpenAIProxyConfig) ----------------
     mode: str = field(
         default="inline",
         metadata={
@@ -1950,22 +1988,27 @@ class OpenAIProxyConfig:
             "help": "Session timeout in seconds. Sessions inactive longer than this will be garbage collected."
         },
     )
-    admin_api_key: str = field(
-        default="areal-admin-key",
+    set_reward_finish_timeout: float = field(
+        default=0.0,
         metadata={
-            "help": (
-                "Admin API key for the proxy server. Used to authenticate management "
-                "operations (grant_capacity, start_session). "
-                "Cannot be used for chat completions. Each session gets a unique "
-                "API key allocated via start_session. "
-                "WARNING: Change this from the default for non-local deployments."
-            ),
+            "help": "Timeout in seconds to wait for additional reward updates before finalizing a session."
         },
     )
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        if not self.agent_cls_path:
+            raise ValueError("agent_cls_path must be a non-empty import path")
+        if len(self.scheduling_spec) != 1:
+            raise ValueError(
+                f"scheduling_spec must contain exactly 1 SchedulingSpec, got {len(self.scheduling_spec)}"
+            )
         if not self.admin_api_key or not self.admin_api_key.strip():
             raise ValueError("admin_api_key must not be empty or whitespace-only")
+        if self.set_reward_finish_timeout < 0:
+            raise ValueError(
+                "set_reward_finish_timeout must be non-negative, "
+                f"got {self.set_reward_finish_timeout}"
+            )
 
 
 @dataclass
@@ -2012,10 +2055,6 @@ class InferenceEngineConfig:
         metadata={
             "help": "Whether to check the format of produced trajectories of a customized workflow. Useful when debugging the workflow in isolation. Should be False during RL training."
         },
-    )
-    schedule_policy: str = field(
-        default="round_robin",
-        metadata={"help": "Request scheduling policy", "choices": ["round_robin"]},
     )
     tokenizer_path: str = field(
         default="",
@@ -2073,10 +2112,12 @@ class InferenceEngineConfig:
         default=False,
         metadata={"help": "Whether to use LoRA. Should be same as actors LORA option."},
     )
-    openai: OpenAIProxyConfig | None = field(
-        default=None,
+    agent: AgentConfig = field(
+        default_factory=lambda: AgentConfig(
+            agent_cls_path="areal.experimental.openai.proxy.online_agent._OnlineAgent"
+        ),
         metadata={
-            "help": "OpenAI proxy configuration (used when workflow is an agent workflow)."
+            "help": "Agent workflow configuration used by inference-service rollouts."
         },
     )
     return_routed_experts: bool = field(
@@ -2086,12 +2127,66 @@ class InferenceEngineConfig:
         },
     )
 
+    # v2 controller options
+    _version: str = field(
+        default="v1",
+        metadata={
+            "help": "Rollout controller implementation version. Use 'v1' for legacy RolloutController, 'v2' for RolloutControllerV2.",
+            "choices": ["v1", "v2"],
+        },
+    )
+    model: str = field(
+        default="default",
+        metadata={"help": "Model name exposed through the inference-service gateway."},
+    )
+    routing_strategy: str = field(
+        default="round_robin",
+        metadata={"help": "Routing strategy for the inference-service router."},
+    )
+    poll_interval: float = field(
+        default=5.0,
+        metadata={
+            "help": "Health-poll interval in seconds for the inference-service router."
+        },
+    )
+    admin_api_key: str = field(
+        default="areal-admin-key",
+        metadata={
+            "help": "Admin API key used by the inference-service gateway, router, and data proxies."
+        },
+    )
+    api_url: str | None = field(
+        default=None,
+        metadata={
+            "help": "External OpenAI-compatible base URL for inference-service external model mode."
+        },
+    )
+    provider_api_key: str | None = field(
+        default=None,
+        metadata={"help": "API key for the external OpenAI-compatible provider."},
+    )
+
     def __post_init__(self):
         """Validate scheduling_spec length."""
         if len(self.scheduling_spec) not in (1, 2):
             raise ValueError(
                 f"scheduling_spec must contain 1 or 2 SchedulingSpec, "
                 f"got {len(self.scheduling_spec)}"
+            )
+        if self._version not in ("v1", "v2"):
+            raise ValueError(
+                f"_version must be either 'v1' or 'v2', got '{self._version}'"
+            )
+        if not self.admin_api_key or not self.admin_api_key.strip():
+            raise ValueError("admin_api_key must not be empty or whitespace-only")
+        if (
+            self._version == "v2"
+            and self.agent is not None
+            and self.agent.admin_api_key != "areal-admin-key"
+        ):
+            logger.warning(
+                "rollout.agent.admin_api_key is ignored by rollout controller v2; "
+                "use rollout.admin_api_key instead."
             )
 
 

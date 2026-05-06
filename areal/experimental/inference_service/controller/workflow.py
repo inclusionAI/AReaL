@@ -14,7 +14,7 @@ from areal.utils import logging, stats_tracker
 if TYPE_CHECKING:
     from areal.api.engine_api import InferenceEngine
     from areal.experimental.inference_service.controller.controller import (
-        GatewayInferenceController,
+        RolloutControllerV2,
     )
     from areal.experimental.openai.types import InteractionWithTokenLogpReward
 
@@ -29,7 +29,7 @@ _EXPORT_TRAJECTORIES_PATHNAME = "export_trajectories"
 class InferenceServiceWorkflow(RolloutWorkflow):
     def __init__(
         self,
-        controller: GatewayInferenceController,
+        controller: RolloutControllerV2,
         agent: Any | None = None,
         gateway_addr: str = "",
         admin_api_key: str = "areal-admin-key",
