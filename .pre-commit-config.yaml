@@ -110,6 +110,18 @@ repos:
         files: ^areal/.*\.py$
         types: [python]
 
+  # Format and lint .github/CODEOWNERS
+  - repo: local
+    hooks:
+      - id: format-codeowners
+        name: Format CODEOWNERS
+        entry: python3 areal/tools/format_codeowners.py
+        language: system
+        files: ^\.github/CODEOWNERS$
+        pass_filenames: false
+        always_run: false
+        require_serial: true
+
   # Conventional Commits message check
   - repo: https://github.com/compilerla/conventional-pre-commit
     rev: v4.4.0
