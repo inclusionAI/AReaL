@@ -177,7 +177,7 @@ def _init_per_pp_weight_update_groups(
         )
         return
 
-    if train_pp_rank >= gen_pp_size:
+    if train_pp_rank != gen_pp_size:
         raise ValueError(
             f"Archon train_pp_rank={train_pp_rank} exceeds gen_pp_size="
             f"{gen_pp_size}; train_pp_size and gen_pp_size must match for "
