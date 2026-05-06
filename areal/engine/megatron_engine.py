@@ -907,7 +907,7 @@ class MegatronEngine(TrainEngine):
                     tree_attn_keys = list(tree_kwargs.keys())
 
             cp_size = mpu.get_context_parallel_world_size()
-            cp_local = cp_size > 1
+            cp_local = cp_size > 1 and not forward_only
 
             # [SPLIT_MISMATCH_DIAG] Log per-MB padded input geometry BEFORE forward.
             try:
