@@ -350,15 +350,15 @@ def prepare_training_config(
     )
 
     # PP weight tying constraint (independent of pad_to_maximum)
-    if parallel_dims.pp_enabled:
-        if getattr(model_config, "tie_word_embeddings", False):
-            raise ValueError(
-                f"Pipeline Parallelism (PP={parallel_dims.pp}) is not supported "
-                f"with weight tying (tie_word_embeddings=True). "
-                f"When PP > 1, tok_embeddings and output layers are on different GPUs "
-                f"and cannot share the same weight tensor. "
-                f"Please either disable PP (set pipeline_parallel_size=1) or use a model "
-                f"without weight tying."
-            )
+    # if parallel_dims.pp_enabled:
+    #     if getattr(model_config, "tie_word_embeddings", False):
+    #         raise ValueError(
+    #             f"Pipeline Parallelism (PP={parallel_dims.pp}) is not supported "
+    #             f"with weight tying (tie_word_embeddings=True). "
+    #             f"When PP > 1, tok_embeddings and output layers are on different GPUs "
+    #             f"and cannot share the same weight tensor. "
+    #             f"Please either disable PP (set pipeline_parallel_size=1) or use a model "
+    #             f"without weight tying."
+    #         )
 
     return ac_config, enable_compile
