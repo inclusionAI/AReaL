@@ -765,6 +765,9 @@ class MegatronEngine(TrainEngine):
 
     def update_weights(self, meta: WeightUpdateMeta):
         self._check_rollout_engine_connected()
+        gc.collect()
+        current_platform.empty_cache()
+        gc.collect()
         with self._offload_aware_context():
             if meta.type == "xccl":
                 assert self.weight_update_group_initialized
@@ -2099,6 +2102,9 @@ class MegatronEngine(TrainEngine):
                     source_path=base_model_path,
                 )
         else:
+            gc.collect()
+            current_platform.empty_cache()
+            gc.collect()
             save_weights_to_hf_with_mbridge_fast(
                 bridge=self.bridge,
                 models=self.model,
