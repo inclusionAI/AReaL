@@ -159,12 +159,16 @@ def _init_per_pp_weight_update_groups(
     """
     assert meta.gen_allocation is not None
 
+    train_pp_size = engine.parallel_dims.pp
+    if train_pp_size != gen_pp_size:
+        raise ValueError(
+            f"Archon train_pp_size={train_pp_size} != gen_pp_size="
+            f"{gen_pp_size}; train_pp_size == gen_pp_size is required for "
+            f"per-PP-rank weight sync."
+        )
+
     train_pp_rank = engine.pipeline_parallel_rank()
     if not engine.is_pipeline_parallel_head():
-        # Non-PP-head ranks (dp>0, tp>0, or cp>0) do not participate in any
-        # weight update NCCL group. Record the expected group name so that
-        # any later cleanup or destroy path can iterate over it without
-        # special-casing this rank.
         for pp_rank in range(gen_pp_size):
             state.group_names.append(f"update_weight_group_{pp_rank}")
         state.group_name = f"update_weight_group_{train_pp_rank}"
@@ -176,13 +180,6 @@ def _init_per_pp_weight_update_groups(
             train_pp_rank,
         )
         return
-
-    if train_pp_rank != gen_pp_size:
-        raise ValueError(
-            f"Archon train_pp_rank={train_pp_rank} exceeds gen_pp_size="
-            f"{gen_pp_size}; train_pp_size and gen_pp_size must match for "
-            f"per-PP-rank weight sync."
-        )
 
     gen_world_size = meta.gen_allocation.parallel.world_size
     # per_pp_world_size = workers at one PP stage = n_servers * tp_size.
