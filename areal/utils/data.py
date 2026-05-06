@@ -437,6 +437,35 @@ def unpack_sequence(
 ):
     """Unpack a sequence tensor into a list of tensors based on cumulative sequence lengths."""
     if lens is not None:
+        # [SPLIT_MISMATCH_DIAG] Pre-flight check that emits a detailed log
+        # BEFORE torch.split raises so we capture the exact mismatch.
+        try:
+            _x_dim = int(x.shape[dim]) if x.ndim > dim else -1
+            _sum_lens = int(sum(lens))
+            if _x_dim != _sum_lens:
+                import torch.distributed as _dist
+                from areal.utils.logging import getLogger as _getLogger
+                _diag = _getLogger("R3SplitDiag")
+                _diag.error(
+                    "[SPLIT_MISMATCH_DIAG][unpack_sequence] PRE_SPLIT_MISMATCH "
+                    "rank=%s x.shape=%s dim=%d x.size(dim)=%d "
+                    "len(lens)=%d sum(lens)=%d delta=%d "
+                    "lens_head=%s lens_tail=%s "
+                    "min_len=%s max_len=%s",
+                    _dist.get_rank() if _dist.is_initialized() else None,
+                    tuple(x.shape),
+                    dim,
+                    _x_dim,
+                    len(lens),
+                    _sum_lens,
+                    _sum_lens - _x_dim,
+                    list(lens[:16]),
+                    list(lens[-16:]),
+                    min(lens) if lens else None,
+                    max(lens) if lens else None,
+                )
+        except Exception:
+            pass
         return torch.split(x, lens, dim=dim)
     if cu_seqlens is not None:
         return torch.split(
@@ -1049,6 +1078,16 @@ def unpad_logits(
     cu_seqlens: torch.Tensor | None = None,
     old_cu_seqlens: torch.Tensor | None = None,
 ):
+    # [SPLIT_MISMATCH_DIAG] Log unpad_logits inputs/outputs centrally so we
+    # observe ALL call sites (engine forward_step, etc.).
+    try:
+        import torch.distributed as _dist
+        from areal.utils.logging import getLogger as _getLogger
+        _diag = _getLogger("R3SplitDiag")
+        _in_shape = tuple(logits.shape)
+    except Exception:
+        _diag = None
+        _in_shape = None
     # TODO: when using megatron, logits are in fp32,
     # create new logits in bucket to reduce peak memory usage
     # First unpad batch
@@ -1069,8 +1108,42 @@ def unpad_logits(
             start = cu_seqlens[i].item()
             length = old_end - old_start
             new_logits[old_start:old_end] = logits[start : start + length]
+        if _diag is not None:
+            try:
+                _diag.info(
+                    "[SPLIT_MISMATCH_DIAG][unpad_logits] rank=%s "
+                    "in_shape=%s padding_length=%d "
+                    "after_pad_strip_shape=%s out_shape=%s "
+                    "cu_seqlens_last=%s old_cu_seqlens_last=%s "
+                    "batch_size=%d",
+                    _dist.get_rank() if _dist.is_initialized() else None,
+                    _in_shape,
+                    int(padding_length),
+                    tuple(logits.shape),
+                    tuple(new_logits.shape),
+                    int(cu_seqlens[-1].item())
+                    if cu_seqlens is not None
+                    else None,
+                    int(old_cu_seqlens[-1].item()),
+                    batch_size,
+                )
+            except Exception:
+                pass
         return new_logits
 
+    if _diag is not None:
+        try:
+            _diag.info(
+                "[SPLIT_MISMATCH_DIAG][unpad_logits] rank=%s "
+                "in_shape=%s padding_length=%d out_shape=%s "
+                "old_cu_seqlens=None_branch",
+                _dist.get_rank() if _dist.is_initialized() else None,
+                _in_shape,
+                int(padding_length),
+                tuple(logits.shape),
+            )
+        except Exception:
+            pass
     return logits
 
 

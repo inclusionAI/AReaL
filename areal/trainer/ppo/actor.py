@@ -222,6 +222,36 @@ class PPOActor:
             input_=data,
             aggregate_fn=lambda xs: torch.cat(xs, dim=-1),
         )
+        # [SPLIT_MISMATCH_DIAG] Log shape of returned train_logp so we can
+        # correlate with per-MB output shapes logged by forward_batch.
+        try:
+            import torch.distributed as _dist
+            from areal.utils.logging import getLogger as _getLogger
+            _diag = _getLogger("R3FwdDiag")
+            _diag.info(
+                "[SPLIT_MISMATCH_DIAG][actor._compute_logp] POST_FORWARD "
+                "rank=%s train_logp.shape=%s train_logp.dim0=%s "
+                "data.input_ids.shape=%s data.attention_mask.shape=%s "
+                "data.attention_mask.sum=%s",
+                _dist.get_rank() if _dist.is_initialized() else None,
+                tuple(train_logp.shape)
+                if isinstance(train_logp, torch.Tensor)
+                else None,
+                int(train_logp.shape[0])
+                if isinstance(train_logp, torch.Tensor) and train_logp.ndim >= 1
+                else -1,
+                tuple(data["input_ids"].shape) if "input_ids" in data else None,
+                tuple(data["attention_mask"].shape)
+                if "attention_mask" in data
+                else None,
+                int(data["attention_mask"].sum().item())
+                if "attention_mask" in data
+                else None,
+            )
+        except Exception:
+            logger.exception(
+                "[SPLIT_MISMATCH_DIAG][actor._compute_logp POST_FORWARD] log-emit failed"
+            )
         # R3 effectiveness metrics. At compute_logp time the training weights
         # equal the rollout weights (no optimizer step has touched θ in this
         # rollout epoch), so comparing SGLang's cached logprobs against the

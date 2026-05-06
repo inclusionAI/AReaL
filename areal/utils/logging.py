@@ -122,6 +122,9 @@ LOGGER_COLORS_EXACT = {
     "InferenceRouter": "white",
     "InferenceGateway": "white",
     "RPCGuard": "white",
+    # R3 diagnostic loggers - yellow (debug)
+    "R3SplitDiag": "yellow",
+    "R3FwdDiag": "yellow",
 }
 
 # Prefix patterns checked in order (first match wins)

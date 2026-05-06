@@ -93,6 +93,10 @@ from areal.models.tree_attn.module import (
 )
 from areal.models.tree_attn.tree import build_packed_tree_batch
 from areal.utils import logging, name_resolve, names, perf_tracer, stats_tracker
+
+# [SPLIT_MISMATCH_DIAG] Module-level diagnostic logger for the
+# `split_with_sizes` mismatch hunt in compute_logp. Yellow color, INFO level.
+_R3_FWD_DIAG_LOGGER = logging.getLogger("R3FwdDiag")
 from areal.utils.constants import (
     DEFAULT_VECTORIZED_ALIGNMENT_BYTES,
     DIST_GROUP_DEFAULT_TIMEOUT,
@@ -905,12 +909,68 @@ class MegatronEngine(TrainEngine):
             cp_size = mpu.get_context_parallel_world_size()
             cp_local = cp_size > 1
 
+            # [SPLIT_MISMATCH_DIAG] Log per-MB padded input geometry BEFORE forward.
+            try:
+                _padded_mb = mb_input.padded_mb
+                _orig_mb = mb_input.orig_mb
+                _R3_FWD_DIAG_LOGGER.info(
+                    "[SPLIT_MISMATCH_DIAG][forward_step] PRE_FWD rank=%s "
+                    "padded_to=%s padding_length=%s "
+                    "padded.input_ids.shape=%s "
+                    "padded.cu_seqlens=%s "
+                    "old_cu_seqlens=%s "
+                    "orig.input_ids.shape=%s "
+                    "cp_size=%d cp_local=%s",
+                    dist.get_rank() if dist.is_initialized() else None,
+                    getattr(mb_input, "padded_to_length", None),
+                    getattr(mb_input, "padding_length", None),
+                    tuple(_padded_mb["input_ids"].shape)
+                    if "input_ids" in _padded_mb
+                    else None,
+                    _padded_mb["cu_seqlens"].cpu().tolist()
+                    if "cu_seqlens" in _padded_mb
+                    and isinstance(_padded_mb["cu_seqlens"], torch.Tensor)
+                    else None,
+                    mb_input.old_cu_seqlens.cpu().tolist()
+                    if isinstance(getattr(mb_input, "old_cu_seqlens", None), torch.Tensor)
+                    else getattr(mb_input, "old_cu_seqlens", None),
+                    tuple(_orig_mb["input_ids"].shape)
+                    if "input_ids" in _orig_mb
+                    else None,
+                    cp_size,
+                    cp_local,
+                )
+            except Exception:
+                _R3_FWD_DIAG_LOGGER.exception(
+                    "[SPLIT_MISMATCH_DIAG][forward_step PRE_FWD] log-emit failed"
+                )
+
             output = packed_context_parallel_forward(
                 model,
                 mb_input.padded_mb,
                 gather_cp_output=not cp_local,
                 is_vision_model=self.is_vision_model,
             )
+
+            # [SPLIT_MISMATCH_DIAG] Log raw forward output shape (pre-unpad).
+            try:
+                _R3_FWD_DIAG_LOGGER.info(
+                    "[SPLIT_MISMATCH_DIAG][forward_step] POST_FWD rank=%s "
+                    "raw_output.shape=%s raw_output.dim0=%s is_pp_last=%s",
+                    dist.get_rank() if dist.is_initialized() else None,
+                    tuple(output.shape) if hasattr(output, "shape") else None,
+                    int(output.shape[0])
+                    if hasattr(output, "shape") and output.ndim >= 1
+                    else -1,
+                    mpu.is_pipeline_last_stage(
+                        ignore_virtual=False,
+                        vp_stage=getattr(model, "vp_stage", 0),
+                    ),
+                )
+            except Exception:
+                _R3_FWD_DIAG_LOGGER.exception(
+                    "[SPLIT_MISMATCH_DIAG][forward_step POST_FWD] log-emit failed"
+                )
 
             # Release tree attention metadata after forward pass
             for key in tree_attn_keys:
@@ -944,12 +1004,41 @@ class MegatronEngine(TrainEngine):
                     cp_inputs["cu_seqlens"] = cp_cu_seqlens
                     return output, functools.partial(_process_output, cp_inputs)
                 else:
+                    _pre_shape = tuple(output.shape) if hasattr(output, "shape") else None
                     output = unpad_logits(
                         output,
                         padding_length=mb_input.padding_length,
                         cu_seqlens=cu_seqlens,
                         old_cu_seqlens=mb_input.old_cu_seqlens,
                     )
+                    # [SPLIT_MISMATCH_DIAG] Log unpad result.
+                    try:
+                        _R3_FWD_DIAG_LOGGER.info(
+                            "[SPLIT_MISMATCH_DIAG][forward_step] UNPAD_LOGITS "
+                            "rank=%s pre_shape=%s post_shape=%s "
+                            "padding_length=%s "
+                            "cu_seqlens_last=%s old_cu_seqlens_last=%s",
+                            dist.get_rank() if dist.is_initialized() else None,
+                            _pre_shape,
+                            tuple(output.shape)
+                            if hasattr(output, "shape")
+                            else None,
+                            getattr(mb_input, "padding_length", None),
+                            int(cu_seqlens[-1].item())
+                            if isinstance(cu_seqlens, torch.Tensor)
+                            else cu_seqlens,
+                            int(mb_input.old_cu_seqlens[-1].item())
+                            if isinstance(
+                                getattr(mb_input, "old_cu_seqlens", None),
+                                torch.Tensor,
+                            )
+                            else getattr(mb_input, "old_cu_seqlens", None),
+                        )
+                    except Exception:
+                        _R3_FWD_DIAG_LOGGER.exception(
+                            "[SPLIT_MISMATCH_DIAG][forward_step UNPAD] "
+                            "log-emit failed"
+                        )
             return output, functools.partial(_process_output, mb_input.orig_mb)
 
         forward_backward_func = get_forward_backward_func()
@@ -1074,6 +1163,60 @@ class MegatronEngine(TrainEngine):
 
         input_batched, meta = self._normalize_batch_input(input_)
 
+        # [SPLIT_MISMATCH_DIAG] Log inbound forward_batch arguments.
+        try:
+            _rank = dist.get_rank() if dist.is_initialized() else None
+            _is_list = isinstance(input_, list)
+            if _is_list:
+                _attn_shapes = [
+                    tuple(d["attention_mask"].shape)
+                    if "attention_mask" in d
+                    else None
+                    for d in input_
+                ]
+                _attn_widths = [
+                    int(d["attention_mask"].shape[-1])
+                    if "attention_mask" in d
+                    else None
+                    for d in input_
+                ]
+                _input_summary = (
+                    f"list len={len(input_)} attn_shapes_head={_attn_shapes[:8]} "
+                    f"attn_widths_head={_attn_widths[:8]} "
+                    f"sum_attn_widths={sum(w for w in _attn_widths if w)}"
+                )
+            else:
+                _ks = sorted(list(input_.keys())) if isinstance(input_, dict) else "N/A"
+                _am = (
+                    tuple(input_["attention_mask"].shape)
+                    if isinstance(input_, dict) and "attention_mask" in input_
+                    else None
+                )
+                _ii = (
+                    tuple(input_["input_ids"].shape)
+                    if isinstance(input_, dict) and "input_ids" in input_
+                    else None
+                )
+                _input_summary = (
+                    f"dict keys={_ks} attention_mask.shape={_am} "
+                    f"input_ids.shape={_ii}"
+                )
+            _R3_FWD_DIAG_LOGGER.info(
+                "[SPLIT_MISMATCH_DIAG][forward_batch] ENTER rank=%s "
+                "is_list=%s meta_is_None=%s output_seqlens_arg=%s | %s",
+                _rank,
+                _is_list,
+                meta is None,
+                None
+                if output_seqlens is None
+                else f"len={len(output_seqlens)} sum={sum(output_seqlens)}",
+                _input_summary,
+            )
+        except Exception:
+            _R3_FWD_DIAG_LOGGER.exception(
+                "[SPLIT_MISMATCH_DIAG][forward_batch ENTER] log-emit failed"
+            )
+
         # Step 1: Prepare sequence lengths
         if meta is not None:
             assert isinstance(input_, list)
@@ -1091,6 +1234,34 @@ class MegatronEngine(TrainEngine):
         assert output_seqlens is not None
         batch_size = len(output_seqlens)
 
+        # [SPLIT_MISMATCH_DIAG] Log derived sequence-length structure.
+        try:
+            _diff = (cu_seqlens[1:] - cu_seqlens[:-1]).cpu().tolist()
+            _R3_FWD_DIAG_LOGGER.info(
+                "[SPLIT_MISMATCH_DIAG][forward_batch] SEQLENS rank=%s "
+                "batch_size=%d cu_seqlens.shape=%s cu_seqlens_total=%d "
+                "real_lens_head=%s real_lens_tail=%s sum_real_lens=%d "
+                "output_seqlens_head=%s output_seqlens_tail=%s "
+                "sum_output_seqlens=%d output_seqlens_path=%s",
+                dist.get_rank() if dist.is_initialized() else None,
+                batch_size,
+                tuple(cu_seqlens.shape),
+                int(cu_seqlens[-1].item()),
+                _diff[:16],
+                _diff[-16:],
+                int(sum(_diff)),
+                list(output_seqlens[:16]),
+                list(output_seqlens[-16:]),
+                int(sum(output_seqlens)),
+                "from_attention_mask"
+                if meta is not None
+                else "from_cu_seqlens_diff",
+            )
+        except Exception:
+            _R3_FWD_DIAG_LOGGER.exception(
+                "[SPLIT_MISMATCH_DIAG][forward_batch SEQLENS] log-emit failed"
+            )
+
         # Step 2: Prepare micro-batches
         mb_list = self._prepare_mb_list(input_batched).to(self.device)
 
@@ -1100,6 +1271,36 @@ class MegatronEngine(TrainEngine):
         def process_output(output: torch.Tensor, inputs: dict[str, Any]) -> None:
             result = self._compute_forward_result(output, inputs)
             outputs.append(result)
+            # [SPLIT_MISMATCH_DIAG] Log per-MB collected output shape.
+            try:
+                _R3_FWD_DIAG_LOGGER.info(
+                    "[SPLIT_MISMATCH_DIAG][forward_batch.process_output] "
+                    "rank=%s mb_idx=%d output.shape=%s output.dim0=%d "
+                    "input_keys=%s input_ids.shape=%s cu_seqlens=%s "
+                    "input_ids_total=%s",
+                    dist.get_rank() if dist.is_initialized() else None,
+                    len(outputs) - 1,
+                    tuple(result.shape) if hasattr(result, "shape") else None,
+                    int(result.shape[0])
+                    if hasattr(result, "shape") and result.ndim >= 1
+                    else -1,
+                    sorted(list(inputs.keys())) if isinstance(inputs, dict) else "N/A",
+                    tuple(inputs["input_ids"].shape)
+                    if "input_ids" in inputs
+                    else None,
+                    inputs["cu_seqlens"].cpu().tolist()
+                    if "cu_seqlens" in inputs
+                    and isinstance(inputs["cu_seqlens"], torch.Tensor)
+                    else None,
+                    int(inputs["input_ids"].numel())
+                    if "input_ids" in inputs
+                    else None,
+                )
+            except Exception:
+                _R3_FWD_DIAG_LOGGER.exception(
+                    "[SPLIT_MISMATCH_DIAG][forward_batch.process_output] "
+                    "log-emit failed"
+                )
             return None
 
         self.forward_backward_batch(mb_list, process_output, forward_only=True)
@@ -1996,6 +2197,33 @@ class MegatronEngine(TrainEngine):
             pad_to_maximum=self.config.pad_to_maximum,
             seq_align_to=align_to_multiple_of,
         )
+        # [SPLIT_MISMATCH_DIAG] Log mb_list geometry.
+        try:
+            _R3_FWD_DIAG_LOGGER.info(
+                "[SPLIT_MISMATCH_DIAG][_prepare_mb_list] rank=%s "
+                "n_mbs=%d align_to_multiple_of=%d "
+                "group_lens=%s padded_to_lengths=%s padding_lengths=%s "
+                "align_to_lengths=%s "
+                "forward_indices=%s backward_indices=%s "
+                "max_seqlen=%s pp=%d cp=%d tp=%d",
+                dist.get_rank() if dist.is_initialized() else None,
+                len(mb_list.mbs),
+                align_to_multiple_of,
+                getattr(mb_list, "group_lens", None),
+                getattr(mb_list, "padded_to_lengths", None),
+                getattr(mb_list, "padding_lengths", None),
+                getattr(mb_list, "align_to_lengths", None),
+                list(getattr(mb_list, "forward_indices", []) or []),
+                list(getattr(mb_list, "backward_indices", []) or []),
+                getattr(mb_list, "max_seqlen", None),
+                pp_size,
+                cp_size,
+                tp_size,
+            )
+        except Exception:
+            _R3_FWD_DIAG_LOGGER.exception(
+                "[SPLIT_MISMATCH_DIAG][_prepare_mb_list] log-emit failed"
+            )
         self.logger.info(
             f"#microbatch: {len(mb_list.group_lens)}, microbatch #tokens: {mb_list.group_lens}, "
             f"aligned to: {mb_list.align_to_lengths}, padded to: {mb_list.padded_to_lengths}, "
@@ -2122,6 +2350,25 @@ class MegatronEngine(TrainEngine):
                 if mpu.get_tensor_model_parallel_world_size() > 1
                 else None,
             )
+            # [SPLIT_MISMATCH_DIAG] Log gather_logprobs i/o shapes.
+            try:
+                _R3_FWD_DIAG_LOGGER.info(
+                    "[SPLIT_MISMATCH_DIAG][_compute_forward_result] "
+                    "rank=%s output.shape=%s labels.shape=%s "
+                    "logprobs.shape=%s logprobs.dim0=%s",
+                    dist.get_rank() if dist.is_initialized() else None,
+                    tuple(output.shape) if hasattr(output, "shape") else None,
+                    tuple(labels.shape) if hasattr(labels, "shape") else None,
+                    tuple(logprobs.shape) if hasattr(logprobs, "shape") else None,
+                    int(logprobs.shape[0])
+                    if hasattr(logprobs, "shape") and logprobs.ndim >= 1
+                    else -1,
+                )
+            except Exception:
+                _R3_FWD_DIAG_LOGGER.exception(
+                    "[SPLIT_MISMATCH_DIAG][_compute_forward_result] "
+                    "log-emit failed"
+                )
             return logprobs
         else:
             values = output.squeeze(-1)
