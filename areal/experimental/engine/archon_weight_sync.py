@@ -167,7 +167,7 @@ def _init_per_pp_weight_update_groups(
             f"per-PP-rank weight sync."
         )
 
-    train_pp_rank = engine.pipeline_parallel_rank()
+    train_pp_rank = engine.pipeline_parallel_rank
     if not engine.is_pipeline_parallel_head():
         for pp_rank in range(gen_pp_size):
             state.group_names.append(f"update_weight_group_{pp_rank}")
@@ -281,7 +281,7 @@ def update_weights_from_distributed(
     if gen_pp_size > 1:
         logger.debug(
             f"[ArchonWeightSync] update_weights: per-PP-stage mode, "
-            f"train_pp_rank={engine.pipeline_parallel_rank()}, "
+            f"train_pp_rank={engine.pipeline_parallel_rank}, "
             f"owned_groups={len(state.groups)}"
         )
         _update_weights_per_stage(state, meta, engine)
