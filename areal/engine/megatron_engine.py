@@ -907,7 +907,34 @@ class MegatronEngine(TrainEngine):
                     tree_attn_keys = list(tree_kwargs.keys())
 
             cp_size = mpu.get_context_parallel_world_size()
-            cp_local = cp_size > 1 and not forward_only
+            # Disable the CP-local output path unconditionally.
+            #
+            # The CP-local branch below only rewrites ``loss_mask`` /
+            # ``cu_seqlens`` / ``_cp_local_labels`` inside ``cp_inputs``, but
+            # leaves the other per-token tensors carried by ``mb_input.orig_mb``
+            # (``logprobs``, ``prox_logp``, ``advantages``, ``rewards``,
+            # ``versions``, ...) at their original full real-sequence length.
+            # Downstream consumers then see inconsistent shapes, for example:
+            #   * ``forward_batch`` (compute_logp / advantages) aggregates the
+            #     per-MB logprobs via ``reorder_and_pad_outputs`` which splits
+            #     by ``output_seqlens`` (full real lens). CP-local outputs are
+            #     ``padded_to_length // cp_size`` rows and break
+            #     ``torch.split_with_sizes``.
+            #   * ``train_batch`` (ppo_update) routes the CP-local ``loss_mask``
+            #     into ``grpo_loss_fn`` / ``ppo_actor_loss_fn`` /
+            #     ``apply_rejection_sampling`` together with the full-length
+            #     ``proximal_logprobs`` / ``old_logprobs``, raising
+            #     ``proximal_logprobs shape [N] != loss_mask shape [N/cp]``.
+            #
+            # Going through ``packed_context_parallel_forward(gather_cp_output=
+            # True)`` + ``unpad_logits`` restores each MB's output to the full
+            # real-sequence length, so it aligns with every tensor in
+            # ``orig_mb`` regardless of whether we are in forward-only or
+            # training mode. The attention / MoE forward still runs CP-sharded
+            # inside ``packed_context_parallel_forward``; only the final
+            # logits are all-gathered along the CP dimension.
+            _ = cp_size  # kept for the dead CP-local branch below
+            cp_local = False
 
             # [SPLIT_MISMATCH_DIAG] Log per-MB padded input geometry BEFORE forward.
             try:
