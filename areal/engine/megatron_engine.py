@@ -214,6 +214,7 @@ class MegatronEngine(TrainEngine):
                     "v54:MTPFreezeGate+DraftEMA+SpecDecFlowLog(AREAL_MTP_V54_FREEZE[default=0],AREAL_MTP_V54_DRAFT_EMA[default=0.0],AREAL_MTP_V54_SPEC_FLOW_LOG[default=1])",
                     "v55:MTPLRBoost(AREAL_MTP_V55_MTP_LR_BOOST[default=1.0])",
                     "v56:MTPShipSummaryFix+GradTrace+LossTrace(AREAL_MTP_V56_GRAD_TRACE[default=1],AREAL_MTP_V56_LOSS_TRACE[default=1])",
+                    "v57:MTPStochasticRoundBf16(AREAL_MTP_V57_STOCHASTIC_ROUND[default=1],AREAL_MTP_V57_SR_MIN_DRIFT_RATIO[default=0.0])+ForceTickRatioFire+K2",
                     "v17:MTPNativeAutoScaler+ConsumerBypass"
                     "(AREAL_MTP_NATIVE_AUTOSCALER,autograd_in_graph)",
                 ]
@@ -6172,24 +6173,39 @@ class MegatronEngine(TrainEngine):
                             except Exception:
                                 _ft_on_v46 = True
                             if _ft_on_v46:
+                                # [v57] Tighten default K from 8 -> 2.
+                                # Rationale: for high-magnitude LayerNorm
+                                # tensors with sub-ULP drift, the natural
+                                # stale-counter reaches K=8 only after
+                                # training has already drifted far enough
+                                # for main/draft mismatch to dominate
+                                # accept_rate. K=2 bounds IPC staleness
+                                # to a single sync.
                                 try:
                                     _ft_k_v46 = int(
                                         _os_v16.environ.get(
                                             'AREAL_MTP_V46_FORCE_TICK_K',
-                                            '8',
+                                            '2',
                                         )
                                     )
                                 except Exception:
-                                    _ft_k_v46 = 8
+                                    _ft_k_v46 = 2
+                                # [v57] Tighten default ratio 0.10 -> 0.05.
+                                # resid_absmax grows ~drift per sync; at
+                                # ratio=0.05 the ratio trigger fires once
+                                # resid crosses 5%% of ULP, which is the
+                                # smallest safe fraction where SR flip
+                                # probability makes the ship_flips count
+                                # statistically observable.
                                 try:
                                     _ft_ratio_v46 = float(
                                         _os_v16.environ.get(
                                             'AREAL_MTP_V46_FORCE_TICK_RATIO',
-                                            '0.10',
+                                            '0.05',
                                         )
                                     )
                                 except Exception:
-                                    _ft_ratio_v46 = 0.10
+                                    _ft_ratio_v46 = 0.05
                                 if not hasattr(
                                     self, '_mtp_v46_stale'
                                 ):
@@ -6233,8 +6249,17 @@ class MegatronEngine(TrainEngine):
                                     >= _ft_ratio_v46 * _ft_ulp
                                 )
                                 _ft_fired = False
+                                # [v57] Fix defect: v46 computed
+                                # _ft_trigger_ratio but never used it
+                                # as a fire condition. The ratio trigger
+                                # is the only path that fires for
+                                # sub-ULP-drift LayerNorm tensors inside
+                                # a normal (non-stale) sync cadence.
                                 if (
-                                    _ft_trigger_stale
+                                    (
+                                        _ft_trigger_stale
+                                        or _ft_trigger_ratio
+                                    )
                                     and _ft_ulp > 0
                                 ):
                                     # Promote _u by sign(resid or
@@ -6292,11 +6317,139 @@ class MegatronEngine(TrainEngine):
                                             _ft_fired,
                                         )
                                     )
+                            # [MTPStochasticRoundBf16-v57]
+                            # Replace RNE with stochastic rounding for
+                            # MTP payload so sub-ULP drift propagates
+                            # across the tensor with expected flip
+                            # count = numel * drift / ULP.  Preserves
+                            # long-run unbiasedness E[SR(x)] = x.
+                            try:
+                                _sr_on_v57 = (
+                                    _os_v16.environ.get(
+                                        'AREAL_MTP_V57_STOCHASTIC_ROUND',
+                                        '1',
+                                    ) == '1'
+                                )
+                            except Exception:
+                                _sr_on_v57 = True
+                            _sr_applied_v57 = False
+                            _sr_drift_ratio_v57 = -1.0
+                            if _sr_on_v57 and _u.dtype == _torch_v16.float32:
+                                try:
+                                    _sr_min_ratio_v57 = float(
+                                        _os_v16.environ.get(
+                                            'AREAL_MTP_V57_SR_MIN_DRIFT_RATIO',
+                                            '0.0',
+                                        )
+                                    )
+                                except Exception:
+                                    _sr_min_ratio_v57 = 0.0
+                                try:
+                                    # Element-wise bf16 ULP derived
+                                    # from each element's magnitude.
+                                    # bf16 ULP(x) = 2^(e_x - 7) where
+                                    # 2^e_x <= |x| < 2^(e_x+1). For
+                                    # |x|=0 we use the tensor's global
+                                    # ulp_max as a fallback (mostly
+                                    # irrelevant since 0 rounds to 0).
+                                    _u_abs = _u.abs()
+                                    _nz_mask = _u_abs > 0
+                                    # log2 is safe only on positives.
+                                    _log2u = _torch_v16.where(
+                                        _nz_mask,
+                                        _torch_v16.log2(
+                                            _torch_v16.where(
+                                                _nz_mask,
+                                                _u_abs,
+                                                _torch_v16.ones_like(_u_abs),
+                                            )
+                                        ),
+                                        _torch_v16.zeros_like(_u_abs),
+                                    )
+                                    _e_elem = _torch_v16.floor(_log2u)
+                                    _ulp_elem = _torch_v16.pow(
+                                        _torch_v16.full_like(
+                                            _e_elem, 2.0
+                                        ),
+                                        _e_elem - 7.0,
+                                    )
+                                    # For zero elements use tensor-level
+                                    # ulp (still zero contribution).
+                                    _ulp_elem = _torch_v16.where(
+                                        _nz_mask,
+                                        _ulp_elem,
+                                        _torch_v16.full_like(
+                                            _ulp_elem,
+                                            max(_ft_ulp, 0.0) if _ft_on_v46 else 0.0,
+                                        ),
+                                    )
+                                    # Drift-gating check (optional).
+                                    _sr_enable_this = True
+                                    if _sr_min_ratio_v57 > 0:
+                                        try:
+                                            _drift_abs_max_v57 = 0.0
+                                            if _r_prev is not None and _r_prev.shape == _u.shape:
+                                                _drift_abs_max_v57 = float(
+                                                    _r_prev.abs().max().item()
+                                                )
+                                            _ulp_global = float(
+                                                _ulp_elem.max().item()
+                                            )
+                                            if _ulp_global > 0:
+                                                _sr_drift_ratio_v57 = (
+                                                    _drift_abs_max_v57 / _ulp_global
+                                                )
+                                            else:
+                                                _sr_drift_ratio_v57 = 0.0
+                                            # If RNE is already naturally
+                                            # flipping, skip SR to keep
+                                            # training deterministic.
+                                            if _sr_drift_ratio_v57 >= _sr_min_ratio_v57:
+                                                _sr_enable_this = False
+                                        except Exception:
+                                            _sr_enable_this = True
+                                    if _sr_enable_this:
+                                        # Dither: u ~ Uniform[-0.5, 0.5]
+                                        # per-element, scale by ulp_elem
+                                        # so that RNE(_u + u*ulp_elem)
+                                        # realises the SR rounding.
+                                        _dither = (
+                                            _torch_v16.rand_like(_u) - 0.5
+                                        ) * _ulp_elem
+                                        _u = _u + _dither
+                                        _sr_applied_v57 = True
+                                except Exception as _e_sr_v57:
+                                    try:
+                                        self.logger.info(
+                                            '[MTPStochasticRoundBf16-v57] '
+                                            'SR failed name=%s err=%r; '
+                                            'falling back to RNE.',
+                                            _nm_sd, _e_sr_v57,
+                                        )
+                                    except Exception:
+                                        pass
+                                    _sr_applied_v57 = False
                             # RNE fp32 -> bf16 and retrieve actual
                             # quantized fp32 value for residual calc.
+                            # When v57 SR applied, the dithered _u
+                            # combined with RNE here is mathematically
+                            # equivalent to per-element stochastic
+                            # rounding of the original fp32 master.
                             _bf16 = _u.to(_torch_v16.bfloat16)
                             _bb = _bf16.float()
                             _new_res = (_u - _bb).detach().clone()
+                            if _sr_applied_v57:
+                                try:
+                                    self.logger.info(
+                                        '[MTPStochasticRoundBf16-v57] '
+                                        'name=%s shape=%s numel=%d '
+                                        'drift_ratio=%.3e applied=True',
+                                        _nm_sd, tuple(_u.shape),
+                                        int(_u.numel()),
+                                        _sr_drift_ratio_v57,
+                                    )
+                                except Exception:
+                                    pass
                             # Diagnostic: count elements whose bf16
                             # representation differs from the plain
                             # RNE(_tn_sd) baseline (i.e. how many were
