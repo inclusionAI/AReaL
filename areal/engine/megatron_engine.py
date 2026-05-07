@@ -122,11 +122,11 @@ from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.seeding import get_seed
 
 if TYPE_CHECKING:
-    from areal.api import Scheduler
-    from areal.api.cli_args import PPOActorConfig, PPOCriticConfig
-    from megatron.bridge import AutoBridge as MegatronBridgeAutoBridge
     from megatron.bridge.peft.lora import LoRA as MegatronBridgeLoRA
+
+    from areal.api import Scheduler
     from areal.api.cli_args import DPOEngineConfig, PPOActorConfig, PPOCriticConfig
+
 
 def _patch_gpt_model_postprocess_for_inference(model_list: _MegatronModelList) -> None:
     """Patch ``GPTModel._postprocess`` to skip MTP when ``labels=None``.
@@ -145,13 +145,20 @@ def _patch_gpt_model_postprocess_for_inference(model_list: _MegatronModelList) -
 
     _original_postprocess = GPTModel._postprocess
 
-    def _patched_postprocess(self, hidden_states, input_ids, position_ids, labels, **kwargs):
+    def _patched_postprocess(
+        self, hidden_states, input_ids, position_ids, labels, **kwargs
+    ):
         if labels is None and getattr(self.config, "mtp_num_layers", None) is not None:
             original_mtp = self.config.mtp_num_layers
             self.config.mtp_num_layers = None
             try:
                 result = _original_postprocess(
-                    self, hidden_states, input_ids, position_ids, labels=labels, **kwargs
+                    self,
+                    hidden_states,
+                    input_ids,
+                    position_ids,
+                    labels=labels,
+                    **kwargs,
                 )
             finally:
                 self.config.mtp_num_layers = original_mtp
@@ -162,7 +169,6 @@ def _patch_gpt_model_postprocess_for_inference(model_list: _MegatronModelList) -
 
     GPTModel._postprocess = _patched_postprocess
     GPTModel._areal_postprocess_patched = True
-
 
 
 # `model.named_modules()` yields LOCAL layer indices on each PP rank, while
@@ -235,7 +241,7 @@ class MegatronEngine(TrainEngine):
         self._r3_enabled: bool = getattr(config.megatron, "enable_router_replay", False)
         if not self._r3_enabled:
             self._r3_enabled = getattr(config, "_r3_enable_router_replay", False)
-        logging.getLogger("[MegatronEngine]").info(
+        logging.getLogger("[MegatronEngine]").debug(
             "[R3] __init__: _r3_enabled=%s, config.megatron.enable_router_replay=%s, "
             "config._r3_enable_router_replay=%s, config.megatron type=%s",
             self._r3_enabled,
@@ -379,9 +385,8 @@ class MegatronEngine(TrainEngine):
         self.tokenizer = load_hf_tokenizer(self.config.path)
 
         # R3: _r3_enabled was set in __init__ from config.megatron.enable_router_replay.
-        self.logger.info(
-            "[R3] enable_router_replay=%s (config.megatron type=%s, "
-            "config type=%s).",
+        self.logger.debug(
+            "[R3] enable_router_replay=%s (config.megatron type=%s, config type=%s).",
             self._r3_enabled,
             type(self.config.megatron).__name__,
             type(self.config).__name__,
@@ -428,9 +433,12 @@ class MegatronEngine(TrainEngine):
             # TopKRouter.__init__ and TransformerConfig.__init__ are patched.
             if self._r3_enabled:
                 from areal.engine.router_replay_patch import apply_router_replay_patch
+
                 apply_router_replay_patch()
                 self.tf_config.enable_routing_replay = True
-                self.logger.info("[R3] Router Replay patches applied before model creation.")
+                self.logger.info(
+                    "[R3] Router Replay patches applied before model creation."
+                )
 
             with self.device:
                 models = make_mcore_model(
@@ -531,7 +539,10 @@ class MegatronEngine(TrainEngine):
 
         # R3: Apply engine-level patch after model and optimizer are ready.
         if self._r3_enabled:
-            from areal.engine.megatron_engine_r3_patch import patch_megatron_engine_for_r3
+            from areal.engine.megatron_engine_r3_patch import (
+                patch_megatron_engine_for_r3,
+            )
+
             patch_megatron_engine_for_r3(self, enable_router_replay=True)
             self.logger.info("[R3] Router Replay enabled on MegatronEngine.")
         self._initialized = True
@@ -962,7 +973,9 @@ class MegatronEngine(TrainEngine):
                     and isinstance(_padded_mb["cu_seqlens"], torch.Tensor)
                     else None,
                     mb_input.old_cu_seqlens.cpu().tolist()
-                    if isinstance(getattr(mb_input, "old_cu_seqlens", None), torch.Tensor)
+                    if isinstance(
+                        getattr(mb_input, "old_cu_seqlens", None), torch.Tensor
+                    )
                     else getattr(mb_input, "old_cu_seqlens", None),
                     tuple(_orig_mb["input_ids"].shape)
                     if "input_ids" in _orig_mb
@@ -1034,7 +1047,9 @@ class MegatronEngine(TrainEngine):
                     cp_inputs["cu_seqlens"] = cp_cu_seqlens
                     return output, functools.partial(_process_output, cp_inputs)
                 else:
-                    _pre_shape = tuple(output.shape) if hasattr(output, "shape") else None
+                    _pre_shape = (
+                        tuple(output.shape) if hasattr(output, "shape") else None
+                    )
                     output = unpad_logits(
                         output,
                         padding_length=mb_input.padding_length,
@@ -1050,9 +1065,7 @@ class MegatronEngine(TrainEngine):
                             "cu_seqlens_last=%s old_cu_seqlens_last=%s",
                             dist.get_rank() if dist.is_initialized() else None,
                             _pre_shape,
-                            tuple(output.shape)
-                            if hasattr(output, "shape")
-                            else None,
+                            tuple(output.shape) if hasattr(output, "shape") else None,
                             getattr(mb_input, "padding_length", None),
                             int(cu_seqlens[-1].item())
                             if isinstance(cu_seqlens, torch.Tensor)
@@ -1066,8 +1079,7 @@ class MegatronEngine(TrainEngine):
                         )
                     except Exception:
                         _R3_FWD_DIAG_LOGGER.exception(
-                            "[SPLIT_MISMATCH_DIAG][forward_step UNPAD] "
-                            "log-emit failed"
+                            "[SPLIT_MISMATCH_DIAG][forward_step UNPAD] log-emit failed"
                         )
             return output, functools.partial(_process_output, mb_input.orig_mb)
 
@@ -1199,9 +1211,7 @@ class MegatronEngine(TrainEngine):
             _is_list = isinstance(input_, list)
             if _is_list:
                 _attn_shapes = [
-                    tuple(d["attention_mask"].shape)
-                    if "attention_mask" in d
-                    else None
+                    tuple(d["attention_mask"].shape) if "attention_mask" in d else None
                     for d in input_
                 ]
                 _attn_widths = [
@@ -1228,8 +1238,7 @@ class MegatronEngine(TrainEngine):
                     else None
                 )
                 _input_summary = (
-                    f"dict keys={_ks} attention_mask.shape={_am} "
-                    f"input_ids.shape={_ii}"
+                    f"dict keys={_ks} attention_mask.shape={_am} input_ids.shape={_ii}"
                 )
             _R3_FWD_DIAG_LOGGER.info(
                 "[SPLIT_MISMATCH_DIAG][forward_batch] ENTER rank=%s "
@@ -1283,9 +1292,7 @@ class MegatronEngine(TrainEngine):
                 list(output_seqlens[:16]),
                 list(output_seqlens[-16:]),
                 int(sum(output_seqlens)),
-                "from_attention_mask"
-                if meta is not None
-                else "from_cu_seqlens_diff",
+                "from_attention_mask" if meta is not None else "from_cu_seqlens_diff",
             )
         except Exception:
             _R3_FWD_DIAG_LOGGER.exception(
@@ -1315,16 +1322,12 @@ class MegatronEngine(TrainEngine):
                     if hasattr(result, "shape") and result.ndim >= 1
                     else -1,
                     sorted(list(inputs.keys())) if isinstance(inputs, dict) else "N/A",
-                    tuple(inputs["input_ids"].shape)
-                    if "input_ids" in inputs
-                    else None,
+                    tuple(inputs["input_ids"].shape) if "input_ids" in inputs else None,
                     inputs["cu_seqlens"].cpu().tolist()
                     if "cu_seqlens" in inputs
                     and isinstance(inputs["cu_seqlens"], torch.Tensor)
                     else None,
-                    int(inputs["input_ids"].numel())
-                    if "input_ids" in inputs
-                    else None,
+                    int(inputs["input_ids"].numel()) if "input_ids" in inputs else None,
                 )
             except Exception:
                 _R3_FWD_DIAG_LOGGER.exception(
@@ -1626,7 +1629,10 @@ class MegatronEngine(TrainEngine):
             mcore_opt_config.use_precision_aware_optimizer
             and (
                 mcore_opt_config.main_params_dtype != torch.float32
-                or (mcore_opt_config.fp8_recipe is None or mcore_opt_config.fp8_recipe == "delayed")
+                or (
+                    mcore_opt_config.fp8_recipe is None
+                    or mcore_opt_config.fp8_recipe == "delayed"
+                )
                 or mcore_opt_config.optimizer_cpu_offload
             )
         )
@@ -2399,8 +2405,7 @@ class MegatronEngine(TrainEngine):
                 )
             except Exception:
                 _R3_FWD_DIAG_LOGGER.exception(
-                    "[SPLIT_MISMATCH_DIAG][_compute_forward_result] "
-                    "log-emit failed"
+                    "[SPLIT_MISMATCH_DIAG][_compute_forward_result] log-emit failed"
                 )
             return logprobs
         else:

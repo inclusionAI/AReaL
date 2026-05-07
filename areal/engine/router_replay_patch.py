@@ -87,15 +87,6 @@ class RouterReplay:
     # Set by the engine patch before forward_backward_func.
     pp_size: int = 1
 
-    # ---------- R3 diagnostics (PP=2 root-cause hunt) ----------
-    # Per forward_backward_batch aggregate counters.  Keys set by the
-    # REPLAY_BACKWARD/consume path and the forward-hook; values are reset
-    # at FB entry by _r3_forward_backward_batch and dumped at FB exit.
-    # This gives one END-OF-FB summary line to diff PP=1 vs PP=2 runs.
-    # Always class-level dict (no cross-rank comm — each rank maintains
-    # its own, which is the correctness unit).
-    _r3_fb_stats: dict[str, int] = {}
-
     # ------------------------------------------------------------------
     # Class-level (static) helpers
     # ------------------------------------------------------------------
@@ -134,22 +125,12 @@ class RouterReplay:
         """Set the replay action for all router instances."""
         for r in RouterReplay.router_instances:
             r.set_router_replay_action(action)
-        try:
-            from areal.engine.router_replay_utils import (
-                _r3_pp_tp_info,
-                _r3_should_log,
-            )
-
-            if _r3_should_log(f"set_global_router_replay_action/{action.value}"):
-                logger.info(
-                    "[R3-STAGE4/set_global_router_replay_action] %s action=%s "
-                    "applied_to=%d router_instances",
-                    _r3_pp_tp_info(),
-                    action.value,
-                    len(RouterReplay.router_instances),
-                )
-        except Exception:
-            pass
+        logger.debug(
+            "[R3] set_global_router_replay_action: action=%s "
+            "applied_to=%d router_instances",
+            action.value,
+            len(RouterReplay.router_instances),
+        )
 
     @staticmethod
     def clear_global_router_replay_action() -> None:
@@ -207,84 +188,7 @@ class RouterReplay:
         self.target_valid_mask = valid_mask
         self.replay_backward_list.append(topk_indices)
         self.replay_backward_mask_list.append(valid_mask)
-        # ---------- R3 diagnostics: capture push metadata at the SAME
-        # call site so REPLAY_BACKWARD/consume can later prove that the
-        # popped slab equals the slab that was originally pushed (the
-        # only correctness criterion). Hashing here is gated by
-        # _r3_should_log so steady-state cost is one int + one None.
-        # ---------------------------------------------------------------
-        try:
-            from areal.engine.router_replay_utils import (
-                _r3_current_trace_id as _tid,
-                _r3_hash64 as _h64,
-                _r3_should_log as _sl,
-                _r3_verbose as _v,
-            )
-            if _v() and _sl("RouterReplay.set_target_indices/push_meta"):
-                _slab_h = hex(_h64(topk_indices))
-                _mask_h = (
-                    hex(_h64(valid_mask.to(torch.int32)))
-                    if valid_mask is not None else "None"
-                )
-                self.replay_push_meta_list.append({
-                    "push_id": getattr(self, "_r3_push_counter", 0),
-                    "trace_id": _tid(),
-                    "slab_hash": _slab_h,
-                    "mask_hash": _mask_h,
-                    "slab_shape": tuple(topk_indices.shape),
-                })
-                self._r3_push_counter = getattr(self, "_r3_push_counter", 0) + 1
-            else:
-                # Always append a placeholder so list lengths stay locked
-                # to ``replay_backward_list``; pop side will skip None.
-                self.replay_push_meta_list.append(None)
-        except Exception:
-            try:
-                self.replay_push_meta_list.append(None)
-            except Exception:
-                pass
-        # Cheap diagnostic: record every set in first few layers/mb. Gated
-        # via _r3_should_log so steady-state overhead is ~one integer
-        # increment.
-        try:
-            from areal.engine.router_replay_utils import (
-                _r3_current_trace_id,
-                _r3_hash64,
-                _r3_pp_tp_info,
-                _r3_should_log,
-                _r3_tensor_sig,
-                _r3_verbose,
-                _r3_zero_row_stats,
-            )
-
-            if _r3_verbose() and _r3_should_log("RouterReplay.set_target_indices"):
-                # instance index in the class-level list tells us which
-                # MoE layer this replay slot refers to
-                try:
-                    inst_idx = RouterReplay.router_instances.index(self)
-                except ValueError:
-                    inst_idx = -1
-                _slab_hash = hex(_r3_hash64(topk_indices))
-                _mask_hash = (
-                    hex(_r3_hash64(valid_mask.to(torch.int32)))
-                    if valid_mask is not None else "None"
-                )
-                logger.info(
-                    "[R3-STAGE3b/set_target_indices] trace_id=%d inst#%d %s %s "
-                    "slab_shape=%s slab_hash=%s mask_hash=%s "
-                    "| %s | backward_queue_len=%d (post-push)",
-                    _r3_current_trace_id(),
-                    inst_idx,
-                    _r3_pp_tp_info(),
-                    _r3_zero_row_stats(topk_indices),
-                    tuple(topk_indices.shape),
-                    _slab_hash,
-                    _mask_hash,
-                    _r3_tensor_sig("topk_indices", topk_indices),
-                    len(self.replay_backward_list),
-                )
-        except Exception:
-            pass
+        self.replay_push_meta_list.append(None)
 
     def get_recorded_indices(self) -> torch.Tensor | None:
         return self.recorded_topk_idx
@@ -293,27 +197,6 @@ class RouterReplay:
         self.recorded_topk_idx = topk_indices
 
     def clear_indices(self) -> None:
-        # ---------- R3 diagnostics: dump tail-state queue sizes BEFORE
-        # clearing so residual queues (a smoking gun for lost backward
-        # pops under PP=2 1F1B) are always visible in logs.
-        try:
-            from areal.engine.router_replay_utils import (
-                _r3_pp_tp_info,
-                _r3_should_log,
-                _r3_verbose,
-            )
-            if _r3_verbose() and _r3_should_log("RouterReplay.clear_indices/tail_state"):
-                logger.info(
-                    "[R3-STAGE3c/clear_indices] %s inst#%d fwd_q=%d "
-                    "mask_q=%d push_meta_q=%d",
-                    _r3_pp_tp_info(),
-                    self.creation_order,
-                    len(self.replay_backward_list),
-                    len(self.replay_backward_mask_list),
-                    len(getattr(self, "replay_push_meta_list", []) or []),
-                )
-        except Exception:
-            pass
         self.recorded_topk_idx = None
         self.target_topk_idx = None
         self.target_valid_mask = None
@@ -331,80 +214,6 @@ class RouterReplay:
 # ===================================================================
 # Patched routing implementation
 # ===================================================================
-
-
-def _R3_routing_log(
-    action_name: str,
-    *,
-    scores: torch.Tensor,
-    top_indices: torch.Tensor,
-    topk: int,
-    compute_topk_fn,
-    num_groups=None,
-    group_topk=None,
-) -> None:
-    """Rate-limited diagnostic for the replay branches.
-
-    Key quantities:
-      * ``shape_match``   -- does target_topk_idx align with this layer's
-        token count? If NOT, replay is being fed the wrong slab.
-      * ``zero_rows``     -- fraction of all-zero rows in the replay
-        indices; zero rows collapse routing to expert 0.
-      * ``live_vs_replay`` -- overlap between replay top-k and the live
-        top-k the router would have picked right now. 100% = no staleness
-        (rollout weights == train weights). 0% = total mismatch.
-    """
-    from areal.engine.router_replay_utils import (
-        _r3_call_count,
-        _r3_pp_tp_info,
-        _r3_should_log,
-        _r3_tensor_sig,
-        _r3_verbose,
-        _r3_zero_row_stats,
-        _R3_ROUTER_LAYER_LIMIT,
-    )
-
-    if not _r3_verbose():
-        return
-    key = f"patched_routing/{action_name}"
-    call_n = _r3_call_count(key)
-    # We always want an early, concentrated burst of per-layer details at
-    # startup (helps catch first-step config problems) and then a sparse
-    # steady-state sample.
-    if not _r3_should_log(key):
-        return
-    with torch.no_grad():
-        shape_match = top_indices.shape[0] == scores.shape[0]
-        if shape_match:
-            try:
-                _, live_top = compute_topk_fn(
-                    scores, topk, num_groups=num_groups, group_topk=group_topk
-                )
-                # per-token overlap ratio
-                set_live = live_top.sort(dim=-1).values
-                set_rep = top_indices.sort(dim=-1).values
-                # equality per (token, slot)
-                overlap = (set_live == set_rep).float().mean().item()
-            except Exception as e:
-                overlap = f"err:{e}"
-        else:
-            overlap = None
-    logger.info(
-        "[R3-STAGE4/patched_routing] %s call#%d %s "
-        "scores_shape=%s topk=%d target_shape=%s shape_match=%s "
-        "live_vs_replay_topk_overlap=%s %s | %s | %s",
-        action_name,
-        call_n,
-        _r3_pp_tp_info(),
-        tuple(scores.shape),
-        topk,
-        tuple(top_indices.shape),
-        shape_match,
-        overlap,
-        _r3_zero_row_stats(top_indices),
-        _r3_tensor_sig("scores", scores, max_sample=4),
-        _r3_tensor_sig("top_indices", top_indices, max_sample=8),
-    )
 
 
 def _patched_topk_routing_with_score_function(
@@ -463,38 +272,7 @@ def _patched_topk_routing_with_score_function(
             # Use the provided indices for replay
             top_indices = router_replay.target_topk_idx
             top_indices = top_indices.to(scores.device)
-            # splice padded rows with the LIVE router top-k so
-            # that TP-alignment / batch padding slack (which was recorded as
-            # all-zeros) does not force those rows to expert 0.
             valid_mask = getattr(router_replay, "target_valid_mask", None)
-            try:
-                from areal.engine.router_replay_utils import (
-                    _r3_current_trace_id as _tid,
-                    _r3_hash64 as _h64,
-                    _r3_should_log as _sl,
-                    _r3_verbose as _v,
-                )
-                if _v() and _sl("REPLAY_FORWARD/consume"):
-                    try:
-                        _inst_idx = RouterReplay.router_instances.index(router_replay)
-                    except ValueError:
-                        _inst_idx = -1
-                    logger.info(
-                        "[R3-STAGE4/REPLAY_FORWARD/consume] trace_id=%d inst#%d "
-                        "scores_shape=%s target_shape=%s shape_match=%s "
-                        "target_hash=%s mask_hash=%s backward_queue_len=%d",
-                        _tid(),
-                        _inst_idx,
-                        tuple(scores.shape),
-                        tuple(top_indices.shape),
-                        top_indices.shape[0] == scores.shape[0],
-                        hex(_h64(top_indices)),
-                        "None" if valid_mask is None
-                        else hex(_h64(valid_mask.to(torch.int32))),
-                        len(router_replay.replay_backward_list),
-                    )
-            except Exception:
-                pass
             if valid_mask is not None and valid_mask.shape[0] == top_indices.shape[0]:
                 _, live_top = _compute_topk(
                     scores, topk, num_groups=num_groups, group_topk=group_topk
@@ -504,15 +282,6 @@ def _patched_topk_routing_with_score_function(
                     top_indices,
                     live_top,
                 )
-            _R3_routing_log(
-                "REPLAY_FORWARD",
-                scores=scores,
-                top_indices=top_indices,
-                topk=topk,
-                compute_topk_fn=_compute_topk,
-                num_groups=num_groups,
-                group_topk=group_topk,
-            )
             probs = scores.gather(1, top_indices)
 
             return probs, top_indices
@@ -526,10 +295,6 @@ def _patched_topk_routing_with_score_function(
                 )
                 return _compute_topk(scores, topk, num_groups=num_groups, group_topk=group_topk)
             # Use the last recorded indices for backward replay
-            _bw_queue_len_before = len(router_replay.replay_backward_list)
-            _bw_mask_queue_len_before = len(
-                getattr(router_replay, "replay_backward_mask_list", []) or []
-            )
             top_indices = router_replay.replay_backward_list.pop(0)
             top_indices = top_indices.to(scores.device)
             # pop the matching per-row validity mask (if any)
@@ -547,149 +312,11 @@ def _patched_topk_routing_with_score_function(
             # the slab that was REGISTERED AT PUSH TIME (the real
             # correctness criterion under 1F1B PP scheduling).
             _push_meta_list = getattr(router_replay, "replay_push_meta_list", None)
-            _bw_push_meta = None
             if _push_meta_list:
                 try:
-                    _bw_push_meta = _push_meta_list.pop(0)
+                    _push_meta_list.pop(0)
                 except IndexError:
-                    _bw_push_meta = None
-            # ---- R3 deep-trace: log backward pop order + hashes ----
-            try:
-                from areal.engine.router_replay_utils import (
-                    _r3_current_trace_id as _tid,
-                    _r3_hash64 as _h64,
-                    _r3_should_log as _sl,
-                    _r3_verbose as _v,
-                )
-
-                if _v() and _sl("REPLAY_BACKWARD/consume"):
-                    try:
-                        _inst_idx = RouterReplay.router_instances.index(router_replay)
-                    except ValueError:
-                        _inst_idx = -1
-                    _popped_slab_hash = hex(_h64(top_indices))
-                    _popped_mask_hash = (
-                        "None"
-                        if bw_valid_mask is None
-                        else hex(_h64(bw_valid_mask.to(torch.int32)))
-                    )
-                    _target_hash = (
-                        "None"
-                        if router_replay.target_topk_idx is None
-                        else hex(_h64(router_replay.target_topk_idx))
-                    )
-                    _divergence = (
-                        "None"
-                        if router_replay.target_topk_idx is None
-                        else (
-                            "MATCH"
-                            if (
-                                router_replay.target_topk_idx.shape
-                                == top_indices.shape
-                                and hex(
-                                    _h64(
-                                        router_replay.target_topk_idx.to(
-                                            top_indices.device
-                                        )
-                                    )
-                                )
-                                == _popped_slab_hash
-                            )
-                            else "DIVERGE_vs_FWD_TARGET"
-                        )
-                    )
-                    logger.info(
-                        "[R3-STAGE4/REPLAY_BACKWARD/consume] trace_id=%d inst#%d "
-                        "scores_shape=%s popped_shape=%s shape_match_scores=%s "
-                        "popped_slab_hash=%s popped_mask_hash=%s "
-                        "current_target_hash=%s divergence=%s "
-                        "queue_len_before=%d queue_len_after=%d "
-                        "mask_queue_len_before=%d mask_queue_len_after=%d "
-                        "push_meta=%s divergence_v2=%s",
-                        _tid(),
-                        _inst_idx,
-                        tuple(scores.shape),
-                        tuple(top_indices.shape),
-                        top_indices.shape[0] == scores.shape[0],
-                        _popped_slab_hash,
-                        _popped_mask_hash,
-                        _target_hash,
-                        _divergence,
-                        _bw_queue_len_before,
-                        len(router_replay.replay_backward_list),
-                        _bw_mask_queue_len_before,
-                        len(
-                            getattr(router_replay, "replay_backward_mask_list", [])
-                            or []
-                        ),
-                        _bw_push_meta,
-                        # divergence_v2 is the DEFINITIVE verdict: it
-                        # compares popped slab against the slab recorded
-                        # at the matching push site, not against the
-                        # most recent (potentially overwritten) target.
-                        # MATCH here = backward queue is correct under PP.
-                        (
-                            "NO_PUSH_META"
-                            if _bw_push_meta is None
-                            else (
-                                "MATCH"
-                                if _bw_push_meta.get("slab_hash") == _popped_slab_hash
-                                else "REAL_MISMATCH"
-                            )
-                        ),
-                    )
-            except Exception:
-                logger.exception(
-                    "[R3-STAGE4/REPLAY_BACKWARD/consume] trace log failed"
-                )
-            # ---------- R3 diagnostics: FB-level aggregate counters
-            # (gated by _r3_verbose so prod path is untouched). Counters
-            # are reset at _r3_forward_backward_batch entry and dumped at
-            # exit, giving one summary line per FB call.
-            try:
-                from areal.engine.router_replay_utils import (
-                    _r3_hash64 as _h64x,
-                    _r3_verbose as _vx,
-                )
-                if _vx():
-                    _stats = RouterReplay._r3_fb_stats
-                    if router_replay.target_topk_idx is None:
-                        _stats["divergence_v1_none"] = (
-                            _stats.get("divergence_v1_none", 0) + 1
-                        )
-                    else:
-                        _v1_match = (
-                            router_replay.target_topk_idx.shape == top_indices.shape
-                            and _h64x(
-                                router_replay.target_topk_idx.to(top_indices.device)
-                            ) == _h64x(top_indices)
-                        )
-                        _stats["divergence_v1_match" if _v1_match
-                               else "divergence_v1_diverge"] = (
-                            _stats.get(
-                                "divergence_v1_match" if _v1_match
-                                else "divergence_v1_diverge", 0,
-                            ) + 1
-                        )
-                    if _bw_push_meta is None:
-                        _stats["divergence_v2_no_meta"] = (
-                            _stats.get("divergence_v2_no_meta", 0) + 1
-                        )
-                    else:
-                        _v2_match = (
-                            _bw_push_meta.get("slab_hash")
-                            == hex(_h64x(top_indices))
-                        )
-                        _stats["divergence_v2_match" if _v2_match
-                               else "divergence_v2_real_mismatch"] = (
-                            _stats.get(
-                                "divergence_v2_match" if _v2_match
-                                else "divergence_v2_real_mismatch", 0,
-                            ) + 1
-                        )
-                    _stats["bw_pop_total"] = _stats.get("bw_pop_total", 0) + 1
-            except Exception:
-                pass
+                    pass
             if (
                 bw_valid_mask is not None
                 and bw_valid_mask.shape[0] == top_indices.shape[0]
@@ -702,15 +329,6 @@ def _patched_topk_routing_with_score_function(
                     top_indices,
                     live_top,
                 )
-            _R3_routing_log(
-                "REPLAY_BACKWARD",
-                scores=scores,
-                top_indices=top_indices,
-                topk=topk,
-                compute_topk_fn=_compute_topk,
-                num_groups=num_groups,
-                group_topk=group_topk,
-            )
             probs = scores.gather(1, top_indices)
             return probs, top_indices
 

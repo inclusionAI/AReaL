@@ -141,83 +141,14 @@ class PPOActor:
             _r3_routed_experts, torch.Tensor
         ):
             from areal.trainer.ppo.actor_r3_patch import _resolve_to_tensor
+
             _r3_routed_experts = _resolve_to_tensor(_r3_routed_experts)
         _r3_enabled = bool(getattr(self.engine, "_r3_enabled", False))
-        try:
-            from areal.engine.router_replay_utils import (
-                _r3_should_log,
-                _r3_tensor_sig,
-                _r3_verbose,
-            )
-
-            if _r3_verbose() and _r3_should_log("actor._compute_logp/ENTER"):
-                _re_info = (
-                    _r3_tensor_sig("routed_experts", _r3_routed_experts)
-                    if _r3_routed_experts is not None
-                    else "routed_experts=None"
-                )
-                logger.info(
-                    "[R3-STAGE2/actor._compute_logp] ENTER r3_enabled=%s "
-                    "input_keys=%s batch_shape=%s | %s | %s | %s",
-                    _r3_enabled,
-                    sorted(list(data.keys())),
-                    tuple(data["input_ids"].shape)
-                    if "input_ids" in data
-                    else "N/A",
-                    _re_info,
-                    _r3_tensor_sig("logprobs", data.get("logprobs")),
-                    _r3_tensor_sig("loss_mask", data.get("loss_mask")),
-                )
-        except Exception:
-            pass
         if _r3_routed_experts is not None and _r3_enabled:
             # forward_batch performs ONE forward_backward_batch(forward_only=True)
             # call internally; the R3 engine patch will split routed_experts per
             # micro-batch and consume the side-channel (setting it back to None).
             self.engine._r3_pending_routed_experts = _r3_routed_experts
-            try:
-                from areal.engine.router_replay_utils import (
-                    _r3_hash64,
-                    _r3_next_trace_id,
-                    _r3_per_sample_hashes,
-                    _r3_per_sample_nnz,
-                    _r3_per_sample_seq_real_len,
-                    _r3_pp_tp_info,
-                    _r3_tensor_sig,
-                    _r3_verbose,
-                )
-
-                _trace_id = _r3_next_trace_id()
-                self.engine._r3_active_trace_id = _trace_id
-                if _r3_verbose():
-                    logger.info(
-                        "[R3-STAGE2/actor._compute_logp] SIDE_CHANNEL_SET "
-                        "trace_id=%d %s bs=%d seqlen=%s L=%s K=%s "
-                        "hash=%s per_sample_hash[:16]=%s "
-                        "per_sample_nnz[:16]=%s per_sample_real_len[:16]=%s "
-                        "attn_sum[:16]=%s | %s",
-                        _trace_id,
-                        _r3_pp_tp_info(),
-                        _r3_routed_experts.shape[0],
-                        _r3_routed_experts.shape[1],
-                        _r3_routed_experts.shape[2]
-                        if _r3_routed_experts.ndim >= 3 else None,
-                        _r3_routed_experts.shape[3]
-                        if _r3_routed_experts.ndim >= 4 else None,
-                        hex(_r3_hash64(_r3_routed_experts)),
-                        [hex(h) for h in _r3_per_sample_hashes(
-                            _r3_routed_experts, max_rows=16)],
-                        _r3_per_sample_nnz(_r3_routed_experts, max_rows=16),
-                        _r3_per_sample_seq_real_len(_r3_routed_experts, max_rows=16),
-                        (
-                            data["attention_mask"].sum(dim=-1).long().cpu().tolist()[:16]
-                            if "attention_mask" in data
-                            else "N/A"
-                        ),
-                        _r3_tensor_sig("routed_experts", _r3_routed_experts),
-                    )
-            except Exception:
-                logger.exception("[R3-STAGE2/actor._compute_logp] side-channel trace log failed")
         train_logp = self.engine.forward(
             input_=data,
             aggregate_fn=lambda xs: torch.cat(xs, dim=-1),
@@ -226,7 +157,9 @@ class PPOActor:
         # correlate with per-MB output shapes logged by forward_batch.
         try:
             import torch.distributed as _dist
+
             from areal.utils.logging import getLogger as _getLogger
+
             _diag = _getLogger("R3FwdDiag")
             _diag.info(
                 "[SPLIT_MISMATCH_DIAG][actor._compute_logp] POST_FORWARD "
@@ -324,125 +257,6 @@ class PPOActor:
         abs_log_ratio = log_ratio.abs()
         extreme_tau2 = (abs_log_ratio > torch.log(torch.tensor(2.0))).float()
         extreme_tau5 = (abs_log_ratio > torch.log(torch.tensor(5.0))).float()
-
-        try:
-            from areal.engine.router_replay_utils import (
-                _r3_current_trace_id,
-                _r3_hash64,
-                _r3_per_sample_hashes,
-                _r3_should_log,
-                _r3_tensor_sig,
-                _r3_verbose,
-            )
-
-            if _r3_verbose() and _r3_should_log(
-                "actor._log_r3_effectiveness_stats"
-            ):
-                with torch.no_grad():
-                    n_valid = int(shifted_mask.sum().item())
-                    if n_valid > 0:
-                        _masked = abs_diff[shifted_mask]
-                        _mean_abs = float(_masked.mean().item())
-                        _max_abs = float(_masked.max().item())
-                        _p99 = float(
-                            torch.quantile(
-                                _masked.float(), 0.99
-                            ).item()
-                        ) if _masked.numel() > 0 else 0.0
-                        _mean_k3 = float(k3_kl[shifted_mask].mean().item())
-                        _frac_tau2 = float(
-                            extreme_tau2[shifted_mask].mean().item()
-                        )
-                        _frac_tau5 = float(
-                            extreme_tau5[shifted_mask].mean().item()
-                        )
-                    else:
-                        _mean_abs = _max_abs = _p99 = _mean_k3 = _frac_tau2 = _frac_tau5 = 0.0
-                logger.info(
-                    "[R3-STAGE2/r3_effectiveness] trace_id=%d r3_enabled=%s "
-                    "n_valid_tokens=%d mean_abs_diff=%.6f max_abs_diff=%.6f "
-                    "p99_abs_diff=%.6f mean_k3_kl=%.6f frac_tau2=%.4f "
-                    "frac_tau5=%.4f | %s | %s",
-                    _r3_current_trace_id(),
-                    r3_enabled,
-                    n_valid,
-                    _mean_abs,
-                    _max_abs,
-                    _p99,
-                    _mean_k3,
-                    _frac_tau2,
-                    _frac_tau5,
-                    _r3_tensor_sig("train_logp", train_logp),
-                    _r3_tensor_sig("rollout_logp_rolled", rollout_logp_f),
-                )
-                # ---- R3 per-sample breakdown: identify catastrophic samples ----
-                with torch.no_grad():
-                    bs = shifted_mask.shape[0]
-                    max_rows = min(bs, 64)
-                    per_sample = []
-                    for i in range(max_rows):
-                        m_i = shifted_mask[i]
-                        n_i = int(m_i.sum().item())
-                        if n_i == 0:
-                            per_sample.append(
-                                {
-                                    "i": i,
-                                    "n": 0,
-                                    "mean_abs": 0.0,
-                                    "max_abs": 0.0,
-                                    "tau2_cnt": 0,
-                                    "tau5_cnt": 0,
-                                    "k3_mean": 0.0,
-                                }
-                            )
-                            continue
-                        row_abs = abs_diff[i][m_i]
-                        row_k3 = k3_kl[i][m_i]
-                        per_sample.append(
-                            {
-                                "i": i,
-                                "n": n_i,
-                                "mean_abs": float(row_abs.mean().item()),
-                                "max_abs": float(row_abs.max().item()),
-                                "tau2_cnt": int(
-                                    (row_abs > torch.log(torch.tensor(2.0))).sum().item()
-                                ),
-                                "tau5_cnt": int(
-                                    (row_abs > torch.log(torch.tensor(5.0))).sum().item()
-                                ),
-                                "k3_mean": float(row_k3.mean().item()),
-                            }
-                        )
-                    # Routed-experts per-sample hashes (side-channel payload)
-                    pending = getattr(self.engine, "_r3_pending_routed_experts", None)
-                    re_hashes = (
-                        [hex(h) for h in _r3_per_sample_hashes(pending, max_rows=max_rows)]
-                        if pending is not None
-                        else []
-                    )
-                    re_full_hash = (
-                        hex(_r3_hash64(pending)) if pending is not None else "None"
-                    )
-                    # Bad sample ranking (top-K by mean_abs)
-                    sorted_bad = sorted(
-                        per_sample, key=lambda x: x["mean_abs"], reverse=True
-                    )[:8]
-                logger.info(
-                    "[R3-STAGE2/r3_effectiveness/per_sample] trace_id=%d "
-                    "r3_enabled=%s batch_size=%d routed_experts_full_hash=%s "
-                    "per_sample=%s top_bad_samples=%s per_sample_routed_hash=%s",
-                    _r3_current_trace_id(),
-                    r3_enabled,
-                    bs,
-                    re_full_hash,
-                    per_sample,
-                    sorted_bad,
-                    re_hashes,
-                )
-        except Exception:
-            logger.exception(
-                "[R3-STAGE2/r3_effectiveness] per-sample trace log failed"
-            )
 
         with stats_tracker.scope("compute_logp"):
             with stats_tracker.scope("r3"):
@@ -659,11 +473,12 @@ class PPOActor:
             _r3_routed_experts, torch.Tensor
         ):
             from areal.trainer.ppo.actor_r3_patch import _resolve_to_tensor
+
             _r3_routed_experts = _resolve_to_tensor(_r3_routed_experts)
         if _r3_routed_experts is not None:
             _re_np = _r3_routed_experts.cpu().numpy()
             _nonzero = _re_np[_re_np > 0]
-            logger.info(
+            logger.debug(
                 "[R3-VERIFY] Actor received routed_experts: "
                 "shape=%s, dtype=%s, nonzero_count=%d/%d, "
                 "nonzero_first3=%s, max=%d, hash=%d",
@@ -684,42 +499,19 @@ class PPOActor:
         # R3: Split routed_experts per mini-batch for side-channel delivery.
         _r3_split = None
         if _r3_routed_experts is not None:
-            from areal.trainer.ppo.actor_r3_patch import split_routed_experts_for_minibatches
+            from areal.trainer.ppo.actor_r3_patch import (
+                split_routed_experts_for_minibatches,
+            )
+
             _r3_split = split_routed_experts_for_minibatches(
                 _r3_routed_experts, mb_inputs
             )
-            logger.info(
+            logger.debug(
                 "[R3] Split routed_experts for %d mini-batches via side-channel "
                 "(shapes: %s).",
                 len(mb_inputs.mbs),
                 [s.shape if s is not None else None for s in _r3_split],
             )
-            try:
-                from areal.engine.router_replay_utils import (
-                    _r3_should_log,
-                    _r3_tensor_sig,
-                    _r3_verbose,
-                )
-
-                if _r3_verbose() and _r3_should_log("actor._ppo_update/split"):
-                    logger.info(
-                        "[R3-STAGE2/actor._ppo_update] SPLIT "
-                        "n_ppo_minibatches=%d per_mb_shapes=%s "
-                        "forward_indices=%s | %s",
-                        len(mb_inputs.mbs),
-                        [
-                            None if s is None else tuple(s.shape)
-                            for s in _r3_split
-                        ],
-                        "None"
-                        if mb_inputs.forward_indices is None
-                        else f"len={len(mb_inputs.forward_indices)}",
-                        _r3_tensor_sig(
-                            "_r3_routed_experts", _r3_routed_experts, max_sample=4
-                        ),
-                    )
-            except Exception:
-                pass
 
         with stats_tracker.scope("update"):
             # Get current version for proximal approximation metrics
@@ -735,62 +527,6 @@ class PPOActor:
                             if i < len(_r3_split) and _r3_split[i] is not None
                             else None
                         )
-                        try:
-                            from areal.engine.router_replay_utils import (
-                                _r3_hash64,
-                                _r3_next_trace_id,
-                                _r3_per_sample_hashes,
-                                _r3_per_sample_nnz,
-                                _r3_per_sample_seq_real_len,
-                                _r3_pp_tp_info,
-                                _r3_should_log,
-                                _r3_tensor_sig,
-                                _r3_verbose,
-                            )
-
-                            _trace_id = _r3_next_trace_id()
-                            self.engine._r3_active_trace_id = _trace_id
-                            _slice = (
-                                _r3_split[i]
-                                if i < len(_r3_split)
-                                else None
-                            )
-                            if _r3_verbose():
-                                logger.info(
-                                    "[R3-STAGE2/actor._ppo_update] "
-                                    "SIDE_CHANNEL_SET trace_id=%d mb=%d "
-                                    "current_version=%s %s "
-                                    "slice_shape=%s hash=%s "
-                                    "per_sample_hash[:16]=%s "
-                                    "per_sample_nnz[:16]=%s "
-                                    "per_sample_real_len[:16]=%s "
-                                    "mb_attn_sum[:16]=%s | %s",
-                                    _trace_id,
-                                    i,
-                                    current_version,
-                                    _r3_pp_tp_info(),
-                                    None if _slice is None else tuple(_slice.shape),
-                                    hex(_r3_hash64(_slice)),
-                                    [hex(h) for h in _r3_per_sample_hashes(
-                                        _slice, max_rows=16)],
-                                    _r3_per_sample_nnz(_slice, max_rows=16),
-                                    _r3_per_sample_seq_real_len(_slice, max_rows=16),
-                                    (
-                                        mb["attention_mask"].sum(dim=-1).long().cpu().tolist()[:16]
-                                        if isinstance(mb, dict) and "attention_mask" in mb
-                                        else "N/A"
-                                    ),
-                                    _r3_tensor_sig(
-                                        "pending_routed_experts",
-                                        _slice,
-                                        max_sample=4,
-                                    ),
-                                )
-                        except Exception:
-                            logger.exception(
-                                "[R3-STAGE2/actor._ppo_update] "
-                                "SIDE_CHANNEL_SET trace log failed",
-                            )
                     else:
                         logger.warning(
                             "[R3] routed_experts available but engine._r3_enabled "

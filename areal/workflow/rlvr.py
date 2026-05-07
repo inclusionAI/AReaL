@@ -196,29 +196,5 @@ class RLVRWorkflow(RolloutWorkflow):
                 topk=self.r3_topk,
             )
             res = inject_routed_experts_into_result(res, routed_experts_tensor)
-            try:
-                from areal.engine.router_replay_utils import (
-                    _r3_should_log,
-                    _r3_tensor_sig,
-                    _r3_verbose,
-                )
-
-                if _r3_verbose() and _r3_should_log("rlvr.arun_episode"):
-                    logger.info(
-                        "[R3-STAGE1/rlvr.arun_episode] INJECT "
-                        "r3_num_moe_layers=%s r3_topk=%s "
-                        "resp.routed_experts.shape=%s input_len=%d "
-                        "output_len=%d | %s",
-                        self.r3_num_moe_layers,
-                        self.r3_topk,
-                        getattr(resp.routed_experts, "shape", None),
-                        resp.input_len,
-                        resp.output_len,
-                        _r3_tensor_sig(
-                            "routed_experts_tensor", routed_experts_tensor
-                        ),
-                    )
-            except Exception:
-                pass
 
         return res

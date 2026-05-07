@@ -597,56 +597,6 @@ def set_router_replay_data(
 
         total_aligned = sum(aligned_lens)
 
-        if _r3_verbose() and _r3_should_log("set_router_replay_data/ENTER"):
-            logger.info(
-                "[R3-STAGE3/set_router_replay_data] ENTER call#%d trace_id=%d %s "
-                "layers_topk_idx=(bs=%d, max_seq=%d, L=%d, K=%d) dtype=%s "
-                "n_cu_entries=%d n_seqs_in_cu=%d seq_align_to=%d "
-                "seq_lens[:16]=%s aligned_lens[:16]=%s total_aligned=%d "
-                "vp_rank=%s | %s",
-                _r3_call_count("set_router_replay_data/ENTER"),
-                _r3_current_trace_id(),
-                _r3_pp_tp_info(tf_config, vp_rank),
-                bs_re,
-                layers_topk_idx.shape[1],
-                num_layers,
-                topk,
-                layers_topk_idx.dtype,
-                n_cu_entries,
-                n_seqs_in_cu,
-                seq_align_to,
-                seq_lens[:16],
-                aligned_lens[:16],
-                total_aligned,
-                vp_rank,
-                _r3_tensor_sig("cu_seqlens", cu_seqlens),
-            )
-        # Per-sample fingerprint (hash, nnz, real_len) so we can verify
-        # the SAME bytes reach here as the actor pushed into the
-        # side-channel.  Any mismatch between hashes implies a
-        # split/reorder bug somewhere upstream.
-        if _r3_verbose() and _r3_should_log("set_router_replay_data/PER_SAMPLE"):
-            try:
-                _h = _r3_per_sample_hashes(layers_topk_idx, max_rows=32)
-                _nnz = _r3_per_sample_nnz(layers_topk_idx, max_rows=32)
-                _rl = _r3_per_sample_seq_real_len(layers_topk_idx, max_rows=32)
-                logger.info(
-                    "[R3-STAGE3/set_router_replay_data] PER_SAMPLE trace_id=%d %s "
-                    "bs_re=%d n_seqs_in_cu=%d "
-                    "per_sample_hash[:16]=%s per_sample_nnz_rows[:16]=%s "
-                    "per_sample_real_len[:16]=%s cu_seqlens_diff[:16]=%s",
-                    _r3_current_trace_id(),
-                    _r3_pp_tp_info(tf_config, vp_rank),
-                    bs_re,
-                    n_seqs_in_cu,
-                    [hex(h) for h in _h[:16]],
-                    _nnz[:16],
-                    _rl[:16],
-                    seq_lens[:16],
-                )
-            except Exception as e:
-                logger.warning("[R3-STAGE3/set_router_replay_data] PER_SAMPLE err=%s", e)
-
         # Pack routed_experts using cu_seqlens-aligned layout.
         # layers_topk_idx is left-ALIGNED: real tokens at positions [0, seq_len).
         # For each sequence i, we take the first seq_lens[i] tokens and place
@@ -727,56 +677,6 @@ def set_router_replay_data(
             n_strike = int((valid_mask & row_all_zero).sum().item())
             valid_mask = valid_mask & (~row_all_zero)
 
-        if _r3_verbose() and _r3_should_log("set_router_replay_data/PACKED"):
-            with torch.no_grad():
-                # Count global all-zero rows across ALL layers AND topk slots.
-                zrows = int(row_all_zero.sum().item())
-                total_rows = int(row_all_zero.numel())
-                n_valid = int(valid_mask.sum().item())
-                # Per-sample valid-row count (after strike), lined up with
-                # aligned_lens so any off-by-one immediately surfaces.
-                per_sample_valid_after = []
-                per_sample_valid_before = []
-                _off = 0
-                for _i in range(n_seqs_in_cu):
-                    _al = aligned_lens[_i] if _i < len(aligned_lens) else 0
-                    _seg = valid_mask[_off : _off + _al]
-                    _segz = row_all_zero[_off : _off + _al]
-                    per_sample_valid_after.append(int(_seg.sum().item()))
-                    per_sample_valid_before.append(
-                        int((~_segz[: seq_lens[_i] if _i < len(seq_lens) else 0]).sum().item())
-                        if _i < len(seq_lens)
-                        else 0
-                    )
-                    _off += _al
-            logger.info(
-                "[R3-STAGE3/set_router_replay_data] PACKED trace_id=%d %s "
-                "packed=(total_aligned=%d, L=%d, K=%d) global_zero_rows=%d/%d "
-                "(%.2f%%) valid_rows=%d/%d (%.2f%%) struck_tail_rows=%d "
-                "per_sample_valid_before_strike[:16]=%s "
-                "per_sample_valid_after_strike[:16]=%s "
-                "per_sample_real_len[:16]=%s aligned_lens[:16]=%s "
-                "packed_hash=%s | %s",
-                _r3_current_trace_id(),
-                _r3_pp_tp_info(tf_config, vp_rank),
-                packed.shape[0],
-                packed.shape[1],
-                packed.shape[2],
-                zrows,
-                total_rows,
-                100.0 * zrows / max(total_rows, 1),
-                n_valid,
-                total_rows,
-                100.0 * n_valid / max(total_rows, 1),
-                n_strike,
-                per_sample_valid_before[:16],
-                per_sample_valid_after[:16],
-                seq_lens[:16],
-                aligned_lens[:16],
-                hex(_r3_hash64(packed)),
-                _r3_tensor_sig("packed", packed),
-            )
-
         # Step 2: CP split (before TP scatter).
         #
         # When ``cp_size > 1``, megatron-core's
@@ -804,21 +704,6 @@ def set_router_replay_data(
             valid_mask = split_packed_seqs_for_context_parallel(
                 valid_mask.to(torch.int32), cu_seqlens_dev
             ).bool()
-            if _r3_verbose() and _r3_should_log("set_router_replay_data/CP_SPLIT"):
-                with torch.no_grad():
-                    n_after_cp_valid = int(valid_mask.sum().item())
-                logger.info(
-                    "[R3-STAGE3/set_router_replay_data] CP_SPLIT trace_id=%d %s "
-                    "cp_size=%d post_cp_packed=%s post_cp_valid=%d/%d "
-                    "post_cp_packed_hash=%s",
-                    _r3_current_trace_id(),
-                    _r3_pp_tp_info(tf_config, vp_rank),
-                    cp_size,
-                    _r3_tensor_sig("packed_after_cp", packed),
-                    n_after_cp_valid,
-                    valid_mask.numel(),
-                    hex(_r3_hash64(packed)),
-                )
 
         # Step 3: Scatter to SP ranks (TP)
         tp_size = mpu.get_tensor_model_parallel_world_size()
@@ -840,95 +725,10 @@ def set_router_replay_data(
         # Step 4: Permute to (num_layers, local_tokens_count, topk)
         layers_topk = local_tokens.permute(1, 0, 2)
 
-        if _r3_verbose() and _r3_should_log("set_router_replay_data/SCATTER"):
-            with torch.no_grad():
-                n_local_valid = int(local_mask.sum().item())
-            logger.info(
-                "[R3-STAGE3/set_router_replay_data] POST-SCATTER trace_id=%d %s "
-                "tp_size=%d local_valid=%d/%d local_tokens=%s layers_topk=%s "
-                "local_tokens_hash=%s local_mask_hash=%s",
-                _r3_current_trace_id(),
-                _r3_pp_tp_info(tf_config, vp_rank),
-                tp_size,
-                n_local_valid,
-                local_mask.numel(),
-                _r3_tensor_sig("local_tokens", local_tokens),
-                _r3_tensor_sig("layers_topk", layers_topk),
-                hex(_r3_hash64(local_tokens)),
-                hex(_r3_hash64(local_mask.to(torch.int32))),
-            )
-
         # Step 5: Distribute to RouterReplay instances for local PP layers
         local_info = get_current_rank_layer_info(tf_config, vp_rank)
         offset, end = local_info["start"], local_info["end"]
         router_list = RouterReplayHelper.get_micro_batch_router_list(tf_config, vp_rank)
-
-        # ---------- R3 diagnostics: PP=2 root-cause hunt ----------
-        # Print the full PP-rank slicing decision so the next log can
-        # trivially confirm:
-        #   * tf_config.num_layers stays GLOBAL (27) under Megatron-Core PP
-        #     -- if it ever becomes local (14/13), index_by_layer would
-        #     still report True but ``idx=layer_idx`` would over-shoot.
-        #   * offset/end honors get_transformer_layer_offset.
-        #   * The set of MoE layers in [offset, end) matches the rollout
-        #     layer-axis convention (absolute layer index, with layer 0
-        #     dense and recorded as zeros).
-        #   * RouterReplay.router_instances is local-per-process: the
-        #     selected slice (creation_order list) tells us which routers
-        #     this PP rank actually owns.
-        try:
-            if _r3_verbose() and _r3_should_log("set_router_replay_data/PP_LAYOUT"):
-                moe_layers_in_range = [
-                    i for i in range(offset, end) if is_moe_layer(tf_config, i)
-                ]
-                non_moe_layers_in_range = [
-                    i for i in range(offset, end) if not is_moe_layer(tf_config, i)
-                ]
-                vp_size = getattr(
-                    tf_config, "virtual_pipeline_model_parallel_size", None
-                )
-                # Cheap audit: nnz of dim-0 slice for ALL layer indices
-                # (helps prove rollout's L-axis-0 is the dense layer and
-                # really is all-zero, vs. silently shifted).
-                with torch.no_grad():
-                    per_layer_nnz = [
-                        int((layers_topk[L] != 0).any(dim=-1).sum().item())
-                        if L < layers_topk.shape[0] else -1
-                        for L in range(min(layers_topk.shape[0], 32))
-                    ]
-                logger.info(
-                    "[R3-STAGE3/set_router_replay_data] PP_LAYOUT trace_id=%d %s "
-                    "tf_config.num_layers=%d vp_size=%s moe_layer_freq=%s "
-                    "first_k_dense_replace=%s "
-                    "local_info={start:%d, end:%d, count:%d} "
-                    "moe_layers_in_range=%s non_moe_layers_in_range=%s "
-                    "len(router_list)=%d total_router_instances=%d "
-                    "selected_router_creation_orders=%s "
-                    "selected_router_creator_ranks=%s "
-                    "layers_topk_dim0=%d index_by_layer=%s "
-                    "per_layer_any_nnz_first32=%s",
-                    _r3_current_trace_id(),
-                    _r3_pp_tp_info(tf_config, vp_rank),
-                    tf_config.num_layers,
-                    vp_size,
-                    getattr(tf_config, "moe_layer_freq", None),
-                    getattr(tf_config, "first_k_dense_replace", None),
-                    offset,
-                    end,
-                    local_info["count"],
-                    moe_layers_in_range,
-                    non_moe_layers_in_range,
-                    len(router_list),
-                    len(RouterReplay.router_instances),
-                    [getattr(r, "creation_order", -1) for r in router_list],
-                    [getattr(r, "creator_rank", -1) for r in router_list],
-                    layers_topk.shape[0],
-                    len(layers_topk) == tf_config.num_layers,
-                    per_layer_nnz,
-                )
-        except Exception:
-            logger.exception("[R3-STAGE3/PP_LAYOUT] diag log failed")
-        # ----------------------------------------------------------
 
         if len(router_list) == 0:
             logger.warning(
@@ -947,7 +747,6 @@ def set_router_replay_data(
         moe_idx = sum(1 for i in range(offset) if is_moe_layer(tf_config, i))
 
         router_offset = 0
-        dispatched = []  # list of (layer_idx, idx_into_layers_topk, zero_row_stats)
         for layer_idx in range(offset, end):
             if not is_moe_layer(tf_config, layer_idx):
                 continue
@@ -972,18 +771,6 @@ def set_router_replay_data(
                 continue
             slab = layers_topk[idx].to(torch.int64)
             router.set_target_indices(slab, valid_mask=local_mask)
-            if _r3_verbose() and _r3_should_log("set_router_replay_data/DISPATCH"):
-                dispatched.append(
-                    (
-                        layer_idx,
-                        idx,
-                        _r3_zero_row_stats(slab),
-                        _r3_tensor_sig(f"target[L={layer_idx}]", slab),
-                        hex(_r3_hash64(slab)),
-                        getattr(router, "creation_order", -1),
-                        moe_idx,
-                    )
-                )
             router_offset += 1
             moe_idx += 1
 
@@ -997,32 +784,6 @@ def set_router_replay_data(
             end,
             tp_size,
         )
-        if _r3_verbose() and dispatched:
-            # Only log first couple of dispatched layers in detail; keep
-            # the rest summarised.
-            head = dispatched[:_R3_ROUTER_LAYER_LIMIT]
-            logger.info(
-                "[R3-STAGE3/set_router_replay_data] DISPATCH trace_id=%d %s "
-                "router_offset=%d len(router_list)=%d index_by_layer=%s "
-                "first_layers=%s all_layers_to_router_map=%s "
-                "... (total dispatched=%d)",
-                _r3_current_trace_id(),
-                _r3_pp_tp_info(tf_config, vp_rank),
-                router_offset,
-                len(router_list),
-                index_by_layer,
-                [
-                    (lidx, j, zr, sig, h, co, mi)
-                    for lidx, j, zr, sig, h, co, mi in head
-                ],
-                # Full (layer_idx, slab_idx_used, router_creation_order,
-                # moe_ordinal) tuple for every dispatched layer. This is
-                # the definitive cross-check: PP0 must be [(1,1,0,0),
-                # (2,2,1,1), ..., (13,13,12,12)] and PP1 must be
-                # [(14,14,0,13), ..., (26,26,12,25)] on Moonlight.
-                [(lidx, j, co, mi) for lidx, j, _, _, _, co, mi in dispatched],
-                len(dispatched),
-            )
 
 
 # ===================================================================
@@ -1049,19 +810,6 @@ def setup_per_microbatch_replay_forward(
         seq_align_to: Per-sequence TP alignment factor.
     """
     routed_experts = routed_experts.to(torch.int32)
-    if _r3_verbose() and _r3_should_log("setup_per_microbatch_replay_forward"):
-        with torch.no_grad():
-            per_row_zero = (routed_experts == 0).all(dim=-1).all(dim=-1)
-        logger.info(
-            "[R3-STAGE3/setup_per_microbatch_replay_forward] ENTER %s "
-            "routed_experts=%s cu_seqlens=%s seq_align_to=%s "
-            "per_sample_zero_rows=%s",
-            _r3_pp_tp_info(tf_config, vp_rank),
-            _r3_tensor_sig("routed_experts", routed_experts),
-            _r3_tensor_sig("cu_seqlens", cu_seqlens),
-            seq_align_to,
-            [int(x.sum().item()) for x in per_row_zero][:8],
-        )
     set_router_replay_data(
         routed_experts, cu_seqlens, tf_config, vp_rank,
         seq_align_to=seq_align_to,
@@ -1077,38 +825,6 @@ def setup_per_microbatch_replay_backward() -> None:
 def clear_router_replay() -> None:
     """Clear all RouterReplay state after a full forward-backward pass."""
     n_instances = len(RouterReplay.router_instances)
-    # ---------- R3 diagnostics: dump pre-clear queue lengths so leftover
-    # backward pops (a smoking gun for missing recompute under PP=2 1F1B)
-    # are always visible.
-    try:
-        if _r3_verbose() and _r3_should_log("clear_router_replay/snapshot"):
-            fwd_qs = [
-                len(getattr(r, "replay_backward_list", []) or [])
-                for r in RouterReplay.router_instances
-            ]
-            mask_qs = [
-                len(getattr(r, "replay_backward_mask_list", []) or [])
-                for r in RouterReplay.router_instances
-            ]
-            push_qs = [
-                len(getattr(r, "replay_push_meta_list", []) or [])
-                for r in RouterReplay.router_instances
-            ]
-            n_nonempty = sum(1 for q in fwd_qs if q > 0)
-            logger.info(
-                "[R3-STAGE3c/clear_router_replay] PRE_CLEAR_SNAPSHOT %s "
-                "n_instances=%d n_with_residual_fwd_q=%d "
-                "fwd_q_lens=%s mask_q_lens=%s push_meta_q_lens=%s",
-                _r3_pp_tp_info(),
-                n_instances,
-                n_nonempty,
-                fwd_qs,
-                mask_qs,
-                push_qs,
-            )
-    except Exception:
-        logger.exception("[R3-STAGE3c/clear_router_replay] diag log failed")
-    # -----------------------------------------------------------------
     RouterReplay.clear_global_indices()
     RouterReplay.clear_global_router_replay_action()
     logger.debug("[R3] Router replay state cleared (%d instances).", n_instances)
@@ -1148,29 +864,11 @@ def preprocess_routed_experts_batch(
     import numpy as np
 
     if routed_experts_np is None:
-        if _r3_verbose():
-            logger.info("[R3-STAGE1/preprocess] routed_experts_np=None, returning None")
         return None
 
     seq_len = input_ids.shape[1]
     num_sgl_tokens = routed_experts_np.shape[0]
     flat_dim = routed_experts_np.shape[1]
-
-    if _r3_verbose():
-        logger.info(
-            "[R3-STAGE1/preprocess] ENTER "
-            "seq_len=%d num_sgl_tokens=%d flat_dim=%d num_moe_layers=%s topk=%s "
-            "expected_flat=%s | %s | %s | %s",
-            seq_len,
-            num_sgl_tokens,
-            flat_dim,
-            num_moe_layers,
-            topk,
-            (num_moe_layers or 0) * (topk or 0),
-            _r3_tensor_sig("input_ids", input_ids),
-            _r3_tensor_sig("attention_mask", attention_mask),
-            _r3_tensor_sig("routed_experts_np", routed_experts_np),
-        )
 
     expected_flat = num_moe_layers * topk
     if flat_dim != expected_flat:
@@ -1253,35 +951,5 @@ def preprocess_routed_experts_batch(
         real_tokens,
         right_pad,
     )
-
-    if _r3_verbose():
-        # NOTE: for R3 correctness check. We expect num_sgl_tokens =
-        # real_tokens - 1 (SGLang drops the logprob of the very last
-        # generated token). Anything else means the routing -> token
-        # alignment is not what we think it is.
-        tail_row_is_zero = None
-        try:
-            tail_slice = padded[0, real_tokens - 1] if real_tokens > 0 else None
-            if tail_slice is not None:
-                tail_row_is_zero = bool((tail_slice == 0).all().item())
-        except Exception:
-            tail_row_is_zero = "err"
-        # All-zero row stats across the seq_len axis for this sample.
-        with torch.no_grad():
-            per_row_zero = (padded[0] == 0).all(dim=-1).all(dim=-1)
-            zero_rows_count = int(per_row_zero.sum().item())
-        logger.info(
-            "[R3-STAGE1/preprocess] EXIT "
-            "num_sgl_tokens=%d real_tokens=%d delta=%d right_pad=%d "
-            "tail_real_row_all_zero=%s zero_rows_total=%d/%d | %s",
-            num_sgl_tokens,
-            real_tokens,
-            real_tokens - num_sgl_tokens,
-            right_pad,
-            tail_row_is_zero,
-            zero_rows_count,
-            seq_len,
-            _r3_tensor_sig("padded", padded),
-        )
 
     return padded
