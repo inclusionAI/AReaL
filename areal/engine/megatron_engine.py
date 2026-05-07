@@ -54,7 +54,11 @@ from areal.engine.core.distributed import (
     init_custom_process_group,
     warmup_process_groups,
 )
-from areal.engine.core.model import disable_dropout_in_model, is_valid_vision_model
+from areal.engine.core.model import (
+    disable_dropout_in_model,
+    is_valid_vision_model,
+    lang_config,
+)
 from areal.engine.megatron_utils.checkpointer import MegatronCheckpointManager
 from areal.engine.megatron_utils.deterministic import set_deterministic_algorithms
 from areal.engine.megatron_utils.fp8 import FP8BlockwiseTensorHelper
@@ -69,8 +73,10 @@ from areal.engine.megatron_utils.megatron_lora import (
     get_vllm_lora_target_modules,
 )
 from areal.engine.megatron_utils.packed_context_parallel import (
+    _is_multi_modal_payload_key,
     extract_vision_from_multi_modal,
     packed_context_parallel_forward,
+    reassemble_cp_packed_logprobs,
     split_packed_seqs_for_context_parallel,
 )
 from areal.engine.megatron_utils.pipeline_parallel import (
@@ -79,7 +85,10 @@ from areal.engine.megatron_utils.pipeline_parallel import (
 from areal.infra.dist_rollout import DistRolloutCoordinator
 from areal.infra.platforms import current_platform
 from areal.models.mcore.hf_load import load_weights_from_hf_with_mbridge_fast
-from areal.models.mcore.hf_save import save_weights_to_hf_with_mbridge_fast
+from areal.models.mcore.hf_save import (
+    save_critic_value_head,
+    save_weights_to_hf_with_mbridge_fast,
+)
 from areal.models.mcore.registry import make_hf_and_mcore_config, make_mcore_model
 from areal.models.tree_attn.functional import (
     _gather_packed_tree_logprobs,
@@ -957,14 +966,11 @@ class MegatronEngine(TrainEngine):
                     cp_labels = split_packed_seqs_for_context_parallel(
                         rolled_ids, padded_cu_seqlens
                     )
-                    cp_loss_mask = split_packed_seqs_for_context_parallel(
-                        mb_input.padded_mb["loss_mask"], padded_cu_seqlens
-                    )
-                    cp_cu_seqlens = padded_cu_seqlens // cp_size
                     cp_inputs = dict(mb_input.orig_mb)
                     cp_inputs["_cp_local_labels"] = cp_labels
-                    cp_inputs["loss_mask"] = cp_loss_mask
-                    cp_inputs["cu_seqlens"] = cp_cu_seqlens
+                    cp_inputs["_cp_padded_cu_seqlens"] = padded_cu_seqlens
+                    cp_inputs["_cp_padding_length"] = mb_input.padding_length
+                    cp_inputs["_cp_old_cu_seqlens"] = mb_input.old_cu_seqlens
                     return output, functools.partial(_process_output, cp_inputs)
                 else:
                     output = unpad_logits(
@@ -1005,9 +1011,15 @@ class MegatronEngine(TrainEngine):
         # Step 1: Prepare micro-batches
         mb_list = self._prepare_mb_list(input_batched).to(self.device)
 
-        # Step 2: Compute total loss weight
+        # Step 2: Compute total loss weight.
+        # Use DP+CP group: after CP all-gather each rank computes the full-sequence
+        # loss, so all_gather's backward (reduce_scatter) sums cp_size identical
+        # gradients, amplifying by cp_size. Including CP in the weight all-reduce
+        # introduces a matching cp_size factor in the denominator, cancelling out.
         total_loss_weight = compute_total_loss_weight(
-            mb_list, loss_weight_fn, mpu.get_data_parallel_group()
+            mb_list,
+            loss_weight_fn,
+            mpu.get_data_parallel_group(with_context_parallel=True),
         )
 
         # Step 3: Forward-backward using Megatron's pipeline function.
@@ -1060,9 +1072,11 @@ class MegatronEngine(TrainEngine):
         # Step 1: Prepare micro-batches
         mb_list = self._prepare_mb_list(input_batched).to(self.device)
 
-        # Step 2: Compute total loss weight
+        # Step 2: Compute total loss weight (DP+CP, see train_batch comment).
         total_loss_weight = compute_total_loss_weight(
-            mb_list, loss_weight_fn, mpu.get_data_parallel_group()
+            mb_list,
+            loss_weight_fn,
+            mpu.get_data_parallel_group(with_context_parallel=True),
         )
 
         # Step 3: Forward using Megatron's pipeline function, collecting losses
@@ -1198,8 +1212,23 @@ class MegatronEngine(TrainEngine):
 
         self.is_offload = False
 
-    def clear_batches(self, *args):
-        """Placeholder method of single-controller API."""
+    def clear_batches(self, shard_ids: list[str]) -> None:
+        """Drain this worker's client-side RTensor fetch buffer.
+
+        Called via RPC by ``TrainController.clear_batches`` at step end so
+        cross-node consumer DP heads release cached tensors. See #1209.
+        Upstream ``TrainController.clear_batches`` guards against empty
+        input, so ``shard_ids`` is always a non-empty ``list[str]``.
+        """
+        from areal.infra.rpc.rtensor import clear_fetch_buffer
+
+        clear_fetch_buffer(shard_ids)
+
+    def fetch_buffer_stats(self) -> dict[str, int]:
+        """Expose local fetch-buffer stats for post-step drain verification."""
+        from areal.infra.rpc.rtensor import fetch_buffer_stats
+
+        return fetch_buffer_stats()
 
     def _normalize_adam_bf16_config(self) -> None:
         if self.optimizer_config is None or self.optimizer_config.type != "adam_bf16":
@@ -1578,7 +1607,7 @@ class MegatronEngine(TrainEngine):
             duplicated_param_names=self._duplicated_param_names,
             gated_linear_unit=is_glu,
         )
-        param = remove_padding(name, param, self.hf_config.vocab_size)
+        param = remove_padding(name, param, lang_config(self.hf_config).vocab_size)
 
         if isinstance(param, FP8BlockwiseTensorHelper):
             # FP8 is stored as uint8, so element_size is 1 byte
@@ -1883,19 +1912,29 @@ class MegatronEngine(TrainEngine):
                     source_path=base_model_path,
                 )
         else:
-            gc.collect()
-            current_platform.empty_cache()
-            gc.collect()
-            save_weights_to_hf_with_mbridge_fast(
-                bridge=self.bridge,
-                models=self.model,
-                weights_path=path,
-                base_model_path=base_model_path,
-                max_shard_size_byte=int(3e9),
-                max_workers=None,
-                is_critic=self.config.is_critic,
-                fp8_direct_convert=self.fp8_direct_convert,
-            )
+            if self.mcore_config.use_mbridge_save:
+                # when loading model using AreaL's fast hf load, the safetensor_io is never set
+                if (
+                    not hasattr(self.bridge, "safetensor_io")
+                    or self.bridge.safetensor_io is None
+                ):
+                    self.bridge.safetensor_io = self.bridge._get_safetensor_io(
+                        self.config.path
+                    )
+                self.bridge.save_weights(models=self.model, weights_path=path)
+            else:
+                save_weights_to_hf_with_mbridge_fast(
+                    bridge=self.bridge,
+                    models=self.model,
+                    weights_path=path,
+                    base_model_path=base_model_path,
+                    max_shard_size_byte=int(3e9),
+                    max_workers=None,
+                    fp8_direct_convert=self.fp8_direct_convert,
+                )
+
+            if self.config.is_critic:
+                save_critic_value_head(self.model, path)
 
         if dist.get_rank() == 0:
             if tokenizer is not None:
@@ -2027,10 +2066,20 @@ class MegatronEngine(TrainEngine):
         for mb in mb_list.padded_mbs:
             mb["max_seqlen"] = int(mb["max_seqlen"])
 
-        # Extract vision data from multi_modal_input into top-level keys
+        # Extract vision data from multi_modal_input into top-level keys.
+        # Vision tensors are placed only on padded_mb (forward side); mb (loss
+        # side) gets multimodal payloads stripped. Also rebind mb_list.data to
+        # a filtered copy so multimodal references are released from the
+        # MicroBatchList without mutating the caller's input dict (which may
+        # be reused across forward calls — see save/load round-trip test).
         if self.is_vision_model:
             for mb, padded_mb in zip(mb_list.mbs, mb_list.padded_mbs):
                 extract_vision_from_multi_modal(mb, padded_mb)
+            mb_list.data = {
+                k: v
+                for k, v in mb_list.data.items()
+                if not _is_multi_modal_payload_key(k)
+            }
 
         return mb_list
 
@@ -2079,6 +2128,7 @@ class MegatronEngine(TrainEngine):
                 )
             else:
                 cp_local_labels = inputs.get("_cp_local_labels")
+                cp_padded_cu_seqlens = inputs.get("_cp_padded_cu_seqlens")
                 if cp_local_labels is not None:
                     labels = cp_local_labels
                 else:
@@ -2093,6 +2143,48 @@ class MegatronEngine(TrainEngine):
                 )
                 vocab_min_logits = output.detach().min(-1).values.float()
                 vocab_max_logits = output.detach().max(-1).values.float()
+                if cp_padded_cu_seqlens is not None:
+                    logprobs = reassemble_cp_packed_logprobs(
+                        logprobs, cp_padded_cu_seqlens
+                    )
+                    entropy = reassemble_cp_packed_logprobs(
+                        entropy, cp_padded_cu_seqlens
+                    )
+                    vocab_min_logits = reassemble_cp_packed_logprobs(
+                        vocab_min_logits, cp_padded_cu_seqlens
+                    )
+                    vocab_max_logits = reassemble_cp_packed_logprobs(
+                        vocab_max_logits, cp_padded_cu_seqlens
+                    )
+                    cp_padding_length = inputs.get("_cp_padding_length", 0)
+                    cp_old_cu_seqlens = inputs.get("_cp_old_cu_seqlens")
+                    logprobs = unpad_logits(
+                        logprobs,
+                        cp_padding_length,
+                        cp_padded_cu_seqlens,
+                        cp_old_cu_seqlens,
+                    )
+                    entropy = unpad_logits(
+                        entropy,
+                        cp_padding_length,
+                        cp_padded_cu_seqlens,
+                        cp_old_cu_seqlens,
+                    )
+                    vocab_min_logits = unpad_logits(
+                        vocab_min_logits,
+                        cp_padding_length,
+                        cp_padded_cu_seqlens,
+                        cp_old_cu_seqlens,
+                    )
+                    vocab_max_logits = unpad_logits(
+                        vocab_max_logits,
+                        cp_padding_length,
+                        cp_padded_cu_seqlens,
+                        cp_old_cu_seqlens,
+                    )
+                    inputs = {
+                        k: v for k, v in inputs.items() if not k.startswith("_cp_")
+                    }
             loss = loss_fn(
                 logprobs,
                 entropy,

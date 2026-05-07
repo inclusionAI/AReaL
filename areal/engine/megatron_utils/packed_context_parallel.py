@@ -4,8 +4,11 @@ from typing import Any
 
 import torch
 import torch.distributed as dist
+import torch.distributed.nn.functional as dist_F
 from megatron.core import parallel_state as mpu
 from megatron.core.packed_seq_params import PackedSeqParams
+
+from areal.utils.data import is_multi_modal_key
 
 
 def preprocess_packed_seqs_context_parallel(
@@ -111,6 +114,84 @@ def split_packed_seqs_for_context_parallel(
     return splitted
 
 
+def _build_cp_reassemble_indices(
+    padded_cu_seqlens: torch.Tensor,
+    cp_size: int,
+) -> torch.Tensor:
+    """Build the index mapping from concatenated CP chunks to original order.
+
+    Returns a 1D LongTensor of length ``output_len`` where ``indices[dst] = src``
+    means the token at position ``dst`` in the full sequence comes from position
+    ``src`` in the flattened ``torch.cat(gathered_list)`` tensor.
+    """
+    input_lens = padded_cu_seqlens[1:] - padded_cu_seqlens[:-1]
+    batch_size = input_lens.shape[0]
+    output_len = int(padded_cu_seqlens[-1].item())
+    local_len = output_len // cp_size
+    device = padded_cu_seqlens.device
+
+    indices = torch.empty(output_len, dtype=torch.long, device=device)
+
+    for i in range(batch_size):
+        seq_len = int(input_lens[i].item())
+        chunk_size = seq_len // cp_size
+        half_chunk = chunk_size // 2
+        local_start = int(padded_cu_seqlens[i].item()) // cp_size
+        full_start = int(padded_cu_seqlens[i].item())
+
+        k = torch.arange(half_chunk, device=device)
+        for j in range(cp_size):
+            src_offset = j * local_len + local_start
+            # first half → positions [j*H, (j+1)*H) in full sequence
+            indices[full_start + j * half_chunk + k] = src_offset + k
+            # second half → mirror positions [L-(j+1)*H, L-j*H)
+            indices[full_start + seq_len - (j + 1) * half_chunk + k] = (
+                src_offset + half_chunk + k
+            )
+
+    return indices
+
+
+def reassemble_cp_packed_logprobs(
+    local_tensor: torch.Tensor,
+    padded_cu_seqlens: torch.Tensor,
+) -> torch.Tensor:
+    """All-gather CP-local 1D tensors and reassemble in original sequence order.
+
+    This is the differentiable inverse of ``split_packed_seqs_for_context_parallel``.
+    It uses ``torch.distributed.nn.functional.all_gather`` (backward = reduce_scatter)
+    followed by advanced indexing (differentiable permutation) so that gradients
+    flow correctly back to each CP rank's local logprobs.
+
+    Args:
+        local_tensor: 1D tensor of shape ``(total_packed_len // cp_size,)`` holding
+            this rank's CP-local values (e.g. logprobs, entropy, vocab stats).
+        padded_cu_seqlens: Cumulative sequence lengths in the *padded* (pre-split)
+            layout, of shape ``(batch_size + 1,)``.
+
+    Returns:
+        Full-sequence 1D tensor of shape ``(total_packed_len,)`` with values placed
+        back in original token order. Gradients flow back through the all-gather.
+    """
+    cp_size = mpu.get_context_parallel_world_size()
+    if cp_size <= 1:
+        return local_tensor
+
+    cp_group = mpu.get_context_parallel_group()
+
+    # Differentiable all-gather: backward is reduce_scatter(sum).
+    gathered_list = dist_F.all_gather(local_tensor, group=cp_group)
+
+    # Concatenate all gathered chunks into a single flat tensor.
+    # cat is differentiable (backward splits gradients back to each chunk).
+    gathered_flat = torch.cat(gathered_list, dim=0)
+
+    # Build index mapping and apply via advanced indexing (differentiable).
+    # indices[dst] = src means output[dst] = gathered_flat[src].
+    indices = _build_cp_reassemble_indices(padded_cu_seqlens, cp_size)
+    return gathered_flat[indices]
+
+
 def postprocess_packed_seqs_context_parallel(
     output: torch.Tensor,
     cu_seqlens: torch.Tensor | None,
@@ -173,23 +254,40 @@ def postprocess_packed_seqs_context_parallel(
 _VLM_FORWARD_KEYS = ("pixel_values", "image_grid_thw", "video_grid_thw")
 
 
+def _is_multi_modal_payload_key(key: str) -> bool:
+    return key in _VLM_FORWARD_KEYS or is_multi_modal_key(key)
+
+
+def _drop_multi_modal_payload(data: dict[str, Any]) -> None:
+    for key in list(data.keys()):
+        if _is_multi_modal_payload_key(key):
+            data.pop(key, None)
+
+
 def extract_vision_from_multi_modal(
     mb: dict[str, Any], padded_mb: dict[str, Any]
 ) -> None:
-    """Extract pixel_values, image_grid_thw, video_grid_thw from multi_modal_input.
+    """Extract pixel_values / image_grid_thw / video_grid_thw from multi_modal_input.
 
-    Mirrors the logic in FSDPEngine._prepare_mb_list. After extraction, vision
-    tensors are placed as top-level keys in both ``mb`` and ``padded_mb``.
+    Mirrors FSDPEngine's `_prepare_multimodal_forward_inputs` (#1272): vision
+    tensors are placed only on ``padded_mb`` (forward side); ``mb`` is the
+    loss/bookkeeping side and does not need them. The original
+    ``multi_modal_input`` list-of-dicts is popped from both to avoid carrying
+    raw per-sample tensors alongside the concatenated batched form.
     """
-    if "multi_modal_input" not in mb:
-        return
-    multi_modal_input = mb["multi_modal_input"]
-    for key in _VLM_FORWARD_KEYS:
-        items = [item[key] for item in multi_modal_input if key in item]
-        if items:
-            concatenated = torch.cat(items, dim=0)
-            mb[key] = concatenated
-            padded_mb[key] = concatenated
+    multi_modal_input = mb.pop("multi_modal_input", None)
+    if multi_modal_input is None:
+        multi_modal_input = padded_mb.pop("multi_modal_input", None)
+    else:
+        padded_mb.pop("multi_modal_input", None)
+
+    if multi_modal_input is not None:
+        for key in _VLM_FORWARD_KEYS:
+            items = [item[key] for item in multi_modal_input if key in item]
+            if items:
+                padded_mb[key] = torch.cat(items, dim=0)
+
+    _drop_multi_modal_payload(mb)
 
 
 def packed_context_parallel_forward(

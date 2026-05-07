@@ -12,9 +12,10 @@ considered a contributor. All contributors are expected to follow the
 
 ### Maintainers
 
-Maintainers have write access to the repository and are responsible for reviewing and
-merging pull requests, triaging issues, and guiding the technical direction of the
-project.
+Maintainers have write access to the repository and are responsible for reviewing pull
+requests, triaging issues, and guiding the technical direction of the project. Two
+maintainer approvals are required to merge a pull request (see
+[Decision-Making](#decision-making)).
 
 | Name         | Organization              | GitHub                |
 | ------------ | ------------------------- | --------------------- |
@@ -36,7 +37,11 @@ project.
 
 Wei Fu ([@garrett4wade](https://github.com/garrett4wade)) serves as the lead maintainer.
 The lead maintainer has final authority on technical decisions when maintainers cannot
-reach consensus.
+reach consensus, and holds the repository **administrator** role on GitHub. As an
+administrator, the lead maintainer may bypass the two-approval requirement to merge
+trivial changes (typo fixes, documentation-only edits, dependency bumps verified by CI)
+or time-sensitive hotfixes. Bypasses must still go through a pull request and should be
+disclosed in the PR description.
 
 ### Community Moderators
 
@@ -51,9 +56,15 @@ cannot be reached, the lead maintainer makes the final decision.
 
 Pull request approval policy:
 
-- Bug fixes or minor improvements: approved by at least one maintainer.
-- New features, architectural changes, or API modifications: approved by at least two
-  maintainers or the lead maintainer.
+- All pull requests require approval from at least **two maintainers** before they can
+  be merged. At least one approval must come from a code owner of the modified paths
+  (see [`.github/CODEOWNERS`](.github/CODEOWNERS)).
+- The **lead maintainer**, acting as repository administrator, may bypass the
+  two-approval requirement for trivial or time-sensitive changes as described in the
+  [Lead Maintainer](#lead-maintainer-bdfl) section.
+- The branch protection rules on `main` are documented in
+  [`.github/ruleset.json`](.github/ruleset.json) and are the source of truth for
+  mechanical enforcement of this policy.
 
 ## Becoming a Maintainer
 

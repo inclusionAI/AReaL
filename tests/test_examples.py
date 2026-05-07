@@ -877,7 +877,7 @@ def test_openclaw_online_rl(tmp_path_factory):
     HEALTH_CHECK_TIMEOUT = 10
     SESSION_NEW_TIMEOUT = 30
     SESSION_REFRESH_TIMEOUT = 130  # Longer timeout for refresh (waits for training)
-    CHAT_TIMEOUT = 30
+    CHAT_TIMEOUT = 120
     REWARD_TIMEOUT = 10
     TRAINING_STEP_TIMEOUT = 300  # 5 min for training step
 

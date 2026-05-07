@@ -3,10 +3,19 @@ package: sglang
 github: sgl-project/sglang
 branch_template: v${VERSION}
 upstream_paths:
+  - python/sglang/srt/entrypoints/engine.py
+  - python/sglang/srt/entrypoints/http_server.py
   - python/sglang/srt/entrypoints/openai/protocol.py
   - python/sglang/srt/function_call/function_call_parser.py
+  - python/sglang/srt/function_call/core_types.py
+  - python/sglang/srt/managers/scheduler.py
+  - python/sglang/srt/managers/io_struct.py
   - python/sglang/srt/parser/reasoning_parser.py
   - python/sglang/srt/server_args.py
+  - python/sglang/srt/utils/__init__.py
+  - python/sglang/srt/utils/common.py
+  - python/sglang/srt/utils/network.py
+  - python/sglang/srt/utils/numa_utils.py
   - python/sglang/launch_server.py
 ---
 
@@ -14,23 +23,27 @@ upstream_paths:
 
 ### Primary (engine layer — most likely to break)
 
-| File                                            | Imports / Usage                                                                                                                                                                                                                                                                                                                                                                                           |
-| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `areal/engine/sglang_remote.py`                 | HTTP-only (no Python imports). Sends requests to `/generate`, `/load_lora_adapter`, `/update_weights_from_disk`, `/update_weights_from_distributed`, `/init_weights_update_group`, `/pause_generation`, `/continue_generation`, `/health`, `/release_memory_occupation`, `/resume_memory_occupation`. Parses `meta_info`, `finish_reason`, `output_token_logprobs`, `routed_experts` from JSON responses. |
-| `areal/experimental/openai/tool_call_parser.py` | `sglang.srt.entrypoints.openai.protocol.Function`, `sglang.srt.entrypoints.openai.protocol.Tool`, `sglang.srt.function_call.function_call_parser.FunctionCallParser`, `sglang.srt.parser.reasoning_parser.ReasoningParser`                                                                                                                                                                                |
+| File                                                           | Imports / Usage                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `areal/engine/sglang_remote.py`                                | HTTP-only (no Python imports). Sends requests to `/generate`, `/load_lora_adapter`, `/update_weights_from_disk`, `/update_weights_from_distributed`, `/init_weights_update_group`, `/pause_generation`, `/continue_generation`, `/health`, `/release_memory_occupation`, `/resume_memory_occupation`. Parses `meta_info`, `finish_reason`, `output_token_logprobs`, `routed_experts` from JSON responses.                                                                                                                   |
+| `areal/experimental/openai/tool_call_parser.py`                | `sglang.srt.entrypoints.openai.protocol.Function`, `sglang.srt.entrypoints.openai.protocol.Tool`, `sglang.srt.function_call.function_call_parser.FunctionCallParser`, `sglang.srt.parser.reasoning_parser.ReasoningParser`                                                                                                                                                                                                                                                                                                  |
+| `areal/experimental/inference_service/sglang/launch_server.py` | `sglang.srt.entrypoints.engine.Engine`, `sglang.srt.entrypoints.engine.init_tokenizer_manager`, `sglang.srt.entrypoints.http_server._execute_server_warmup`, `sglang.srt.entrypoints.http_server._setup_and_run_http_server`, `sglang.srt.entrypoints.http_server.app`, `sglang.srt.managers.detokenizer_manager.run_detokenizer_process`                                                                                                                                                                                   |
+| `areal/experimental/inference_service/sglang/scheduler.py`     | `sglang.srt.managers.scheduler.Scheduler`, `sglang.srt.managers.scheduler.configure_scheduler`, `sglang.srt.observability.trace.process_tracing_init`, `sglang.srt.observability.trace.trace_set_thread_info`, `sglang.srt.utils.get_bool_env_var`, `sglang.srt.utils.kill_itself_when_parent_died`, `sglang.srt.utils.set_gpu_proc_affinity`, `sglang.srt.utils.numa_utils.get_numa_node_if_available`, `sglang.srt.utils.numa_utils.numa_bind_to_node`, `sglang.srt.environ.envs`, `sglang.utils.get_exception_traceback` |
+| `areal/experimental/inference_service/sglang/rpc_proxy.py`     | `sglang.srt.managers.io_struct.RpcReqInput`, `sglang.srt.managers.io_struct.RpcReqOutput`, `sglang.srt.server_args.PortArgs`, `sglang.srt.utils.network.get_zmq_socket`                                                                                                                                                                                                                                                                                                                                                     |
+| `areal/experimental/inference_service/sglang/bridge.py`        | HTTP-only (same protocol as `sglang_remote.py`). `/generate` request/response, `/pause_generation`, `/continue_generation`, `/release_memory_occupation`, `/resume_memory_occupation`.                                                                                                                                                                                                                                                                                                                                      |
 
 ### Secondary (model / infra layer)
 
-| File                                                            | Imports / Usage                                                                                                                                        |
-| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `areal/infra/launcher/sglang_server.py`                         | HTTP-only. Polls `/v1/models` to confirm server readiness. Calls `SGLangConfig.build_cmd()` to construct the server launch command.                    |
-| `areal/api/cli_args.py`                                         | `SGLangConfig.build_cmd()`, `SGLangConfig.build_cmd_from_args()`, `SGLangConfig.build_args()`. Version check against `0.4.9.post2` and `0.4.10.post2`. |
-| `areal/trainer/rl_trainer.py`                                   | `SGLangConfig.build_args()` to construct `RemoteSGLangEngine`.                                                                                         |
-| `areal/infra/launcher/ray.py`                                   | `SGLangConfig` import + `to_structured_cfg`.                                                                                                           |
-| `areal/infra/launcher/local.py`                                 | `SGLangConfig` import + `to_structured_cfg`.                                                                                                           |
-| `areal/infra/launcher/slurm.py`                                 | `SGLangConfig` import + `to_structured_cfg`.                                                                                                           |
-| `areal/experimental/inference_service/controller/controller.py` | `SGLangConfig` in gateway controller.                                                                                                                  |
-| `areal/experimental/inference_service/data_proxy/backend.py`    | HTTP protocol implementation for inference service proxy (SGLangBridgeBackend).                                                                        |
+| File                                                            | Imports / Usage                                                                                                                      |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `areal/infra/launcher/sglang_server.py`                         | HTTP-only. Polls `/v1/models` to confirm server readiness. Calls `SGLangConfig.build_cmd()` to construct the server launch command.  |
+| `areal/api/cli_args.py`                                         | `SGLangConfig.build_cmd()`, `SGLangConfig.build_cmd_from_args()`, `SGLangConfig.build_args()`. Version check against `0.5.10.post1`. |
+| `areal/trainer/rl_trainer.py`                                   | `SGLangConfig.build_args()` to construct `RemoteSGLangEngine`.                                                                       |
+| `areal/infra/launcher/ray.py`                                   | `SGLangConfig` import + `to_structured_cfg`.                                                                                         |
+| `areal/infra/launcher/local.py`                                 | `SGLangConfig` import + `to_structured_cfg`.                                                                                         |
+| `areal/infra/launcher/slurm.py`                                 | `SGLangConfig` import + `to_structured_cfg`.                                                                                         |
+| `areal/experimental/inference_service/controller/controller.py` | `SGLangConfig` in gateway controller.                                                                                                |
+| `areal/experimental/inference_service/data_proxy/backend.py`    | HTTP protocol implementation for inference service proxy (SGLangBridgeBackend).                                                      |
 
 ### Tertiary (tests, config)
 
@@ -398,12 +411,146 @@ added/removed/renamed `argparse` arguments.
 
 ______________________________________________________________________
 
+### 15. `Engine._launch_subprocesses` — server lifecycle
+
+**Source:** `python/sglang/srt/entrypoints/engine.py`
+
+Called in `areal/experimental/inference_service/sglang/launch_server.py`
+(`areal_launch_server`):
+
+```python
+from sglang.srt.entrypoints.engine import Engine, init_tokenizer_manager
+
+(
+    tokenizer_manager,
+    template_manager,
+    port_args,
+    scheduler_init_result,
+    subprocess_watchdog,
+) = Engine._launch_subprocesses(
+    server_args=server_args,
+    init_tokenizer_manager_func=init_tokenizer_manager,
+    run_scheduler_process_func=areal_run_scheduler_process,
+    run_detokenizer_process_func=run_detokenizer_process,
+)
+```
+
+**Check:** Confirm `_launch_subprocesses` is still a classmethod. Verify it still
+accepts `run_scheduler_process_func` as a callable parameter for scheduler process
+injection. Verify the return tuple is
+`(TokenizerManager, TemplateManager, PortArgs, SchedulerInitResult, SubprocessWatchdog)`.
+Confirm `SchedulerInitResult.scheduler_infos` attribute exists.
+
+______________________________________________________________________
+
+### 16. `_setup_and_run_http_server` — HTTP server bootstrap
+
+**Source:** `python/sglang/srt/entrypoints/http_server.py`
+
+Called in `areal/experimental/inference_service/sglang/launch_server.py`
+(`areal_launch_server`):
+
+```python
+from sglang.srt.entrypoints.http_server import (
+    _execute_server_warmup,
+    _setup_and_run_http_server,
+    app,
+)
+
+_setup_and_run_http_server(
+    server_args,
+    tokenizer_manager,
+    template_manager,
+    port_args,
+    scheduler_init_result.scheduler_infos,
+    subprocess_watchdog,
+    execute_warmup_func=_execute_server_warmup,
+)
+```
+
+**Check:** Confirm the function still exists at this module path. Verify signature:
+`(server_args, tokenizer_manager, template_manager, port_args, scheduler_infos, subprocess_watchdog, execute_warmup_func, launch_callback)`.
+Confirm `app` is still the FastAPI instance exported from this module.
+
+______________________________________________________________________
+
+### 17. `Scheduler` constructor and `configure_scheduler`
+
+**Source:** `python/sglang/srt/managers/scheduler.py`
+
+Called in `areal/experimental/inference_service/sglang/scheduler.py`
+(`areal_run_scheduler_process`):
+
+```python
+from sglang.srt.managers.scheduler import Scheduler, configure_scheduler
+
+dp_rank = configure_scheduler(
+    server_args, tp_rank, attn_cp_rank, moe_dp_rank, moe_ep_rank, pp_rank, dp_rank
+)
+
+scheduler = Scheduler(
+    server_args, port_args, gpu_id, tp_rank, moe_ep_rank, pp_rank,
+    attn_cp_rank, moe_dp_rank, dp_rank,
+)
+pipe_writer.send(scheduler.get_init_info())
+scheduler.run_event_loop()
+```
+
+**Check:** Confirm `configure_scheduler` signature is
+`(server_args, tp_rank, attn_cp_rank, moe_dp_rank, moe_ep_rank, pp_rank, dp_rank)`.
+Confirm `Scheduler.__init__` signature is
+`(server_args, port_args, gpu_id, tp_rank, moe_ep_rank, pp_rank, attn_cp_rank, moe_dp_rank, dp_rank)`.
+Verify `get_init_info()` and `run_event_loop()` still exist. Confirm `tp_rank`,
+`dp_rank`, `tp_cpu_group`, `tp_size` attributes are present on the scheduler instance
+(used by `AwexSchedulerBridge`).
+
+______________________________________________________________________
+
+### 18. `RpcReqInput` / `RpcReqOutput` — scheduler RPC protocol
+
+**Source:** `python/sglang/srt/managers/io_struct.py`
+
+Used in `areal/experimental/inference_service/sglang/rpc_proxy.py`:
+
+```python
+from sglang.srt.managers.io_struct import RpcReqInput, RpcReqOutput
+
+req = RpcReqInput(method=method, parameters=kwargs if kwargs else None)
+self._rpc_socket.send_pyobj(req)
+resp: RpcReqOutput = self._rpc_socket.recv_pyobj()
+# resp.success: bool, resp.message: str
+```
+
+**Check:** Confirm `RpcReqInput` still has `method: str` and
+`parameters: Optional[Dict]` fields. Confirm `RpcReqOutput` still has `success: bool`
+and `message: str` fields. Verify `send_pyobj`/`recv_pyobj` serialization still works
+(both inherit from `BaseReq` which is a dataclass).
+
+______________________________________________________________________
+
+### 19. `sglang.srt.utils` module reorganization (v0.5.10+)
+
+**Source:** `python/sglang/srt/utils/__init__.py`, `python/sglang/srt/utils/common.py`,
+`python/sglang/srt/utils/network.py`, `python/sglang/srt/utils/numa_utils.py`
+
+In v0.5.10+, `sglang.srt.utils/__init__.py` only re-exports from `common.py` via
+`from sglang.srt.utils.common import *`. Functions in submodules must be imported
+directly:
+
+- `get_zmq_socket` → `sglang.srt.utils.network`
+- `get_numa_node_if_available`, `numa_bind_to_node` → `sglang.srt.utils.numa_utils`
+- `kill_itself_when_parent_died`, `get_bool_env_var`, `set_gpu_proc_affinity`,
+  `kill_process_tree` → `sglang.srt.utils` (via `common.py`)
+
+**Check:** On each upgrade, verify `sglang.srt.utils/__init__.py` re-export scope. If
+functions move between submodules, update AReaL import paths accordingly.
+
+______________________________________________________________________
+
 ## Version-Guarded Code
 
-- `areal/api/cli_args.py:1713-1714` —
-  `if not pkg_version.is_version_greater_or_equal("sglang", "0.4.9.post2"): raise RuntimeError(...)`.
-  Update this floor version if the new target requires a higher minimum.
-- `areal/api/cli_args.py:1715-1716` —
-  `if is_version_less("sglang", "0.4.10.post2"): args.pop("max_loaded_loras", None)`.
-  Once the minimum version is raised past `0.4.10.post2`, this guard and the `pop` call
-  can be removed.
+- `areal/api/cli_args.py:1877-1878` —
+  `if not pkg_version.is_version_greater_or_equal("sglang", "0.5.10.post1"): raise RuntimeError(...)`.
+  Minimum floor raised from `0.4.9.post2` to `0.5.10.post1` during this upgrade. The
+  legacy `max_loaded_loras` version guard (`<0.4.10.post2`) was removed because the new
+  floor is well past that version.
