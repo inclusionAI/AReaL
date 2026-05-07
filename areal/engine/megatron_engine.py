@@ -4503,6 +4503,30 @@ class MegatronEngine(TrainEngine):
         # --- MTP independent learning rate  ---
         _mtp_lr_config_overrides = None
         _mtp_lr_scale = getattr(self.optimizer_config, 'mtp_lr_scale', 1.0)
+        # [P2-MTPShareParamGroup] When the MTP-only param group is activated
+        # via ParamKey(name=("*.mtp.*",)), Megatron 0.16 DistributedOptimizer
+        # only shards that (small) group across a subset of DP ranks, leaving
+        # the other ranks with ``param.main_param = None``.  That breaks the
+        # weight-ship path because _collect_param(..) returns None on those
+        # ranks, so ``mtp_hf_tensors`` stays empty and sglang draft never
+        # gets updated.  Default behaviour of this patch is to force MTP to
+        # share the main param group (mtp_lr_scale coerced to 1.0); opt-out
+        # via AREAL_MTP_SHARE_PARAM_GROUP=0.
+        _v59_share_pg = (os.environ.get(
+            "AREAL_MTP_SHARE_PARAM_GROUP", "1") == "1")
+        if (
+            self.enable_mtp_training
+            and _v59_share_pg
+            and _mtp_lr_scale != 1.0
+        ):
+            self.logger.warning(
+                "[MTPShareParamGroup-P2] overriding mtp_lr_scale=%.3f -> 1.0 "
+                "so MTP parameters share the main param group and every DP "
+                "rank holds a master-param shard. Set "
+                "AREAL_MTP_SHARE_PARAM_GROUP=0 to restore the split.",
+                _mtp_lr_scale,
+            )
+            _mtp_lr_scale = 1.0
         if self.enable_mtp_training and _mtp_lr_scale != 1.0:
             try:
                 from megatron.core.optimizer.optimizer_config import ParamKey
@@ -6135,6 +6159,41 @@ class MegatronEngine(TrainEngine):
                     _sys_v24m.stdout.flush()
                 except Exception:
                     pass
+                # [P3-MTPShipFallback] When _collect_param returned None on
+                # this rank (typically because the MTP-only param group left
+                # no master shard here, or the fp32-master fetch raised),
+                # fall back to a plain bf16 all-gather of ``param`` so that
+                # the wire payload for the draft model is never dropped
+                # silently.  Opt-out via AREAL_MTP_SHIP_FALLBACK=0.
+                if (
+                    _collect_mtp_for_draft
+                    and _mtp_param is None
+                    and os.environ.get(
+                        "AREAL_MTP_SHIP_FALLBACK", "1") == "1"
+                ):
+                    try:
+                        _fb_param, _ = self._collect_param(name, param)
+                        if _fb_param is not None:
+                            _mtp_param = _fb_param
+                            self.logger.warning(
+                                "[MTPShipFallback-P3] rank=%d name=%s "
+                                "fell back to bf16 all-gather (fp32 "
+                                "master unavailable on this rank).",
+                                dist.get_rank(), name,
+                            )
+                        else:
+                            self.logger.error(
+                                "[MTPShipFallback-P3] rank=%d name=%s "
+                                "bf16 all-gather also returned None; "
+                                "MTP tensor will be skipped.",
+                                dist.get_rank(), name,
+                            )
+                    except Exception as _e_p3_fb:
+                        self.logger.error(
+                            "[MTPShipFallback-P3] rank=%d name=%s "
+                            "fallback raised: %r",
+                            dist.get_rank(), name, _e_p3_fb,
+                        )
                 if _collect_mtp_for_draft and _mtp_param is not None:
                     _mtp_model_name = self.hf_config.model_type
                     _prev_count = len(mtp_hf_tensors)

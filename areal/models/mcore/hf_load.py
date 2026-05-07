@@ -468,6 +468,30 @@ def load_weights_from_hf_with_mbridge_fast(
             for k, v in local_to_global_map.items()
             if "_extra_state" not in k
         }
+        # [P1-MTPCkptLoad] mbridge MiMoBridge does not translate
+        # ``mtp.layers.{idx}.*`` MCore-global keys to their HF counterparts
+        # (``model.mtp_layers.{idx}.*``).  Without this augmentation the MTP
+        # head boots from random weights (per-token CE ≈ log(vocab)) which
+        # crushes spec_accept_rate.  Apply MiMo MTP mapping in-place when the
+        # base bridge produced an empty list.
+        try:
+            from areal.models.mcore.mimo_mtp_hf_mapping import (
+                augment_local_to_hf_map_with_mtp,
+            )
+            _mtp_patched = augment_local_to_hf_map_with_mtp(
+                local_to_global_map, local_to_hf_map, logger=logger,
+            )
+            if _mtp_patched:
+                logger.info(
+                    "[MTPCkptLoad-P1] applied MTP HF-name mapping for "
+                    "%d local keys (model_index=%d)",
+                    _mtp_patched, model_index,
+                )
+        except Exception as _e_p1_mtp:
+            logger.warning(
+                "[MTPCkptLoad-P1] augment failed: %r (MTP weights may "
+                "still be missing)", _e_p1_mtp,
+            )
         if manual_tie_word_embedding:
             for k, v in local_to_hf_map.items():
                 if "lm_head.weight" in v:
