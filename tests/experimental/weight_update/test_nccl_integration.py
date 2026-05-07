@@ -436,6 +436,7 @@ def test_awex_fsdp_e2e_weight_update(n_gpus, tmp_path_factory):
         inf_ctrl.initialize(
             role="rollout",
             server_args={"model_path": model_path, "mem_fraction_static": 0.7},
+            wait=True,
         )
         inf_worker_urls = list(inf_ctrl._inf_addrs)
 
@@ -450,7 +451,7 @@ def test_awex_fsdp_e2e_weight_update(n_gpus, tmp_path_factory):
         ft_spec = FinetuneSpec(
             total_train_epochs=1, dataset_size=100, train_batch_size=2
         )
-        train_ctrl.initialize(role="actor", ft_spec=ft_spec)
+        train_ctrl.initialize(role="actor", ft_spec=ft_spec, wait=True)
         train_worker_urls = list(train_ctrl._worker_addrs)
 
         # -- 3. Weight update gateway -------------------------------------
@@ -636,6 +637,7 @@ def _run_megatron_awex_e2e(
         inf_ctrl.initialize(
             role="rollout",
             server_args={"model_path": model_path, "mem_fraction_static": 0.7},
+            wait=True,
         )
         inf_worker_urls = list(inf_ctrl._inf_addrs)
 
@@ -648,6 +650,7 @@ def _run_megatron_awex_e2e(
             ft_spec=FinetuneSpec(
                 total_train_epochs=1, dataset_size=100, train_batch_size=2
             ),
+            wait=True,
         )
         train_worker_urls = list(train_ctrl._worker_addrs)
 

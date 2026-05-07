@@ -364,6 +364,7 @@ def gateway_controller(sglang_server, model_path, tmp_path_factory):
     ctrl.initialize(
         role="rollout",
         server_infos=[_make_server_info(sglang_server)],
+        wait=True,
     )
 
     try:
@@ -421,6 +422,7 @@ def gateway_controller_full_init(request, model_path, tmp_path_factory):
     ctrl.initialize(
         role=f"rollout-{backend}",
         server_args=_server_args_for_backend(backend, model_path),
+        wait=True,
     )
 
     try:
@@ -476,6 +478,7 @@ def gateway_controller_full_init_online(request, model_path, tmp_path_factory):
     ctrl.initialize(
         role=f"rollout-online-{backend}",
         server_args=_server_args_for_backend(backend, model_path),
+        wait=True,
     )
 
     try:
@@ -535,6 +538,7 @@ def gateway_controller_full_init_with_reward_timeout(
     ctrl.initialize(
         role=f"rollout-timeout-{backend}",
         server_args=_server_args_for_backend(backend, model_path),
+        wait=True,
     )
 
     try:
@@ -587,6 +591,7 @@ def gateway_controller_full_init_vlm(request, vlm_model_path, tmp_path_factory):
     ctrl.initialize(
         role=f"rollout-vlm-{backend}",
         server_args=_server_args_for_backend(backend, vlm_model_path, mem=0.25),
+        wait=True,
     )
 
     try:

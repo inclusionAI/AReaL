@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import sys
+import threading
 import time
 import traceback
 from typing import TYPE_CHECKING, Any
@@ -11,7 +13,7 @@ from uuid import uuid4
 
 import aiohttp
 
-from areal.infra.utils.concurrent import run_async_task
+from areal.infra.utils.concurrent import get_executor, run_async_task
 from areal.utils import logging
 from areal.utils.network import format_hostport
 
@@ -55,19 +57,79 @@ class GatewayTrainController:
         self._parallel_strategy = self.train_alloc.parallel
         self._own_process_group = False
 
+        # Pipelined initialization state
+        self._init_future: concurrent.futures.Future | None = None
+        self._init_lock = threading.Lock()
+        self._workers_ready = threading.Event()
+        self._shutdown_requested = threading.Event()
+
+    _WORKERS_READY_TIMEOUT: float = 30.0
+
     # -- Initialize --------------------------------------------------------
 
     def initialize(
+        self,
+        role: str,
+        ft_spec: FinetuneSpec | None = None,
+        *,
+        wait: bool = False,
+        **kwargs: Any,
+    ) -> concurrent.futures.Future | None:
+        if self._init_future is not None:
+            raise RuntimeError(
+                "initialize() called while a previous initialization is in progress"
+            )
+
+        self._role = role
+
+        self._workers_ready.clear()
+        self._shutdown_requested.clear()
+        self._init_future = get_executor("ctrl_init").submit(
+            self._guarded_bg_initialize, role, ft_spec, **kwargs
+        )
+
+        if not self._workers_ready.wait(timeout=self._WORKERS_READY_TIMEOUT):
+            raise TimeoutError(
+                f"Worker creation timed out after {self._WORKERS_READY_TIMEOUT}s"
+            )
+        if self._init_future.done():
+            self._init_future.result()
+
+        if wait:
+            self._ensure_initialized()
+            return None
+        return self._init_future
+
+    def _guarded_bg_initialize(self, *args: Any, **kwargs: Any) -> None:
+        """Ensure _workers_ready is signaled even if _bg_initialize fails."""
+        try:
+            self._bg_initialize(*args, **kwargs)
+        except BaseException:
+            self._workers_ready.set()
+            raise
+
+    def _bg_initialize(
         self, role: str, ft_spec: FinetuneSpec | None = None, **kwargs: Any
     ) -> None:
-        self._role = role
         run_async_task(self._async_initialize, role, ft_spec, **kwargs)
+        if self._shutdown_requested.is_set():
+            return
         logger.info(
             "GatewayTrainController initialized (role=%s, api_key=%s, gateway=%s)",
             role,
             self.api_key,
             self._gateway_addr,
         )
+
+    def _ensure_initialized(self) -> None:
+        if self._init_future is None:
+            return
+        with self._init_lock:
+            future = self._init_future
+            if future is None:
+                return
+            future.result(timeout=self.config.setup_timeout)
+            self._init_future = None
 
     async def _async_initialize(
         self,
@@ -117,6 +179,11 @@ class GatewayTrainController:
                 timeout=int(self.config.setup_timeout),
             )
             logger.info("Guards ready: %s", [w.id for w in guard_workers])
+
+            self._workers_ready.set()
+
+            if self._shutdown_requested.is_set():
+                return
 
             # ==============================================================
             # Step 1: Allocate master addr/port for NCCL rendezvous
@@ -228,6 +295,9 @@ class GatewayTrainController:
             )
             logger.info("Engines initialized on all workers")
 
+            if self._shutdown_requested.is_set():
+                return
+
             # ==============================================================
             # Step 4: Fork Router on guard 0
             # ==============================================================
@@ -248,6 +318,9 @@ class GatewayTrainController:
             )
             self._router_addr = f"http://{format_hostport(router_host, router_port)}"
             logger.info("Router: %s", self._router_addr)
+
+            if self._shutdown_requested.is_set():
+                return
 
             # ==============================================================
             # Step 5: Fork Data Proxy on a guard
@@ -271,6 +344,9 @@ class GatewayTrainController:
             )
             self._model_addr = f"http://{format_hostport(dp_host, dp_port)}"
             logger.info("Model endpoint: %s", self._model_addr)
+
+            if self._shutdown_requested.is_set():
+                return
 
             # ==============================================================
             # Step 6: Fork Gateway on guard 0
@@ -550,6 +626,7 @@ class GatewayTrainController:
     def _gateway_post(self, path: str, payload: Any = None) -> Any:
         import requests
 
+        self._ensure_initialized()
         url = f"{self._gateway_addr}{path}"
         resp = requests.post(
             url,
@@ -566,6 +643,7 @@ class GatewayTrainController:
     def _gateway_get(self, path: str) -> Any:
         import requests
 
+        self._ensure_initialized()
         url = f"{self._gateway_addr}{path}"
         resp = requests.get(
             url,
@@ -918,4 +996,10 @@ class GatewayTrainController:
                 self._own_process_group = False
 
     def destroy(self) -> None:
+        self._shutdown_requested.set()
+        future = self._init_future
+        self._init_future = None
+        if future is not None:
+            future.cancel()
+
         self._cleanup_runtime_state()

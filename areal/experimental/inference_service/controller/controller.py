@@ -11,6 +11,7 @@ server processes are forked through RPCGuard (a lightweight process manager).
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import copy
 import os
 import sys
@@ -178,7 +179,15 @@ class RolloutControllerV2:
         self.proxy_workers: list = []
         self.proxy_addrs: list[str] = []
 
+        # Pipelined initialization state
+        self._init_future: concurrent.futures.Future | None = None
+        self._init_lock = threading.Lock()
+        self._workers_ready = threading.Event()
+        self._shutdown_requested = threading.Event()
+
     # -- Initialize --------------------------------------------------------
+
+    _WORKERS_READY_TIMEOUT: float = 30.0
 
     def initialize(
         self,
@@ -186,24 +195,66 @@ class RolloutControllerV2:
         server_args: dict[str, Any] | None = None,
         server_infos: list[LocalInfServerInfo] | None = None,
         *args: Any,
+        wait: bool = False,
+        **kwargs: Any,
+    ) -> concurrent.futures.Future | None:
+        from areal.infra.utils.concurrent import get_executor
+
+        if self._init_future is not None:
+            raise RuntimeError(
+                "initialize() called while a previous initialization is in progress"
+            )
+
+        self._worker_role = role
+        self._start_online_callback_server()
+
+        self._workers_ready.clear()
+        self._shutdown_requested.clear()
+        self._init_future = get_executor("ctrl_init").submit(
+            self._guarded_bg_initialize, server_args, server_infos, *args, **kwargs
+        )
+
+        if not self._workers_ready.wait(timeout=self._WORKERS_READY_TIMEOUT):
+            raise TimeoutError(
+                f"Worker creation timed out after {self._WORKERS_READY_TIMEOUT}s"
+            )
+        if self._init_future.done():
+            self._init_future.result()
+
+        if wait:
+            self._ensure_initialized()
+            return None
+        return self._init_future
+
+    def _guarded_bg_initialize(self, *args: Any, **kwargs: Any) -> None:
+        """Ensure _workers_ready is signaled even if _bg_initialize fails."""
+        try:
+            self._bg_initialize(*args, **kwargs)
+        except BaseException:
+            self._workers_ready.set()
+            raise
+
+    def _bg_initialize(
+        self,
+        server_args: dict[str, Any] | None,
+        server_infos: list[LocalInfServerInfo] | None = None,
+        *args: Any,
         **kwargs: Any,
     ) -> None:
         from areal.infra.utils.concurrent import run_async_task
 
-        self._worker_role = role
-        self._start_online_callback_server()
         run_async_task(
-            self._async_initialize,
-            server_args,
-            server_infos,
-            *args,
-            **kwargs,
+            self._async_initialize, server_args, server_infos, *args, **kwargs
         )
 
-        # Register data proxies in the router
+        if self._shutdown_requested.is_set():
+            return
+
         self._register_data_proxies_in_router()
 
-        # Create WorkflowExecutor directly (no intermediate engine)
+        if self._shutdown_requested.is_set():
+            return
+
         from areal.infra.remote_inf_engine import RemoteInfEngine
         from areal.infra.workflow_executor import WorkflowExecutor
 
@@ -213,7 +264,9 @@ class RolloutControllerV2:
         )
         self._workflow_executor.initialize()
 
-        # Create staleness manager
+        if self._shutdown_requested.is_set():
+            return
+
         from areal.infra.staleness_manager import StalenessManager
 
         max_concurrent = (
@@ -226,10 +279,13 @@ class RolloutControllerV2:
             max_staleness=self.config.max_head_offpolicyness,
         )
 
-        logger.info("RolloutControllerV2 initialized (role=%s)", role)
+        logger.info("RolloutControllerV2 initialized (role=%s)", self._worker_role)
 
         if self.config.model:
-            self.register_model(
+            # Call _register_model_impl directly to avoid _ensure_initialized()
+            # which would deadlock: the main thread holds _init_lock waiting for
+            # this future to complete, but _ensure_initialized() also needs _init_lock.
+            self._register_model_impl(
                 model=self.config.model,
                 url=self.config.api_url or "",
                 api_key=self.config.provider_api_key,
@@ -240,6 +296,16 @@ class RolloutControllerV2:
                 self.config.api_url,
                 self.config.model,
             )
+
+    def _ensure_initialized(self) -> None:
+        if self._init_future is None:
+            return
+        with self._init_lock:
+            future = self._init_future
+            if future is None:
+                return
+            future.result(timeout=self.config.setup_timeout)
+            self._init_future = None
 
     async def _async_initialize(
         self,
@@ -329,6 +395,11 @@ class RolloutControllerV2:
             )
         self.workers = inf_workers
         logger.info("RPCGuard workers ready: %s", [w.id for w in inf_workers])
+
+        self._workers_ready.set()
+
+        if self._shutdown_requested.is_set():
+            return
 
         # ==================================================================
         # Step 1: Launch inference servers (skip in external mode or when pre-existing)
@@ -537,6 +608,9 @@ class RolloutControllerV2:
                 )
         logger.info("Inference servers: %s", self._inf_addrs)
 
+        if self._shutdown_requested.is_set():
+            return
+
         # ==================================================================
         # Step 2: Fork Router on worker 0
         # ==================================================================
@@ -563,6 +637,9 @@ class RolloutControllerV2:
         )
         self._router_addr = f"http://{format_hostport(router_host, router_port)}"
         logger.info("Router: %s", self._router_addr)
+
+        if self._shutdown_requested.is_set():
+            return
 
         # ==================================================================
         # Step 3: Fork Data Proxies on all workers (raw_cmd mode)
@@ -627,6 +704,9 @@ class RolloutControllerV2:
             )
 
         logger.info("Data proxies: %s", self._data_proxy_addrs)
+
+        if self._shutdown_requested.is_set():
+            return
 
         # ==================================================================
         # Step 4: Fork Gateway on worker 0
@@ -710,6 +790,16 @@ class RolloutControllerV2:
                 self._worker_ids[data_proxy_addr] = worker_id
 
     def register_model(
+        self,
+        model: str,
+        url: str = "",
+        api_key: str | None = None,
+        data_proxy_addrs: list[str] | None = None,
+    ) -> None:
+        self._ensure_initialized()
+        self._register_model_impl(model, url, api_key, data_proxy_addrs)
+
+    def _register_model_impl(
         self,
         model: str,
         url: str = "",
@@ -887,6 +977,13 @@ class RolloutControllerV2:
         if self._destroyed:
             return
         self._destroyed = True
+
+        self._shutdown_requested.set()
+        future = self._init_future
+        self._init_future = None
+        if future is not None:
+            future.cancel()
+
         self._stop_online_callback_server()
 
         # Destroy workflow executor
@@ -955,6 +1052,8 @@ class RolloutControllerV2:
     def set_version(self, version: int) -> None:
         """Set version locally and broadcast to all data proxy workers."""
         from areal.infra.utils.concurrent import run_async_task
+
+        self._ensure_initialized()
 
         with self._version_lock:
             self._version = version
@@ -1080,6 +1179,7 @@ class RolloutControllerV2:
         list[dict[str, Any]]
             A list of trajectory dicts (one per completed rollout).
         """
+        self._ensure_initialized()
         if not self._gateway_addr:
             raise RuntimeError("RolloutControllerV2.initialize() must be called first")
         if data is None:
@@ -1149,6 +1249,7 @@ class RolloutControllerV2:
         list[dict[str, Any]]
             A list of trajectory dicts (matching ``RolloutController`` API).
         """
+        self._ensure_initialized()
         if not self._gateway_addr:
             raise RuntimeError("RolloutControllerV2.initialize() must be called first")
         if dataloader is None:
@@ -1198,6 +1299,7 @@ class RolloutControllerV2:
             When ``stream=False`` (default): parsed OpenAI ChatCompletion object.
             When ``stream=True``: async generator yielding ChatCompletionChunk.
         """
+        self._ensure_initialized()
         import aiohttp
 
         stream = kwargs.get("stream", False)
@@ -1286,6 +1388,7 @@ class RolloutControllerV2:
         """Pause dispatcher + pause all workers."""
         from areal.infra.utils.concurrent import run_async_task
 
+        self._ensure_initialized()
         if self._workflow_executor is not None:
             self._workflow_executor.pause()
         run_async_task(self.pause_generation)
@@ -1294,6 +1397,7 @@ class RolloutControllerV2:
         """Resume all workers + resume dispatcher."""
         from areal.infra.utils.concurrent import run_async_task
 
+        self._ensure_initialized()
         run_async_task(self.continue_generation)
         if self._workflow_executor is not None:
             self._workflow_executor.resume()
@@ -1302,6 +1406,7 @@ class RolloutControllerV2:
         """Offload model memory on all inference workers."""
         from areal.infra.utils.concurrent import run_async_task
 
+        self._ensure_initialized()
         run_async_task(self._async_offload)
 
     async def _async_offload(self) -> None:
@@ -1324,6 +1429,7 @@ class RolloutControllerV2:
         """Reload model memory on all inference workers."""
         from areal.infra.utils.concurrent import run_async_task
 
+        self._ensure_initialized()
         run_async_task(self._async_onload, tags)
 
     async def _async_onload(self, tags: list[str] | None = None) -> None:
@@ -1411,6 +1517,7 @@ class RolloutControllerV2:
 
     @property
     def proxy_gateway_addr(self) -> str:
+        self._ensure_initialized()
         return self._gateway_addr
 
     # -- Properties --------------------------------------------------------
@@ -1418,14 +1525,17 @@ class RolloutControllerV2:
     @property
     def worker_ids(self) -> dict[str, str]:
         """Return mapping from data proxy address to router-assigned worker_id."""
+        self._ensure_initialized()
         return dict(self._worker_ids)
 
     @property
     def staleness_manager(self):
+        self._ensure_initialized()
         return self._staleness_manager
 
     @property
     def workflow_executor(self):
+        self._ensure_initialized()
         if self._workflow_executor is None:
             raise RuntimeError("RolloutControllerV2.initialize() must be called first")
         return self._workflow_executor
