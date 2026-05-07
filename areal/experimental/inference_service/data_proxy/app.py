@@ -39,6 +39,7 @@ from areal.experimental.openai.proxy.server import serialize_interactions
 from areal.infra.rpc.guard.data_blueprint import (
     data_bp,
 )
+from areal.infra.utils.http import get_default_httpx_limits
 from areal.utils import logging
 
 logger = logging.getLogger("InferenceDataProxy")
@@ -323,7 +324,10 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         )
         app.state.session_store.set_admin_key(config.admin_api_key)
         app.state.version = 0
-        app.state.http_client = httpx.AsyncClient(timeout=config.request_timeout)
+        app.state.http_client = httpx.AsyncClient(
+            timeout=config.request_timeout,
+            limits=get_default_httpx_limits(),
+        )
 
         if not config.backend_addr:
             app.state.tokenizer = None

@@ -11,6 +11,7 @@ from typing import Any
 
 import httpx
 
+from areal.infra.utils.http import get_default_httpx_limits
 from areal.utils import logging
 
 logger = logging.getLogger("InferenceGateway")
@@ -39,7 +40,9 @@ async def _use_client(
     if client is not None:
         yield client
     else:
-        async with httpx.AsyncClient(timeout=timeout) as c:
+        async with httpx.AsyncClient(
+            timeout=timeout, limits=get_default_httpx_limits()
+        ) as c:
             yield c
 
 

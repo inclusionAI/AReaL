@@ -40,6 +40,7 @@ def main():
         warmup_timeout=args.warmup_timeout,
     )
 
+    from areal.infra.utils.http import get_default_uvicorn_kwargs
     from areal.utils.logging import suppress_http_loggers
 
     suppress_http_loggers()
@@ -50,6 +51,7 @@ def main():
         port=config.port,
         log_level=config.log_level,
         access_log=False,
+        **get_default_uvicorn_kwargs(),
     )
 
 
