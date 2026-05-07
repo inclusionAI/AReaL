@@ -282,7 +282,10 @@ class RolloutControllerV2:
         logger.info("RolloutControllerV2 initialized (role=%s)", self._worker_role)
 
         if self.config.model:
-            self.register_model(
+            # Call _register_model_impl directly to avoid _ensure_initialized()
+            # which would deadlock: the main thread holds _init_lock waiting for
+            # this future to complete, but _ensure_initialized() also needs _init_lock.
+            self._register_model_impl(
                 model=self.config.model,
                 url=self.config.api_url or "",
                 api_key=self.config.provider_api_key,
@@ -794,6 +797,15 @@ class RolloutControllerV2:
         data_proxy_addrs: list[str] | None = None,
     ) -> None:
         self._ensure_initialized()
+        self._register_model_impl(model, url, api_key, data_proxy_addrs)
+
+    def _register_model_impl(
+        self,
+        model: str,
+        url: str = "",
+        api_key: str | None = None,
+        data_proxy_addrs: list[str] | None = None,
+    ) -> None:
         if data_proxy_addrs is None:
             data_proxy_addrs = self._data_proxy_addrs
         resp = self._sync_client.post(
