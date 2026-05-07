@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Monkey-patches for Megatron-Core MoE components to support Router Replay (R3).
 
 Forces TopKRouter to use pre-recorded expert assignments from rollout inference
@@ -74,7 +76,7 @@ class RouterReplay:
     """
 
     # Class-level list of all router instances (one per MoE layer).
-    router_instances: list["RouterReplay"] = []
+    router_instances: list[RouterReplay] = []
 
     # Class-level pipeline parallelism size for backward remapping.
     # Set by the engine patch before forward_backward_func.
@@ -142,6 +144,7 @@ class RouterReplay:
         self.creation_order: int = len(RouterReplay.router_instances)
         try:
             import torch.distributed as _dist
+
             self.creator_rank: int = _dist.get_rank() if _dist.is_initialized() else -1
         except Exception:
             self.creator_rank = -1
@@ -230,7 +233,9 @@ def _patched_topk_routing_with_score_function(
         )
 
         if routing_action is None:
-            return _compute_topk(scores, topk, num_groups=num_groups, group_topk=group_topk)
+            return _compute_topk(
+                scores, topk, num_groups=num_groups, group_topk=group_topk
+            )
 
         if routing_action == RouterReplayAction.RECORD:
             probs, top_indices = _compute_topk(
@@ -247,7 +252,9 @@ def _patched_topk_routing_with_score_function(
                     "[R3] REPLAY_FORWARD: no replay indices available, "
                     "falling back to normal routing."
                 )
-                return _compute_topk(scores, topk, num_groups=num_groups, group_topk=group_topk)
+                return _compute_topk(
+                    scores, topk, num_groups=num_groups, group_topk=group_topk
+                )
 
             # Use the provided indices for replay
             top_indices = router_replay.target_topk_idx
@@ -274,7 +281,9 @@ def _patched_topk_routing_with_score_function(
                     "[R3] REPLAY_BACKWARD: no backward indices available, "
                     "falling back to normal routing."
                 )
-                return _compute_topk(scores, topk, num_groups=num_groups, group_topk=group_topk)
+                return _compute_topk(
+                    scores, topk, num_groups=num_groups, group_topk=group_topk
+                )
             # Backward recompute: use the recorded indices from the forward pass.
             top_indices = router_replay.replay_backward_list.pop(0)
             top_indices = top_indices.to(scores.device)
@@ -306,7 +315,9 @@ def _patched_topk_routing_with_score_function(
             return probs, top_indices
 
         else:
-            return _compute_topk(scores, topk, num_groups=num_groups, group_topk=group_topk)
+            return _compute_topk(
+                scores, topk, num_groups=num_groups, group_topk=group_topk
+            )
 
     # --- Score function dispatch ---
     if score_function == "softmax":
@@ -320,11 +331,15 @@ def _patched_topk_routing_with_score_function(
         scores = torch.sigmoid(logits.float()).type_as(logits)
         if expert_bias is not None:
             scores_for_routing = scores + expert_bias
-            _, top_indices = compute_topk(scores_for_routing, topk, num_groups, group_topk)
+            _, top_indices = compute_topk(
+                scores_for_routing, topk, num_groups, group_topk
+            )
             scores = torch.gather(scores, dim=1, index=top_indices).type_as(logits)
         else:
             scores, top_indices = compute_topk(scores, topk, num_groups, group_topk)
-        probs = scores / (scores.sum(dim=-1, keepdim=True) + 1e-20) if topk > 1 else scores
+        probs = (
+            scores / (scores.sum(dim=-1, keepdim=True) + 1e-20) if topk > 1 else scores
+        )
     else:
         raise ValueError(f"[R3] Invalid score_function: {score_function}")
 
@@ -445,7 +460,9 @@ def patched_routing(self, logits: torch.Tensor, *args, **kwargs):
                 fused=self.config.moe_router_fusion,
             )
         )
-        probs = self._apply_aux_loss(probs, scores_for_aux_loss, routing_map_for_aux_loss)
+        probs = self._apply_aux_loss(
+            probs, scores_for_aux_loss, routing_map_for_aux_loss
+        )
         probs = self._apply_seq_aux_loss(
             probs, scores_for_aux_loss, routing_map_for_aux_loss, seq_length, bsz
         )
@@ -563,7 +580,9 @@ def _patch_transformer_config_init() -> None:
 
     TransformerConfig.__init__ = patched_tf_config_init
     TransformerConfig._r3_config_patched = True
-    logger.debug("[R3] TransformerConfig.__init__ patched to accept enable_routing_replay.")
+    logger.debug(
+        "[R3] TransformerConfig.__init__ patched to accept enable_routing_replay."
+    )
 
 
 def _undo_transformer_config_patch() -> None:
@@ -595,8 +614,7 @@ def _patch_topk_router_init() -> None:
         if getattr(self.config, "enable_routing_replay", False):
             self.router_replay = RouterReplay()
             logger.debug(
-                "[R3] TopKRouter: created RouterReplay instance "
-                "(total instances: %d).",
+                "[R3] TopKRouter: created RouterReplay instance (total instances: %d).",
                 len(RouterReplay.router_instances),
             )
 

@@ -1,4 +1,3 @@
-import pytest
 import torch
 
 from areal.engine.megatron_engine_r3_patch import _align_routed_experts_to_mask

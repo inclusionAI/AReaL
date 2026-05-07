@@ -535,9 +535,7 @@ def call_engine_method():
                     args={"method": method_name, "engine": engine_name},
                 ):
                     if not hasattr(engine, method_name):
-                        raise ValueError(
-                            f"Engine does not have method '{method_name}'"
-                        )
+                        raise ValueError(f"Engine does not have method '{method_name}'")
                     method = getattr(engine, method_name)
                     result = method(*args_bcast, **kwargs_bcast)
 

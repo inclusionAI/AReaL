@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Router Replay (R3) utilities for AReaL.
 
 Converts rollout routing indices into Megatron-Core's RouterReplay layout:
@@ -7,12 +9,10 @@ right-pad → left-align, TP/SP scatter, PP layer slicing, dense/MoE mapping.
 from __future__ import annotations
 
 import inspect
-from typing import Optional
 
 import torch
 
 from areal.engine.router_replay_patch import RouterReplay, RouterReplayAction
-
 from areal.utils import logging
 
 # NOTE: use areal.utils.logging.getLogger with a stable registered
@@ -95,9 +95,7 @@ def get_num_layers_to_build(config, vp_stage=None, pp_rank=None) -> int:
 
     # Account for embedding/loss layers
     if getattr(config, "account_for_embedding_in_pipeline_split", False):
-        if is_first_pp_stage and (
-            vp_stage is None or vp_stage == 0
-        ):
+        if is_first_pp_stage and (vp_stage is None or vp_stage == 0):
             num_layers_to_build -= 1
 
     if getattr(config, "account_for_loss_in_pipeline_split", False):
@@ -119,7 +117,9 @@ def is_moe_layer(tf_config, layer_idx: int) -> bool:
     elif isinstance(moe_layer_freq, list):
         return moe_layer_freq[layer_idx] == 1
     else:
-        raise ValueError(f"[R3] Unsupported moe_layer_freq type: {type(moe_layer_freq)}")
+        raise ValueError(
+            f"[R3] Unsupported moe_layer_freq type: {type(moe_layer_freq)}"
+        )
 
 
 def get_moe_num_layers_to_build(config, vp_stage=None, pp_rank=None) -> int:
@@ -203,14 +203,12 @@ class RouterReplayHelper:
         )
 
 
-
-
 def set_router_replay_data(
     layers_topk_idx: torch.Tensor,
     cu_seqlens: torch.Tensor,
     tf_config,
-    vp_rank: Optional[int] = None,
-    seq_align_to: Optional[int] = None,
+    vp_rank: int | None = None,
+    seq_align_to: int | None = None,
 ) -> None:
     """Scatter packed router top-k indices to SP ranks and update RouterReplay instances.
 
@@ -277,7 +275,9 @@ def set_router_replay_data(
         # For each sequence i, we take the first seq_lens[i] tokens and place
         # them at aligned positions, with zero-padding for TP alignment gaps.
         packed = torch.zeros(
-            total_aligned, num_layers, topk,
+            total_aligned,
+            num_layers,
+            topk,
             dtype=layers_topk_idx.dtype,
             device=layers_topk_idx.device,
         )
@@ -306,9 +306,9 @@ def set_router_replay_data(
                 continue
             # Take first slen tokens from this sample's routed_experts
             actual_len = min(slen, layers_topk_idx.shape[1])
-            packed[aligned_offset : aligned_offset + actual_len] = (
-                layers_topk_idx[i, :actual_len]
-            )
+            packed[aligned_offset : aligned_offset + actual_len] = layers_topk_idx[
+                i, :actual_len
+            ]
             # Only the real-token span is marked valid; the per-seq
             # TP-alignment slack (aligned_lens[i] - actual_len) stays False.
             valid_mask[aligned_offset : aligned_offset + actual_len] = True
@@ -346,9 +346,7 @@ def set_router_replay_data(
         # ``mean_abs_diff`` profile on every micro-batch.
         # ----------------------------------------------------------------
         with torch.no_grad():
-            row_all_zero = (
-                (packed == 0).reshape(packed.shape[0], -1).all(dim=-1)
-            )
+            row_all_zero = (packed == 0).reshape(packed.shape[0], -1).all(dim=-1)
             valid_mask = valid_mask & (~row_all_zero)
 
         # Step 2: CP split (before TP scatter).
@@ -359,6 +357,7 @@ def set_router_replay_data(
             from areal.engine.megatron_utils.packed_context_parallel import (
                 split_packed_seqs_for_context_parallel,
             )
+
             cu_seqlens_dev = cu_seqlens.to(device)
             packed = split_packed_seqs_for_context_parallel(packed, cu_seqlens_dev)
             # Preserve bool semantics: split as int32 then recast.
@@ -369,7 +368,10 @@ def set_router_replay_data(
         # Step 3: Scatter to SP ranks (TP).
         tp_size = mpu.get_tensor_model_parallel_world_size()
         if tp_size > 1:
-            from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region
+            from megatron.core.tensor_parallel import (
+                scatter_to_sequence_parallel_region,
+            )
+
             local_tokens = scatter_to_sequence_parallel_region(packed)
             # Scatter the mask on dim-0 as well.  ``scatter_to_sequence_parallel_region``
             # expects a tensor with a sequence dimension on dim 0; promote the
@@ -396,7 +398,9 @@ def set_router_replay_data(
                 "[R3] set_router_replay_data: no RouterReplay instances found "
                 "for PP offset=%d..%d, vp_rank=%s. "
                 "Total router_instances=%d.",
-                offset, end, vp_rank,
+                offset,
+                end,
+                vp_rank,
                 len(RouterReplay.router_instances),
             )
             return
@@ -416,7 +420,9 @@ def set_router_replay_data(
                     "[R3] set_router_replay_data: router_offset=%d >= "
                     "len(router_list)=%d. Layer assignment mismatch at "
                     "layer_idx=%d.",
-                    router_offset, len(router_list), layer_idx,
+                    router_offset,
+                    len(router_list),
+                    layer_idx,
                 )
                 break
             router = router_list[router_offset]
@@ -425,7 +431,8 @@ def set_router_replay_data(
                 logger.warning(
                     "[R3] set_router_replay_data: layer index %d >= "
                     "layers_topk dim-0 (%d). Skipping.",
-                    idx, len(layers_topk),
+                    idx,
+                    len(layers_topk),
                 )
                 moe_idx += 1
                 router_offset += 1
@@ -445,8 +452,8 @@ def setup_per_microbatch_replay_forward(
     routed_experts: torch.Tensor,
     cu_seqlens: torch.Tensor,
     tf_config,
-    vp_rank: Optional[int] = None,
-    seq_align_to: Optional[int] = None,
+    vp_rank: int | None = None,
+    seq_align_to: int | None = None,
 ) -> None:
     """Set up RouterReplay for a single micro-batch's forward pass.
 
@@ -461,7 +468,10 @@ def setup_per_microbatch_replay_forward(
     """
     routed_experts = routed_experts.to(torch.int32)
     set_router_replay_data(
-        routed_experts, cu_seqlens, tf_config, vp_rank,
+        routed_experts,
+        cu_seqlens,
+        tf_config,
+        vp_rank,
         seq_align_to=seq_align_to,
     )
 

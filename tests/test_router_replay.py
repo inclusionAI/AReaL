@@ -34,7 +34,6 @@ from areal.engine.router_replay_patch import (
     remove_router_replay_patch,
 )
 
-
 # ---------------------------------------------------------------------------
 # RouterReplay instance lifecycle
 # ---------------------------------------------------------------------------
@@ -80,9 +79,7 @@ class TestRouterReplayInstance:
 
     def test_set_global_action_broadcasts_to_all(self):
         a, b, c = RouterReplay(), RouterReplay(), RouterReplay()
-        RouterReplay.set_global_router_replay_action(
-            RouterReplayAction.REPLAY_FORWARD
-        )
+        RouterReplay.set_global_router_replay_action(RouterReplayAction.REPLAY_FORWARD)
         for inst in (a, b, c):
             assert inst.router_replay_action is RouterReplayAction.REPLAY_FORWARD
         RouterReplay.clear_global_router_replay_action()
@@ -91,9 +88,7 @@ class TestRouterReplayInstance:
 
     def test_set_replay_data_distributes_in_order(self):
         instances = [RouterReplay() for _ in range(3)]
-        per_layer = [
-            torch.full((4, 6), i, dtype=torch.int32) for i in range(3)
-        ]
+        per_layer = [torch.full((4, 6), i, dtype=torch.int32) for i in range(3)]
         RouterReplay.set_replay_data(per_layer)
         for i, inst in enumerate(instances):
             assert torch.equal(inst.target_topk_idx, per_layer[i])
@@ -132,7 +127,6 @@ class TestApplyPatchIdempotency:
     def test_topk_router_init_patched_flag(self):
         pytest.importorskip("megatron.core")
         from megatron.core.transformer.moe.router import TopKRouter
-        from areal.engine import router_replay_patch as rrp
 
         remove_router_replay_patch()
         assert not getattr(TopKRouter, "_r3_init_patched", False)
@@ -200,7 +194,9 @@ class TestDispatcherNumOutTokensOverride:
     must override it with ``routing_map.sum().item()``.
     """
 
-    def _make_routing_map(self, num_real: int, num_padding: int, num_experts: int, topk: int):
+    def _make_routing_map(
+        self, num_real: int, num_padding: int, num_experts: int, topk: int
+    ):
         rm = torch.zeros(num_real + num_padding, num_experts, dtype=torch.bool)
         for i in range(num_real):
             experts = torch.randperm(num_experts)[:topk]
@@ -247,9 +243,7 @@ class TestDispatcherNumOutTokensOverride:
         rm = self._make_routing_map(5, 5, 64, 6)
         disp = types.SimpleNamespace(
             drop_and_pad=False,
-            config=_FakeMoEConfig(
-                enable_routing_replay=True, fp8_padding=True, topk=6
-            ),
+            config=_FakeMoEConfig(enable_routing_replay=True, fp8_padding=True, topk=6),
             num_out_tokens=None,
         )
         _invoke_patched_preprocess(disp, rm, 60)
@@ -289,9 +283,7 @@ class TestResolveR3MoeConfig:
             def from_pretrained(path, trust_remote_code=True):  # noqa: ARG004
                 return fake_config
 
-        monkeypatch.setattr(
-            "transformers.AutoConfig", _FakeAutoConfig, raising=True
-        )
+        monkeypatch.setattr("transformers.AutoConfig", _FakeAutoConfig, raising=True)
 
     def test_moonlight_like_config(self, monkeypatch):
         """Moonlight-16B-A3B: 27 layers (1 dense + 26 MoE), topk=6."""
@@ -383,8 +375,12 @@ class TestPreprocessRoutedExpertsBatch:
         attention_mask = torch.ones(1, seq_len, dtype=torch.long)
 
         out = preprocess_routed_experts_batch(
-            np_arr, input_ids, attention_mask,
-            num_moe_layers=num_moe, topk=topk, compress_dtype=False,
+            np_arr,
+            input_ids,
+            attention_mask,
+            num_moe_layers=num_moe,
+            topk=topk,
+            compress_dtype=False,
         )
         assert out.shape == (1, seq_len, num_moe, topk)
         # First num_sgl_tokens rows come from the numpy array
@@ -405,7 +401,11 @@ class TestPreprocessRoutedExpertsBatch:
         input_ids = torch.zeros(1, 6, dtype=torch.long)
         attention_mask = torch.ones(1, 6, dtype=torch.long)
         out = preprocess_routed_experts_batch(
-            np_arr, input_ids, attention_mask,
-            num_moe_layers=6, topk=6, compress_dtype=True,
+            np_arr,
+            input_ids,
+            attention_mask,
+            num_moe_layers=6,
+            topk=6,
+            compress_dtype=True,
         )
         assert out.dtype == torch.uint8  # max expert idx < 256

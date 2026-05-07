@@ -31,7 +31,6 @@ from typing import Any
 
 import torch
 import torch.distributed as dist
-from megatron.core import parallel_state as mpu
 
 from areal.api import FinetuneSpec
 from areal.api.alloc_mode import ModelAllocation
@@ -186,9 +185,7 @@ def _build_training_input_with_rollout_experts(
     bs, slen = input_ids.shape
 
     gen = torch.Generator(device="cpu").manual_seed(seed)
-    rollout_logprobs = (
-        -torch.rand((bs, slen), generator=gen) * 2.0
-    ).to(engine.device)
+    rollout_logprobs = (-torch.rand((bs, slen), generator=gen) * 2.0).to(engine.device)
     advantages = torch.randn((bs, slen), generator=gen).to(engine.device)
 
     loss_mask = attention_mask.to(dtype=torch.int64)
@@ -245,7 +242,9 @@ def test_patch_plumbing(model_type: str, backend: str, output: str | None):
         got = len(RouterReplay.router_instances)
         logger.info(
             "[R3-E2E] rank=%d expected_moe_layers=%d got_router_instances=%d",
-            rank, expected, got,
+            rank,
+            expected,
+            got,
         )
         assert got == expected, (
             f"RouterReplay.router_instances count ({got}) must match the "
@@ -318,9 +317,7 @@ def test_forward_replay(model_type: str, backend: str, output: str | None):
         engine._r3_pending_routed_experts = routed_experts
 
         engine.eval()
-        _ = engine.forward(
-            input_=inp, aggregate_fn=lambda xs: torch.cat(xs, dim=0)
-        )
+        _ = engine.forward(input_=inp, aggregate_fn=lambda xs: torch.cat(xs, dim=0))
 
         assert engine._r3_pending_routed_experts is None, (
             "_r3_pending_routed_experts should be consumed by the R3 wrapper."
@@ -393,15 +390,13 @@ def test_forward_backward(model_type: str, backend: str, output: str | None):
         )
 
         # Build training input + rollout_expert_indices.
-        input_dict, rollout_expert_indices = (
-            _build_training_input_with_rollout_experts(
-                engine,
-                num_moe_layers_total=num_moe,
-                topk=topk,
-                batch_size=4,
-                min_seqlen=16,
-                max_seqlen=32,
-            )
+        input_dict, rollout_expert_indices = _build_training_input_with_rollout_experts(
+            engine,
+            num_moe_layers_total=num_moe,
+            topk=topk,
+            batch_size=4,
+            min_seqlen=16,
+            max_seqlen=32,
         )
 
         # Broadcast input across the context+model-parallel group so every

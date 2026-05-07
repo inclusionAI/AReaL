@@ -102,7 +102,6 @@ from areal.models.tree_attn.module import (
 )
 from areal.models.tree_attn.tree import build_packed_tree_batch
 from areal.utils import logging, name_resolve, names, perf_tracer, stats_tracker
-
 from areal.utils.constants import (
     DEFAULT_VECTORIZED_ALIGNMENT_BYTES,
     DIST_GROUP_DEFAULT_TIMEOUT,

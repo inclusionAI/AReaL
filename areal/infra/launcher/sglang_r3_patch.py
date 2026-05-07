@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """SGLang server-side monkey patches for AReaL's R3 (Router Replay).
 
 When ``skip_tokenizer_init=True`` (forced by R3), SGLang's ``TokenizerManager``

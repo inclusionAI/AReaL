@@ -96,8 +96,7 @@ def _run_e2e(
         proc.wait()
         stdout = "".join(stdout_lines) if stdout_lines else ""
         pytest.fail(
-            f"R3 E2E subprocess timed out after {timeout_sec}s.\n"
-            f"OUTPUT:\n{stdout}"
+            f"R3 E2E subprocess timed out after {timeout_sec}s.\nOUTPUT:\n{stdout}"
         )
     with open(output) as f:
         result = f.read().strip()
@@ -223,4 +222,3 @@ def test_r3_e2e_moonlight_pp2_tp4_ep4_forward_backward(tmp_path_factory):
         test_type="forward_backward",
         output=str(out),
     )
-
