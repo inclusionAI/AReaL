@@ -349,7 +349,6 @@ def set_router_replay_data(
             row_all_zero = (
                 (packed == 0).reshape(packed.shape[0], -1).all(dim=-1)
             )
-            n_strike = int((valid_mask & row_all_zero).sum().item())
             valid_mask = valid_mask & (~row_all_zero)
 
         # Step 2: CP split (before TP scatter).

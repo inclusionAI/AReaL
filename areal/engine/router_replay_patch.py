@@ -29,12 +29,19 @@ try:
         apply_router_token_dropping,
         compute_routing_scores_for_aux_loss,
     )
+    from megatron.core.transformer.moe.router import TopKRouter
+    from megatron.core.transformer.moe.token_dispatcher import (
+        MoEAlltoAllTokenDispatcher,
+    )
+    from megatron.core.transformer.transformer_config import TransformerConfig
 except ImportError:
     apply_router_token_dropping = None
     compute_routing_scores_for_aux_loss = None
+    TopKRouter = None
+    MoEAlltoAllTokenDispatcher = None
+    TransformerConfig = None
     warnings.warn(
-        "[R3] Could not import apply_router_token_dropping / "
-        "compute_routing_scores_for_aux_loss from megatron.core; "
+        "[R3] Could not import megatron.core MoE components; "
         "some MoE features may be unavailable.",
         stacklevel=2,
     )
@@ -43,16 +50,6 @@ try:
     from megatron.core.transformer.moe.moe_utils import group_limited_topk
 except ImportError:
     group_limited_topk = None
-
-try:
-    from megatron.core.transformer.moe.token_dispatcher import (
-        MoEAlltoAllTokenDispatcher,
-    )
-except ImportError:
-    MoEAlltoAllTokenDispatcher = None
-
-from megatron.core.transformer.moe.router import TopKRouter
-from megatron.core.transformer.transformer_config import TransformerConfig
 
 
 # ===================================================================

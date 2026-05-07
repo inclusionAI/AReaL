@@ -189,9 +189,6 @@ def _build_training_input_with_rollout_experts(
     rollout_logprobs = (
         -torch.rand((bs, slen), generator=gen) * 2.0
     ).to(engine.device)
-    action_log_probs = (
-        -torch.rand((bs, slen), generator=gen) * 2.0
-    ).to(engine.device)
     advantages = torch.randn((bs, slen), generator=gen).to(engine.device)
 
     loss_mask = attention_mask.to(dtype=torch.int64)
