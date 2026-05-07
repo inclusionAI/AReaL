@@ -1040,8 +1040,8 @@ class RolloutControllerV2:
         payload = {"version": version}
         results = await asyncio.gather(
             *[
-                self._async_gateway_http_post(f"/set_version/{wid}", payload)
-                for wid in self._worker_ids.values()
+                self._async_data_proxy_post(addr, "/set_version", payload)
+                for addr in self._data_proxy_addrs
             ],
             return_exceptions=True,
         )
@@ -1846,3 +1846,19 @@ class RolloutControllerV2:
                 )
         except httpx.HTTPError as exc:
             raise RuntimeError(f"Failed to POST {endpoint}: {exc}") from exc
+
+    @async_http_retry
+    async def _async_data_proxy_post(
+        self, addr: str, endpoint: str, payload: dict[str, Any]
+    ) -> None:
+        """POST directly to a data proxy, bypassing gateway/router resolution."""
+        url = f"{addr}{endpoint}"
+        try:
+            client = await self._get_async_client()
+            resp = await client.post(url, json=payload)
+            if resp.status_code >= 400:
+                raise RuntimeError(
+                    f"Data proxy {url} returned {resp.status_code}: {resp.text}"
+                )
+        except httpx.HTTPError as exc:
+            raise RuntimeError(f"Failed to POST {url}: {exc}") from exc
