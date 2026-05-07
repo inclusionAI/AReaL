@@ -29,11 +29,6 @@ logger = logging.getLogger("GatewayTrainController")
 class GatewayTrainController:
     _GUARD_SUFFIX = "-guard"
 
-    # TODO(agent): Controller v2 is not yet a drop-in replacement for
-    # TrainController on PPO/GRPO paths. Add parity for connect_engine,
-    # prepare_batch/rollout_batch, and update_weights (plus the matching
-    # gateway/data-proxy/worker endpoints), or keep RL controllers on v1.
-
     def __init__(
         self,
         train_engine: type[TrainEngine] | str,
@@ -51,11 +46,18 @@ class GatewayTrainController:
         self._router_addr: str = ""
         self._model_addr: str = ""
         self._worker_addrs: list[str] = []
+        self._guard_addrs: list[str] = []
         self._forked_services: list[tuple[str, str, int]] = []
         self._service_roles: list[str] = []
         self._role: str = ""
         self._parallel_strategy = self.train_alloc.parallel
         self._own_process_group = False
+        self.rollout: Any | None = None
+        self._weight_update_ctrl: Any | None = None
+
+        # Pipelined initialization state
+        self._init_future: concurrent.futures.Future | None = None
+        self._workers_ready = threading.Event()
 
         # Pipelined initialization state
         self._init_future: concurrent.futures.Future | None = None
@@ -148,6 +150,39 @@ class GatewayTrainController:
 
         world_size = self.train_alloc.parallel.world_size
 
+        # ==============================================================
+        # Step 0: Create world_size guards via scheduler (one per GPU rank)
+        # ==============================================================
+        # Each guard is allocated a GPU by the scheduler (like TrainController
+        # workers). Forked workers inherit the guard's GPU environment.
+        if len(cfg.scheduling_spec) != 1:
+            raise ValueError(
+                "GatewayTrainController (controller v2) requires exactly "
+                "one scheduling_spec. Legacy 2-spec worker/engine layouts "
+                "are only supported by TrainController (controller v1)."
+            )
+
+        guard_spec = SchedulingSpec(**asdict(cfg.scheduling_spec[0]))
+        guard_spec.cmd = "python -m areal.experimental.training_service.guard"
+
+        guard_role = f"{role}{self._GUARD_SUFFIX}"
+        guard_job = Job(
+            replicas=world_size,
+            tasks=[guard_spec],
+            scheduling_strategy=cfg.scheduling_strategy,
+            role=guard_role,
+        )
+        await asyncio.to_thread(self.scheduler.create_workers, job=guard_job)
+        self._service_roles.append(guard_role)
+        guard_workers = await asyncio.to_thread(
+            self.scheduler.get_workers,
+            role=guard_role,
+            timeout=int(self.config.setup_timeout),
+        )
+        logger.info("Guards ready: %s", [w.id for w in guard_workers])
+
+        self._workers_ready.set()
+
         try:
             # ==============================================================
             # Step 0: Create world_size guards via scheduler (one per GPU rank)
@@ -191,6 +226,15 @@ class GatewayTrainController:
             guard_addr_0 = f"http://{format_hostport(guard_workers[0].ip, int(guard_workers[0].worker_ports[0]))}"
             master_addr = guard_workers[0].ip
 
+            # Persist guard addresses so connect_engine() can allocate
+            # ports later (e.g. for the weight-update NCCL group).
+            def _guard_addr(worker: Worker) -> str:
+                return (
+                    f"http://{format_hostport(worker.ip, int(worker.worker_ports[0]))}"
+                )
+
+            self._guard_addrs = [_guard_addr(w) for w in guard_workers]
+
             async with httpx.AsyncClient(timeout=30.0) as client:
                 resp = await client.post(
                     f"{guard_addr_0}/alloc_ports", json={"count": 1}
@@ -201,10 +245,6 @@ class GatewayTrainController:
             # ==============================================================
             # Step 1.5: Set NCCL env on each guard so forked workers inherit it
             # ==============================================================
-            def _guard_addr(worker: Worker) -> str:
-                return (
-                    f"http://{format_hostport(worker.ip, int(worker.worker_ports[0]))}"
-                )
 
             await self._async_set_guards_env(
                 guard_workers,
@@ -299,7 +339,7 @@ class GatewayTrainController:
                 return
 
             # ==============================================================
-            # Step 4: Fork Router on guard 0
+            # Step 4+5: Fork Router AND Data Proxy in PARALLEL
             # ==============================================================
             router_cmd = [
                 sys.executable,
@@ -336,13 +376,25 @@ class GatewayTrainController:
                 "--log-level",
                 cfg.log_level,
             ]
-            dp_host, dp_port = await self._async_fork_on_guard(
-                guard_addr=guard_addr_0,
-                role="data-proxy",
-                worker_index=0,
-                raw_cmd=data_proxy_cmd,
+
+            (router_host, router_port), (dp_host, dp_port) = await asyncio.gather(
+                self._async_fork_on_guard(
+                    guard_addr=guard_addr_0,
+                    role="router",
+                    worker_index=0,
+                    raw_cmd=router_cmd,
+                ),
+                self._async_fork_on_guard(
+                    guard_addr=guard_addr_0,
+                    role="data-proxy",
+                    worker_index=0,
+                    raw_cmd=data_proxy_cmd,
+                ),
             )
+
+            self._router_addr = f"http://{format_hostport(router_host, router_port)}"
             self._model_addr = f"http://{format_hostport(dp_host, dp_port)}"
+            logger.info("Router: %s", self._router_addr)
             logger.info("Model endpoint: %s", self._model_addr)
 
             if self._shutdown_requested.is_set():
@@ -824,13 +876,22 @@ class GatewayTrainController:
         return self._gateway_post_result("/get_device_stats", payload)
 
     def config_perf_tracer(self, config: Any, role: str) -> None:
-        from areal.infra.rpc.serialization import serialize_value
+        self._ensure_initialized()
 
-        payload = {
-            "args": serialize_value([]),
-            "kwargs": serialize_value({"config": config, "role": role}),
-        }
-        self._gateway_post("/config_perf_tracer", payload)
+        async def _call() -> None:
+            tasks = [
+                self._call_worker_engine_endpoint(
+                    addr,
+                    "/config_perf_tracer",
+                    args=[],
+                    kwargs={"config": config, "rank": rank, "role": role},
+                    timeout=self.config.request_timeout,
+                )
+                for rank, addr in enumerate(self._worker_addrs)
+            ]
+            await asyncio.gather(*tasks)
+
+        run_async_task(_call)
 
     def save_perf_tracer(self, step: int | None = None, force: bool = False) -> None:
         from areal.infra.rpc.serialization import serialize_value
@@ -874,6 +935,131 @@ class GatewayTrainController:
     @property
     def cpu_group(self):
         return None
+
+    @property
+    def train_worker_urls(self) -> list[str]:
+        return list(self._worker_addrs)
+
+    # -- RL parity methods (connect_engine / update_weights / batch) --------
+
+    def connect_engine(self, rollout: Any, meta: Any) -> None:
+        self._ensure_initialized()
+        import requests
+
+        from areal.experimental.inference_service.controller.controller import (
+            GatewayInferenceController,
+        )
+        from areal.experimental.weight_update.controller.config import (
+            WeightUpdateControllerConfig,
+        )
+        from areal.experimental.weight_update.controller.controller import (
+            WeightUpdateController,
+        )
+
+        if not isinstance(rollout, GatewayInferenceController):
+            raise TypeError(
+                f"GatewayTrainController requires GatewayInferenceController, "
+                f"got {type(rollout).__name__}. "
+                f"Ensure _version='v2' is set on InferenceEngineConfig."
+            )
+
+        self.rollout = rollout
+
+        if meta.type != "awex":
+            raise ValueError(
+                f"GatewayTrainController only supports 'awex' weight updates, got '{meta.type}'"
+            )
+
+        ctrl = WeightUpdateController(
+            WeightUpdateControllerConfig(
+                admin_api_key=self.config.admin_api_key,
+                log_level=self.config.log_level,
+            )
+        )
+        ctrl.initialize()
+
+        inference_urls: list[str] = rollout.inference_worker_urls
+
+        nccl_master_addr = ""
+        nccl_master_port = 0
+        if self._guard_addrs:
+            resp = requests.post(
+                f"{self._guard_addrs[0]}/alloc_ports",
+                json={"count": 1},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            port_data = resp.json()
+            nccl_master_addr = port_data["host"]
+            nccl_master_port = port_data["ports"][0]
+
+        pair_name = f"{self._role}-rollout"
+        ctrl.connect(
+            pair_name=pair_name,
+            train_worker_urls=self._worker_addrs,
+            inference_worker_urls=inference_urls,
+            nccl_master_addr=nccl_master_addr,
+            nccl_master_port=nccl_master_port,
+        )
+        self._weight_update_ctrl = ctrl
+        logger.info(
+            "WeightUpdateController connected (pair=%s, train=%d, inf=%d)",
+            pair_name,
+            len(self._worker_addrs),
+            len(inference_urls),
+        )
+
+    def update_weights(self, meta: Any) -> None:
+        if self._weight_update_ctrl is None:
+            raise RuntimeError(
+                "connect_engine() must be called before update_weights()"
+            )
+        version = meta.version if meta.version is not None else 0
+        result = self._weight_update_ctrl.update_weights(version=version)
+        logger.info(
+            "Weight update v%d completed (%s, %.0fms)",
+            version,
+            result.status,
+            result.duration_ms,
+        )
+
+    def prepare_batch(
+        self,
+        dataloader: Any,
+        workflow: Any,
+        workflow_kwargs: dict[str, Any],
+        should_accept_fn: str | None = None,
+        group_size: int = 1,
+        dynamic_bs: bool = False,
+    ) -> list[dict[str, Any]]:
+        if self.rollout is None:
+            raise RuntimeError("connect_engine() must be called before prepare_batch()")
+        return self.rollout.prepare_batch(
+            dataloader=dataloader,
+            workflow=workflow,
+            workflow_kwargs=workflow_kwargs,
+            should_accept_fn=should_accept_fn,
+            group_size=group_size,
+            dynamic_bs=dynamic_bs,
+        )
+
+    def rollout_batch(
+        self,
+        data: list[dict[str, Any]],
+        workflow: Any,
+        workflow_kwargs: dict[str, Any],
+        should_accept_fn: str | None = None,
+        group_size: int = 1,
+    ) -> list[dict[str, Any]]:
+        if self.rollout is None:
+            raise RuntimeError("connect_engine() must be called before rollout_batch()")
+        return self.rollout.rollout_batch(
+            data=data,
+            workflow=workflow,
+            workflow_kwargs=workflow_kwargs,
+            should_accept_fn=should_accept_fn,
+            group_size=group_size,
+        )
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         self._parallel_strategy = parallel_strategy
@@ -1001,5 +1187,4 @@ class GatewayTrainController:
         self._init_future = None
         if future is not None:
             future.cancel()
-
         self._cleanup_runtime_state()

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
-import copy
 import os
 import sys
 import threading
@@ -125,7 +124,7 @@ class RolloutControllerV2:
 
         # Worker management
         self.workers: list[Worker] = []
-        self.server_infos: list[LocalInfServerInfo] = []
+        self._server_infos: list[LocalInfServerInfo] = []
         self._worker_role: str = ""
 
         # Addresses resolved after initialization
@@ -259,7 +258,7 @@ class RolloutControllerV2:
         from areal.infra.workflow_executor import WorkflowExecutor
 
         self._workflow_executor = WorkflowExecutor(
-            config=cast(InferenceEngineConfig, self.config),
+            config=self.config,
             inference_engine=cast(RemoteInfEngine, self),
         )
         self._workflow_executor.initialize()
@@ -314,19 +313,6 @@ class RolloutControllerV2:
         *args: Any,
         **kwargs: Any,
     ) -> None:
-        """Launch all servers as worker processes via the scheduler.
-
-        In both cases we create ``dp_size`` RPCGuard workers and fork
-        services onto them:
-
-        * **server_infos is None** — fork SGLang server + data proxy on
-          every worker; fork router + gateway on worker 0.
-        * **server_infos is not None** — SGLang servers already exist so
-          we only fork data proxy on every worker; fork router + gateway
-          on worker 0.
-        * **external_mode** — skip inference servers entirely; data proxies
-          start with an empty ``--backend-addr``.
-        """
         from dataclasses import asdict
 
         from areal.api.cli_args import SchedulingSpec, SchedulingStrategy
@@ -363,8 +349,6 @@ class RolloutControllerV2:
             gpus_per_worker = instance_size // nnodes_per_instance
 
             if server_infos is not None:
-                # Pre-existing inference servers — only need dp_size workers
-                # for CPU services (data proxy, router, gateway), no GPUs.
                 total_workers = dp_size
                 inf_spec.gpu = 0
             else:
@@ -374,7 +358,6 @@ class RolloutControllerV2:
                 if inf_spec.gpu > 0:
                     inf_spec.gpu = gpus_per_worker
 
-            # Override cmd to launch RPCGuard instead of RPC server
             inf_spec.cmd = "python -m areal.experimental.inference_service.guard"
 
         inf_role = f"{self._worker_role}{self._INF_SUFFIX}"
@@ -401,219 +384,14 @@ class RolloutControllerV2:
         if self._shutdown_requested.is_set():
             return
 
-        # ==================================================================
-        # Step 1: Launch inference servers (skip in external mode or when pre-existing)
-        # ==================================================================
-        if self.external_mode:
-            logger.info("External mode — skipping inference server launch")
-        elif server_infos is not None:
-            # Pre-existing servers — just record their addresses
-            self.server_infos = server_infos
-            self._inf_addrs = [
-                f"http://{format_hostport(info.host, info.port)}"
-                for info in server_infos
-            ]
-            logger.info(
-                "Using %d pre-existing server_infos, skipping inference server fork",
-                len(server_infos),
-            )
-        else:
-            tp_size = alloc.parallel.tp_size
-
-            # Build backend-specific launch command builder
-            if inf_backend == "sglang":
-                from areal.api.cli_args import SGLangConfig
-
-                sglang_config = SGLangConfig()
-                if server_args:
-                    sglang_config = copy.deepcopy(sglang_config)
-                    for k, v in server_args.items():
-                        if hasattr(sglang_config, k):
-                            setattr(sglang_config, k, v)
-                        else:
-                            logger.warning(
-                                "SGLangConfig has no attribute %r, ignoring "
-                                "server_args entry (value=%r)",
-                                k,
-                                v,
-                            )
-
-                def _build_launch_cmd(
-                    host: str | None,
-                    port: int | None,
-                    n_nodes: int = 1,
-                    node_rank: int = 0,
-                    dist_init_addr: str | None = None,
-                ) -> list[str]:
-                    return SGLangConfig.build_cmd(
-                        sglang_config=sglang_config,
-                        tp_size=tp_size,
-                        pp_size=alloc.parallel.pp_size,
-                        base_gpu_id=0,
-                        host=host,
-                        port=port,
-                        dist_init_addr=dist_init_addr,
-                        n_nodes=n_nodes,
-                        node_rank=node_rank,
-                    )
-
-            elif inf_backend == "vllm":
-                from areal.api.cli_args import vLLMConfig
-
-                vllm_config = vLLMConfig()
-                if server_args:
-                    vllm_config = copy.deepcopy(vllm_config)
-                    for k, v in server_args.items():
-                        if hasattr(vllm_config, k):
-                            setattr(vllm_config, k, v)
-                        else:
-                            logger.warning(
-                                "vLLMConfig has no attribute %r, ignoring "
-                                "server_args entry (value=%r)",
-                                k,
-                                v,
-                            )
-
-                def _build_launch_cmd(
-                    host: str | None,
-                    port: int | None,
-                    n_nodes: int = 1,
-                    node_rank: int = 0,
-                    dist_init_addr: str | None = None,
-                ) -> list[str]:
-                    return vLLMConfig.build_cmd(
-                        vllm_config=vllm_config,
-                        tp_size=tp_size,
-                        pp_size=alloc.parallel.pp_size,
-                        host=host,
-                        port=port,
-                        dist_init_addr=dist_init_addr,
-                        n_nodes=n_nodes,
-                        node_rank=node_rank,
-                    )
-
-            else:
-                raise ValueError(f"Unsupported inference backend: {inf_backend!r}")
-
-            # For each inference instance group: alloc ports, build cmd, fork servers
-            for group_idx in range(dp_size):
-                group_workers = inf_workers[
-                    group_idx * nnodes_per_instance : (group_idx + 1)
-                    * nnodes_per_instance
-                ]
-                head_worker = group_workers[0]
-                head_guard_addr = f"http://{format_hostport(head_worker.ip, int(head_worker.worker_ports[0]))}"
-
-                # Allocate rendezvous port on head node for distributed init
-                dist_init_addr = None
-                if nnodes_per_instance > 1:
-                    resp = self._sync_client.post(
-                        f"{head_guard_addr}/alloc_ports",
-                        json={"count": 1},
-                    )
-                    resp.raise_for_status()
-                    rendezvous_data = resp.json()
-                    rendezvous_host = rendezvous_data["host"]
-                    rendezvous_port = rendezvous_data["ports"][0]
-                    dist_init_addr = format_hostport(rendezvous_host, rendezvous_port)
-
-                head_inf_host = None
-                head_inf_port = None
-
-                for node_rank, worker in enumerate(group_workers):
-                    guard_addr = f"http://{format_hostport(worker.ip, int(worker.worker_ports[0]))}"
-
-                    # Allocate port for inference server on this node
-                    resp = self._sync_client.post(
-                        f"{guard_addr}/alloc_ports",
-                        json={"count": 1},
-                    )
-                    resp.raise_for_status()
-                    port_data = resp.json()
-                    inf_host = port_data["host"]
-                    inf_port = port_data["ports"][0]
-
-                    # Worker nodes (rank > 0) don't need to serve HTTP,
-                    # but we still pass host/port for the server to bind
-                    cmd = _build_launch_cmd(
-                        host=inf_host,
-                        port=inf_port,
-                        n_nodes=nnodes_per_instance,
-                        node_rank=node_rank,
-                        dist_init_addr=dist_init_addr,
-                    )
-
-                    fork_payload: dict[str, Any] = {
-                        "role": "inf-server",
-                        "worker_index": group_idx * nnodes_per_instance + node_rank,
-                        "raw_cmd": cmd,
-                    }
-                    if inf_backend == "vllm":
-                        from areal.infra.utils.launcher import (
-                            TRITON_CACHE_PATH as _TRITON_CACHE,
-                        )
-                        from areal.infra.utils.launcher import (
-                            VLLM_CACHE_ROOT as _VLLM_CACHE,
-                        )
-
-                        fork_payload["env"] = {
-                            "TRITON_CACHE_PATH": os.path.join(
-                                os.environ.get("TRITON_CACHE_PATH", _TRITON_CACHE),
-                                str(uuid.uuid4()),
-                            ),
-                            "VLLM_CACHE_ROOT": os.path.join(
-                                os.environ.get("VLLM_CACHE_ROOT", _VLLM_CACHE),
-                                str(uuid.uuid4()),
-                            ),
-                            "VLLM_ALLOW_RUNTIME_LORA_UPDATING": "True",
-                        }
-
-                    resp = self._sync_client.post(
-                        f"{guard_addr}/fork",
-                        json=fork_payload,
-                    )
-                    resp.raise_for_status()
-                    self._forked_services.append(
-                        (
-                            guard_addr,
-                            "inf-server",
-                            group_idx * nnodes_per_instance + node_rank,
-                        )
-                    )
-
-                    if node_rank == 0:
-                        head_inf_host = inf_host
-                        head_inf_port = inf_port
-
-                if head_inf_host is None or head_inf_port is None:
-                    raise RuntimeError(
-                        f"No head worker resolved for group {group_idx}; "
-                        f"expected {nnodes_per_instance} workers per group"
-                    )
-
-                # Only record the head node's address as the inference endpoint
-                addr = f"http://{format_hostport(head_inf_host, head_inf_port)}"
-                self._inf_addrs.append(addr)
-                self.server_infos.append(
-                    LocalInfServerInfo(
-                        host=head_inf_host,
-                        port=head_inf_port,
-                        process=None,  # type: ignore[arg-type]  # RPCGuard manages process
-                    )
-                )
-
-            # Wait for inference servers to be healthy (only head nodes)
-            for i, addr in enumerate(self._inf_addrs):
-                self._wait_for_service(
-                    f"{addr}/health", f"InfServer-{i}", timeout=cfg.setup_timeout
-                )
-        logger.info("Inference servers: %s", self._inf_addrs)
+        guard_addr_0 = f"http://{format_hostport(self.workers[0].ip, int(self.workers[0].worker_ports[0]))}"
 
         if self._shutdown_requested.is_set():
             return
 
         # ==================================================================
-        # Step 2: Fork Router on worker 0
+        # Step 1+2: Launch inference servers AND fork Router in PARALLEL
+        # Router does not depend on inference servers.
         # ==================================================================
         router_cmd = [
             sys.executable,
@@ -628,14 +406,42 @@ class RolloutControllerV2:
             "--log-level",
             _DEFAULT_SERVICE_LOG_LEVEL,
         ]
-
-        guard_addr_0 = f"http://{format_hostport(self.workers[0].ip, int(self.workers[0].worker_ports[0]))}"
-        router_host, router_port = self._fork_on_guard(
-            guard_addr=guard_addr_0,
-            role="router",
-            worker_index=0,
-            raw_cmd=router_cmd,
+        router_task = asyncio.ensure_future(
+            self._async_fork_on_guard(
+                guard_addr=guard_addr_0,
+                role="router",
+                worker_index=0,
+                raw_cmd=router_cmd,
+            )
         )
+
+        if self.external_mode:
+            logger.info("External mode — skipping inference server launch")
+        elif server_infos is not None:
+            self._server_infos = server_infos
+            self._inf_addrs = [
+                f"http://{format_hostport(info.host, info.port)}"
+                for info in server_infos
+            ]
+            logger.info(
+                "Using %d pre-existing server_infos, skipping inference server fork",
+                len(server_infos),
+            )
+        else:
+            assert alloc is not None and inf_backend is not None
+            await self._async_fork_inf_servers(
+                cfg,
+                alloc,
+                inf_backend,
+                inf_workers,
+                dp_size,
+                nnodes_per_instance,
+                admin_api_key,
+                server_args,
+            )
+        logger.info("Inference servers: %s", self._inf_addrs)
+
+        router_host, router_port = await router_task
         self._router_addr = f"http://{format_hostport(router_host, router_port)}"
         logger.info("Router: %s", self._router_addr)
 
@@ -643,7 +449,8 @@ class RolloutControllerV2:
             return
 
         # ==================================================================
-        # Step 3: Fork Data Proxies on all workers (raw_cmd mode)
+        # Step 3+4: Fork Data Proxies AND Gateway in PARALLEL
+        # Data Proxies need _inf_addrs (ready); Gateway needs _router_addr (ready).
         # ==================================================================
         data_proxy_base_cmd = [
             sys.executable,
@@ -655,8 +462,6 @@ class RolloutControllerV2:
             admin_api_key,
             "--log-level",
             _DEFAULT_SERVICE_LOG_LEVEL,
-            "--request-timeout",
-            str(cfg.request_timeout),
             "--set-reward-finish-timeout",
             str(cfg.agent.set_reward_finish_timeout),
             "--callback-server-addr",
@@ -674,7 +479,7 @@ class RolloutControllerV2:
                 str(agent_cfg.engine_max_tokens),
             ]
 
-        for group_idx in range(dp_size):
+        async def _fork_data_proxy(group_idx: int) -> tuple[str, int]:
             if self.external_mode:
                 head_worker = inf_workers[group_idx]
             else:
@@ -684,27 +489,21 @@ class RolloutControllerV2:
                     else group_idx * nnodes_per_instance
                 ]
             guard_addr = f"http://{format_hostport(head_worker.ip, int(head_worker.worker_ports[0]))}"
-            # Each data proxy connects to its group's head inference server
             if self.external_mode:
-                data_proxy_cmd = data_proxy_base_cmd + ["--backend-addr", ""]
+                dp_cmd = data_proxy_base_cmd + ["--backend-addr", ""]
             else:
-                data_proxy_cmd = data_proxy_base_cmd + [
+                dp_cmd = data_proxy_base_cmd + [
                     "--backend-addr",
                     self._inf_addrs[group_idx],
                     "--backend-type",
                     inf_backend or "sglang",
                 ]
-            data_proxy_host, data_proxy_port = self._fork_on_guard(
+            return await self._async_fork_on_guard(
                 guard_addr=guard_addr,
                 role="data-proxy",
                 worker_index=group_idx,
-                raw_cmd=data_proxy_cmd,
+                raw_cmd=dp_cmd,
             )
-            self._data_proxy_addrs.append(
-                f"http://{format_hostport(data_proxy_host, data_proxy_port)}"
-            )
-
-        logger.info("Data proxies: %s", self._data_proxy_addrs)
 
         if self._shutdown_requested.is_set():
             return
@@ -726,14 +525,228 @@ class RolloutControllerV2:
             _DEFAULT_SERVICE_LOG_LEVEL,
         ]
 
-        gw_host, gw_port = self._fork_on_guard(
-            guard_addr=guard_addr_0,
-            role="gateway",
-            worker_index=0,
-            raw_cmd=gw_cmd,
+        all_results = await asyncio.gather(
+            *[_fork_data_proxy(i) for i in range(dp_size)],
+            self._async_fork_on_guard(
+                guard_addr=guard_addr_0,
+                role="gateway",
+                worker_index=0,
+                raw_cmd=gw_cmd,
+            ),
         )
+
+        for dp_host, dp_port in all_results[:-1]:
+            self._data_proxy_addrs.append(f"http://{format_hostport(dp_host, dp_port)}")
+        logger.info("Data proxies: %s", self._data_proxy_addrs)
+
+        gw_host, gw_port = all_results[-1]
         self._gateway_addr = f"http://{format_hostport(gw_host, gw_port)}"
         logger.info("Gateway: %s", self._gateway_addr)
+
+    async def _async_fork_inf_servers(
+        self,
+        cfg: Any,
+        alloc: Any,
+        inf_backend: str,
+        inf_workers: list,
+        dp_size: int,
+        nnodes_per_instance: int,
+        admin_api_key: str,
+        server_args: dict[str, Any] | None,
+    ) -> None:
+        import httpx
+
+        tp_size = alloc.parallel.tp_size
+
+        if inf_backend == "sglang":
+            from areal.api.cli_args import SGLangConfig
+
+            sglang_config = SGLangConfig(
+                model_path=cfg.tokenizer_path,
+            )
+            if server_args:
+                for k, v in server_args.items():
+                    if hasattr(sglang_config, k):
+                        setattr(sglang_config, k, v)
+                    else:
+                        logger.warning(
+                            "SGLangConfig has no attribute %r, ignoring "
+                            "server_args entry (value=%r)",
+                            k,
+                            v,
+                        )
+
+            def _build_launch_cmd(
+                host: str | None,
+                port: int | None,
+                n_nodes: int = 1,
+                node_rank: int = 0,
+                dist_init_addr: str | None = None,
+            ) -> list[str]:
+                return SGLangConfig.build_cmd(
+                    sglang_config=sglang_config,
+                    tp_size=tp_size,
+                    base_gpu_id=0,
+                    host=host,
+                    port=port,
+                    dist_init_addr=dist_init_addr,
+                    n_nodes=n_nodes,
+                    node_rank=node_rank,
+                )
+
+        elif inf_backend == "vllm":
+            from areal.api.cli_args import vLLMConfig
+
+            vllm_config = vLLMConfig(model=cfg.tokenizer_path)
+            for k, v in (server_args or {}).items():
+                if hasattr(vllm_config, k):
+                    setattr(vllm_config, k, v)
+                else:
+                    logger.warning(
+                        "vLLMConfig has no attribute %r, ignoring "
+                        "server_args entry (value=%r)",
+                        k,
+                        v,
+                    )
+
+            def _build_launch_cmd(
+                host: str | None,
+                port: int | None,
+                n_nodes: int = 1,
+                node_rank: int = 0,
+                dist_init_addr: str | None = None,
+            ) -> list[str]:
+                return vLLMConfig.build_cmd(
+                    vllm_config=vllm_config,
+                    tp_size=tp_size,
+                    pp_size=alloc.parallel.pp_size,
+                    host=host,
+                    port=port,
+                    dist_init_addr=dist_init_addr,
+                    n_nodes=n_nodes,
+                    node_rank=node_rank,
+                )
+
+        else:
+            raise ValueError(f"Unsupported inference backend: {inf_backend!r}")
+
+        async def _fork_group(group_idx: int) -> tuple[str, int]:
+            group_workers = inf_workers[
+                group_idx * nnodes_per_instance : (group_idx + 1) * nnodes_per_instance
+            ]
+            head_worker = group_workers[0]
+            head_guard_addr = f"http://{format_hostport(head_worker.ip, int(head_worker.worker_ports[0]))}"
+
+            dist_init_addr = None
+            if nnodes_per_instance > 1:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    resp = await client.post(
+                        f"{head_guard_addr}/alloc_ports",
+                        json={"count": 1},
+                    )
+                    resp.raise_for_status()
+                    rendezvous_data = resp.json()
+                    rendezvous_host = rendezvous_data["host"]
+                    rendezvous_port = rendezvous_data["ports"][0]
+                    dist_init_addr = format_hostport(rendezvous_host, rendezvous_port)
+
+            head_inf_host = None
+            head_inf_port = None
+
+            for node_rank, worker in enumerate(group_workers):
+                guard_addr = (
+                    f"http://{format_hostport(worker.ip, int(worker.worker_ports[0]))}"
+                )
+
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    resp = await client.post(
+                        f"{guard_addr}/alloc_ports",
+                        json={"count": 1},
+                    )
+                    resp.raise_for_status()
+                    port_data = resp.json()
+                    inf_host = port_data["host"]
+                    inf_port = port_data["ports"][0]
+
+                cmd = _build_launch_cmd(
+                    host=inf_host,
+                    port=inf_port,
+                    n_nodes=nnodes_per_instance,
+                    node_rank=node_rank,
+                    dist_init_addr=dist_init_addr,
+                )
+
+                fork_payload: dict[str, Any] = {
+                    "role": "inf-server",
+                    "worker_index": group_idx * nnodes_per_instance + node_rank,
+                    "raw_cmd": cmd,
+                }
+                if inf_backend == "vllm":
+                    from areal.infra.utils.launcher import (
+                        TRITON_CACHE_PATH as _TRITON_CACHE,
+                    )
+                    from areal.infra.utils.launcher import (
+                        VLLM_CACHE_ROOT as _VLLM_CACHE,
+                    )
+
+                    fork_payload["env"] = {
+                        "TRITON_CACHE_PATH": os.path.join(
+                            os.environ.get("TRITON_CACHE_PATH", _TRITON_CACHE),
+                            str(uuid.uuid4()),
+                        ),
+                        "VLLM_CACHE_ROOT": os.path.join(
+                            os.environ.get("VLLM_CACHE_ROOT", _VLLM_CACHE),
+                            str(uuid.uuid4()),
+                        ),
+                        "VLLM_ALLOW_RUNTIME_LORA_UPDATING": "True",
+                    }
+
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    resp = await client.post(
+                        f"{guard_addr}/fork",
+                        json=fork_payload,
+                    )
+                    resp.raise_for_status()
+                self._forked_services.append(
+                    (
+                        guard_addr,
+                        "inf-server",
+                        group_idx * nnodes_per_instance + node_rank,
+                    )
+                )
+
+                if node_rank == 0:
+                    head_inf_host = inf_host
+                    head_inf_port = inf_port
+
+            if head_inf_host is None or head_inf_port is None:
+                raise RuntimeError(
+                    f"No head worker resolved for group {group_idx}; "
+                    f"expected {nnodes_per_instance} workers per group"
+                )
+            return (head_inf_host, head_inf_port)
+
+        group_results = await asyncio.gather(*[_fork_group(i) for i in range(dp_size)])
+
+        for host, port in group_results:
+            addr = f"http://{format_hostport(host, port)}"
+            self._inf_addrs.append(addr)
+            self._server_infos.append(
+                LocalInfServerInfo(
+                    host=host,
+                    port=port,
+                    process=None,  # type: ignore[arg-type]
+                )
+            )
+
+        await asyncio.gather(
+            *[
+                self._async_wait_for_service(
+                    f"{addr}/health", f"InfServer-{i}", timeout=cfg.setup_timeout
+                )
+                for i, addr in enumerate(self._inf_addrs)
+            ]
+        )
 
     # -- Service health checks & registration ------------------------------
 
@@ -752,6 +765,25 @@ class RolloutControllerV2:
             except httpx.HTTPError:
                 pass
             time.sleep(0.1)
+        raise TimeoutError(f"{name} did not become healthy at {url} within {timeout}s")
+
+    async def _async_wait_for_service(
+        self, url: str, name: str, timeout: float | None = None
+    ) -> None:
+        import httpx
+
+        timeout = timeout or self.config.setup_timeout
+        deadline = time.monotonic() + timeout
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            while time.monotonic() < deadline:
+                try:
+                    resp = await client.get(url)
+                    if resp.status_code == 200:
+                        logger.info("%s is ready at %s", name, url)
+                        return
+                except Exception:
+                    pass
+                await asyncio.sleep(0.1)
         raise TimeoutError(f"{name} did not become healthy at {url} within {timeout}s")
 
     def _register_data_proxies_in_router(self) -> None:
@@ -1034,7 +1066,7 @@ class RolloutControllerV2:
 
         self._service_roles.clear()
         self.workers.clear()
-        self.server_infos.clear()
+        self._server_infos.clear()
         with self._online_waiters_lock:
             for waiter in self._online_waiters:
                 if not waiter.future.done():
@@ -1105,6 +1137,7 @@ class RolloutControllerV2:
         is_eval: bool = False,
         group_size: int = 1,
     ) -> int:
+        self._ensure_initialized()
         resolved_workflow = self._resolve_workflow(
             workflow,
             workflow_kwargs,
@@ -1125,6 +1158,7 @@ class RolloutControllerV2:
         timeout: float | None = None,
         raise_timeout: bool = True,
     ) -> list[dict[str, Any] | None]:
+        self._ensure_initialized()
         return self.workflow_executor.wait(
             count, timeout=timeout, raise_timeout=raise_timeout
         )
@@ -1180,9 +1214,9 @@ class RolloutControllerV2:
         list[dict[str, Any]]
             A list of trajectory dicts (one per completed rollout).
         """
-        self._ensure_initialized()
         if not self._gateway_addr:
             raise RuntimeError("RolloutControllerV2.initialize() must be called first")
+        self._ensure_initialized()
         if data is None:
             if batch_size is None:
                 raise ValueError(
@@ -1250,9 +1284,9 @@ class RolloutControllerV2:
         list[dict[str, Any]]
             A list of trajectory dicts (matching ``RolloutController`` API).
         """
-        self._ensure_initialized()
         if not self._gateway_addr:
             raise RuntimeError("RolloutControllerV2.initialize() must be called first")
+        self._ensure_initialized()
         if dataloader is None:
             if batch_size is None:
                 raise ValueError(
@@ -1300,8 +1334,9 @@ class RolloutControllerV2:
             When ``stream=False`` (default): parsed OpenAI ChatCompletion object.
             When ``stream=True``: async generator yielding ChatCompletionChunk.
         """
-        self._ensure_initialized()
         import aiohttp
+
+        self._ensure_initialized()
 
         stream = kwargs.get("stream", False)
         body: dict[str, Any] = {
@@ -1510,18 +1545,22 @@ class RolloutControllerV2:
 
     # -- Proxy compatibility (gateway IS the proxy) ------------------------
 
-    def start_proxy(self) -> None:
-        """No-op — gateway already acts as the proxy."""
-
-    def start_proxy_gateway(self) -> None:
-        """No-op — gateway already acts as the proxy gateway."""
-
     @property
     def proxy_gateway_addr(self) -> str:
         self._ensure_initialized()
         return self._gateway_addr
 
     # -- Properties --------------------------------------------------------
+
+    @property
+    def inference_worker_urls(self) -> list[str]:
+        self._ensure_initialized()
+        return list(self._inf_addrs)
+
+    @property
+    def server_infos(self) -> list[LocalInfServerInfo]:
+        self._ensure_initialized()
+        return self._server_infos
 
     @property
     def worker_ids(self) -> dict[str, str]:
@@ -1568,18 +1607,13 @@ class RolloutControllerV2:
                 "Gateway address is unavailable; initialize the controller first"
             )
 
-        agent_cfg = self._agent_config
-        admin_api_key = self.config.admin_api_key
-        turn_discount = agent_cfg.turn_discount
-        export_style = agent_cfg.export_style
-
         return InferenceServiceWorkflow(
             controller=self,
             agent=agent,
             gateway_addr=self._gateway_addr,
-            admin_api_key=admin_api_key,
-            discount=turn_discount,
-            export_style=export_style,
+            admin_api_key=self.config.admin_api_key,
+            discount=self.config.agent.turn_discount,
+            export_style=self.config.agent.export_style,
         )
 
     def _resolve_workflow(
@@ -1749,6 +1783,40 @@ class RolloutControllerV2:
 
         addr = f"http://{format_hostport(host, port)}"
         self._wait_for_service(f"{addr}{health_path}", role)
+
+        return host, port
+
+    async def _async_fork_on_guard(
+        self,
+        guard_addr: str,
+        role: str,
+        worker_index: int,
+        raw_cmd: list[str],
+        health_path: str = "/health",
+    ) -> tuple[str, int]:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(f"{guard_addr}/alloc_ports", json={"count": 1})
+            resp.raise_for_status()
+            port_data = resp.json()
+            host = port_data["host"]
+            port = port_data["ports"][0]
+
+            cmd = list(raw_cmd) + ["--host", host, "--port", str(port)]
+            fork_payload: dict[str, Any] = {
+                "role": role,
+                "worker_index": worker_index,
+                "raw_cmd": cmd,
+            }
+
+            resp = await client.post(f"{guard_addr}/fork", json=fork_payload)
+            resp.raise_for_status()
+
+        self._forked_services.append((guard_addr, role, worker_index))
+
+        addr = f"http://{format_hostport(host, port)}"
+        await self._async_wait_for_service(f"{addr}{health_path}", role)
 
         return host, port
 
