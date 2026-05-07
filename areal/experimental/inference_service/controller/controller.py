@@ -561,72 +561,11 @@ class RolloutControllerV2:
         if inf_backend == "sglang":
             from areal.api.cli_args import SGLangConfig
 
-            sglang_config = SGLangConfig(
-                model_path=cfg.tokenizer_path,
-            )
-            if server_args:
-                for k, v in server_args.items():
-                    if hasattr(sglang_config, k):
-                        setattr(sglang_config, k, v)
-                    else:
-                        logger.warning(
-                            "SGLangConfig has no attribute %r, ignoring "
-                            "server_args entry (value=%r)",
-                            k,
-                            v,
-                        )
-
-            def _build_launch_cmd(
-                host: str | None,
-                port: int | None,
-                n_nodes: int = 1,
-                node_rank: int = 0,
-                dist_init_addr: str | None = None,
-            ) -> list[str]:
-                return SGLangConfig.build_cmd(
-                    sglang_config=sglang_config,
-                    tp_size=tp_size,
-                    base_gpu_id=0,
-                    host=host,
-                    port=port,
-                    dist_init_addr=dist_init_addr,
-                    n_nodes=n_nodes,
-                    node_rank=node_rank,
-                )
-
+            _build_launch_cmd = SGLangConfig.build_cmd_from_args
         elif inf_backend == "vllm":
             from areal.api.cli_args import vLLMConfig
 
-            vllm_config = vLLMConfig(model=cfg.tokenizer_path)
-            for k, v in (server_args or {}).items():
-                if hasattr(vllm_config, k):
-                    setattr(vllm_config, k, v)
-                else:
-                    logger.warning(
-                        "vLLMConfig has no attribute %r, ignoring "
-                        "server_args entry (value=%r)",
-                        k,
-                        v,
-                    )
-
-            def _build_launch_cmd(
-                host: str | None,
-                port: int | None,
-                n_nodes: int = 1,
-                node_rank: int = 0,
-                dist_init_addr: str | None = None,
-            ) -> list[str]:
-                return vLLMConfig.build_cmd(
-                    vllm_config=vllm_config,
-                    tp_size=tp_size,
-                    pp_size=alloc.parallel.pp_size,
-                    host=host,
-                    port=port,
-                    dist_init_addr=dist_init_addr,
-                    n_nodes=n_nodes,
-                    node_rank=node_rank,
-                )
-
+            _build_launch_cmd = vLLMConfig.build_cmd_from_args
         else:
             raise ValueError(f"Unsupported inference backend: {inf_backend!r}")
 
@@ -668,12 +607,15 @@ class RolloutControllerV2:
                     inf_host = port_data["host"]
                     inf_port = port_data["ports"][0]
 
-                cmd = _build_launch_cmd(
+                server_args.update(
                     host=inf_host,
                     port=inf_port,
-                    n_nodes=nnodes_per_instance,
+                    nnodes=nnodes_per_instance,
                     node_rank=node_rank,
                     dist_init_addr=dist_init_addr,
+                )
+                cmd = _build_launch_cmd(
+                    server_args
                 )
 
                 fork_payload: dict[str, Any] = {

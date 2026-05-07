@@ -150,39 +150,6 @@ class GatewayTrainController:
 
         world_size = self.train_alloc.parallel.world_size
 
-        # ==============================================================
-        # Step 0: Create world_size guards via scheduler (one per GPU rank)
-        # ==============================================================
-        # Each guard is allocated a GPU by the scheduler (like TrainController
-        # workers). Forked workers inherit the guard's GPU environment.
-        if len(cfg.scheduling_spec) != 1:
-            raise ValueError(
-                "GatewayTrainController (controller v2) requires exactly "
-                "one scheduling_spec. Legacy 2-spec worker/engine layouts "
-                "are only supported by TrainController (controller v1)."
-            )
-
-        guard_spec = SchedulingSpec(**asdict(cfg.scheduling_spec[0]))
-        guard_spec.cmd = "python -m areal.experimental.training_service.guard"
-
-        guard_role = f"{role}{self._GUARD_SUFFIX}"
-        guard_job = Job(
-            replicas=world_size,
-            tasks=[guard_spec],
-            scheduling_strategy=cfg.scheduling_strategy,
-            role=guard_role,
-        )
-        await asyncio.to_thread(self.scheduler.create_workers, job=guard_job)
-        self._service_roles.append(guard_role)
-        guard_workers = await asyncio.to_thread(
-            self.scheduler.get_workers,
-            role=guard_role,
-            timeout=int(self.config.setup_timeout),
-        )
-        logger.info("Guards ready: %s", [w.id for w in guard_workers])
-
-        self._workers_ready.set()
-
         try:
             # ==============================================================
             # Step 0: Create world_size guards via scheduler (one per GPU rank)
@@ -947,7 +914,7 @@ class GatewayTrainController:
         import requests
 
         from areal.experimental.inference_service.controller.controller import (
-            GatewayInferenceController,
+            RolloutControllerV2,
         )
         from areal.experimental.weight_update.controller.config import (
             WeightUpdateControllerConfig,
@@ -956,9 +923,9 @@ class GatewayTrainController:
             WeightUpdateController,
         )
 
-        if not isinstance(rollout, GatewayInferenceController):
+        if not isinstance(rollout, RolloutControllerV2):
             raise TypeError(
-                f"GatewayTrainController requires GatewayInferenceController, "
+                f"GatewayTrainController requires RolloutControllerV2, "
                 f"got {type(rollout).__name__}. "
                 f"Ensure _version='v2' is set on InferenceEngineConfig."
             )

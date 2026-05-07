@@ -533,10 +533,10 @@ class RemoteSGLangEngine(InferenceEngine):
     def as_controller(cls, config: InferenceEngineConfig, scheduler: Scheduler):
         if config._version == "v2":
             from areal.experimental.inference_service.controller.controller import (
-                GatewayInferenceController,
+                RolloutControllerV2,
             )
 
-            return GatewayInferenceController(config=config, scheduler=scheduler)
+            return RolloutControllerV2(config=config, scheduler=scheduler)
         return RolloutController(cls, config=config, scheduler=scheduler)
 
     def clear_batches(self, shard_ids: list[str]) -> None:
