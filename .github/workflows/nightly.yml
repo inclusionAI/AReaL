@@ -5,6 +5,12 @@ on:
     # 00:00 Beijing time (UTC+8) = 16:00 UTC
     - cron: '0 16 * * *'
   workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch, tag, or SHA to checkout (default: main)'
+        required: false
+        type: string
+        default: 'main'
 
 concurrency:
   group: nightly-ci
@@ -123,35 +129,90 @@ jobs:
             throw new Error(`Timed out waiting for runner ${instanceName} to come online.`);
 
   nightly-tests:
-    name: Run nightly tests
+    name: Run nightly tests (${{ matrix.variant }})
     needs: start-runner
     runs-on:
       - self-hosted
       - areal-nightly
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        variant: [sglang, vllm]
     timeout-minutes: 480
+    env:
+      CONTAINER_IMAGE: ghcr.io/inclusionai/areal-runtime:dev-${{ matrix.variant }}
+      CONTAINER_NAME: areal-nightly-${{ matrix.variant }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.sha }}
 
-      - name: System info
-        run: |
-          echo "=== GPU info ==="
-          nvidia-smi
-          echo ""
-          echo "=== Python ==="
-          python --version || python3 --version
-          echo ""
-          echo "=== Disk ==="
-          df -h
-          echo ""
-          echo "=== Memory ==="
-          free -h
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u inclusionai --password-stdin
 
-      - name: Dummy test (placeholder)
+      - name: Pull latest runtime image
+        run: docker pull "$CONTAINER_IMAGE"
+
+      - name: Start container
         run: |
-          echo "Nightly CI running on $(hostname) at $(date -u)"
-          echo "TODO: Replace with actual long-running tests"
-          sleep 10
-          echo "Dummy test completed successfully."
+          docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+          docker run --name "$CONTAINER_NAME" -d \
+            --runtime=nvidia --gpus all \
+            --net=host \
+            --shm-size=54g \
+            --ulimit nofile=1048576:1048576 \
+            --cap-add=SYS_ADMIN \
+            --device=/dev/fuse \
+            --security-opt=apparmor:unconfined \
+            -e HF_TOKEN="${{ secrets.HF_TOKEN }}" \
+            -e TOKENIZERS_PARALLELISM=false \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            --entrypoint=/bin/bash \
+            "$CONTAINER_IMAGE" \
+            -lc "trap : TERM INT; sleep infinity & wait"
+
+      - name: Install AReaL from source
+        run: |
+          docker exec "$CONTAINER_NAME" bash -lc '
+            export PATH=/opt/.venv/bin:$PATH
+            uv pip install -e . --no-deps
+          '
+
+      - name: Determine run parameters
+        id: params
+        run: |
+          BACKENDS=("fsdp" "megatron" "archon")
+          DAY_OF_YEAR=$(date -u +%j)
+          BACKEND_INDEX=$(( (10#$DAY_OF_YEAR - 1) % 3 ))
+          echo "experiment_name=nightly-gsm8k-$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+          echo "trial_name=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+          echo "train_backend=${BACKENDS[$BACKEND_INDEX]}" >> "$GITHUB_OUTPUT"
+
+      - name: Run training
+        env:
+          VARIANT: ${{ matrix.variant }}
+          EXPERIMENT_NAME: ${{ steps.params.outputs.experiment_name }}
+          TRIAL_NAME: ${{ steps.params.outputs.trial_name }}
+          TRAIN_BACKEND: ${{ steps.params.outputs.train_backend }}
+        run: |
+          docker exec "$CONTAINER_NAME" bash -lc '
+            export PATH=/opt/.venv/bin:$PATH
+            python3 examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml \
+              experiment_name='"$EXPERIMENT_NAME"' trial_name='"$TRIAL_NAME"' \
+              stats_logger.wandb.mode=disabled \
+              rollout.backend='"$VARIANT"':d1 actor.backend='"$TRAIN_BACKEND"':d1 \
+              cluster.n_nodes=1 cluster.n_gpus_per_node=2 \
+              actor.path=Qwen/Qwen3-0.6B \
+              scheduler.type=local train_dataset.batch_size=64
+          '
+
+      - name: Teardown container
+        if: always()
+        run: |
+          docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+          docker logout ghcr.io 2>/dev/null || true
 
   stop-runner:
     name: Stop areal-nightly instance
