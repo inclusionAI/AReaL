@@ -918,32 +918,13 @@ class MegatronEngine(TrainEngine):
                     tree_attn_keys = list(tree_kwargs.keys())
 
             cp_size = mpu.get_context_parallel_world_size()
-            # Disable the CP-local output path unconditionally.
-            #
-            # The CP-local branch below only rewrites ``loss_mask`` /
-            # ``cu_seqlens`` / ``_cp_local_labels`` inside ``cp_inputs``, but
-            # leaves the other per-token tensors carried by ``mb_input.orig_mb``
-            # (``logprobs``, ``prox_logp``, ``advantages``, ``rewards``,
-            # ``versions``, ...) at their original full real-sequence length.
-            # Downstream consumers then see inconsistent shapes, for example:
-            #   * ``forward_batch`` (compute_logp / advantages) aggregates the
-            #     per-MB logprobs via ``reorder_and_pad_outputs`` which splits
-            #     by ``output_seqlens`` (full real lens). CP-local outputs are
-            #     ``padded_to_length // cp_size`` rows and break
-            #     ``torch.split_with_sizes``.
-            #   * ``train_batch`` (ppo_update) routes the CP-local ``loss_mask``
-            #     into ``grpo_loss_fn`` / ``ppo_actor_loss_fn`` /
-            #     ``apply_rejection_sampling`` together with the full-length
-            #     ``proximal_logprobs`` / ``old_logprobs``, raising
-            #     ``proximal_logprobs shape [N] != loss_mask shape [N/cp]``.
-            #
-            # Going through ``packed_context_parallel_forward(gather_cp_output=
-            # True)`` + ``unpad_logits`` restores each MB's output to the full
-            # real-sequence length, so it aligns with every tensor in
-            # ``orig_mb`` regardless of whether we are in forward-only or
-            # training mode. The attention / MoE forward still runs CP-sharded
-            # inside ``packed_context_parallel_forward``; only the final
-            # logits are all-gathered along the CP dimension.
+            # CP-local path only rewrites loss_mask/cu_seqlens, but orig_mb tensors
+            # (logprobs, advantages, etc.) retain full sequence length, causing shape
+            # mismatches downstream (e.g. reorder_and_pad_outputs split failure, or
+            # loss_mask vs proximal_logprobs dimension mismatch in ppo_update).
+            # Force gather_cp_output=True + unpad_logits to restore full-length output.
+            # CP sharding still runs inside packed_context_parallel_forward; only the
+            # final logits are all-gathered along the CP dimension.
             _ = cp_size  # kept for the dead CP-local branch below
             cp_local = False
 
@@ -1412,27 +1393,13 @@ class MegatronEngine(TrainEngine):
         mcore_opt_config.exp_avg_sq_dtype = getattr(
             torch, self.mcore_config.exp_avg_sq_dtype
         )
-        # Precision-aware optimizer for MoE models
-        # -----------------------------------------
-        # When ``use_precision_aware_optimizer=True``, Megatron-Core stores
-        # optimizer states (params, grads, exp_avg, exp_avg_sq) in
-        # user-specified dtypes and compensates for low-precision rounding
-        # via fp32 remainders.  Two additional flags are set here:
-        #
-        # ``use_precision_aware_optimizer_no_fp8_or_ds_fp8``:
-        #   A derived flag that is True when the precision-aware optimizer
-        #   is enabled AND at least one of the following holds:
-        #     1. ``main_params_dtype != float32`` -- low-precision master
-        #        params (e.g. bf16) need rounding-error compensation.
-        #     2. ``fp8_recipe is None or "delayed"`` -- no real-time FP8
-        #        scaling, so the optimizer must handle quantisation error
-        #        itself (delayed-scaling FP8 updates the scale factor with
-        #        a lag, conflicting with the optimizer's immediate residual
-        #        correction).
-        #     3. ``optimizer_cpu_offload`` -- CPU offload introduces extra
-        #        precision conversions that require special handling.
-        #   When True, the optimizer applies its full residual-compensation
-        #   logic during the parameter update step.
+        # Precision-aware optimizer: stores optimizer states in user-specified
+        # dtypes and compensates low-precision rounding via fp32 remainders.
+        # ``use_precision_aware_optimizer_no_fp8_or_ds_fp8`` is True when
+        # precision-aware optimizer is enabled AND any of: (1) main_params_dtype
+        # != fp32, (2) no real-time FP8 scaling (fp8_recipe is None/delayed),
+        # (3) optimizer_cpu_offload. When True, full residual-compensation is
+        # applied during the parameter update step.
         mcore_opt_config.use_precision_aware_optimizer_no_fp8_or_ds_fp8 = (
             mcore_opt_config.use_precision_aware_optimizer
             and (
