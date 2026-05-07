@@ -870,10 +870,31 @@ class GatewayTrainController:
         self._gateway_post("/save_perf_tracer", payload)
 
     def clear_batches(self, *targets: Any) -> None:
+        from areal.infra.rpc.rtensor import RTensor, flatten_shard_ids
         from areal.infra.rpc.serialization import serialize_value
 
+        # Step 1: HTTP DELETE to storage nodes to evict _storage entries
+        # (mirrors TrainController._async_clear_batches)
+        shards_by_node = RTensor.collect_shards(targets)
+        if shards_by_node:
+
+            async def _clear_storage():
+                await asyncio.gather(
+                    *[
+                        RTensor.clear_node(addr, sids)
+                        for addr, sids in shards_by_node.items()
+                    ],
+                    return_exceptions=True,
+                )
+
+            run_async_task(_clear_storage)
+
+        # Step 2: Drain _fetch_buffer on workers via engine.clear_batches(shard_ids)
+        shard_ids = flatten_shard_ids(targets)
+        if not shard_ids:
+            return
         payload = {
-            "args": serialize_value(list(targets)),
+            "args": serialize_value([shard_ids]),
             "kwargs": serialize_value({}),
         }
         self._gateway_post("/clear_batches", payload)
