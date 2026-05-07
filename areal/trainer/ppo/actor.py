@@ -697,52 +697,6 @@ def grpo_loss_fn(
         denominator="n_valid_tokens",
     )
 
-    # ---- R3 Logprob Diff: rollout (inference) vs training logprobs ----
-    # Three metrics quantify train/infer divergence at different granularities:
-    #
-    # 1. ``rollout_train_logprobs_abs_diff`` (old_logp vs current-train logprobs)
-    #    Conflates (a) train/infer gap AND (b) intra-ppo_update weight drift
-    #    from earlier mini-batches. At ``max_head_offpolicyness>0`` this metric
-    #    grows with mini-batch index because ``logprobs`` is forwarded on
-    #    W_current (already stepped i times within the epoch), while
-    #    ``old_logp`` stays fixed at W_rollout.  R3 cannot reduce this drift.
-    #
-    # 2. ``rollout_train_logprobs_abs_diff_prox`` (old_logp vs prox_logp_gt)
-    #    The *pure* train/infer mismatch: both evaluated on W_rollout, differing
-    #    only in SGLang-vs-Megatron forward (fused kernel + router top-k).
-    #    With R3 enabled and weights fully synced (k=0), this should collapse
-    #    to BF16 kernel noise. With R3 off, ~2% per-expert router flips add
-    #    ~0.1-0.2 abs-diff per token.  This is the metric to validate R3
-    #    effectiveness across staleness settings.
-    #
-    # Both are logged via ``stats_tracker.stat`` with ``n_valid_tokens``
-    # denominator so the aggregation is a proper token-weighted global
-    # mean/min/max (cross-mini-batch, cross-rank), not a Python-float mean
-    # of per-minibatch local scalars (which would be small-batch-biased and
-    # would report local stds as if they were global ones).
-    if loss_mask.any():
-        with torch.no_grad():
-            _diff_abs = (old_logp - logprobs.detach()).abs().float()
-            _diff_abs = torch.where(loss_mask, _diff_abs, torch.zeros_like(_diff_abs))
-            _diff_sq = (_diff_abs * _diff_abs).float()
-        stats_tracker.stat(
-            rollout_train_logprobs_abs_diff=_diff_abs,
-            rollout_train_logprobs_sq_diff=_diff_sq,
-            denominator="n_valid_tokens",
-        )
-        if prox_logp_gt is not None:
-            with torch.no_grad():
-                _prox_abs = (old_logp - prox_logp_gt.detach()).abs().float()
-                _prox_abs = torch.where(
-                    loss_mask, _prox_abs, torch.zeros_like(_prox_abs)
-                )
-                _prox_sq = (_prox_abs * _prox_abs).float()
-            stats_tracker.stat(
-                rollout_train_logprobs_abs_diff_prox=_prox_abs,
-                rollout_train_logprobs_sq_diff_prox=_prox_sq,
-                denominator="n_valid_tokens",
-            )
-
     if "behave_imp_weight" in stat:
         stats_tracker.denominator(unclipped_behave_tokens=stat["behave_mask"])
         stats_tracker.stat(
