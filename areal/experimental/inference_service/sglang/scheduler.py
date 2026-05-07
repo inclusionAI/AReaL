@@ -169,6 +169,7 @@ def areal_run_scheduler_process(
         numa_bind_to_node,
     )
     from sglang.utils import get_exception_traceback
+
     from areal.experimental.inference_service.sglang.pp_bridge import (
         PPSchedulerBridge,
     )

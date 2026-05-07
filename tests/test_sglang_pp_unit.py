@@ -353,6 +353,7 @@ class TestPPBridgeModule:
         # Should not raise
         bridge.bind()
 
+
 class TestLocalLaunchPPSizeThreading:
     """``rl_trainer.py`` and the local controller path
     must thread ``pp_size`` through to ``SGLangConfig.build_args`` /
@@ -552,13 +553,13 @@ class TestArchonPerStageInit:
         assert state.group_name == "update_weight_group_1"
 
     def test_non_pp_head_creates_no_group(self, monkeypatch):
-        """Non-PP-head ranks (dp>0/tp>0/cp>0) must not create any NCCL group.
-        """
+        """Non-PP-head ranks (dp>0/tp>0/cp>0) must not create any NCCL group."""
         import areal.experimental.engine.archon_weight_sync as aws
 
         created = []
         monkeypatch.setattr(
-            aws, "init_custom_process_group",
+            aws,
+            "init_custom_process_group",
             lambda **kw: created.append(kw) or object(),
         )
         monkeypatch.setattr(aws, "find_free_ports", lambda n: list(range(n)))
@@ -569,8 +570,9 @@ class TestArchonPerStageInit:
                 self.pp = pp
 
         class FakeEngine:
-            logger = type("L", (), {"info": lambda *a, **k: None,
-                                     "debug": lambda *a, **k: None})()
+            logger = type(
+                "L", (), {"info": lambda *a, **k: None, "debug": lambda *a, **k: None}
+            )()
             parallel_dims = FakeParallelDims(pp=2)
 
             def is_pipeline_parallel_head(self):
@@ -583,9 +585,7 @@ class TestArchonPerStageInit:
         gen_pp_size = 2
         meta = _make_meta(tp=2, pp=gen_pp_size, dp=2)
         state = aws.WeightSyncState(pp_rank=0)
-        aws._init_per_pp_weight_update_groups(
-            state, meta, FakeEngine(), gen_pp_size
-        )
+        aws._init_per_pp_weight_update_groups(state, meta, FakeEngine(), gen_pp_size)
 
         assert created == []
         # State still records expected group names so destroy/cleanup can
@@ -607,17 +607,25 @@ class TestArchonPerStageAllGatherParticipation:
         import areal.experimental.engine.archon_weight_sync as aws
 
         class FakeLogger:
-            def info(self, *a, **k): pass
-            def debug(self, *a, **k): pass
+            def info(self, *a, **k):
+                pass
+
+            def debug(self, *a, **k):
+                pass
 
         class FakeLock:
-            def __enter__(self): return self
-            def __exit__(self, *a): return False
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
 
         class FakeRollout:
             def update_weights_from_distributed(self, meta, specs):
                 class F:
-                    def result(self_inner): return None
+                    def result(self_inner):
+                        return None
+
                 return F()
 
         # Fake parameter object that records each call to _get_full_tensor.
@@ -663,12 +671,14 @@ class TestArchonPerStageAllGatherParticipation:
         calls = []
         real = aws._get_full_tensor
         monkeypatch.setattr(
-            aws, "_get_full_tensor",
+            aws,
+            "_get_full_tensor",
             lambda p: (calls.append(p.tag), real(p))[1],
         )
         # Stub broadcast so we don't actually try to NCCL-broadcast.
         monkeypatch.setattr(
-            aws, "_update_bucket_weights_multi_group",
+            aws,
+            "_update_bucket_weights_multi_group",
             lambda *a, **k: None,
         )
         meta = _make_meta(tp=2, pp=2, dp=1)
@@ -687,12 +697,14 @@ class TestArchonPerStageAllGatherParticipation:
         calls = []
         real = aws._get_full_tensor
         monkeypatch.setattr(
-            aws, "_get_full_tensor",
+            aws,
+            "_get_full_tensor",
             lambda p: (calls.append(p.tag), real(p))[1],
         )
         broadcast_calls = []
         monkeypatch.setattr(
-            aws, "_update_bucket_weights_multi_group",
+            aws,
+            "_update_bucket_weights_multi_group",
             lambda *a, **k: broadcast_calls.append(a),
         )
         meta = _make_meta(tp=2, pp=2, dp=1)
@@ -710,7 +722,6 @@ class TestArchonPerStageAllGatherParticipation:
         )
 
 
-
 class TestArchonPPSizeMismatchValidation:
     """when ``train_pp_size != gen_pp_size`` the per-PP-rank
     sync silently deadlocks (training heads create groups sglang never joins,
@@ -725,13 +736,14 @@ class TestArchonPPSizeMismatchValidation:
 
     class _FakeEngine:
         def __init__(self, train_pp_size, train_pp_rank, is_head):
-            self.parallel_dims = (
-                TestArchonPPSizeMismatchValidation._FakeParallelDims(pp=train_pp_size)
+            self.parallel_dims = TestArchonPPSizeMismatchValidation._FakeParallelDims(
+                pp=train_pp_size
             )
             self._pp_rank = train_pp_rank
             self._is_head = is_head
             self.logger = type(
-                "L", (),
+                "L",
+                (),
                 {"info": lambda *a, **k: None, "debug": lambda *a, **k: None},
             )()
 
@@ -750,14 +762,10 @@ class TestArchonPPSizeMismatchValidation:
 
         gen_pp_size = 4
         meta = _make_meta(tp=2, pp=gen_pp_size, dp=1)
-        engine = self._FakeEngine(
-            train_pp_size=2, train_pp_rank=0, is_head=True
-        )
+        engine = self._FakeEngine(train_pp_size=2, train_pp_rank=0, is_head=True)
         state = aws.WeightSyncState(pp_rank=0)
         with pytest.raises(ValueError, match="train_pp_size == gen_pp_size"):
-            aws._init_per_pp_weight_update_groups(
-                state, meta, engine, gen_pp_size
-            )
+            aws._init_per_pp_weight_update_groups(state, meta, engine, gen_pp_size)
 
     def test_train_gt_gen_raises_on_head(self):
         """train_pp_size=4, gen_pp_size=2: training heads with rank 2,3 would
@@ -767,14 +775,10 @@ class TestArchonPPSizeMismatchValidation:
 
         gen_pp_size = 2
         meta = _make_meta(tp=2, pp=gen_pp_size, dp=1)
-        engine = self._FakeEngine(
-            train_pp_size=4, train_pp_rank=0, is_head=True
-        )
+        engine = self._FakeEngine(train_pp_size=4, train_pp_rank=0, is_head=True)
         state = aws.WeightSyncState(pp_rank=0)
         with pytest.raises(ValueError, match="train_pp_size == gen_pp_size"):
-            aws._init_per_pp_weight_update_groups(
-                state, meta, engine, gen_pp_size
-            )
+            aws._init_per_pp_weight_update_groups(state, meta, engine, gen_pp_size)
 
     def test_mismatch_raises_on_non_head(self):
         """Non-PP-head ranks must ALSO raise; otherwise they silently record
@@ -785,14 +789,10 @@ class TestArchonPPSizeMismatchValidation:
 
         gen_pp_size = 4
         meta = _make_meta(tp=2, pp=gen_pp_size, dp=1)
-        engine = self._FakeEngine(
-            train_pp_size=2, train_pp_rank=0, is_head=False
-        )
+        engine = self._FakeEngine(train_pp_size=2, train_pp_rank=0, is_head=False)
         state = aws.WeightSyncState(pp_rank=0)
         with pytest.raises(ValueError, match="train_pp_size == gen_pp_size"):
-            aws._init_per_pp_weight_update_groups(
-                state, meta, engine, gen_pp_size
-            )
+            aws._init_per_pp_weight_update_groups(state, meta, engine, gen_pp_size)
 
     def test_match_passes_validation(self, monkeypatch):
         """train_pp_size == gen_pp_size: validation passes; head proceeds to
@@ -800,21 +800,24 @@ class TestArchonPPSizeMismatchValidation:
         """
         import areal.experimental.engine.archon_weight_sync as aws
 
-        monkeypatch.setattr(
-            aws, "init_custom_process_group", lambda **kw: object()
-        )
+        monkeypatch.setattr(aws, "init_custom_process_group", lambda **kw: object())
         monkeypatch.setattr(aws, "find_free_ports", lambda n: [40000])
         monkeypatch.setattr(aws, "gethostip", lambda: "127.0.0.1")
 
         class FakeFut:
-            def result(self): return None
+            def result(self):
+                return None
 
         class FakeRollout:
-            def init_weights_update_group(self, m): return FakeFut()
+            def init_weights_update_group(self, m):
+                return FakeFut()
 
         class FakeLock:
-            def __enter__(self): return self
-            def __exit__(self, *a): return False
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
 
         gen_pp_size = 2
         meta = _make_meta(tp=2, pp=gen_pp_size, dp=2)
@@ -825,7 +828,5 @@ class TestArchonPPSizeMismatchValidation:
         engine.engine_lock = FakeLock()
         state = aws.WeightSyncState(pp_rank=0)
         # Should not raise.
-        aws._init_per_pp_weight_update_groups(
-            state, meta, engine, gen_pp_size
-        )
+        aws._init_per_pp_weight_update_groups(state, meta, engine, gen_pp_size)
         assert state.group_names == ["update_weight_group_0"]

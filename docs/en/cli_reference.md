@@ -1087,7 +1087,7 @@ Refer to Megatron-LM documentation for implementation details.
 | `moe_permute_fusion`                       | boolean                                                              | `False`      | Fuse token rearrangement ops during token dispatching.                                                                                                                                            |
 | `fp8_config`                               | [`FP8EngineConfig`](section-fp8-engine) \| None                      | `None`       | -                                                                                                                                                                                                 |
 | `bridge_type`                              | string                                                               | `"mbridge"`  | Bridge backend for MegatronEngine. Choices: 'mbridge' or 'megatron-bridge'. **Choices:** `mbridge`, `megatron-bridge`                                                                             |
-| `use_mbridge_save`                         | bool                                                                 | `False`      | Use mbridge's save method to save gpu memory when saving weights.                                                                                                                                 |
+| `use_mbridge_save`                         | boolean                                                              | `False`      | Use mbridge's save method to save gpu memory when saving weights.                                                                                                                                 |
 
 (section-memory-profiler)=
 
