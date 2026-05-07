@@ -217,6 +217,10 @@ class MegatronEngine(TrainEngine):
                     "v57:MTPStochasticRoundBf16(AREAL_MTP_V57_STOCHASTIC_ROUND[default=1],AREAL_MTP_V57_SR_MIN_DRIFT_RATIO[default=0.0])+ForceTickRatioFire+K2",
                     "v17:MTPNativeAutoScaler+ConsumerBypass"
                     "(AREAL_MTP_NATIVE_AUTOSCALER,autograd_in_graph)",
+                    "v58:MTPSlimeAlign(AREAL_MTP_SLIME_ALIGN[default=1]):"
+                    "disable Path3-detach/v53-weight-detach/v52-cap/"
+                    "FIFO-append/v50-gradFp32/v57-SR; set_loss_scale="
+                    "loss_scale/num_mb (Megatron-Core native = slime)",
                 ]
                 _banner_flags = {
                     "AREAL_MTP_FP32_BROADCAST":
@@ -231,7 +235,35 @@ class MegatronEngine(TrainEngine):
                     "AREAL_MTP_V30_DIAG":
                         _os_banner.environ.get(
                             "AREAL_MTP_V30_DIAG", "1"),
+                    "AREAL_MTP_SLIME_ALIGN":
+                        _os_banner.environ.get(
+                            "AREAL_MTP_SLIME_ALIGN", "1"),
                 }
+                try:
+                    _slime_align_on = (
+                        _os_banner.environ.get(
+                            "AREAL_MTP_SLIME_ALIGN", "1") == "1"
+                    )
+                    self.logger.info(
+                        "[MTPSlimeAlign] AREAL_MTP_SLIME_ALIGN=%s. "
+                        "When ON: A) Path3 detach SKIPPED, "
+                        "B) output_weight NOT detached, "
+                        "C) v52 SourceLossCap DISABLED, "
+                        "D) FIFO append SKIPPED, "
+                        "E) set_loss_scale=loss_scale/num_mb, "
+                        "G) v50 MTPGradFp32Coerce DISABLED, "
+                        "H) v57 StochasticRoundBf16 DISABLED. "
+                        "This restores Megatron-Core 0.16.0 native MTP "
+                        "semantics (= slime), so "
+                        "mtp_loss_scaling_factor=0.2 carries the same "
+                        "meaning as in slime.",
+                        _slime_align_on,
+                    )
+                except Exception as _e_sa:
+                    self.logger.warning(
+                        "[MTPSlimeAlign] banner log failed: %s",
+                        _e_sa,
+                    )
                 self.logger.info(
                     "[MTPVersionBanner] tags=%s flags=%s",
                     ",".join(_banner_tags), _banner_flags,
@@ -1452,9 +1484,24 @@ class MegatronEngine(TrainEngine):
         # Gate: AREAL_MTP_V50_GRAD_FP32_COERCE (default "1").
         try:
             import os as _os_v50g
+            # [MTPSlimeAlign] disable v50 fp32 coerce when slime-align is ON;
+            # slime/Megatron-Core native does not upcast MTP main_grad.
+            _v50_slime = (
+                _os_v50g.environ.get('AREAL_MTP_SLIME_ALIGN', '1') == '1'
+            )
             _v50_gfp32 = (
                 _os_v50g.environ.get('AREAL_MTP_V50_GRAD_FP32_COERCE', '1') == '1'
+                and not _v50_slime
             )
+            if _v50_slime and not getattr(self, '_v58_v50_logged', False):
+                try:
+                    self.logger.info(
+                        '[MTPSlimeAlign] v50 MTPGradFp32Coerce DISABLED '
+                        '(slime/native does not upcast MTP main_grad).'
+                    )
+                    self._v58_v50_logged = True
+                except Exception:
+                    pass
         except Exception:
             _v50_gfp32 = True
         if (
@@ -2962,11 +3009,46 @@ class MegatronEngine(TrainEngine):
                             # output_weight ...)` call below is LEFT UNTOUCHED so GRPO
                             # gradient on lm_head / embedding is preserved exactly.
                             # ----------------------------------------------------------------
-                            _mtp_output_weight_v53 = (
-                                output_weight.detach()
-                                if output_weight is not None
-                                else None
-                            )
+                            # [MTPSlimeAlign] When slime-align is ON, pass
+                            # the un-detached shared output_weight, exactly
+                            # like Megatron-Core 0.16.0 native
+                            # gpt_model.py:_postprocess and slime. This
+                            # restores MTP CE -> shared lm_head/embedding
+                            # gradient flow, which is essential for the
+                            # main policy to track the draft distribution.
+                            try:
+                                import os as _os_v58_b
+                                _v58_slime_b = (
+                                    _os_v58_b.environ.get(
+                                        'AREAL_MTP_SLIME_ALIGN', '1'
+                                    ) == '1'
+                                )
+                            except Exception:
+                                _v58_slime_b = True
+                            if _v58_slime_b:
+                                _mtp_output_weight_v53 = output_weight
+                                if (
+                                    not getattr(
+                                        _engine_ref,
+                                        '_v58_b_logged', False)
+                                ):
+                                    try:
+                                        _logger.info(
+                                            '[MTPSlimeAlign] B) '
+                                            'output_weight passed '
+                                            'un-detached to MTP '
+                                            'output_layer (slime/'
+                                            'native).'
+                                        )
+                                        _engine_ref._v58_b_logged = True
+                                    except Exception:
+                                        pass
+                            else:
+                                _mtp_output_weight_v53 = (
+                                    output_weight.detach()
+                                    if output_weight is not None
+                                    else None
+                                )
 
                             if mtp_in_postprocess:
                                 hidden_states = self_model.mtp(
@@ -3156,8 +3238,35 @@ class MegatronEngine(TrainEngine):
                                     # Disable: AREAL_MTP_V52_LOSS_CAP_RATIO=0
                                     try:
                                         import os as _os_v52s
-                                        _v52_ratio = float(_os_v52s.environ.get(
-                                            'AREAL_MTP_V52_LOSS_CAP_RATIO', '2.0'))
+                                        # [MTPSlimeAlign] force cap ratio
+                                        # to 0 when slime-align is ON;
+                                        # native Megatron-Core has no
+                                        # source-side loss cap.
+                                        if _os_v52s.environ.get(
+                                            'AREAL_MTP_SLIME_ALIGN', '1'
+                                        ) == '1':
+                                            _v52_ratio = 0.0
+                                            if not getattr(
+                                                _engine_ref,
+                                                '_v58_c_logged', False
+                                            ):
+                                                try:
+                                                    _logger.info(
+                                                        '[MTPSlime'
+                                                        'Align] C) '
+                                                        'v52 Source'
+                                                        'LossCap '
+                                                        'DISABLED '
+                                                        '(ratio=0, '
+                                                        'slime/'
+                                                        'native).'
+                                                    )
+                                                    _engine_ref._v58_c_logged = True
+                                                except Exception:
+                                                    pass
+                                        else:
+                                            _v52_ratio = float(_os_v52s.environ.get(
+                                                'AREAL_MTP_V52_LOSS_CAP_RATIO', '2.0'))
                                     except Exception:
                                         _v52_ratio = 2.0
                                     if _v52_ratio > 0.0:
@@ -3199,7 +3308,36 @@ class MegatronEngine(TrainEngine):
                                                 '[MTPSourceLossCap-v52] failed: %s',
                                                 _e_v52s,
                                             )
-                                    _engine_ref._mtp_loss_for_backward.append(_mtp_loss_to_store)
+                                    # [MTPSlimeAlign] D) skip FIFO append
+                                    # when slime-align is ON; native MC has
+                                    # no scalar FIFO -- gradient injection
+                                    # is handled solely by
+                                    # MTPLossAutoScaler.apply below.
+                                    try:
+                                        import os as _os_v58_d
+                                        _v58_slime_d = (
+                                            _os_v58_d.environ.get(
+                                                'AREAL_MTP_SLIME_ALIGN',
+                                                '1') == '1'
+                                        )
+                                    except Exception:
+                                        _v58_slime_d = True
+                                    if not _v58_slime_d:
+                                        _engine_ref._mtp_loss_for_backward.append(_mtp_loss_to_store)
+                                    elif not getattr(
+                                        _engine_ref,
+                                        '_v58_d_logged', False
+                                    ):
+                                        try:
+                                            _logger.info(
+                                                '[MTPSlimeAlign] D) '
+                                                'FIFO append SKIPPED '
+                                                '(slime/native uses '
+                                                'autograd-only path).'
+                                            )
+                                            _engine_ref._v58_d_logged = True
+                                        except Exception:
+                                            pass
 
                                     # ---  BEGIN ---
                                     # Reproduce Megatron-native behaviour:
@@ -3259,11 +3397,82 @@ class MegatronEngine(TrainEngine):
                                             # loss_scale via the outer
                                             # loss * loss_scale contract,
                                             # so only 1/num_mb is needed here.
-                                            _MTPLossAutoScaler_v17.set_loss_scale(
-                                                _torch_v17.tensor(
-                                                    1.0 / float(_num_mb_v17)
+                                            # [MTPSlimeAlign] E) match
+                                            # Megatron-Core schedules.py:
+                                            #   loss_scale = grad_scale_func(1.0)
+                                            #   set_loss_scale(loss_scale / num_microbatches)
+                                            # Falls back to 1/num_mb only
+                                            # when slime-align is OFF, to
+                                            # preserve legacy behaviour.
+                                            try:
+                                                import os as _os_v58_e
+                                                _v58_slime_e = (
+                                                    _os_v58_e.environ.get(
+                                                        'AREAL_MTP_SLIME_ALIGN',
+                                                        '1') == '1'
                                                 )
-                                            )
+                                            except Exception:
+                                                _v58_slime_e = True
+                                            if _v58_slime_e:
+                                                try:
+                                                    _gsf_e = getattr(
+                                                        self_model.config,
+                                                        'grad_scale_func',
+                                                        None,
+                                                    )
+                                                    _ls_e = (
+                                                        _gsf_e(
+                                                            _torch_v17.ones(
+                                                                1,
+                                                                device=hidden_states.device,
+                                                            )
+                                                        )
+                                                        if _gsf_e is not None
+                                                        else _torch_v17.ones(
+                                                            1,
+                                                            device=hidden_states.device,
+                                                        )
+                                                    )
+                                                except Exception:
+                                                    _ls_e = _torch_v17.ones(
+                                                        1,
+                                                        device=hidden_states.device,
+                                                    )
+                                                _MTPLossAutoScaler_v17.set_loss_scale(
+                                                    _ls_e / float(_num_mb_v17)
+                                                )
+                                                if not getattr(
+                                                    _engine_ref,
+                                                    '_v58_e_logged', False
+                                                ):
+                                                    try:
+                                                        _logger.info(
+                                                            '[MTPSlime'
+                                                            'Align] E) '
+                                                            'set_loss_scale'
+                                                            '=loss_scale/'
+                                                            'num_mb (= '
+                                                            'Megatron-Core '
+                                                            'schedules.py '
+                                                            ': %s / %d).',
+                                                            float(
+                                                                _ls_e.item()
+                                                                if hasattr(
+                                                                    _ls_e,
+                                                                    'item')
+                                                                else _ls_e
+                                                            ),
+                                                            int(_num_mb_v17),
+                                                        )
+                                                        _engine_ref._v58_e_logged = True
+                                                    except Exception:
+                                                        pass
+                                            else:
+                                                _MTPLossAutoScaler_v17.set_loss_scale(
+                                                    _torch_v17.tensor(
+                                                        1.0 / float(_num_mb_v17)
+                                                    )
+                                                )
                                             try:
                                                 _d06_step = getattr(
                                                     _engine_ref,
@@ -3498,8 +3707,44 @@ class MegatronEngine(TrainEngine):
                             _orig_postprocess,
                         )
 
-                        # Path 3: patch _get_embeddings for embedding detach
+                        # Path 3: patch _get_embeddings for embedding detach.
+                        # [MTPSlimeAlign] A) Skip Path-3 detach when
+                        # slime-align is ON; native Megatron-Core uses
+                        # `make_viewless_tensor(..., keep_graph=True)`
+                        # which preserves the gradient flow through the
+                        # decoder_input/hidden_states into the main
+                        # embedding & backbone -- this is precisely the
+                        # mechanism that makes slime's
+                        # `mtp_loss_scaling_factor=0.2` an effective
+                        # main-policy regulariser.
+                        try:
+                            import os as _os_v58_a
+                            _v58_slime_a = (
+                                _os_v58_a.environ.get(
+                                    'AREAL_MTP_SLIME_ALIGN', '1') == '1'
+                            )
+                        except Exception:
+                            _v58_slime_a = True
                         _mtp_block = getattr(_unwrapped, "mtp", None)
+                        if _v58_slime_a:
+                            if not getattr(
+                                self, '_v58_a_logged', False
+                            ):
+                                try:
+                                    self.logger.info(
+                                        '[MTPSlimeAlign] A) Path-3 '
+                                        '_get_embeddings detach SKIPPED. '
+                                        'Native Megatron-Core preserves '
+                                        'decoder_input/hidden_states via '
+                                        'make_viewless_tensor(keep_graph='
+                                        'True), letting MTP CE backward '
+                                        'flow into the main embedding & '
+                                        'backbone (slime semantics).'
+                                    )
+                                    self._v58_a_logged = True
+                                except Exception:
+                                    pass
+                            _mtp_block = None  # disables the patch loop
                         if _mtp_block is not None and hasattr(_mtp_block, "layers"):
                             for _layer in _mtp_block.layers:
                                 _orig_get_emb = _layer._get_embeddings
@@ -6324,12 +6569,34 @@ class MegatronEngine(TrainEngine):
                             # count = numel * drift / ULP.  Preserves
                             # long-run unbiasedness E[SR(x)] = x.
                             try:
+                                # [MTPSlimeAlign] H) disable v57 SR when
+                                # slime-align is ON; slime/native bf16
+                                # path uses RNE (round-nearest-even) only.
+                                _v57_slime = (
+                                    _os_v16.environ.get(
+                                        'AREAL_MTP_SLIME_ALIGN', '1'
+                                    ) == '1'
+                                )
                                 _sr_on_v57 = (
                                     _os_v16.environ.get(
                                         'AREAL_MTP_V57_STOCHASTIC_ROUND',
                                         '1',
                                     ) == '1'
+                                    and not _v57_slime
                                 )
+                                if _v57_slime and not getattr(
+                                    self, '_v58_h_logged', False
+                                ):
+                                    try:
+                                        self.logger.info(
+                                            '[MTPSlimeAlign] H) v57 '
+                                            'StochasticRoundBf16 '
+                                            'DISABLED (slime/native uses '
+                                            'RNE only).'
+                                        )
+                                        self._v58_h_logged = True
+                                    except Exception:
+                                        pass
                             except Exception:
                                 _sr_on_v57 = True
                             _sr_applied_v57 = False
