@@ -187,6 +187,8 @@ class RolloutControllerV2:
 
     # -- Initialize --------------------------------------------------------
 
+    _WORKERS_READY_TIMEOUT: float = 30.0
+
     def initialize(
         self,
         role: str,
@@ -198,17 +200,23 @@ class RolloutControllerV2:
     ) -> concurrent.futures.Future | None:
         from areal.infra.utils.concurrent import get_executor
 
+        if self._init_future is not None:
+            raise RuntimeError(
+                "initialize() called while a previous initialization is in progress"
+            )
+
         self._worker_role = role
         self._start_online_callback_server()
 
         self._workers_ready.clear()
-        self._init_future = get_executor().submit(
+        self._shutdown_requested.clear()
+        self._init_future = get_executor("ctrl_init").submit(
             self._guarded_bg_initialize, server_args, server_infos, *args, **kwargs
         )
 
-        if not self._workers_ready.wait(timeout=self.config.setup_timeout):
+        if not self._workers_ready.wait(timeout=self._WORKERS_READY_TIMEOUT):
             raise TimeoutError(
-                f"Worker creation timed out after {self.config.setup_timeout}s"
+                f"Worker creation timed out after {self._WORKERS_READY_TIMEOUT}s"
             )
         if self._init_future.done():
             self._init_future.result()
@@ -386,6 +394,9 @@ class RolloutControllerV2:
         logger.info("RPCGuard workers ready: %s", [w.id for w in inf_workers])
 
         self._workers_ready.set()
+
+        if self._shutdown_requested.is_set():
+            return
 
         # ==================================================================
         # Step 1: Launch inference servers (skip in external mode or when pre-existing)
@@ -594,6 +605,9 @@ class RolloutControllerV2:
                 )
         logger.info("Inference servers: %s", self._inf_addrs)
 
+        if self._shutdown_requested.is_set():
+            return
+
         # ==================================================================
         # Step 2: Fork Router on worker 0
         # ==================================================================
@@ -620,6 +634,9 @@ class RolloutControllerV2:
         )
         self._router_addr = f"http://{format_hostport(router_host, router_port)}"
         logger.info("Router: %s", self._router_addr)
+
+        if self._shutdown_requested.is_set():
+            return
 
         # ==================================================================
         # Step 3: Fork Data Proxies on all workers (raw_cmd mode)
@@ -684,6 +701,9 @@ class RolloutControllerV2:
             )
 
         logger.info("Data proxies: %s", self._data_proxy_addrs)
+
+        if self._shutdown_requested.is_set():
+            return
 
         # ==================================================================
         # Step 4: Fork Gateway on worker 0
@@ -1021,10 +1041,11 @@ class RolloutControllerV2:
         """Set version locally and broadcast to all data proxy workers."""
         from areal.infra.utils.concurrent import run_async_task
 
+        self._ensure_initialized()
+
         with self._version_lock:
             self._version = version
 
-        self._ensure_initialized()
         if not self._gateway_addr:
             return
 

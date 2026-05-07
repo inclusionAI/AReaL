@@ -70,6 +70,8 @@ class DataController:
         self._workers_ready = threading.Event()
         self._shutdown_requested = threading.Event()
 
+    _WORKERS_READY_TIMEOUT: float = 30.0
+
     # -- Initialize --------------------------------------------------------
 
     def initialize(
@@ -82,16 +84,22 @@ class DataController:
     ) -> concurrent.futures.Future | None:
         from areal.infra.utils.concurrent import get_executor
 
+        if self._init_future is not None:
+            raise RuntimeError(
+                "initialize() called while a previous initialization is in progress"
+            )
+
         self._worker_role = role
 
         self._workers_ready.clear()
-        self._init_future = get_executor().submit(
+        self._shutdown_requested.clear()
+        self._init_future = get_executor("ctrl_init").submit(
             self._guarded_bg_initialize, num_dataset_workers, **kwargs
         )
 
-        if not self._workers_ready.wait(timeout=self.config.setup_timeout):
+        if not self._workers_ready.wait(timeout=self._WORKERS_READY_TIMEOUT):
             raise TimeoutError(
-                f"Worker creation timed out after {self.config.setup_timeout}s"
+                f"Worker creation timed out after {self._WORKERS_READY_TIMEOUT}s"
             )
         if self._init_future.done():
             self._init_future.result()
@@ -174,6 +182,9 @@ class DataController:
 
         self._workers_ready.set()
 
+        if self._shutdown_requested.is_set():
+            return
+
         guard_addrs = [
             f"http://{format_hostport(w.ip, int(w.worker_ports[0]))}"
             for w in guard_workers
@@ -230,6 +241,9 @@ class DataController:
                 logger.info("DataWorkers: %s", self._worker_addrs)
                 logger.info("Router: %s", self._router_addr)
 
+                if self._shutdown_requested.is_set():
+                    return
+
                 # Wave 2: Fork Gateway + Register workers with Router
                 async def _register_workers() -> None:
                     async def _register_one(worker_addr: str) -> None:
@@ -242,9 +256,13 @@ class DataController:
                             resp.raise_for_status()
                         logger.info("Registered DataWorker %s in router", worker_addr)
 
-                    await asyncio.gather(
-                        *[_register_one(addr) for addr in self._worker_addrs]
+                    results = await asyncio.gather(
+                        *[_register_one(addr) for addr in self._worker_addrs],
+                        return_exceptions=True,
                     )
+                    errors = [r for r in results if isinstance(r, BaseException)]
+                    if errors:
+                        raise errors[0]
 
                 gw_result, _ = await asyncio.gather(
                     self._async_fork_on_guard(

@@ -63,6 +63,8 @@ class GatewayTrainController:
         self._workers_ready = threading.Event()
         self._shutdown_requested = threading.Event()
 
+    _WORKERS_READY_TIMEOUT: float = 30.0
+
     # -- Initialize --------------------------------------------------------
 
     def initialize(
@@ -73,16 +75,22 @@ class GatewayTrainController:
         wait: bool = False,
         **kwargs: Any,
     ) -> concurrent.futures.Future | None:
+        if self._init_future is not None:
+            raise RuntimeError(
+                "initialize() called while a previous initialization is in progress"
+            )
+
         self._role = role
 
         self._workers_ready.clear()
-        self._init_future = get_executor().submit(
+        self._shutdown_requested.clear()
+        self._init_future = get_executor("ctrl_init").submit(
             self._guarded_bg_initialize, role, ft_spec, **kwargs
         )
 
-        if not self._workers_ready.wait(timeout=self.config.setup_timeout):
+        if not self._workers_ready.wait(timeout=self._WORKERS_READY_TIMEOUT):
             raise TimeoutError(
-                f"Worker creation timed out after {self.config.setup_timeout}s"
+                f"Worker creation timed out after {self._WORKERS_READY_TIMEOUT}s"
             )
         if self._init_future.done():
             self._init_future.result()
@@ -173,6 +181,9 @@ class GatewayTrainController:
             logger.info("Guards ready: %s", [w.id for w in guard_workers])
 
             self._workers_ready.set()
+
+            if self._shutdown_requested.is_set():
+                return
 
             # ==============================================================
             # Step 1: Allocate master addr/port for NCCL rendezvous
@@ -284,6 +295,9 @@ class GatewayTrainController:
             )
             logger.info("Engines initialized on all workers")
 
+            if self._shutdown_requested.is_set():
+                return
+
             # ==============================================================
             # Step 4: Fork Router on guard 0
             # ==============================================================
@@ -304,6 +318,9 @@ class GatewayTrainController:
             )
             self._router_addr = f"http://{format_hostport(router_host, router_port)}"
             logger.info("Router: %s", self._router_addr)
+
+            if self._shutdown_requested.is_set():
+                return
 
             # ==============================================================
             # Step 5: Fork Data Proxy on a guard
@@ -327,6 +344,9 @@ class GatewayTrainController:
             )
             self._model_addr = f"http://{format_hostport(dp_host, dp_port)}"
             logger.info("Model endpoint: %s", self._model_addr)
+
+            if self._shutdown_requested.is_set():
+                return
 
             # ==============================================================
             # Step 6: Fork Gateway on guard 0
