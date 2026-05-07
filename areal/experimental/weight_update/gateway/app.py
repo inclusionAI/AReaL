@@ -451,6 +451,7 @@ def create_app(config: WeightUpdateConfig | None = None) -> FastAPI:
             "train_world_size": train_world_size,
             "num_engines": num_engines,
             "master_port": master_port,
+            "admin_api_key": config.admin_api_key,
         }
 
         init_tasks = []
@@ -564,6 +565,16 @@ def create_app(config: WeightUpdateConfig | None = None) -> FastAPI:
                 for url in pair_info.inference_worker_urls
             ]
         )
+
+        # Flush colocate KV keys for this version to prevent accumulation
+        infer_world_size = pair_info.inference_world_size
+        train_world_size = pair_info.train_world_size
+        for i in range(train_world_size):
+            transfer_rank = infer_world_size + i
+            weight_key = f"colocate_weights_rank{transfer_rank}_{version}"
+            done_key = f"colocate_done_rank{transfer_rank}_{version}"
+            kv_store.delete(pair_info.pair_name, weight_key)
+            kv_store.delete(pair_info.pair_name, done_key)
 
     @asynccontextmanager
     async def _inference_paused(

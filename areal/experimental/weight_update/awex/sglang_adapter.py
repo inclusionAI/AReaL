@@ -8,6 +8,7 @@ import os
 import time
 from typing import Any
 
+import httpx
 import torch
 import torch.distributed as dist
 from awex.meta.weight_meta import (
@@ -53,6 +54,12 @@ class AwexSGLangAdapter(AwexInferenceAdapter):
         self._rank_info: RankInfo | None = None
         self._parameters: dict[str, torch.Tensor] | None = None
         self._released_tags: set[str] = set()
+        self._colocate_admin_api_key: str = "areal-admin-key"
+        self._colocate_http_client: httpx.Client | None = None
+        self._colocate_timeout_s: float = 120.0
+        self._colocate_transport = None
+        self._train_to_infer_device_mapping: dict | None = None
+        self._infer_to_train_device_mapping: dict | None = None
 
     def _get_model(self) -> torch.nn.Module:
         return self._scheduler.tp_worker.model_runner.model
@@ -410,6 +417,12 @@ class AwexSGLangAdapter(AwexInferenceAdapter):
         self._transfer_rank = None
         self._rank_info = None
         self._parameters = None
+        if self._colocate_http_client is not None:
+            self._colocate_http_client.close()
+            self._colocate_http_client = None
+        self._colocate_transport = None
+        self._train_to_infer_device_mapping = None
+        self._infer_to_train_device_mapping = None
 
     # ── Colocated weight transfer methods ─────────────────────────────────
 
@@ -422,12 +435,24 @@ class AwexSGLangAdapter(AwexInferenceAdapter):
         train_world_size: int,
         num_engines: int,
         master_port: int,
+        admin_api_key: str = "areal-admin-key",
+        timeout_s: float = 120.0,
     ) -> None:
+        if infer_world_size != train_world_size:
+            raise ValueError(
+                f"Colocate mode requires infer_world_size == train_world_size. "
+                f"Got infer_world_size={infer_world_size}, "
+                f"train_world_size={train_world_size}"
+            )
         self._colocate_pair_name = pair_name
         self._colocate_kv_store_url = kv_store_url
         self._transfer_rank = transfer_rank
         self._colocate_infer_world_size = infer_world_size
         self._colocate_train_world_size = train_world_size
+        self._colocate_admin_api_key = admin_api_key
+        self._colocate_timeout_s = timeout_s
+        if self._colocate_http_client is None:
+            self._colocate_http_client = httpx.Client()
 
         infer_meta, train_meta = fetch_kv_metadata(kv_store_url, pair_name)
 
@@ -480,33 +505,40 @@ class AwexSGLangAdapter(AwexInferenceAdapter):
         )
 
     def execute_colocate_weight_update(self, version: int) -> None:
-        import httpx
-
         kv_store_url = self._colocate_kv_store_url
         pair_name = self._colocate_pair_name
         transfer_rank = self._transfer_rank
+        assert self._colocate_http_client is not None, (
+            "init_colocate_weight_update must be called first"
+        )
+        assert self._infer_to_train_device_mapping is not None
+        client = self._colocate_http_client
+        auth_headers = {"Authorization": f"Bearer {self._colocate_admin_api_key}"}
+        timeout_s = self._colocate_timeout_s
 
-        # Paired training rank: inference rank i pairs with training rank
-        # infer_world_size + i.
         paired_train_rank = self._infer_to_train_device_mapping[transfer_rank]
         kv_key = f"colocate_weights_rank{paired_train_rank}_{version}"
 
-        client = httpx.Client()
-        deadline = time.monotonic() + 120.0
+        deadline = time.monotonic() + timeout_s
         serialized_hex = None
+        poll_count = 0
+        last_status = -1
         while time.monotonic() < deadline:
             resp = client.get(
                 f"{kv_store_url}/weight_meta/{pair_name}/{kv_key}",
                 timeout=5.0,
             )
+            last_status = resp.status_code
             if resp.status_code == 200:
                 serialized_hex = resp.json()["value"]
                 break
+            poll_count += 1
             time.sleep(0.1)
         if serialized_hex is None:
-            client.close()
             raise TimeoutError(
-                f"Training did not put colocate weights within 120s (key={kv_key})"
+                f"Training did not put colocate weights within {timeout_s}s "
+                f"(waiting_key={kv_key}, polls={poll_count}, "
+                f"last_status={last_status})"
             )
 
         serialized_weights = bytes.fromhex(serialized_hex)
@@ -521,6 +553,7 @@ class AwexSGLangAdapter(AwexInferenceAdapter):
         rank_info = self._build_rank_info()
         rank_coordinate = f"infer_{rank_info.global_rank}"
 
+        assert self._colocate_transport is not None
         self._colocate_transport.update_weights_in_colocate_mode(
             self._train_to_infer_device_mapping,
             self._infer_to_train_device_mapping,
@@ -539,10 +572,9 @@ class AwexSGLangAdapter(AwexInferenceAdapter):
         client.put(
             f"{kv_store_url}/weight_meta/{pair_name}/{done_key}",
             json={"value": True},
-            headers={"Authorization": "Bearer areal-admin-key"},
+            headers=auth_headers,
             timeout=10.0,
         )
-        client.close()
 
         del deserialized_weights, group_shared, tensors, serialized_weights
         torch.cuda.synchronize()
@@ -564,6 +596,16 @@ class AwexSGLangAdapter(AwexInferenceAdapter):
         native_tags = (
             [t for t in tags if t in self._SGLANG_MEMORY_TAGS] if tags else None
         )
+        unsupported = (
+            [t for t in tags if t not in self._SGLANG_MEMORY_TAGS] if tags else []
+        )
+        if unsupported:
+            logger.warning(
+                "release_memory: tags %s not supported by SGLang adapter "
+                "(supported: %s), ignoring",
+                unsupported,
+                self._SGLANG_MEMORY_TAGS,
+            )
         if native_tags:
             req = ReleaseMemoryOccupationReqInput(tags=native_tags)
             self._scheduler.release_memory_occupation(req)
@@ -582,6 +624,16 @@ class AwexSGLangAdapter(AwexInferenceAdapter):
             if tags
             else None
         )
+        unsupported = (
+            [t for t in tags if t not in self._SGLANG_MEMORY_TAGS] if tags else []
+        )
+        if unsupported:
+            logger.warning(
+                "resume_memory: tags %s not supported by SGLang adapter "
+                "(supported: %s), ignoring",
+                unsupported,
+                self._SGLANG_MEMORY_TAGS,
+            )
         if native_tags:
             req = ResumeMemoryOccupationReqInput(tags=native_tags)
             self._scheduler.resume_memory_occupation(req)

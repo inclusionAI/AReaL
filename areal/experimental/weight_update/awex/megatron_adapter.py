@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import gc
 import os
+import threading
 import time
 from typing import TYPE_CHECKING
 
+import httpx
 import torch
 import torch.distributed as dist
 from awex.meta.weight_meta import (
@@ -60,6 +62,10 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
         self._offloaded_optimizer_states: dict = {}
         self._offloaded_weights: dict[str, torch.Tensor] = {}
         self._released_tags: set[str] = set()
+        self._colocate_lock = threading.Lock()
+        self._colocate_admin_api_key: str = "areal-admin-key"
+        self._colocate_http_client: httpx.Client | None = None
+        self._colocate_timeout_s: float = 120.0
 
     @property
     def parallelism_strategy(self) -> dict:
@@ -210,6 +216,9 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
         self._weights_update_group = None
         self._transfer_plan = None
         self._transfer_rank = None
+        if self._colocate_http_client is not None:
+            self._colocate_http_client.close()
+            self._colocate_http_client = None
 
     def _build_rank_info(self) -> RankInfo:
         from megatron.core import parallel_state as mpu
@@ -304,11 +313,17 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
         train_world_size: int,
         num_engines: int,
         master_port: int,
+        admin_api_key: str = "areal-admin-key",
+        timeout_s: float = 120.0,
     ) -> None:
         self._colocate_pair_name = pair_name
         self._colocate_kv_store_url = kv_store_url
         self._colocate_transfer_rank = transfer_rank
         self._colocate_infer_world_size = infer_world_size
+        self._colocate_admin_api_key = admin_api_key
+        self._colocate_timeout_s = timeout_s
+        if self._colocate_http_client is None:
+            self._colocate_http_client = httpx.Client()
         logger.info(
             "Initialized colocate weight update for pair '%s', transfer_rank=%d",
             pair_name,
@@ -316,11 +331,19 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
         )
 
     def execute_colocate_weight_update(self, version: int) -> None:
-        import httpx
+        with self._colocate_lock:
+            self._execute_colocate_weight_update_locked(version)
 
+    def _execute_colocate_weight_update_locked(self, version: int) -> None:
         kv_store_url = self._colocate_kv_store_url
         pair_name = self._colocate_pair_name
         transfer_rank = self._colocate_transfer_rank
+        assert self._colocate_http_client is not None, (
+            "init_colocate_weight_update must be called first"
+        )
+        client = self._colocate_http_client
+        auth_headers = {"Authorization": f"Bearer {self._colocate_admin_api_key}"}
+        timeout_s = self._colocate_timeout_s
 
         weights_offloaded = "weights" in self._released_tags
         if weights_offloaded:
@@ -341,14 +364,12 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
 
         kv_key = f"colocate_weights_rank{transfer_rank}_{version}"
 
-        client = httpx.Client()
         client.put(
             f"{kv_store_url}/weight_meta/{pair_name}/{kv_key}",
             json={"value": serialized_weights.hex()},
-            headers={"Authorization": "Bearer areal-admin-key"},
-            timeout=120.0,
+            headers=auth_headers,
+            timeout=timeout_s,
         )
-        client.close()
 
         logger.info(
             "Serialized %d params (%d groups) for colocate transfer v%d, rank %d",
@@ -359,22 +380,25 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
         )
 
         done_key = f"colocate_done_rank{transfer_rank}_{version}"
-        deadline = time.monotonic() + 120.0
-        reader = httpx.Client()
+        deadline = time.monotonic() + timeout_s
+        poll_count = 0
+        last_status = -1
         while time.monotonic() < deadline:
-            resp = reader.get(
+            resp = client.get(
                 f"{kv_store_url}/weight_meta/{pair_name}/{done_key}",
                 timeout=5.0,
             )
+            last_status = resp.status_code
             if resp.status_code == 200:
                 break
+            poll_count += 1
             time.sleep(0.1)
         else:
-            reader.close()
             raise TimeoutError(
-                f"Inference did not signal completion within 120s (key={done_key})"
+                f"Inference did not signal completion within {timeout_s}s "
+                f"(waiting_key={done_key}, put_key={kv_key}, "
+                f"polls={poll_count}, last_status={last_status})"
             )
-        reader.close()
 
         del group_shared, group_tensors, serialized_weights
         torch.cuda.synchronize()
@@ -447,14 +471,22 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
 
         # Megatron's ChainedOptimizer wraps per-model-chunk optimizers;
         # each in turn wraps a base torch optimizer holding the state dict.
-        inner_optimizers = getattr(optimizer, "optimizers", [optimizer])
+        if hasattr(optimizer, "optimizers"):
+            inner_optimizers = optimizer.optimizers
+        else:
+            inner_optimizers = [optimizer]
+            logger.warning(
+                "Optimizer does not have 'optimizers' attribute. "
+                "Treating it as a single optimizer; offload may be incomplete "
+                "for non-standard Megatron optimizer structures."
+            )
         for opt in inner_optimizers:
             base_opt = getattr(opt, "optimizer", opt)
             for param, state in base_opt.state.items():
                 cpu_state: dict[str, torch.Tensor] = {}
                 for key, val in state.items():
                     if isinstance(val, torch.Tensor) and val.is_cuda:
-                        cpu_state[key] = val.data
+                        cpu_state[key] = val.detach().to("cpu", non_blocking=True)
                         state[key] = torch.empty(0, device="cpu")
                 if cpu_state:
                     self._offloaded_optimizer_states[param] = cpu_state
@@ -492,7 +524,9 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
 
         for name, param in self._engine.model.named_parameters():
             if param.is_cuda:
-                self._offloaded_weights[name] = param.data
+                self._offloaded_weights[name] = param.data.detach().to(
+                    "cpu", non_blocking=True
+                )
                 param.data = torch.empty(0, device="cpu")
 
         logger.info(
@@ -503,6 +537,8 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
     def _reload_model_weights(self) -> None:
         """Restore model parameters from CPU back to GPU."""
         if not self._offloaded_weights:
+            return
+        if self._engine.model is None:
             return
 
         device = self._engine.device

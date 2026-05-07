@@ -67,6 +67,8 @@ class AwexInferenceAdapter(Protocol):
         train_world_size: int,
         num_engines: int,
         master_port: int,
+        admin_api_key: str = "areal-admin-key",
+        timeout_s: float = 120.0,
     ) -> None:
         """Build device mapping, inference-only NCCL group, and colocate transport."""
         ...

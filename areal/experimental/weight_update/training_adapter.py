@@ -67,6 +67,8 @@ class AwexTrainingAdapter(Protocol):
         train_world_size: int,
         num_engines: int,
         master_port: int,
+        admin_api_key: str = "areal-admin-key",
+        timeout_s: float = 120.0,
     ) -> None:
         """Register device info in KV store for colocated weight transfer."""
         ...
