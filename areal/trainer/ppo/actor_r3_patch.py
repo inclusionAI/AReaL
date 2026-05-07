@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
-"""
-R3 data-splitting helpers for the PPO actor.
+"""R3 data-splitting helpers for the PPO actor.
 
-Provides utilities for resolving ``routed_experts`` tensors and splitting
-them across mini-batches for side-channel delivery to the training engine.
+Resolves and splits ``routed_experts`` tensors across mini-batches for
+side-channel delivery to the training engine.
 """
 
 from __future__ import annotations
@@ -85,14 +84,6 @@ def split_routed_experts_for_minibatches(
         result.append(reordered[offset : offset + n_samples])
         offset += n_samples
 
-    logger.debug(
-        "[R3] split_routed_experts_for_minibatches: split %d samples into "
-        "%d mini-batches with sizes %s (forward_indices=%s).",
-        routed_experts.shape[0],
-        n_mbs,
-        [r.shape[0] for r in result],
-        "None" if forward_indices is None else f"len={len(forward_indices)}",
-    )
     return result
 
 

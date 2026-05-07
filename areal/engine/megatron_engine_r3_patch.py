@@ -1,28 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
-"""
-R3 Integration Patch for MegatronEngine.
+"""R3 Integration Patch for MegatronEngine.
 
-This module wraps ``MegatronEngine.forward_backward_batch`` so that, when
-the micro-batch data contains ``routed_experts`` tensors, each micro-batch's
-forward step is preceded by a call to ``setup_per_microbatch_replay_forward``
-and followed (after the full forward pass) by a switch to backward-replay
-mode.
-
-The patch handles the critical issue that ``routed_experts`` is a 4D tensor
-``(bs, seq_len, num_moe_layers, topk)`` which will NOT be correctly split by
-``split_padded_tensor_dict_into_mb_list`` (which only splits tensors with
-``numel() == bs * max_seqlen``).  Instead, we extract ``routed_experts``
-from ``mb_list.data`` before micro-batch splitting, and manually distribute
-it to each micro-batch using the ``forward_indices`` and ``group_lens``
-from ``MicroBatchList``.
-
-Usage::
-
-    from areal.engine.megatron_engine_r3_patch import patch_megatron_engine_for_r3
-    patch_megatron_engine_for_r3(engine, enable_router_replay=True)
-
-Ref some code from megatron or verl, adapted for AReaL.
+Wraps ``MegatronEngine.forward_backward_batch`` to inject per-microbatch
+replay setup/teardown around the Megatron pipeline schedule when the
+micro-batch data contains ``routed_experts`` tensors.
 """
 
 from __future__ import annotations
@@ -139,15 +121,6 @@ def _align_routed_experts_to_mask(
         n = min(actual_len, re_seqlen, max_seqlen)
         aligned[i, :n] = routed_experts[i, :n]
 
-    logger.debug(
-        "[R3] _align_routed_experts_to_mask: re_shape=%s -> aligned_shape=%s, "
-        "n_seqs=%d (re_bs=%d), seq_lens=%s.",
-        routed_experts.shape,
-        aligned.shape,
-        n_seqs,
-        re_bs,
-        seq_lens[:8],
-    )
     return aligned
 
 
@@ -234,14 +207,6 @@ def _split_routed_experts_for_mbs(
         result.append(reordered[offset : offset + n_samples])
         offset += n_samples
 
-    logger.debug(
-        "[R3] _split_routed_experts_for_mbs: split %d samples into %d mbs "
-        "with sizes %s (forward_indices=%s).",
-        routed_experts.shape[0],
-        n_mbs,
-        [r.shape[0] for r in result],
-        "None" if forward_indices is None else f"len={len(forward_indices)}",
-    )
     return result
 
 
@@ -315,7 +280,7 @@ def _r3_forward_backward_batch(
     routed_experts_batch = None
     _from_side_channel = False
 
-    # Strategy A: Side-channel (preferred path)
+    # Side-channel path (preferred).
     if (
         hasattr(self, "_r3_pending_routed_experts")
         and self._r3_pending_routed_experts is not None
@@ -323,21 +288,11 @@ def _r3_forward_backward_batch(
         routed_experts_batch = self._r3_pending_routed_experts
         self._r3_pending_routed_experts = None  # Consume it
         _from_side_channel = True
-        logger.debug(
-            "[R3] Retrieved routed_experts from engine side-channel: shape=%s.",
-            routed_experts_batch.shape,
-        )
 
     # Strategy B: Legacy path from mb_list.data (backward compatibility)
     if routed_experts_batch is None and not forward_only:
         if hasattr(mb_list, "data") and isinstance(mb_list.data, dict):
             routed_experts_batch = mb_list.data.pop("routed_experts", None)
-            if routed_experts_batch is not None:
-                logger.debug(
-                    "[R3] Retrieved routed_experts from mb_list.data (legacy path): "
-                    "shape=%s.",
-                    routed_experts_batch.shape,
-                )
 
     # Clean from mbs and padded_mbs to avoid confusing downstream code.
     for mb_dict in mb_list.mbs:
@@ -351,16 +306,6 @@ def _r3_forward_backward_batch(
         mb_list.data.pop("routed_experts", None)
 
     if routed_experts_batch is None:
-        if forward_only:
-            logger.debug(
-                "[R3] forward_only=True and no side-channel routed_experts; "
-                "skipping R3 replay (compute_logp/eval path)."
-            )
-        else:
-            logger.debug(
-                "[R3] No routed_experts found (neither side-channel nor mb_list.data); "
-                "using original forward_backward_batch."
-            )
         return self._r3_original_forward_backward_batch(
             mb_list, process_output_fn, forward_only=forward_only
         )
@@ -375,9 +320,7 @@ def _r3_forward_backward_batch(
     # Split routed_experts per micro-batch
     per_mb_routed_experts = _split_routed_experts_for_mbs(routed_experts_batch, mb_list)
 
-    # ------------------------------------------------------------------
-    # 2. Store R3 data on the engine for the wrapped iterator.
-    # ------------------------------------------------------------------
+    # Store R3 data for the wrapped iterator.
     self._r3_per_mb_experts = per_mb_routed_experts
     self._r3_mb_counter = 0
     model_config = self.tf_config
@@ -420,8 +363,7 @@ def _r3_forward_backward_batch(
                 else None
             )
 
-            # When backward recompute finishes and next forward starts,
-            # switch back to REPLAY_FORWARD.
+            # Switch back to REPLAY_FORWARD after backward recompute.
             if RouterReplayHelper.is_replay_backward_action(model_config):
                 router_list = RouterReplayHelper.get_micro_batch_router_list(
                     model_config
@@ -457,8 +399,7 @@ def _r3_forward_backward_batch(
                         if orig_cu is None:
                             orig_cu = cu_seqlens
 
-                        # Align routed_experts from left-padded to left-aligned
-                        # using the ORIGINAL cu_seqlens (actual token counts).
+                        # Align from left-padded to left-aligned using original cu_seqlens.
                         aligned_re = _align_routed_experts_to_mask(
                             re,
                             orig_cu,
@@ -466,8 +407,7 @@ def _r3_forward_backward_batch(
                             _r3_mb_idx=idx,
                         )
 
-                        # Pass the PADDED cu_seqlens (with TP alignment)
-                        # to set_router_replay_data so packing matches Megatron.
+                        # Pass padded cu_seqlens (TP-aligned) to the model.
                         setup_per_microbatch_replay_forward(
                             aligned_re.to(cu_seqlens.device),
                             cu_seqlens,
@@ -517,9 +457,7 @@ def _r3_forward_backward_batch(
 
     mb_list.__class__ = _R3MicroBatchListProxy
 
-    # ------------------------------------------------------------------
-    # 4. Register a forward hook for REPLAY_FORWARD -> REPLAY_BACKWARD toggle.
-    # ------------------------------------------------------------------
+    # Register forward hook for REPLAY_FORWARD → REPLAY_BACKWARD toggle.
     hook_handles = []
 
     def _r3_post_forward_hook(module, input, output):

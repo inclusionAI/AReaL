@@ -1,12 +1,8 @@
-"""
-Monkey-patches for Megatron-Core MoE components to support Router Replay (R3).
+"""Monkey-patches for Megatron-Core MoE components to support Router Replay (R3).
 
-Router Replay forces the TopKRouter to use pre-recorded expert assignments
-(from rollout inference) instead of computing new ones during training.
-This eliminates the train/inference routing mismatch caused by weight
-staleness in asynchronous RL training.
-
-Ref some code from megatron or verl, adapted for AReaL.
+Forces TopKRouter to use pre-recorded expert assignments from rollout inference
+instead of computing new ones during training, eliminating train/inference routing
+mismatch caused by weight staleness in async RL training.
 """
 
 from __future__ import annotations
@@ -125,12 +121,6 @@ class RouterReplay:
         """Set the replay action for all router instances."""
         for r in RouterReplay.router_instances:
             r.set_router_replay_action(action)
-        logger.debug(
-            "[R3] set_global_router_replay_action: action=%s "
-            "applied_to=%d router_instances",
-            action.value,
-            len(RouterReplay.router_instances),
-        )
 
     @staticmethod
     def clear_global_router_replay_action() -> None:
@@ -150,14 +140,7 @@ class RouterReplay:
         # back to the live router output so they produce no replay signal.
         self.target_valid_mask: torch.Tensor | None = None
         self.replay_backward_mask_list: list[torch.Tensor | None] = []
-        # ---------- R3 diagnostics (PP=2 root-cause hunt) ----------
-        # Per-push metadata ring -- parallel to ``replay_backward_list`` so
-        # the BACKWARD consumer can compare the popped slab against the
-        # slab that was REGISTERED AT THAT PUSH (not the most recent
-        # target, which under 1F1B scheduling has been overwritten by a
-        # later mb). This cleanly separates "logging artifact" from "real
-        # backward queue corruption". See code-rules/distributed.md hang
-        # section -- the metadata ring is local state, no cross-rank comm.
+        # Keep push_meta queue in sync with backward_list.
         self.replay_push_meta_list: list[dict] = []
         self.creation_order: int = len(RouterReplay.router_instances)
         try:
@@ -272,6 +255,7 @@ def _patched_topk_routing_with_score_function(
             # Use the provided indices for replay
             top_indices = router_replay.target_topk_idx
             top_indices = top_indices.to(scores.device)
+            # Splice padding rows with live routing to avoid routing to expert 0.
             valid_mask = getattr(router_replay, "target_valid_mask", None)
             if valid_mask is not None and valid_mask.shape[0] == top_indices.shape[0]:
                 _, live_top = _compute_topk(
@@ -294,23 +278,15 @@ def _patched_topk_routing_with_score_function(
                     "falling back to normal routing."
                 )
                 return _compute_topk(scores, topk, num_groups=num_groups, group_topk=group_topk)
-            # Use the last recorded indices for backward replay
+            # Backward recompute: use the recorded indices from the forward pass.
             top_indices = router_replay.replay_backward_list.pop(0)
             top_indices = top_indices.to(scores.device)
-            # pop the matching per-row validity mask (if any)
-            # so the backward recompute sees the same spliced indices as the
-            # original forward pass.  Without this, activation-checkpoint
-            # recomputation re-introduces the all-zero padding rows and the
-            # gradient path contradicts the forward pass.
             bw_mask_list = getattr(router_replay, "replay_backward_mask_list", None)
             if bw_mask_list:
                 bw_valid_mask = bw_mask_list.pop(0)
             else:
                 bw_valid_mask = None
-            # ---------- R3 diagnostics: pop the matching push-meta entry
-            # so the divergence verdict below compares popped-slab against
-            # the slab that was REGISTERED AT PUSH TIME (the real
-            # correctness criterion under 1F1B PP scheduling).
+            # Keep push_meta queue in sync with backward_list.
             _push_meta_list = getattr(router_replay, "replay_push_meta_list", None)
             if _push_meta_list:
                 try:

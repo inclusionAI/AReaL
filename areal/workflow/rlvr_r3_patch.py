@@ -1,20 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
-"""
-R3 helpers for the RLVR workflow.
+"""R3 helpers for the RLVR workflow.
 
-These functions bridge the inference-time ``ModelResponse.routed_experts``
-(a numpy array of shape ``(num_sgl_tokens, num_moe_layers * topk)``) into the
-training-side tensor dict so that the Megatron engine can replay routing
-decisions.
-
-The conversion pipeline:
-    1. ``extract_routed_experts`` -- called in ``arun_episode`` right after
-       ``_collect_samples``.  Converts the numpy array to a left-padded
-       torch tensor of shape ``(1, seq_len, num_moe_layers, topk)``.
-    2. The tensor is added to the result dict under key ``"routed_experts"``.
-    3. During training, the ``MegatronEngine`` R3 patch picks it up from
-       the batch data and feeds it to ``setup_per_microbatch_replay_forward``.
+Bridges inference-time ``ModelResponse.routed_experts`` into the training-side
+tensor dict so that the Megatron engine can replay routing decisions.
 """
 
 from __future__ import annotations

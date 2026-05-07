@@ -1,14 +1,7 @@
-"""
-Router Replay Utilities for AReaL.
+"""Router Replay (R3) utilities for AReaL.
 
-Handles the complete shape-transformation pipeline that converts rollout
-routing indices into the layout expected by Megatron-Core's RouterReplay:
-
-1. **Right-padding to left-alignment** -- rollout batch is right-padded;
-   training uses left-aligned packed format.
-2. **TP/SP splitting** -- sequence parallelism across tensor-model-parallel ranks.
-3. **PP layer slicing** -- pipeline parallelism assigns different layers to ranks.
-4. **Dense/MoE layer mapping** -- architectures with dense FFN layers before MoE.
+Converts rollout routing indices into Megatron-Core's RouterReplay layout:
+right-pad → left-align, TP/SP scatter, PP layer slicing, dense/MoE mapping.
 """
 
 from __future__ import annotations
@@ -28,320 +21,12 @@ from areal.utils import logging
 logger = logging.getLogger("R3/utils")
 
 
-# ===================================================================
-# R3 detailed-logging helpers
-# ===================================================================
-# These helpers are used by EVERY R3 file (this module, router_replay_patch,
-# megatron_engine_r3_patch, actor_r3_patch, actor.py, rlvr_r3_patch) so that
-# all stages of the pipeline produce fingerprints in a consistent format.
-#
-# Controls (all opt-in via env vars so prod perf is not affected unless you
-# deliberately enable):
-#
-#   AREAL_R3_VERBOSE=1              -- master switch; enables everything below.
-#                                      Default: 1 (ON) so that if someone cares
-#                                      to run with R3 and grep logs, they do
-#                                      not need to set anything extra.
-#   AREAL_R3_LOG_FIRST_N=30         -- for rate-limited hot paths, always log
-#                                      the first N calls per key.
-#   AREAL_R3_LOG_EVERY=100          -- after the first N, log every Nth call.
-#   AREAL_R3_TENSOR_SAMPLE=8        -- how many leading elements to include in
-#                                      a tensor signature.
-#   AREAL_R3_ROUTER_LAYER_LIMIT=3   -- in patched_topk_routing, only print
-#                                      per-layer details for up to the first
-#                                      K routing calls of each type per step
-#                                      (layer idx is approximated via a
-#                                      per-action counter).
-# ===================================================================
+# R3 verbose-logging helpers (controlled via AREAL_R3_VERBOSE env var).
 
 
 def _r3_verbose() -> bool:
+    """Return whether R3 verbose logging is enabled."""
     return os.environ.get("AREAL_R3_VERBOSE", "1") != "0"
-
-
-_R3_LOG_CALL_COUNTS: dict[str, int] = {}
-_R3_LOG_FIRST_N = int(os.environ.get("AREAL_R3_LOG_FIRST_N", "30"))
-_R3_LOG_EVERY = int(os.environ.get("AREAL_R3_LOG_EVERY", "100"))
-_R3_TENSOR_SAMPLE = int(os.environ.get("AREAL_R3_TENSOR_SAMPLE", "8"))
-_R3_ROUTER_LAYER_LIMIT = int(os.environ.get("AREAL_R3_ROUTER_LAYER_LIMIT", "3"))
-
-
-def _r3_should_log(key: str) -> bool:
-    """Rate-limited logging gate. Returns True for the first
-    ``AREAL_R3_LOG_FIRST_N`` calls against ``key``, then True once every
-    ``AREAL_R3_LOG_EVERY`` calls thereafter. Monotonic per-process counter.
-    """
-    if not _r3_verbose():
-        return False
-    n = _R3_LOG_CALL_COUNTS.get(key, 0) + 1
-    _R3_LOG_CALL_COUNTS[key] = n
-    if n <= _R3_LOG_FIRST_N:
-        return True
-    return (n % max(_R3_LOG_EVERY, 1)) == 0
-
-
-def _r3_call_count(key: str) -> int:
-    return _R3_LOG_CALL_COUNTS.get(key, 0)
-
-
-def _r3_tensor_sig(name: str, t, *, max_sample: int | None = None) -> str:
-    """Compact human-readable fingerprint for a tensor or numpy array.
-
-    Intentionally cheap: performs ONE ``.detach().cpu()`` copy and one
-    reduction so it is safe to call from hot paths (still, prefer to gate
-    via ``_r3_should_log``).
-    """
-    if t is None:
-        return f"{name}=None"
-    sample_n = _R3_TENSOR_SAMPLE if max_sample is None else max_sample
-    try:
-        if isinstance(t, torch.Tensor):
-            tc = t.detach()
-            if tc.device.type != "cpu":
-                tc = tc.to("cpu", non_blocking=False)
-            flat = tc.reshape(-1)
-            total = int(flat.numel())
-            if total == 0:
-                return f"{name}(shape={tuple(t.shape)}, dtype={t.dtype}, empty)"
-            nnz = int((flat != 0).sum().item())
-            if tc.dtype in (
-                torch.float16,
-                torch.float32,
-                torch.float64,
-                torch.bfloat16,
-            ):
-                checksum = float(flat.float().double().sum().item())
-                maxv = float(flat.float().abs().max().item())
-                sample = [round(v, 6) for v in flat[:sample_n].float().tolist()]
-            else:
-                checksum = int(flat.long().sum().item())
-                maxv = int(flat.long().abs().max().item())
-                sample = flat[:sample_n].tolist()
-            return (
-                f"{name}(shape={tuple(t.shape)}, dtype={t.dtype}, "
-                f"device={t.device}, nnz={nnz}/{total}, "
-                f"sum={checksum}, |max|={maxv}, first{len(sample)}={sample})"
-            )
-        # numpy or generic array-like
-        if hasattr(t, "shape") and hasattr(t, "dtype"):
-            import numpy as np
-
-            arr = t if isinstance(t, np.ndarray) else np.asarray(t)
-            flat = arr.reshape(-1)
-            total = int(flat.size)
-            if total == 0:
-                return f"{name}(shape={arr.shape}, dtype={arr.dtype}, empty, numpy)"
-            nnz = int((flat != 0).sum())
-            checksum = int(flat.astype("int64").sum()) if np.issubdtype(
-                arr.dtype, np.integer
-            ) else float(flat.astype("float64").sum())
-            maxv = (
-                int(np.abs(flat).max())
-                if np.issubdtype(arr.dtype, np.integer)
-                else float(np.abs(flat).max())
-            )
-            sample = flat[:sample_n].tolist()
-            return (
-                f"{name}(shape={tuple(arr.shape)}, dtype={arr.dtype}, numpy, "
-                f"nnz={nnz}/{total}, sum={checksum}, |max|={maxv}, "
-                f"first{len(sample)}={sample})"
-            )
-    except Exception as e:  # pragma: no cover - diagnostic helper must not raise
-        return f"{name}=<sig-err:{type(e).__name__}:{e}>"
-    return f"{name}={type(t).__name__}"
-
-
-def _r3_zero_row_stats(top_indices: torch.Tensor) -> str:
-    """Returns a string describing the count of all-zero rows in a
-    ``(num_tokens, topk)`` target_topk_idx tensor. All-zero rows are the
-    smoking gun for zero-fill hazard.
-    """
-    if top_indices is None or top_indices.ndim < 2:
-        return "zero_row_stats=N/A"
-    try:
-        with torch.no_grad():
-            zero_rows = (top_indices == 0).all(dim=-1)
-            total = int(zero_rows.numel())
-            z = int(zero_rows.sum().item())
-        return f"zero_rows={z}/{total} ({100.0*z/max(total,1):.2f}%)"
-    except Exception as e:
-        return f"zero_row_stats=<err:{e}>"
-
-
-def _r3_pp_tp_info(tf_config=None, vp_rank=None) -> str:
-    """Short PP/TP/DP/SP/EP context string for log lines."""
-    try:
-        from megatron.core import parallel_state as mpu
-
-        pp = mpu.get_pipeline_model_parallel_world_size()
-        pp_rank = mpu.get_pipeline_model_parallel_rank()
-        tp = mpu.get_tensor_model_parallel_world_size()
-        tp_rank = mpu.get_tensor_model_parallel_rank()
-        cp = getattr(mpu, "get_context_parallel_world_size", lambda: 1)()
-        dp = mpu.get_data_parallel_world_size()
-        dp_rank = mpu.get_data_parallel_rank()
-        return (
-            f"pp={pp_rank}/{pp} tp={tp_rank}/{tp} cp={cp} dp={dp_rank}/{dp}"
-            + (f" vp={vp_rank}" if vp_rank is not None else "")
-        )
-    except Exception:
-        return "pp=?/? tp=?/?"
-
-
-# ===================================================================
-# Root-cause hunting helpers (v2 — per-sample & per-mb fingerprints)
-# ===================================================================
-# We need to pinpoint whether the R3 replay indices that reach the router
-# are the SAME bytes as those the rollout engine produced for the SAME
-# sample.  The cheapest reliable way to do this is a per-sample 64-bit
-# fold-hash of the int32 tensor bytes.  The hash is stable across device
-# (we move to CPU once), preserves per-sample order, and survives
-# reordering (each sample is hashed independently — we can then check
-# any permutation via the multiset of hashes).
-#
-# We also expose a monotonically increasing trace-id that the actor
-# increments every time it sets ``engine._r3_pending_routed_experts``
-# so each end-to-end replay can be correlated across STAGE2 → STAGE3 →
-# STAGE4 log lines.
-# ===================================================================
-
-
-# Global monotonically increasing trace-id.  Incremented at the side-channel
-# SET site (actor._compute_logp / actor._ppo_update).  Read back at the
-# CONSUMPTION site in ``_r3_forward_backward_batch``.  Exported via an
-# env-independent module-level function so *all* stages print the same id.
-_R3_TRACE_ID: int = 0
-
-
-def _r3_next_trace_id() -> int:
-    """Reserve & return a new trace-id.
-
-    A trace-id identifies one SIDE_CHANNEL-SET -> CONSUME -> REPLAY cycle.
-    """
-    global _R3_TRACE_ID
-    _R3_TRACE_ID += 1
-    return _R3_TRACE_ID
-
-
-def _r3_current_trace_id() -> int:
-    return _R3_TRACE_ID
-
-
-def _r3_hash64(t) -> int:
-    """Return a stable 64-bit hash of a tensor/ndarray's int32 bytes.
-
-    For a ``(bs, seqlen, L, K)`` routed_experts tensor this is cheap
-    (one CPU copy) and deterministic regardless of dtype conversion.
-    Returns 0 for ``None``.
-    """
-    if t is None:
-        return 0
-    try:
-        if isinstance(t, torch.Tensor):
-            tc = t.detach()
-            if tc.device.type != "cpu":
-                tc = tc.to("cpu", non_blocking=False)
-            arr = tc.to(torch.int32).contiguous().numpy()
-        else:
-            import numpy as np
-
-            arr = (t if isinstance(t, np.ndarray) else np.asarray(t)).astype("int32", copy=False)
-        import hashlib
-
-        return int.from_bytes(
-            hashlib.blake2b(arr.tobytes(), digest_size=8).digest(),
-            "big",
-            signed=False,
-        )
-    except Exception:
-        return -1
-
-
-def _r3_per_sample_hashes(t, max_rows: int = 64) -> list[int]:
-    """Return per-sample 64-bit hashes.
-
-    For a 4D ``(bs, seqlen, L, K)`` tensor, returns one hash per sample
-    (dim-0).  For 3D packed ``(total_aligned, L, K)`` returns one hash
-    per row (capped at ``max_rows`` to keep log size sane).
-    """
-    if t is None:
-        return []
-    try:
-        if isinstance(t, torch.Tensor):
-            tc = t.detach()
-            if tc.device.type != "cpu":
-                tc = tc.to("cpu", non_blocking=False)
-            arr = tc.to(torch.int32).contiguous().numpy()
-        else:
-            import numpy as np
-
-            arr = (t if isinstance(t, np.ndarray) else np.asarray(t)).astype("int32", copy=False)
-        import hashlib
-
-        out = []
-        for i in range(min(arr.shape[0], max_rows)):
-            b = arr[i].tobytes()
-            out.append(
-                int.from_bytes(
-                    hashlib.blake2b(b, digest_size=8).digest()[:4],
-                    "big",
-                    signed=False,
-                )
-            )
-        return out
-    except Exception:
-        return [-1]
-
-
-def _r3_per_sample_nnz(t, max_rows: int = 64) -> list[int]:
-    """Return per-sample non-zero counts (rows where any expert id != 0)."""
-    if t is None:
-        return []
-    try:
-        if isinstance(t, torch.Tensor):
-            tc = t.detach()
-            if tc.device.type != "cpu":
-                tc = tc.to("cpu", non_blocking=False)
-            arr = tc.to(torch.int32).contiguous().numpy()
-        else:
-            import numpy as np
-
-            arr = (t if isinstance(t, np.ndarray) else np.asarray(t)).astype("int32", copy=False)
-        out = []
-        for i in range(min(arr.shape[0], max_rows)):
-            out.append(int((arr[i] != 0).any(axis=-1).sum()))
-        return out
-    except Exception:
-        return [-1]
-
-
-def _r3_per_sample_seq_real_len(t, max_rows: int = 64) -> list[int]:
-    """Return per-sample "real-looking" length = index of last non-all-zero row + 1.
-
-    Useful for verifying that the routed_experts tensor is right-padded
-    as expected: the real length should equal the sample's attention
-    mask sum (= cu_seqlens diff).  If it doesn't, alignment is off.
-    """
-    if t is None:
-        return []
-    try:
-        if isinstance(t, torch.Tensor):
-            tc = t.detach()
-            if tc.device.type != "cpu":
-                tc = tc.to("cpu", non_blocking=False)
-            arr = tc.to(torch.int32).contiguous().numpy()
-        else:
-            import numpy as np
-
-            arr = (t if isinstance(t, np.ndarray) else np.asarray(t)).astype("int32", copy=False)
-        out = []
-        for i in range(min(arr.shape[0], max_rows)):
-            row_any = (arr[i] != 0).any(axis=(-1, -2)) if arr[i].ndim >= 2 else (arr[i] != 0)
-            nz = row_any.nonzero()[0]
-            out.append(int(nz[-1]) + 1 if len(nz) else 0)
-        return out
-    except Exception:
-        return [-1]
 
 
 # ===================================================================
@@ -678,19 +363,6 @@ def set_router_replay_data(
             valid_mask = valid_mask & (~row_all_zero)
 
         # Step 2: CP split (before TP scatter).
-        #
-        # When ``cp_size > 1``, megatron-core's
-        # ``preprocess_packed_seqs_context_parallel`` has already
-        # interleaved-split the model's token axis so each CP rank only sees
-        # ``total_aligned / cp_size`` tokens.  Router replay indices MUST
-        # match that layout before the TP scatter; otherwise each TP rank
-        # would end up with ``cp_size``x too many rows and overwrite the
-        # wrong positions.  We reuse ``split_packed_seqs_for_context_parallel``
-        # with the PADDED ``cu_seqlens`` the caller provided (see caller
-        # comment "Pass the PADDED cu_seqlens (with TP alignment) ...").
-        #
-        # Contract: ``cu_seqlens`` here describes the SAME packed layout as
-        # ``packed`` (dim-0 aligned), which is what the engine passes in.
         packed = packed.to(device)
         valid_mask = valid_mask.to(device)
         cp_size = getattr(mpu, "get_context_parallel_world_size", lambda: 1)()
@@ -705,7 +377,7 @@ def set_router_replay_data(
                 valid_mask.to(torch.int32), cu_seqlens_dev
             ).bool()
 
-        # Step 3: Scatter to SP ranks (TP)
+        # Step 3: Scatter to SP ranks (TP).
         tp_size = mpu.get_tensor_model_parallel_world_size()
         if tp_size > 1:
             from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region
@@ -722,10 +394,10 @@ def set_router_replay_data(
         # local_tokens: (local_tokens_count, num_layers, topk)
         # local_mask:   (local_tokens_count,)
 
-        # Step 4: Permute to (num_layers, local_tokens_count, topk)
+        # Step 4: Permute to (num_layers, local_tokens_count, topk).
         layers_topk = local_tokens.permute(1, 0, 2)
 
-        # Step 5: Distribute to RouterReplay instances for local PP layers
+        # Step 5: Distribute to RouterReplay instances for local PP layers.
         local_info = get_current_rank_layer_info(tf_config, vp_rank)
         offset, end = local_info["start"], local_info["end"]
         router_list = RouterReplayHelper.get_micro_batch_router_list(tf_config, vp_rank)
@@ -774,17 +446,6 @@ def set_router_replay_data(
             router_offset += 1
             moe_idx += 1
 
-        logger.debug(
-            "[R3] set_router_replay_data: distributed %d layers of replay data "
-            "to %d/%d router instances (PP layers %d..%d, tp_size=%d).",
-            router_offset,
-            len(router_list),
-            len(RouterReplay.router_instances),
-            offset,
-            end,
-            tp_size,
-        )
-
 
 # ===================================================================
 # Per-microbatch replay control
@@ -819,15 +480,12 @@ def setup_per_microbatch_replay_forward(
 def setup_per_microbatch_replay_backward() -> None:
     """Switch to backward replay mode for activation-checkpoint recomputation."""
     RouterReplay.set_global_router_replay_action(RouterReplayAction.REPLAY_BACKWARD)
-    logger.debug("[R3] Switched to backward replay mode.")
 
 
 def clear_router_replay() -> None:
     """Clear all RouterReplay state after a full forward-backward pass."""
-    n_instances = len(RouterReplay.router_instances)
     RouterReplay.clear_global_indices()
     RouterReplay.clear_global_router_replay_action()
-    logger.debug("[R3] Router replay state cleared (%d instances).", n_instances)
 
 
 # ===================================================================
@@ -895,7 +553,7 @@ def preprocess_routed_experts_batch(
     reshaped = routed_experts_np.reshape(num_sgl_tokens, num_moe_layers, topk)
     tensor = torch.from_numpy(reshaped.astype(np.int32))
 
-    # Build (1, seq_len, num_moe_layers, topk) with RIGHT padding.
+    # SGLang returns one fewer token than the prompt+gen length.
     real_tokens = int(attention_mask.sum().item())
     padded = torch.zeros(1, seq_len, num_moe_layers, topk, dtype=torch.int32)
     if num_sgl_tokens > real_tokens:
@@ -937,19 +595,5 @@ def preprocess_routed_experts_batch(
             padded = padded.to(torch.uint8)
         elif max_val < 32768:
             padded = padded.to(torch.int16)
-
-    right_pad = seq_len - real_tokens
-    logger.debug(
-        "[R3] preprocess_routed_experts_batch: shape=%s dtype=%s "
-        "(num_moe_layers=%d, topk=%d, sgl_tokens=%d, real_tokens=%d, "
-        "right_pad=%d).",
-        padded.shape,
-        padded.dtype,
-        num_moe_layers,
-        topk,
-        num_sgl_tokens,
-        real_tokens,
-        right_pad,
-    )
 
     return padded
