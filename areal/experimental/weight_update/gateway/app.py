@@ -21,6 +21,7 @@ from areal.experimental.weight_update.gateway.config import (
 )
 from areal.experimental.weight_update.gateway.kv_store import WeightMetaStore
 from areal.experimental.weight_update.gateway.pair_registry import PairRegistry
+from areal.infra.utils.http import async_http_retry
 from areal.utils import logging
 
 logger = logging.getLogger("WeightUpdateGateway")
@@ -85,6 +86,7 @@ class KVSetSizeResponse(BaseModel):
     size: int
 
 
+@async_http_retry
 async def _get_json(session: aiohttp.ClientSession, url: str, timeout_s: float) -> Any:
     timeout = aiohttp.ClientTimeout(total=timeout_s)
     async with session.get(url, timeout=timeout) as resp:
@@ -92,6 +94,7 @@ async def _get_json(session: aiohttp.ClientSession, url: str, timeout_s: float) 
         return await resp.json()
 
 
+@async_http_retry
 async def _post_json(
     session: aiohttp.ClientSession,
     url: str,
@@ -104,6 +107,7 @@ async def _post_json(
         return await resp.json()
 
 
+@async_http_retry
 async def _post(
     session: aiohttp.ClientSession,
     url: str,

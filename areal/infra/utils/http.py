@@ -5,12 +5,25 @@ from http import HTTPStatus
 from typing import Any
 
 import aiohttp
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from areal.utils import logging
 from areal.utils.network import format_hostport, split_hostport
 
 DEFAULT_RETRIES = 1
 DEFAULT_REQUEST_TIMEOUT = 3600
+
+async_http_retry = retry(
+    stop=stop_after_attempt(4),
+    wait=wait_exponential(multiplier=1, min=1, max=4),
+    retry=retry_if_exception_type((aiohttp.ClientError, OSError, RuntimeError)),
+    reraise=True,
+)
 
 
 logger = logging.getLogger("HTTPUtils")

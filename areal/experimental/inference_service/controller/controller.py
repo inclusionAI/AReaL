@@ -27,6 +27,8 @@ from typing import TYPE_CHECKING, Any, cast
 import httpx
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 
+from areal.infra.utils.http import async_http_retry
+
 if TYPE_CHECKING:
     from areal.api.scheduler_api import Scheduler, Worker
 
@@ -556,8 +558,6 @@ class RolloutControllerV2:
     ) -> None:
         import httpx
 
-        tp_size = alloc.parallel.tp_size
-
         if inf_backend == "sglang":
             from areal.api.cli_args import SGLangConfig
 
@@ -614,9 +614,7 @@ class RolloutControllerV2:
                     node_rank=node_rank,
                     dist_init_addr=dist_init_addr,
                 )
-                cmd = _build_launch_cmd(
-                    server_args
-                )
+                cmd = _build_launch_cmd(server_args)
 
                 fork_payload: dict[str, Any] = {
                     "role": "inf-server",
@@ -1824,6 +1822,7 @@ class RolloutControllerV2:
             self._async_client_loop = current_loop
         return self._async_client
 
+    @async_http_retry
     async def _async_gateway_http_post(
         self, endpoint: str, payload: dict[str, Any]
     ) -> None:
