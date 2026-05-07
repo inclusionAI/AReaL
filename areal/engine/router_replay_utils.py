@@ -7,7 +7,6 @@ right-pad → left-align, TP/SP scatter, PP layer slicing, dense/MoE mapping.
 from __future__ import annotations
 
 import inspect
-import os
 from typing import Optional
 
 import torch
@@ -19,15 +18,6 @@ from areal.utils import logging
 # NOTE: use areal.utils.logging.getLogger with a stable registered
 # name so the logger survives the dictConfig(disable_existing_loggers=True) re-init path.
 logger = logging.getLogger("R3/utils")
-
-
-# R3 verbose-logging helpers (controlled via AREAL_R3_VERBOSE env var).
-
-
-def _r3_verbose() -> bool:
-    """Return whether R3 verbose logging is enabled."""
-    return os.environ.get("AREAL_R3_VERBOSE", "1") != "0"
-
 
 # ===================================================================
 # Layer computation helpers
