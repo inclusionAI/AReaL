@@ -2,15 +2,19 @@
 
 The upstream ``mbridge`` ``MiMoBridge`` (as of PR#1176 HEAD) does NOT translate
 MTP-layer local keys such as ``mtp.layers.0.enorm.weight`` into their
-HuggingFace counterparts under ``model.mtp_layers.0.*``.  As a result, the
-MiMo-7B-RL checkpoint's MTP weights are silently skipped during
-``load_weights_from_hf_with_mbridge_fast``, leaving the MTP head at random
-initialisation (per-token CE \u2248 log(vocab)).
+HuggingFace counterparts under ``model.mtp_layers.0.*``.  Worse, in practice
+it falls back to the parent Qwen2 rules and returns a **non-empty but wrong**
+list (e.g. ``model.layers.0.*``), which downstream silently ignores when the
+index lookup fails.  That left every non-``eh_proj`` MTP tensor at random
+initialisation (per-token CE \u2248 log(vocab) \u2248 11.24) and dragged the
+spec-decoding accept-rate below 0.30 after the first weight-ship.
 
 This module provides a pure-data mapping that mirrors
 ``areal.engine.megatron_utils.megatron._convert_mimo_mtp_param`` (the MCore \u2192 HF
-direction already used by the weight-ship path), so that checkpoint loading
-can be fixed without modifying the mbridge package itself.
+direction already used by the weight-ship path), and - in v60 - unconditionally
+OVERWRITES whatever the base bridge produced for MTP keys, aligning with
+``slime/slime_plugins/mbridge/mimo.py::_weight_name_mapping_mcore_to_hf`` which
+also hard-routes all ``mtp.*`` names through an MTP-specific converter.
 
 Usage is limited to ``areal.models.mcore.hf_load`` which calls
 ``augment_local_to_hf_map_with_mtp`` after the bridge has populated the base
@@ -18,6 +22,7 @@ mapping.
 """
 from __future__ import annotations
 
+import os
 import re
 from typing import Dict, List
 
@@ -97,37 +102,67 @@ def augment_local_to_hf_map_with_mtp(
 ) -> int:
     """Inject MTP HF-name mappings into ``local_to_hf_map`` in-place.
 
-    Iterates the local keys whose global name matches the MTP pattern.  If
-    the existing mapping is empty (i.e. the base bridge did not know how to
-    translate it), populate it from :func:`mtp_mcore_name_to_hf_names`.
+    v60 behaviour (slime-aligned, see ``slime_plugins/mbridge/mimo.py``):
+    any local key whose global name matches the MTP pattern is **authoritatively
+    overwritten** with the MTP-specific HF names produced by this module.  The
+    upstream bridge's Qwen2 default rules are discarded, because they point
+    at ``model.layers.{idx}.*`` keys that do not exist in the MiMo checkpoint
+    and were silently ignored by the downstream loader - the very reason the
+    MTP head kept booting at random initialisation.
 
-    Returns the number of local keys patched.  A single [MTPCkptLoad-P1]
-    summary is emitted via ``logger`` for verification.
+    Opt-out: ``AREAL_MTP_P1_OVERWRITE=0`` reverts to v59 "only when empty"
+    behaviour for A/B testing.
+
+    Returns the number of local keys patched.  A single ``[MTPCkptLoad-P1]``
+    summary with ``overwritten_nonempty`` / ``filled_empty`` / ``skipped_no_rule``
+    breakdown is emitted via ``logger`` for verification.
     """
+    overwrite = os.environ.get("AREAL_MTP_P1_OVERWRITE", "1") == "1"
     patched = 0
-    preview: List[str] = []
+    filled_empty = 0
+    overwritten_nonempty = 0
+    skipped_no_rule = 0
+    preview_filled: List[str] = []
+    preview_overwritten: List[str] = []
     for local_name, global_name in local_to_global_map.items():
         if "_extra_state" in local_name:
             continue
         m = _MTP_GLOBAL_RE.match(global_name)
         if m is None:
             continue
-        cur = local_to_hf_map.get(local_name) or []
-        if cur:
-            continue
         hf_names = mtp_mcore_name_to_hf_names(global_name)
         if not hf_names:
+            skipped_no_rule += 1
             continue
-        local_to_hf_map[local_name] = hf_names
-        patched += 1
-        if len(preview) < 3:
-            preview.append(f"{local_name}->{hf_names}")
+        cur = local_to_hf_map.get(local_name) or []
+        if cur:
+            if not overwrite:
+                # v59 compatibility mode
+                continue
+            # v60: authoritative overwrite (slime-aligned)
+            local_to_hf_map[local_name] = hf_names
+            overwritten_nonempty += 1
+            patched += 1
+            if len(preview_overwritten) < 3:
+                preview_overwritten.append(
+                    f"{local_name}: {cur}->{hf_names}"
+                )
+        else:
+            local_to_hf_map[local_name] = hf_names
+            filled_empty += 1
+            patched += 1
+            if len(preview_filled) < 3:
+                preview_filled.append(f"{local_name}->{hf_names}")
     if logger is not None:
         try:
             logger.info(
                 "[MTPCkptLoad-P1] augment_local_to_hf_map_with_mtp "
-                "patched=%d examples=%s",
-                patched, preview,
+                "patched=%d (overwritten_nonempty=%d, filled_empty=%d, "
+                "skipped_no_rule=%d) overwrite_mode=%s "
+                "preview_overwritten=%s preview_filled=%s",
+                patched, overwritten_nonempty, filled_empty,
+                skipped_no_rule, overwrite,
+                preview_overwritten, preview_filled,
             )
         except Exception:
             pass
