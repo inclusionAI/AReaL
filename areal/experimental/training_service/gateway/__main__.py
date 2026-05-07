@@ -58,7 +58,13 @@ def main():
 
     suppress_http_loggers()
     app = create_app(config)
-    uvicorn.run(app, host=config.host, port=config.port, log_level=config.log_level)
+    uvicorn.run(
+        app,
+        host=config.host,
+        port=config.port,
+        log_level=config.log_level,
+        access_log=False,
+    )
 
 
 if __name__ == "__main__":

@@ -36,7 +36,9 @@ def main():
     uvicorn = importlib.import_module("uvicorn")
 
     app = create_router_app(config)
-    uvicorn.run(app, host=config.host, port=config.port, log_level="warning")
+    uvicorn.run(
+        app, host=config.host, port=config.port, log_level="warning", access_log=False
+    )
 
 
 if __name__ == "__main__":

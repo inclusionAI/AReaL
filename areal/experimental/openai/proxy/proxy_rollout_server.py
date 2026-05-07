@@ -1021,6 +1021,7 @@ def main():
             port=_server_port,
             log_level="warning",
             timeout_keep_alive=300,
+            access_log=False,
         )
     except KeyboardInterrupt:
         logger.info("Shutting down proxy rollout server")
