@@ -34,11 +34,9 @@ def main():
         log_level=args.log_level,
     )
 
-    import logging as _logging
+    from areal.utils.logging import suppress_http_loggers
 
-    _logging.getLogger("werkzeug").setLevel(
-        getattr(_logging, config.log_level.upper(), _logging.WARNING)
-    )
+    suppress_http_loggers()
 
     app = create_app(config)
     app.run(host=config.host, port=config.port, threaded=True)

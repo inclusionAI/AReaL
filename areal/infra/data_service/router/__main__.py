@@ -30,6 +30,9 @@ def main():
         worker_health_timeout=args.worker_health_timeout,
     )
 
+    from areal.utils.logging import suppress_http_loggers
+
+    suppress_http_loggers()
     uvicorn = importlib.import_module("uvicorn")
 
     app = create_router_app(config)

@@ -96,6 +96,9 @@ def main():
         engine_max_tokens=args.engine_max_tokens,
         chat_template_type=args.chat_template_type,
     )
+    from areal.utils.logging import suppress_http_loggers
+
+    suppress_http_loggers()
     app = create_app(config)
     uvicorn.run(app, host=config.host, port=config.port, log_level=config.log_level)
 

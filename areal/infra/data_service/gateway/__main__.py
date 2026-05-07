@@ -31,6 +31,9 @@ def main():
 
     import uvicorn
 
+    from areal.utils.logging import suppress_http_loggers
+
+    suppress_http_loggers()
     app = create_gateway_app(config)
     uvicorn.run(app, host=config.host, port=config.port, log_level="warning")
 

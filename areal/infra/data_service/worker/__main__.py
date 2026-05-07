@@ -31,6 +31,9 @@ def main():
         dataloader_num_workers=args.dataloader_num_workers,
         seed=args.seed,
     )
+    from areal.utils.logging import suppress_http_loggers
+
+    suppress_http_loggers()
     uvicorn = importlib.import_module("uvicorn")
 
     app = create_worker_app(config)
