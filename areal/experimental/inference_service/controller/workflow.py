@@ -9,6 +9,7 @@ import aiohttp
 from areal.api.workflow_api import RolloutWorkflow
 from areal.experimental.openai.proxy.server import deserialize_interactions
 from areal.infra import workflow_context
+from areal.infra.utils.http import async_http_retry
 from areal.utils import logging, stats_tracker
 
 if TYPE_CHECKING:
@@ -45,12 +46,14 @@ class InferenceServiceWorkflow(RolloutWorkflow):
         self.export_style = export_style
         self.timeout = timeout
 
+    @async_http_retry
     async def _grant_capacity(self, session: aiohttp.ClientSession) -> None:
         url = f"{self.gateway_addr}/{_GRANT_CAPACITY_PATHNAME}"
         headers = {"Authorization": f"Bearer {self._admin_api_key}"}
         async with session.post(url, headers=headers) as resp:
             resp.raise_for_status()
 
+    @async_http_retry
     async def _start_session(
         self, session: aiohttp.ClientSession, task_id: str
     ) -> tuple[str, str]:
@@ -62,6 +65,7 @@ class InferenceServiceWorkflow(RolloutWorkflow):
             data = await resp.json()
         return data["session_id"], data["api_key"]
 
+    @async_http_retry
     async def _set_last_reward(
         self,
         session: aiohttp.ClientSession,
@@ -77,6 +81,7 @@ class InferenceServiceWorkflow(RolloutWorkflow):
         trajectory_id = data.get("trajectory_id")
         return int(trajectory_id) if trajectory_id is not None else None
 
+    @async_http_retry
     async def _export_interactions(
         self,
         session: aiohttp.ClientSession,
