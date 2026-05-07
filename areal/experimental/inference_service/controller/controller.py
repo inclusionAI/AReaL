@@ -1386,12 +1386,12 @@ class RolloutControllerV2:
         run_async_task(self._async_offload)
 
     async def _async_offload(self) -> None:
-        if not self._gateway_addr:
+        if not self._data_proxy_addrs:
             return
         results = await asyncio.gather(
             *(
-                self._async_gateway_http_post(f"/release_memory_occupation/{wid}", {})
-                for wid in self._worker_ids.values()
+                self._async_data_proxy_post(addr, "/release_memory_occupation", {})
+                for addr in self._data_proxy_addrs
             ),
             return_exceptions=True,
         )
@@ -1409,15 +1409,13 @@ class RolloutControllerV2:
         run_async_task(self._async_onload, tags)
 
     async def _async_onload(self, tags: list[str] | None = None) -> None:
-        if not self._gateway_addr:
+        if not self._data_proxy_addrs:
             return
         payload: dict = {"tags": tags} if tags is not None else {}
         results = await asyncio.gather(
             *(
-                self._async_gateway_http_post(
-                    f"/resume_memory_occupation/{wid}", payload
-                )
-                for wid in self._worker_ids.values()
+                self._async_data_proxy_post(addr, "/resume_memory_occupation", payload)
+                for addr in self._data_proxy_addrs
             ),
             return_exceptions=True,
         )
@@ -1429,15 +1427,23 @@ class RolloutControllerV2:
 
     async def pause_generation(self, worker_id: str | None = None) -> None:
         """Pause generation on a specific worker, or all workers if worker_id is None."""
-        if not self._gateway_addr:
+        if not self._data_proxy_addrs:
             return
         if worker_id is not None:
-            await self._async_gateway_http_post(f"/pause_generation/{worker_id}", {})
+            # Resolve addr from worker_id (reverse lookup)
+            addr = next(
+                (a for a, wid in self._worker_ids.items() if wid == worker_id), None
+            )
+            if addr is None:
+                raise RuntimeError(
+                    f"Unknown worker_id {worker_id} for pause_generation"
+                )
+            await self._async_data_proxy_post(addr, "/pause_generation", {})
         else:
             results = await asyncio.gather(
                 *[
-                    self._async_gateway_http_post(f"/pause_generation/{wid}", {})
-                    for wid in self._worker_ids.values()
+                    self._async_data_proxy_post(addr, "/pause_generation", {})
+                    for addr in self._data_proxy_addrs
                 ],
                 return_exceptions=True,
             )
@@ -1451,15 +1457,23 @@ class RolloutControllerV2:
 
     async def continue_generation(self, worker_id: str | None = None) -> None:
         """Continue generation on a specific worker, or all workers if worker_id is None."""
-        if not self._gateway_addr:
+        if not self._data_proxy_addrs:
             return
         if worker_id is not None:
-            await self._async_gateway_http_post(f"/continue_generation/{worker_id}", {})
+            # Resolve addr from worker_id (reverse lookup)
+            addr = next(
+                (a for a, wid in self._worker_ids.items() if wid == worker_id), None
+            )
+            if addr is None:
+                raise RuntimeError(
+                    f"Unknown worker_id {worker_id} for continue_generation"
+                )
+            await self._async_data_proxy_post(addr, "/continue_generation", {})
         else:
             results = await asyncio.gather(
                 *[
-                    self._async_gateway_http_post(f"/continue_generation/{wid}", {})
-                    for wid in self._worker_ids.values()
+                    self._async_data_proxy_post(addr, "/continue_generation", {})
+                    for addr in self._data_proxy_addrs
                 ],
                 return_exceptions=True,
             )
