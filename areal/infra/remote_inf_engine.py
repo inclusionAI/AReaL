@@ -1063,6 +1063,66 @@ class RemoteInfEngine(InferenceEngine):
             f"payload_keys={_payload_keys}, n_serialized_tensors={_n_tensors}, "
             f"addresses={self.addresses}"
         )
+        # [MTPWireBytesAudit-v64] Hash the actual serialized payload
+        # for the critical MTP HF names just BEFORE the HTTP send to
+        # sglang.  If this hash does not match the [MTPShipSwapAudit-v64]
+        # POST hash for input_proj.weight, mutation is happening
+        # between megatron's convert_to_hf and the wire send.  If they
+        # match but [MTPDraftSglangProbe-v64] returns a different
+        # value, divergence is on the sglang side.
+        try:
+            import hashlib as _v64_w_hash
+            _v64_w_named = serialized_payload.get(
+                "serialized_named_tensors", []
+            ) if isinstance(serialized_payload, dict) else []
+            _v64_w_targets = (
+                "model.mtp_layers.0.input_proj.weight",
+                "model.mtp_layers.0.token_layernorm.weight",
+                "model.mtp_layers.0.hidden_layernorm.weight",
+                "model.mtp_layers.0.final_layernorm.weight",
+            )
+            _v64_w_count = 0
+            for _v64_w_item in _v64_w_named:
+                _v64_w_name = None
+                _v64_w_blob = None
+                if (
+                    isinstance(_v64_w_item, (list, tuple))
+                    and len(_v64_w_item) >= 2
+                ):
+                    _v64_w_name = _v64_w_item[0]
+                    _v64_w_blob = _v64_w_item[1]
+                elif isinstance(_v64_w_item, dict):
+                    _v64_w_name = _v64_w_item.get("name")
+                    _v64_w_blob = _v64_w_item.get(
+                        "tensor", _v64_w_item.get("data"))
+                if _v64_w_name is None or _v64_w_name not in _v64_w_targets:
+                    continue
+                if isinstance(_v64_w_blob, str):
+                    _v64_w_raw = _v64_w_blob.encode("utf-8")
+                elif isinstance(_v64_w_blob, (bytes, bytearray)):
+                    _v64_w_raw = bytes(_v64_w_blob)
+                else:
+                    _v64_w_raw = repr(_v64_w_blob).encode("utf-8")
+                _v64_w_h = _v64_w_hash.sha256(_v64_w_raw).hexdigest()[:16]
+                logger.info(
+                    "[MTPWireBytesAudit-v64] hf_name=%s "
+                    "blob_type=%s blob_size=%d sha256_16=%s",
+                    _v64_w_name, type(_v64_w_blob).__name__,
+                    len(_v64_w_raw), _v64_w_h,
+                )
+                _v64_w_count += 1
+            logger.info(
+                "[MTPWireBytesAudit-v64] summary n_hashed=%d "
+                "n_named_tensors=%d addresses=%s",
+                _v64_w_count, len(_v64_w_named), self.addresses,
+            )
+        except Exception as _e_v64_w:
+            try:
+                logger.warning(
+                    "[MTPWireBytesAudit-v64] failure: %r", _e_v64_w,
+                )
+            except Exception:
+                pass
         http_req = HttpRequest(
             endpoint="/update_weights_from_tensor",
             payload=serialized_payload,
@@ -1077,6 +1137,63 @@ class RemoteInfEngine(InferenceEngine):
                 f"[DiagMTP][Worker] update_weights_from_tensor_serialized "
                 f"COMPLETED in {_time.time() - _t0:.3f}s"
             )
+            # [MTPDraftSglangProbe-v64] After the wire send completes,
+            # probe the sglang draft via /get_weights_by_name to read
+            # the bytes the draft model actually holds for our shipped
+            # MTP names.  This is the only way to determine whether
+            # divergence is wire-side or draft-side (sglang internal
+            # layout / column-half-swap mismatch with mcore output).
+            try:
+                import hashlib as _v64_pr_hash
+                import requests as _v64_pr_req
+                _v64_pr_targets = [
+                    "model.mtp_layers.0.input_proj.weight",
+                    "model.mtp_layers.0.token_layernorm.weight",
+                ]
+                for _v64_pr_addr in self.addresses:
+                    for _v64_pr_n in _v64_pr_targets:
+                        _v64_pr_url = (
+                            f"http://{_v64_pr_addr}/get_weights_by_name"
+                        )
+                        try:
+                            _v64_pr_resp = _v64_pr_req.post(
+                                _v64_pr_url,
+                                json={
+                                    "name": _v64_pr_n,
+                                    "truncate_size": 32,
+                                },
+                                timeout=10,
+                            )
+                            _v64_pr_status = int(
+                                _v64_pr_resp.status_code)
+                            _v64_pr_body = _v64_pr_resp.text
+                            _v64_pr_h = _v64_pr_hash.sha256(
+                                _v64_pr_body.encode("utf-8")
+                            ).hexdigest()[:16]
+                            logger.info(
+                                "[MTPDraftSglangProbe-v64] addr=%s "
+                                "name=%s status=%d body_len=%d "
+                                "sha256_16=%s head=%.300s",
+                                _v64_pr_addr, _v64_pr_n,
+                                _v64_pr_status,
+                                len(_v64_pr_body),
+                                _v64_pr_h, _v64_pr_body,
+                            )
+                        except Exception as _e_v64_pr_inner:
+                            logger.info(
+                                "[MTPDraftSglangProbe-v64] addr=%s "
+                                "name=%s FAIL err=%r",
+                                _v64_pr_addr, _v64_pr_n,
+                                _e_v64_pr_inner,
+                            )
+            except Exception as _e_v64_pr:
+                try:
+                    logger.warning(
+                        "[MTPDraftSglangProbe-v64] outer failure: %r",
+                        _e_v64_pr,
+                    )
+                except Exception:
+                    pass
         except Exception as e:
             logger.error(
                 f"[DiagMTP][Worker] update_weights_from_tensor_serialized "

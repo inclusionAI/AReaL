@@ -6784,6 +6784,50 @@ class MegatronEngine(TrainEngine):
                             )
                         except Exception:
                             pass
+                    # [MTPShipPostAGAudit-v64] Right BEFORE convert_to_hf,
+                    # log the post-all_gather _mtp_param tensor.  This
+                    # is the EXACT mcore-side payload that flows into
+                    # the HF mapping.  Compared with PRE/POST swap
+                    # audits and with WireBytes audit, this nails the
+                    # location of any divergence.
+                    try:
+                        import hashlib as _v64_pag_hash
+                        _v64_pag_t = _mtp_param.detach().contiguous()
+                        _v64_pag_b = (
+                            _v64_pag_t.float().cpu().numpy().tobytes()
+                        )
+                        _v64_pag_h = _v64_pag_hash.sha256(
+                            _v64_pag_b).hexdigest()[:16]
+                        _v64_pag_f8 = [
+                            float(x) for x in
+                            _v64_pag_t.reshape(-1)[:8].float()
+                            .cpu().tolist()
+                        ]
+                        try:
+                            _v64_pag_ver = int(self.get_version())
+                        except Exception:
+                            _v64_pag_ver = -1
+                        self.logger.info(
+                            "[MTPShipPostAGAudit-v64] version=%d "
+                            "name=%s shape=%s dtype=%s "
+                            "sha256_16=%s first8=%s "
+                            "abs_mean=%.6e abs_max=%.6e l2=%.6e",
+                            _v64_pag_ver, name,
+                            tuple(_v64_pag_t.shape),
+                            str(_v64_pag_t.dtype),
+                            _v64_pag_h, str(_v64_pag_f8),
+                            float(_v64_pag_t.float().abs().mean().item()),
+                            float(_v64_pag_t.float().abs().max().item()),
+                            float(_v64_pag_t.float().norm().item()),
+                        )
+                    except Exception as _e_v64_pag:
+                        try:
+                            self.logger.info(
+                                "[MTPShipPostAGAudit-v64] failure: %r",
+                                _e_v64_pag,
+                            )
+                        except Exception:
+                            pass
                     mtp_hf_tensors.extend(
                         convert_to_hf(
                             self.tf_config,
