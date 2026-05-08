@@ -987,8 +987,73 @@ def _convert_mimo_mtp_param(
 
     # MiMo-specific: swap column halves for eh_proj weight
     if component == "eh_proj.weight":
+        # [MTPShipPreSwapAudit-v63] BEFORE the column-half swap, log tensor
+        # stats so we can compare with slime's _mcore_to_hf_format output.
+        # Mismatch here would prove ship-time swap differs from load-time swap.
+        try:
+            import logging as _v63_log_mod
+            import hashlib as _v63_hash_mod
+            _v63_lg = _v63_log_mod.getLogger("AReaL")
+            _v63_pre_t = param.detach().contiguous()
+            _v63_pre_bytes = _v63_pre_t.float().cpu().numpy().tobytes()
+            _v63_pre_h = _v63_hash_mod.sha256(_v63_pre_bytes).hexdigest()[:16]
+            _v63_pre_first = [
+                float(x) for x in
+                _v63_pre_t.reshape(-1)[:8].float().cpu().tolist()
+            ]
+            _v63_pre_last = [
+                float(x) for x in
+                _v63_pre_t.reshape(-1)[-8:].float().cpu().tolist()
+            ]
+            _v63_lg.info(
+                "[MTPShipPreSwapAudit-v63] stage=PRE layer=%s component=%s "
+                "shape=%s dtype=%s sha256_16=%s first8=%s last8=%s",
+                str(layer_idx), component,
+                tuple(param.shape), str(param.dtype),
+                _v63_pre_h, str(_v63_pre_first), str(_v63_pre_last),
+            )
+        except Exception as _e_v63_pre:
+            try:
+                import logging as _v63_log_mod_b
+                _v63_log_mod_b.getLogger("AReaL").info(
+                    "[MTPShipPreSwapAudit-v63] PRE failure: %r", _e_v63_pre,
+                )
+            except Exception:
+                pass
         first_half, second_half = param.chunk(2, dim=1)
         param = torch.cat([second_half, first_half], dim=1)
+        # [MTPShipPreSwapAudit-v63] AFTER swap, log post-swap stats. Compare
+        # pre vs post sha256_16 to verify the swap actually moved bytes.
+        try:
+            import logging as _v63_log_post
+            import hashlib as _v63_hash_post
+            _v63_lp = _v63_log_post.getLogger("AReaL")
+            _v63_post_t = param.detach().contiguous()
+            _v63_post_bytes = _v63_post_t.float().cpu().numpy().tobytes()
+            _v63_post_h = _v63_hash_post.sha256(_v63_post_bytes).hexdigest()[:16]
+            _v63_post_first = [
+                float(x) for x in
+                _v63_post_t.reshape(-1)[:8].float().cpu().tolist()
+            ]
+            _v63_post_last = [
+                float(x) for x in
+                _v63_post_t.reshape(-1)[-8:].float().cpu().tolist()
+            ]
+            _v63_lp.info(
+                "[MTPShipPreSwapAudit-v63] stage=POST layer=%s component=%s "
+                "shape=%s sha256_16=%s first8=%s last8=%s",
+                str(layer_idx), component,
+                tuple(param.shape), _v63_post_h,
+                str(_v63_post_first), str(_v63_post_last),
+            )
+        except Exception as _e_v63_post:
+            try:
+                import logging as _v63_log_post_b
+                _v63_log_post_b.getLogger("AReaL").info(
+                    "[MTPShipPreSwapAudit-v63] POST failure: %r", _e_v63_post,
+                )
+            except Exception:
+                pass
 
     # Check direct mappings first
     if component in direct_mappings:

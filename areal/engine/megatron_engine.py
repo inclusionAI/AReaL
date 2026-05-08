@@ -6664,6 +6664,126 @@ class MegatronEngine(TrainEngine):
                             )
                         except Exception:
                             pass
+                    # [MTPShipPostAGAudit-v63] Right BEFORE convert_to_hf,
+                    # log the post-all_gather _mtp_param tensor (full
+                    # gathered shape, sha256_16, first/last 8). This is
+                    # the EXACT mcore-side payload that goes into the
+                    # HF mapping. Comparing this hash across versions
+                    # tells us whether ship-time TP all_gather is
+                    # producing identical-byte tensors per version
+                    # (would explain stalled draft despite training).
+                    try:
+                        import hashlib as _v63_pag_hash
+                        _v63_pag_t = _mtp_param.detach().contiguous()
+                        _v63_pag_bytes = (
+                            _v63_pag_t.float().cpu().numpy().tobytes()
+                        )
+                        _v63_pag_h = _v63_pag_hash.sha256(
+                            _v63_pag_bytes).hexdigest()[:16]
+                        _v63_pag_first = [
+                            float(x) for x in
+                            _v63_pag_t.reshape(-1)[:8].float()
+                            .cpu().tolist()
+                        ]
+                        _v63_pag_last = [
+                            float(x) for x in
+                            _v63_pag_t.reshape(-1)[-8:].float()
+                            .cpu().tolist()
+                        ]
+                        try:
+                            _v63_pag_ver = int(self.get_version())
+                        except Exception:
+                            _v63_pag_ver = -1
+                        self.logger.info(
+                            "[MTPShipPostAGAudit-v63] version=%d "
+                            "name=%s shape=%s dtype=%s "
+                            "sha256_16=%s first8=%s last8=%s "
+                            "abs_mean=%.6e abs_max=%.6e l2=%.6e",
+                            _v63_pag_ver, name,
+                            tuple(_v63_pag_t.shape),
+                            str(_v63_pag_t.dtype),
+                            _v63_pag_h,
+                            str(_v63_pag_first), str(_v63_pag_last),
+                            float(_v63_pag_t.float().abs().mean().item()),
+                            float(_v63_pag_t.float().abs().max().item()),
+                            float(_v63_pag_t.float().norm().item()),
+                        )
+                    except Exception as _e_v63_pag:
+                        try:
+                            self.logger.info(
+                                "[MTPShipPostAGAudit-v63] failure: %r",
+                                _e_v63_pag,
+                            )
+                        except Exception:
+                            pass
+                    # [MTPMainParamCmpAudit-v63] Compare bf16 model
+                    # param vs fp32 main_param at ship time. If they
+                    # diverge by more than bf16 ULP, stochastic
+                    # rounding desync between training and ship is
+                    # the root cause of post-ship draft regression.
+                    try:
+                        _v63_mp_param_obj = param  # original module param
+                        _v63_mp = getattr(
+                            _v63_mp_param_obj, 'main_param', None)
+                        if _v63_mp is not None:
+                            import torch as _v63_torch_mp
+                            _v63_mp_fp32 = _v63_mp.detach().float()
+                            _v63_bf = _v63_mp_param_obj.detach().float()
+                            if _v63_mp_fp32.shape == _v63_bf.shape:
+                                _v63_d = (_v63_mp_fp32 - _v63_bf).abs()
+                                _v63_d_max = float(_v63_d.max().item())
+                                _v63_d_mean = float(_v63_d.mean().item())
+                                _v63_amax = float(
+                                    _v63_mp_fp32.abs().max().item())
+                                _v63_ulp = -1.0
+                                if _v63_amax > 0:
+                                    import math as _v63_math
+                                    _v63_e = _v63_math.floor(
+                                        _v63_math.log2(_v63_amax))
+                                    _v63_ulp = 2.0 ** (_v63_e - 7)
+                                _v63_dratio = (
+                                    _v63_d_max / _v63_ulp
+                                    if _v63_ulp > 0 else -1.0
+                                )
+                                self.logger.info(
+                                    "[MTPMainParamCmpAudit-v63] "
+                                    "name=%s shape=%s "
+                                    "fp32_main_param_sum=%.6e "
+                                    "bf16_model_param_sum=%.6e "
+                                    "delta_abs_max=%.6e "
+                                    "delta_abs_mean=%.6e "
+                                    "bf16_ulp=%.6e "
+                                    "delta_to_ulp_ratio=%.4f",
+                                    name, tuple(_v63_mp_fp32.shape),
+                                    float(_v63_mp_fp32.sum().item()),
+                                    float(_v63_bf.sum().item()),
+                                    _v63_d_max, _v63_d_mean,
+                                    _v63_ulp, _v63_dratio,
+                                )
+                            else:
+                                self.logger.info(
+                                    "[MTPMainParamCmpAudit-v63] "
+                                    "shape mismatch name=%s "
+                                    "main_param=%s bf16=%s",
+                                    name,
+                                    tuple(_v63_mp_fp32.shape),
+                                    tuple(_v63_bf.shape),
+                                )
+                        else:
+                            self.logger.info(
+                                "[MTPMainParamCmpAudit-v63] "
+                                "name=%s main_param=None "
+                                "(no fp32 master on this rank)",
+                                name,
+                            )
+                    except Exception as _e_v63_mp:
+                        try:
+                            self.logger.info(
+                                "[MTPMainParamCmpAudit-v63] failure: %r",
+                                _e_v63_mp,
+                            )
+                        except Exception:
+                            pass
                     mtp_hf_tensors.extend(
                         convert_to_hf(
                             self.tf_config,
@@ -8051,6 +8171,126 @@ class MegatronEngine(TrainEngine):
                         _e_v62_out)
                 except Exception:
                     pass
+        # [MTPShipKeyOverlap-v63] After all MTP HF tensors are collected
+        # AND the main bucket converted_named_tensors is finalised,
+        # cross-check whether MTP HF names overlap with main-bucket
+        # HF names being shipped in the SAME wave. sglang's EAGLE
+        # draft model shares some backbone weights (embedding,
+        # output_layer) with the target model; if MTP-collected tensors
+        # collide with main-bucket HF names, one would overwrite the
+        # other in unpredictable order, causing post-ship draft
+        # regression that matches what spec_v1.log.5 shows.
+        try:
+            if (_collect_mtp_for_draft
+                    and mtp_hf_tensors
+                    and dist.get_rank() == 0):
+                _v63_mtp_names = set(n for n, _ in mtp_hf_tensors)
+                _v63_main_names = set()
+                try:
+                    _v63_main_names = set(
+                        n for n, _ in (converted_named_tensors or [])
+                    )
+                except Exception:
+                    pass
+                _v63_overlap = sorted(
+                    _v63_mtp_names & _v63_main_names)
+                self.logger.info(
+                    "[MTPShipKeyOverlap-v63] version=%s "
+                    "n_mtp=%d n_main=%d n_overlap=%d "
+                    "overlap_keys=%s "
+                    "mtp_only_sample=%s main_only_sample=%s",
+                    str(getattr(meta, 'version', 'NA')),
+                    len(_v63_mtp_names), len(_v63_main_names),
+                    len(_v63_overlap),
+                    str(_v63_overlap[:16]),
+                    str(sorted(_v63_mtp_names - _v63_main_names)[:8]),
+                    str(sorted(_v63_main_names - _v63_mtp_names)[:8]),
+                )
+                if _v63_overlap:
+                    self.logger.warning(
+                        "[MTPShipKeyOverlap-v63] OVERLAP DETECTED "
+                        "version=%s — %d HF names ship in BOTH the "
+                        "main bucket AND the MTP wire. SGLang receives "
+                        "BOTH writes for the same key; last-writer "
+                        "wins and may overwrite the MTP-trained value "
+                        "with the main-model value (or vice versa). "
+                        "Sample: %s",
+                        str(getattr(meta, 'version', 'NA')),
+                        len(_v63_overlap), str(_v63_overlap[:8]),
+                    )
+        except Exception as _e_v63_ko:
+            try:
+                self.logger.info(
+                    "[MTPShipKeyOverlap-v63] failure: %r", _e_v63_ko,
+                )
+            except Exception:
+                pass
+
+        # [MTPDraftReadbackV4-v63] Probe alternative sglang readback
+        # endpoints to capture what the draft model ACTUALLY has
+        # post-ship. v32's /get_weights_by_name path is blocked for
+        # MiMo; this v63 probe attempts /update_weights_from_tensor
+        # echo paths and a generic /get_internal_state fallback so
+        # that next round we can correlate ship-time hash with
+        # draft-side hash even when one channel is blocked.
+        try:
+            import os as _v63_os_rb
+            if (_collect_mtp_for_draft
+                    and mtp_hf_tensors
+                    and dist.get_rank() == 0
+                    and _v63_os_rb.environ.get(
+                        'AREAL_MTP_DRAFT_READBACK_V4', '1') == '1'):
+                _v63_rb_engine = getattr(
+                    self, 'rollout_engine', None)
+                _v63_rb_endpoints = [
+                    'get_weights_by_name',
+                    'get_internal_state',
+                    'flush_cache',
+                ]
+                for _v63_ep in _v63_rb_endpoints:
+                    _v63_fn = getattr(
+                        _v63_rb_engine, _v63_ep, None)
+                    self.logger.info(
+                        "[MTPDraftReadbackV4-v63] version=%s "
+                        "endpoint=%s callable=%s",
+                        str(getattr(meta, 'version', 'NA')),
+                        _v63_ep, str(callable(_v63_fn)),
+                    )
+                    if callable(_v63_fn):
+                        try:
+                            if _v63_ep == 'get_weights_by_name':
+                                _v63_rb_names = set(n for n, _ in mtp_hf_tensors)
+                                _v63_target_name = next(
+                                    iter(_v63_rb_names), None)
+                                if _v63_target_name is not None:
+                                    _v63_rb_res = _v63_fn(
+                                        _v63_target_name)
+                                else:
+                                    _v63_rb_res = None
+                            else:
+                                _v63_rb_res = _v63_fn()
+                            self.logger.info(
+                                "[MTPDraftReadbackV4-v63] "
+                                "endpoint=%s status=OK "
+                                "result_type=%s "
+                                "result_repr_head=%.200s",
+                                _v63_ep, type(_v63_rb_res).__name__,
+                                repr(_v63_rb_res),
+                            )
+                        except Exception as _e_v63_ep:
+                            self.logger.info(
+                                "[MTPDraftReadbackV4-v63] "
+                                "endpoint=%s status=FAIL err=%r",
+                                _v63_ep, _e_v63_ep,
+                            )
+        except Exception as _e_v63_rb:
+            try:
+                self.logger.info(
+                    "[MTPDraftReadbackV4-v63] outer failure: %r",
+                    _e_v63_rb,
+                )
+            except Exception:
+                pass
 
         if _collect_mtp_for_draft and mtp_hf_tensors and dist.get_rank() == 0:
             try:
