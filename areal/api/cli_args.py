@@ -461,13 +461,6 @@ class FSDPEngineConfig:
         },
     )
 
-    use_fused_moe: bool = field(
-        default=True,
-        metadata={
-            "help": ""
-        },
-    )
-
 
 @dataclass
 class ArchonFP8Config:
@@ -1143,6 +1136,14 @@ class TrainEngineConfig:
     enable_tree_training: bool = field(
         default=False,
         metadata={"help": "Enable tree training with flex attention module."},
+    )
+    use_fused_linear_ce: bool = field(
+        default=False,
+        metadata={
+            "help": "Fuse the linear projection with cross-entropy so that the "
+            "[num_tokens, vocab_size] logits tensor is never materialised. "
+            "Only effective for the Megatron actor backend with parallel_output=True."
+        },
     )
 
     # Scheduling
