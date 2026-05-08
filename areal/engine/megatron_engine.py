@@ -3105,6 +3105,88 @@ class MegatronEngine(TrainEngine):
                                             mtp_layer_number, _gs_fwd, _mtp_hs.requires_grad,
                                             list(_mtp_hs.shape), _mtp_hs_gfn,
                                             hidden_states.requires_grad)
+                                    # [MTPFwdWeightAudit-v61] log live MTP
+                                    # weight statistics every 100 steps to
+                                    # detect silent corruption between load
+                                    # time (MTPLoad/MTPPreScan) and forward.
+                                    try:
+                                        _v61w_gs = getattr(
+                                            _engine_ref,
+                                            '_global_step', 0,
+                                        )
+                                        if (_mtp_diag_mb_counter[0] == 0
+                                                and (_v61w_gs <= 3
+                                                     or _v61w_gs % 100 == 0)):
+                                            _v61w_mtp = getattr(
+                                                self_model, 'mtp', None,
+                                            )
+                                            if _v61w_mtp is not None:
+                                                for _v61w_pn in (
+                                                    'enorm.weight',
+                                                    'hnorm.weight',
+                                                    'eh_proj.weight',
+                                                ):
+                                                    try:
+                                                        _v61w_p = (
+                                                            _v61w_mtp
+                                                            .layers[0]
+                                                        )
+                                                        for _v61w_part in _v61w_pn.split('.'):
+                                                            _v61w_p = getattr(
+                                                                _v61w_p,
+                                                                _v61w_part,
+                                                            )
+                                                        _v61w_pf = _v61w_p.detach().float()
+                                                        _v61w_am = float(_v61w_pf.abs().mean().item())
+                                                        _v61w_ax = float(_v61w_pf.abs().max().item())
+                                                        _v61w_l2 = float(_v61w_pf.norm().item())
+                                                        _v61w_first8 = [
+                                                            float(x) for x in
+                                                            _v61w_pf.reshape(-1)[:8].tolist()
+                                                        ]
+                                                        _logger.info(
+                                                            '[MTPFwdWeightAudit-v61] '
+                                                            'step=%d mtp.layers.0.%s '
+                                                            'dtype=%s shape=%s '
+                                                            'abs_mean=%.6e abs_max=%.6e '
+                                                            'l2=%.6e first8=%s',
+                                                            _v61w_gs, _v61w_pn,
+                                                            str(_v61w_p.dtype),
+                                                            str(tuple(_v61w_p.shape)),
+                                                            _v61w_am, _v61w_ax,
+                                                            _v61w_l2,
+                                                            str(_v61w_first8),
+                                                        )
+                                                    except Exception:
+                                                        continue
+                                            # also probe output_weight
+                                            try:
+                                                _v61w_ow = _mtp_output_weight_v53
+                                                if _v61w_ow is not None:
+                                                    _v61w_owf = _v61w_ow.detach().float()
+                                                    _logger.info(
+                                                        '[MTPFwdWeightAudit-v61] '
+                                                        'step=%d output_weight '
+                                                        'dtype=%s shape=%s '
+                                                        'abs_mean=%.6e abs_max=%.6e '
+                                                        'l2=%.6e',
+                                                        _v61w_gs,
+                                                        str(_v61w_ow.dtype),
+                                                        str(tuple(_v61w_ow.shape)),
+                                                        float(_v61w_owf.abs().mean().item()),
+                                                        float(_v61w_owf.abs().max().item()),
+                                                        float(_v61w_owf.norm().item()),
+                                                    )
+                                            except Exception:
+                                                pass
+                                    except Exception as _e_v61w:
+                                        try:
+                                            _logger.info(
+                                                '[MTPFwdWeightAudit-v61] '
+                                                'failure: %r', _e_v61w,
+                                            )
+                                        except Exception:
+                                            pass
                                     mtp_logits, _ = self_model.output_layer(
                                         _mtp_hs,
                                         # [MTPSharedWeightIsolate-v53] detached weight
@@ -6194,6 +6276,45 @@ class MegatronEngine(TrainEngine):
                             "fallback raised: %r",
                             dist.get_rank(), name, _e_p3_fb,
                         )
+                # [MTPShipEnumTrace-v61] log per-MTP-param ship enumeration
+                # ENTER. Captures whether MTP path will collect this tensor,
+                # the param's bf16 statistics, and shape — independent of
+                # later HF-name expansion.
+                try:
+                    if _collect_mtp_for_draft and ('mtp' in name):
+                        _v61_pa = _mtp_param if _mtp_param is not None else None
+                        if _v61_pa is not None:
+                            _v61_pf = _v61_pa.detach().float()
+                            _v61_am = float(_v61_pf.abs().mean().item())
+                            _v61_ax = float(_v61_pf.abs().max().item())
+                            _v61_l2 = float(_v61_pf.norm().item())
+                            _v61_n = int(_v61_pa.numel())
+                            _v61_dt = str(_v61_pa.dtype)
+                            _v61_sh = tuple(_v61_pa.shape)
+                        else:
+                            _v61_am = _v61_ax = _v61_l2 = -1.0
+                            _v61_n = 0
+                            _v61_dt = 'None'
+                            _v61_sh = ()
+                        self.logger.info(
+                            '[MTPShipEnumTrace-v61] stage=ENTER rank=%d '
+                            'name=%s collect=%s mtp_param_is_none=%s '
+                            'numel=%d dtype=%s shape=%s '
+                            'abs_mean=%.6e abs_max=%.6e l2=%.6e',
+                            int(dist.get_rank()), name,
+                            str(_collect_mtp_for_draft),
+                            str(_mtp_param is None),
+                            _v61_n, _v61_dt, str(_v61_sh),
+                            _v61_am, _v61_ax, _v61_l2,
+                        )
+                except Exception as _e_v61_a:
+                    try:
+                        self.logger.info(
+                            '[MTPShipEnumTrace-v61] ENTER failure: %r',
+                            _e_v61_a,
+                        )
+                    except Exception:
+                        pass
                 if _collect_mtp_for_draft and _mtp_param is not None:
                     _mtp_model_name = self.hf_config.model_type
                     _prev_count = len(mtp_hf_tensors)
@@ -6339,6 +6460,47 @@ class MegatronEngine(TrainEngine):
                             fp8_direct_convert=self.fp8_direct_convert,
                         )
                     )
+                    # [MTPShipEnumTrace-v61] EXIT — log expanded HF names
+                    # and per-tensor bytes added by convert_to_hf for this
+                    # one mcore param.
+                    try:
+                        _v61_added = mtp_hf_tensors[_prev_count:]
+                        for _v61_i, (_v61_hn, _v61_ht) in enumerate(_v61_added):
+                            try:
+                                _v61_hf = _v61_ht.detach().float()
+                                _v61_ham = float(_v61_hf.abs().mean().item())
+                                _v61_hax = float(_v61_hf.abs().max().item())
+                                _v61_hl2 = float(_v61_hf.norm().item())
+                                _v61_hfirst = [
+                                    float(x) for x in
+                                    _v61_hf.reshape(-1)[:8].tolist()
+                                ]
+                            except Exception:
+                                _v61_ham = _v61_hax = _v61_hl2 = -1.0
+                                _v61_hfirst = []
+                            self.logger.info(
+                                '[MTPShipEnumTrace-v61] stage=EXIT rank=%d '
+                                'mcore=%s hf_idx=%d hf_name=%s '
+                                'hf_dtype=%s hf_shape=%s hf_numel=%d '
+                                'hf_bytes=%d abs_mean=%.6e abs_max=%.6e '
+                                'l2=%.6e first8=%s',
+                                int(dist.get_rank()), name,
+                                _v61_i, _v61_hn,
+                                str(_v61_ht.dtype),
+                                str(tuple(_v61_ht.shape)),
+                                int(_v61_ht.numel()),
+                                int(_v61_ht.numel() * _v61_ht.element_size()),
+                                _v61_ham, _v61_hax, _v61_hl2,
+                                str(_v61_hfirst),
+                            )
+                    except Exception as _e_v61_b:
+                        try:
+                            self.logger.info(
+                                '[MTPShipEnumTrace-v61] EXIT failure: %r',
+                                _e_v61_b,
+                            )
+                        except Exception:
+                            pass
                     # [MTPBf16UpcastBroadcast-v24] Upcast bf16->fp32
                     # before serialize so sub-ULP deltas are not
                     # rounded on the wire (default 1).
@@ -7559,6 +7721,75 @@ class MegatronEngine(TrainEngine):
                 f"MTP draft model weights will NOT be updated!"
             )
 
+        # [MTPShipFinalSummary-v61] one-shot definitive ship summary right
+        # after the MTP loop completes, BEFORE serialize/send. Unlike the
+        # per-bucket-flush v56 ship_summary (which can fire 13+ times with
+        # n_mtp_shipped=0 because the bucket flush happens DURING the MTP
+        # collection loop), this one fires exactly once per ship and shows
+        # the actual MTP wire payload list contents.
+        try:
+            if _collect_mtp_for_draft:
+                _v61f_ver = getattr(meta, 'version', 'NA')
+                _v61f_n = len(mtp_hf_tensors)
+                _v61f_total_bytes = sum(
+                    int(t.numel() * t.element_size())
+                    for _, t in mtp_hf_tensors
+                )
+                _v61f_first = mtp_hf_tensors[0][0] if _v61f_n > 0 else None
+                _v61f_names = [n for n, _ in mtp_hf_tensors]
+                self.logger.info(
+                    '[MTPShipFinalSummary-v61] rank=%d version=%s '
+                    'n_mtp_shipped=%d total_bytes=%d first=%s '
+                    'names=%s',
+                    int(dist.get_rank()), str(_v61f_ver), _v61f_n,
+                    _v61f_total_bytes, str(_v61f_first), str(_v61f_names),
+                )
+                # Cross-version delta on a sentinel HF tensor.
+                if _v61f_n > 0:
+                    if not hasattr(self, '_v61_prev_ship_first8'):
+                        self._v61_prev_ship_first8 = {}
+                    for _v61f_n2, _v61f_t in mtp_hf_tensors:
+                        try:
+                            _v61f_f = _v61f_t.detach().float().reshape(-1)
+                            _v61f_first8 = [
+                                float(x) for x in _v61f_f[:8].tolist()
+                            ]
+                            _v61f_l2 = float(_v61f_f.norm().item())
+                            _v61f_prev = self._v61_prev_ship_first8.get(
+                                _v61f_n2,
+                            )
+                            self._v61_prev_ship_first8[_v61f_n2] = (
+                                _v61f_first8, _v61f_l2,
+                            )
+                            if _v61f_prev is not None:
+                                _v61f_pf, _v61f_pl2 = _v61f_prev
+                                _v61f_d8 = [
+                                    (a - b) for a, b in zip(
+                                        _v61f_first8, _v61f_pf,
+                                    )
+                                ]
+                                _v61f_dl2 = abs(_v61f_l2 - _v61f_pl2)
+                            else:
+                                _v61f_d8 = []
+                                _v61f_dl2 = -1.0
+                            self.logger.info(
+                                '[MTPShipDelta-v61] rank=%d version=%s '
+                                'name=%s l2=%.6e d_l2=%.6e first8=%s '
+                                'd_first8=%s',
+                                int(dist.get_rank()), str(_v61f_ver),
+                                _v61f_n2, _v61f_l2, _v61f_dl2,
+                                str(_v61f_first8),
+                                str(_v61f_d8),
+                            )
+                        except Exception:
+                            continue
+        except Exception as _e_v61f:
+            try:
+                self.logger.info(
+                    '[MTPShipFinalSummary-v61] failure: %r', _e_v61f,
+                )
+            except Exception:
+                pass
         if _collect_mtp_for_draft and mtp_hf_tensors and dist.get_rank() == 0:
             try:
                 tp_size = (

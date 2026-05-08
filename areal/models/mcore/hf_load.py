@@ -217,6 +217,17 @@ def _weight_to_mcore_tp(
             mcore_param_shape, hf_weights_safe_slice, tp_rank, tp_size
         )
         if not isinstance(res, FP8BlockwiseTensorHelper):
+            # [MTPLoadHashAudit-v61] capture pre-swap stats
+            try:
+                _v61l_pre = res.detach().float()
+                _v61l_pre_first8 = [
+                    float(x) for x in _v61l_pre.reshape(-1)[:8].tolist()
+                ]
+                _v61l_pre_am = float(_v61l_pre.abs().mean().item())
+                _v61l_pre_ax = float(_v61l_pre.abs().max().item())
+            except Exception:
+                _v61l_pre_first8 = []
+                _v61l_pre_am = _v61l_pre_ax = -1.0
             first_half, second_half = res.chunk(2, dim=1)
             res = torch.cat([second_half, first_half], dim=1)
             logger.info(
@@ -224,6 +235,24 @@ def _weight_to_mcore_tp(
                 f"{mcore_weights_name}, shape={tuple(res.shape)}, "
                 f"tp_rank={tp_rank}, tp_size={tp_size}"
             )
+            try:
+                _v61l_post = res.detach().float()
+                _v61l_post_first8 = [
+                    float(x) for x in _v61l_post.reshape(-1)[:8].tolist()
+                ]
+                logger.info(
+                    "[MTPLoadHashAudit-v61] eh_proj swap pre_first8=%s "
+                    "post_first8=%s pre_abs_mean=%.6e pre_abs_max=%.6e "
+                    "post_abs_mean=%.6e post_abs_max=%.6e tp_rank=%d "
+                    "tp_size=%d",
+                    str(_v61l_pre_first8), str(_v61l_post_first8),
+                    _v61l_pre_am, _v61l_pre_ax,
+                    float(_v61l_post.abs().mean().item()),
+                    float(_v61l_post.abs().max().item()),
+                    tp_rank, tp_size,
+                )
+            except Exception:
+                pass
     else:
         res = _slice_generic_weight(
             mcore_param_shape, hf_weights_safe_slice, tp_rank, tp_size
@@ -231,6 +260,28 @@ def _weight_to_mcore_tp(
 
     if dtype is not None and not isinstance(res, FP8BlockwiseTensorHelper):
         res = res.to(dtype)
+    # [MTPLoadHashAudit-v61] for any mtp-bearing mcore name, log the final
+    # post-conversion stats so we can correlate with MTPPreScan / MTPSrcHash.
+    try:
+        if isinstance(res, torch.Tensor) and ('mtp' in mcore_weights_name):
+            _v61la_f = res.detach().float()
+            _v61la_first8 = [
+                float(x) for x in _v61la_f.reshape(-1)[:8].tolist()
+            ]
+            logger.info(
+                "[MTPLoadHashAudit-v61] post_convert mcore=%s dtype=%s "
+                "shape=%s abs_mean=%.6e abs_max=%.6e l2=%.6e first8=%s "
+                "tp_rank=%d tp_size=%d",
+                mcore_weights_name, str(res.dtype),
+                str(tuple(res.shape)),
+                float(_v61la_f.abs().mean().item()),
+                float(_v61la_f.abs().max().item()),
+                float(_v61la_f.norm().item()),
+                str(_v61la_first8),
+                tp_rank, tp_size,
+            )
+    except Exception:
+        pass
     return res
 
 
