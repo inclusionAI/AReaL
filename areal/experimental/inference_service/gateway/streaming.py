@@ -11,7 +11,7 @@ from typing import Any
 
 import httpx
 
-from areal.infra.utils.http import get_default_httpx_limits
+from areal.infra.utils.http import async_httpx_retry, create_httpx_client
 from areal.utils import logging
 
 logger = logging.getLogger("InferenceGateway")
@@ -40,9 +40,7 @@ async def _use_client(
     if client is not None:
         yield client
     else:
-        async with httpx.AsyncClient(
-            timeout=timeout, limits=get_default_httpx_limits()
-        ) as c:
+        async with create_httpx_client(timeout=timeout) as c:
             yield c
 
 
@@ -432,7 +430,7 @@ async def forward_sse_stream(
 
     fwd_headers = _forwarding_headers(headers)
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as c:
+        async with create_httpx_client(timeout=timeout) as c:
             async with c.stream(
                 "POST", upstream_url, content=body, headers=fwd_headers
             ) as resp:
@@ -455,6 +453,7 @@ async def forward_sse_stream(
         yield f"data: {error_event}\n\n".encode()
 
 
+@async_httpx_retry
 async def forward_request(
     upstream_url: str,
     body: bytes,

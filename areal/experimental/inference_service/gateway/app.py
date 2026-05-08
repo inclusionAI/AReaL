@@ -39,7 +39,7 @@ from areal.experimental.inference_service.gateway.streaming import (
     resolve_worker_addr,
     revoke_session_in_router,
 )
-from areal.infra.utils.http import get_default_httpx_limits
+from areal.infra.utils.http import create_httpx_client
 from areal.utils import logging
 
 logger = logging.getLogger("InferenceGateway")
@@ -85,9 +85,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        app.state.http_client = httpx.AsyncClient(
-            timeout=config.forward_timeout, limits=get_default_httpx_limits()
-        )
+        app.state.http_client = create_httpx_client(timeout=config.forward_timeout)
         try:
             yield
         finally:
@@ -110,10 +108,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
             return app.state.http_client
         except AttributeError:
             if _fallback_client is None:
-                _fallback_client = httpx.AsyncClient(
-                    timeout=config.forward_timeout,
-                    limits=get_default_httpx_limits(),
-                )
+                _fallback_client = create_httpx_client(timeout=config.forward_timeout)
             return _fallback_client
 
     # =========================================================================
