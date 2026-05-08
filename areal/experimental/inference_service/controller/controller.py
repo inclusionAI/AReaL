@@ -257,18 +257,8 @@ class RolloutControllerV2:
             return
 
         from areal.infra.remote_inf_engine import RemoteInfEngine
-        from areal.infra.workflow_executor import WorkflowExecutor
-
-        self._workflow_executor = WorkflowExecutor(
-            config=self.config,
-            inference_engine=cast(RemoteInfEngine, self),
-        )
-        self._workflow_executor.initialize()
-
-        if self._shutdown_requested.is_set():
-            return
-
         from areal.infra.staleness_manager import StalenessManager
+        from areal.infra.workflow_executor import WorkflowExecutor
 
         max_concurrent = (
             self.config.max_concurrent_rollouts or self.config.consumer_batch_size
@@ -279,6 +269,16 @@ class RolloutControllerV2:
             consumer_batch_size=self.config.consumer_batch_size,
             max_staleness=self.config.max_head_offpolicyness,
         )
+
+        self._workflow_executor = WorkflowExecutor(
+            config=self.config,
+            inference_engine=cast(RemoteInfEngine, self),
+            staleness_manager=self._staleness_manager,
+        )
+        self._workflow_executor.initialize()
+
+        if self._shutdown_requested.is_set():
+            return
 
         logger.info("RolloutControllerV2 initialized (role=%s)", self._worker_role)
 
@@ -1530,14 +1530,6 @@ class RolloutControllerV2:
         if self._workflow_executor is None:
             raise RuntimeError("RolloutControllerV2.initialize() must be called first")
         return self._workflow_executor
-
-    @property
-    def dispatcher(self):
-        return self.workflow_executor.dispatcher
-
-    @property
-    def runner(self):
-        return self.dispatcher.runner
 
     # -- Workflow resolution helpers ----------------------------------------
 
