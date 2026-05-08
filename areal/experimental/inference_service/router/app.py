@@ -319,7 +319,7 @@ def create_app(config: RouterConfig) -> FastAPI:
             if first is not None:
                 model_addrs = first.data_proxy_addrs
 
-        def _filter_healthy(workers: list, addrs: list[str] | None) -> list:
+        def _filter_by_model(workers: list, addrs: list[str] | None) -> list:
             if addrs is None:
                 return workers
             addr_set = set(addrs)
@@ -335,14 +335,13 @@ def create_app(config: RouterConfig) -> FastAPI:
 
         # Step C: model-only routing (no api_key/session_id)
         if body.api_key is None and model_addrs is not None:
-            healthy = await worker_registry.get_healthy_workers()
-            addr_set = set(model_addrs)
-            healthy = [w for w in healthy if w.worker_addr in addr_set]
-            if not healthy:
-                raise HTTPException(status_code=503, detail="No healthy workers")
-            worker = strategy.pick(healthy)
+            all_workers = await worker_registry.get_all_workers()
+            candidates = _filter_by_model(all_workers, model_addrs)
+            if not candidates:
+                raise HTTPException(status_code=503, detail="No registered workers")
+            worker = strategy.pick(candidates)
             if worker is None:
-                raise HTTPException(status_code=503, detail="No healthy workers")
+                raise HTTPException(status_code=503, detail="No registered workers")
             info = (
                 await model_registry.get(body.model)
                 if body.model
@@ -365,25 +364,21 @@ def create_app(config: RouterConfig) -> FastAPI:
                 detail="Either 'api_key' or 'session_id' must be provided",
             )
 
-        # Step C: Session key → pinned worker
+        # Step C: Session key → pinned worker (always route regardless of health;
+        # the data proxy buffers requests while the worker is paused)
         pinned = await session_registry.lookup_by_key(body.api_key)
         if pinned is not None:
-            all_workers = await worker_registry.get_all_workers()
-            worker_map = {w.worker_addr: w for w in all_workers}
-            w = worker_map.get(pinned)
-            if w is None or not w.is_healthy:
-                raise HTTPException(status_code=503, detail="Pinned worker unhealthy")
             return RouteResponse(worker_addr=pinned)
 
         # Step D: Admin key → pick from model addrs
         if hmac.compare_digest(body.api_key, config.admin_api_key):
-            healthy = await worker_registry.get_healthy_workers()
-            healthy = _filter_healthy(healthy, model_addrs)
-            if not healthy:
-                raise HTTPException(status_code=503, detail="No healthy workers")
-            worker = strategy.pick(healthy)
+            all_workers = await worker_registry.get_all_workers()
+            candidates = _filter_by_model(all_workers, model_addrs)
+            if not candidates:
+                raise HTTPException(status_code=503, detail="No registered workers")
+            worker = strategy.pick(candidates)
             if worker is None:
-                raise HTTPException(status_code=503, detail="No healthy workers")
+                raise HTTPException(status_code=503, detail="No registered workers")
             await session_registry.register_session(
                 body.api_key,
                 "__hitl__",

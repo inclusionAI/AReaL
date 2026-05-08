@@ -148,8 +148,13 @@ class InferenceServiceWorkflow(RolloutWorkflow):
                 http_session, final_reward, session_api_key
             )
             finished = True
-        except Exception:
-            logger.warning("Agent task failed. This trajectory will be rejected.")
+        except Exception as exc:
+            logger.warning(
+                "Agent task failed (%s: %s). This trajectory will be rejected.",
+                type(exc).__name__,
+                exc,
+                exc_info=True,
+            )
             if not finished:
                 try:
                     await self._set_last_reward(http_session, 0.0, session_api_key)
