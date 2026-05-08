@@ -205,6 +205,28 @@ def capture_lm_head_hidden(
         if needs_sp_gather:
             hidden = gather_from_sequence_parallel_region(hidden)
 
+        # Align ``hidden`` dtype to ``actual_weight`` dtype before handing the
+        # tensors to the fused Triton kernel.
+        #
+        # Why this is required:
+        #   * Megatron-Core feeds ``output_layer`` with the post-final-layernorm
+        #     activation, which is typically fp32 under mixed-precision training,
+        #     while ``output_layer.weight`` is bf16/fp16. The original
+        #     ``ColumnParallelLinear.forward`` silently downcasts ``input_`` to
+        #     the weight dtype inside
+        #     ``linear_with_grad_accumulation_and_async_allreduce``; our
+        #     identity-style monkey-patch bypasses that path and would otherwise
+        #     hand mismatched dtypes to ``efficient_entropy_forward``.
+        #   * Triton's ``tl.dot`` requires both operands to share the same dtype;
+        #     a mismatch triggers warnings such as
+        #     "Both operands must be same dtype. Got fp32 and bf16; falling back
+        #     to reference path." and silently disables the fused fast path.
+        #   * ``Tensor.to(dtype)`` is autograd-aware: backward auto-upcasts
+        #     gradients to the original dtype, so the upstream fp32 activation
+        #     receives a fp32 grad as expected.
+        if hidden.dtype != actual_weight.dtype:
+            hidden = hidden.to(actual_weight.dtype)
+
         slot.hidden = hidden
         slot.weight = actual_weight
         # Return ``(hidden, None)``: callers expect ``(logits, bias)`` and
