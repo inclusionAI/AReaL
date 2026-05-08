@@ -13,7 +13,11 @@ microbatch forward pass:
 
 1. Stashes the input tensor (``hidden``) and the actual weight (either the
    ``output_layer``'s own weight, or the embedding-tied weight passed in via
-   ``weight=``).
+   ``weight=``). When sequence-parallel is active (TP > 1 in AReaL), the
+   incoming ``input_`` is scattered along seq to ``[seq/tp_size, hidden]``,
+   so we first call ``gather_from_sequence_parallel_region`` to restore the
+   full ``[seq, hidden]`` tensor — exactly mirroring the first step of
+   mcore's ``ColumnParallelLinear.forward``.
 2. Returns ``(hidden, None)`` instead of ``(logits, bias)``. Because
    :func:`areal.utils.data.unpad_logits` and
    :func:`postprocess_packed_seqs_context_parallel` are shape-agnostic on
@@ -49,6 +53,9 @@ from typing import Any, Iterator, Optional
 
 import torch
 from megatron.core import parallel_state as mpu
+from megatron.core.tensor_parallel.mappings import (
+    gather_from_sequence_parallel_region,
+)
 
 from areal.utils import logging
 
@@ -161,21 +168,58 @@ def capture_lm_head_hidden(
     slot = _CaptureSlot()
     original_forward = output_layer.forward
 
+    # Detect sequence-parallel mode. In mcore, when TP > 1 AReaL enables
+    # ``sequence_parallel=True`` (see ``MegatronEngine._make_parallel_strategy``),
+    # which means the input handed to ``ColumnParallelLinear.forward`` is
+    # *scattered* along the sequence dimension to shape ``[seq/tp_size, hidden]``.
+    # The original ``ColumnParallelLinear.forward`` first calls
+    # ``gather_from_sequence_parallel_region`` to restore the full ``[seq, hidden]``
+    # tensor before doing the matmul. Our identity-style patch must replicate
+    # that gather, otherwise:
+    #   * the captured ``hidden`` is only this rank's sequence shard, leading
+    #     to wrong fused-kernel inputs and wrong logprobs;
+    #   * the tensor returned to mcore (which then flows through
+    #     ``postprocess_packed_seqs_context_parallel`` and ``unpad_logits``) has
+    #     dim-0 = seq/tp_size, which mismatches ``cu_seqlens`` / ``old_cu_seqlens``
+    #     and crashes with shape errors like "expanded size (X) must match
+    #     existing size (X/tp_size) at non-singleton dimension 0".
+    config = getattr(post_process, "config", None)
+    sequence_parallel = bool(getattr(config, "sequence_parallel", False))
+    tp_world_size = mpu.get_tensor_model_parallel_world_size()
+    needs_sp_gather = sequence_parallel and tp_world_size > 1
+
     def _patched_forward(input_, weight=None, runtime_gather_output=None):
         # Resolve the actual weight: either passed in (weight tying) or the
         # output_layer's own parameter. We intentionally store a *reference*
         # (not detach) so autograd flows through both the kernel forward
         # and backward.
         actual_weight = weight if weight is not None else output_layer.weight
-        slot.hidden = input_
+
+        # When sequence parallel is on, ``input_`` is shape ``[seq/tp_size, hidden]``.
+        # Gather along the sequence dim to obtain the full ``[seq, hidden]`` tensor
+        # — this is exactly what the original ``ColumnParallelLinear.forward``
+        # does as its first step. ``gather_from_sequence_parallel_region`` is
+        # an autograd-aware op (its backward is a reduce-scatter along seq),
+        # so gradients flow correctly back into the SP-scattered upstream.
+        hidden = input_
+        if needs_sp_gather:
+            hidden = gather_from_sequence_parallel_region(hidden)
+
+        slot.hidden = hidden
         slot.weight = actual_weight
-        # Return ``(input_, None)``: callers expect ``(logits, bias)`` and
+        # Return ``(hidden, None)``: callers expect ``(logits, bias)`` and
         # only ever destructure with ``logits, _ = output_layer(...)``. The
         # downstream pipeline (``unpad_logits`` etc.) is shape-agnostic on
         # the trailing dim, so passing ``hidden`` through is safe; the
         # fused kernel will then consume the stashed tensors and produce
         # the real per-token logprobs.
-        return input_, None
+        #
+        # Crucially we return the *gathered* hidden so that the leading
+        # sequence dim matches what mcore would have produced for the real
+        # logits tensor (``[seq, vocab/tp_size]``). This keeps every
+        # downstream shape invariant intact (CP all-gather, batch-padding
+        # strip, ``unpad_logits`` cu_seqlens slicing).
+        return hidden, None
 
     # ``output_layer.forward = _patched_forward`` replaces the bound method
     # at instance level (via ``__dict__`` lookup), shadowing the class
