@@ -184,7 +184,249 @@ def test_linear_cross_entropy_backward_matches_reference() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Performance benchmark
+# Tensor-parallel (TP=2) correctness + performance
+# ---------------------------------------------------------------------------
+
+
+def _tp2_available() -> bool:
+    """Whether we can launch a 2-rank TP test on this host."""
+    if not (CUDA_AVAILABLE and TRITON_AVAILABLE):
+        return False
+    if torch.cuda.device_count() < 2:
+        return False
+    return True
+
+
+_tp2_skip = pytest.mark.skipif(not _tp2_available(), reason="TP=2 requires >= 2 CUDA GPUs")
+
+
+def _init_tp2():
+    """Initialise a 2-rank NCCL process group; return (rank, group)."""
+    import os
+
+    import torch.distributed as dist
+
+    if dist.is_initialized():
+        rank = dist.get_rank()
+        group = dist.new_group(ranks=[0, 1], backend="nccl")
+        return rank, group
+
+    os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
+    os.environ.setdefault("MASTER_PORT", "29500")
+    os.environ.setdefault("RANK", "0")
+    os.environ.setdefault("WORLD_SIZE", "1")
+    dist.init_process_group(backend="nccl")
+    rank = dist.get_rank()
+    group = dist.new_group(ranks=list(range(dist.get_world_size())), backend="nccl")
+    return rank, group
+
+
+@_tp2_skip
+@pytest.mark.parametrize(
+    "num_tokens,hidden_size,vocab_size,dtype",
+    [
+        (128, 512, 8192, torch.float32),
+        (256, 1024, 32000, torch.bfloat16),
+    ],
+)
+def test_linear_cross_entropy_tp2_correctness(
+    num_tokens: int,
+    hidden_size: int,
+    vocab_size: int,
+    dtype: torch.dtype,
+) -> None:
+    """TP=2 fused forward+backward must match the materialised single-GPU reference."""
+    import torch.distributed as dist
+
+    from areal.utils.kernel import linear_cross_entropy
+
+    rank, tp_group = _init_tp2()
+    world_size = dist.get_world_size(tp_group)
+    assert world_size == 2
+
+    torch.cuda.set_device(rank)
+    device = f"cuda:{rank}"
+
+    vocab_per_rank = vocab_size // world_size
+    assert vocab_size % world_size == 0, "vocab_size must be divisible by world_size"
+
+    g = torch.Generator(device=device).manual_seed(42)
+    hidden = (torch.randn(num_tokens, hidden_size, dtype=dtype, device=device, generator=g) * 0.02)
+    labels = torch.randint(0, vocab_size, (num_tokens,), device=device, generator=g)
+
+    weight_full = (torch.randn(vocab_size, hidden_size, dtype=dtype, device=device, generator=g) * 0.02)
+    weight_shard = weight_full[rank * vocab_per_rank : (rank + 1) * vocab_per_rank].contiguous()
+
+    # --- Reference (single-GPU, full weight) ---
+    hidden_ref = hidden.detach().clone().requires_grad_(True)
+    weight_ref = weight_full.detach().clone().requires_grad_(True)
+    logits = (hidden_ref.float() @ weight_ref.float().t())
+    log_softmax = torch.nn.functional.log_softmax(logits, dim=-1)
+    ref_lp = log_softmax.gather(dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
+    probs = log_softmax.exp()
+    ref_h = -(probs * log_softmax).sum(dim=-1)
+    (ref_lp.sum() + 0.5 * ref_h.sum()).backward()
+
+    # --- Fused TP=2 ---
+    hidden_fused = hidden.detach().clone().requires_grad_(True)
+    weight_fused = weight_shard.detach().clone().requires_grad_(True)
+    fused_lp, fused_h = linear_cross_entropy(
+        hidden_fused, weight_fused, labels, 1.0, "none", tp_group
+    )
+    (fused_lp.sum() + 0.5 * fused_h.sum()).backward()
+
+    if dtype == torch.float32:
+        rtol, atol = 1e-3, 1e-3
+    else:
+        rtol, atol = 5e-2, 5e-2
+
+    torch.testing.assert_close(fused_lp.float(), ref_lp.float(), rtol=rtol, atol=atol)
+    torch.testing.assert_close(fused_h.float(), ref_h.float(), rtol=rtol, atol=atol)
+    torch.testing.assert_close(hidden_fused.grad.float(), hidden_ref.grad.float(), rtol=rtol, atol=atol)
+
+    # d_weight is per-rank (vocab shard), compare only the owned shard
+    torch.testing.assert_close(
+        weight_fused.grad.float(),
+        weight_ref.grad[rank * vocab_per_rank : (rank + 1) * vocab_per_rank].float(),
+        rtol=rtol,
+        atol=atol,
+    )
+
+    dist.destroy_process_group()
+
+
+@_tp2_skip
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "num_tokens,hidden_size,vocab_size",
+    [
+        (1024, 1024, 32000),
+        (2048, 4096, 152064),
+    ],
+)
+def test_linear_cross_entropy_tp2_performance_benchmark(
+    num_tokens: int,
+    hidden_size: int,
+    vocab_size: int,
+) -> None:
+    """TP=2 fused vs materialised forward+backward time and peak memory."""
+    import torch.distributed as dist
+
+    from areal.utils.kernel import linear_cross_entropy
+
+    rank, tp_group = _init_tp2()
+    world_size = dist.get_world_size(tp_group)
+    assert world_size == 2
+
+    torch.cuda.set_device(rank)
+    device = f"cuda:{rank}"
+    dtype = torch.bfloat16
+
+    vocab_per_rank = vocab_size // world_size
+    assert vocab_size % world_size == 0
+
+    g = torch.Generator(device=device).manual_seed(0)
+    hidden = (torch.randn(num_tokens, hidden_size, dtype=dtype, device=device, generator=g) * 0.02)
+    labels = torch.randint(0, vocab_size, (num_tokens,), device=device, generator=g)
+    weight_full = (torch.randn(vocab_size, hidden_size, dtype=dtype, device=device, generator=g) * 0.02)
+    weight_shard = weight_full[rank * vocab_per_rank : (rank + 1) * vocab_per_rank].contiguous()
+
+    # --- warm-up ---
+    for _ in range(2):
+        h = hidden.detach().clone().requires_grad_(True)
+        w = weight_shard.detach().clone().requires_grad_(True)
+        lp, ent = linear_cross_entropy(h, w, labels, 1.0, "none", tp_group)
+        (lp.sum() + ent.sum()).backward()
+        del lp, ent, h, w
+        gc.collect()
+        torch.cuda.empty_cache()
+
+    for _ in range(2):
+        h = hidden.detach().clone().requires_grad_(True)
+        w = weight_full.detach().clone().requires_grad_(True)
+        logits = (h.float() @ w.float().t())
+        log_softmax = torch.nn.functional.log_softmax(logits, dim=-1)
+        lp = log_softmax.gather(dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
+        probs = log_softmax.exp()
+        ent = -(probs * log_softmax).sum(dim=-1)
+        (lp.sum() + ent.sum()).backward()
+        del lp, ent, h, w
+        gc.collect()
+        torch.cuda.empty_cache()
+
+    # --- Fused TP=2 timing ---
+    fused_times = []
+    fused_mems = []
+    for _ in range(5):
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats()
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+        start.record()
+        h = hidden.detach().clone().requires_grad_(True)
+        w = weight_shard.detach().clone().requires_grad_(True)
+        lp, ent = linear_cross_entropy(h, w, labels, 1.0, "none", tp_group)
+        (lp.sum() + ent.sum()).backward()
+        end.record()
+        torch.cuda.synchronize()
+        fused_times.append(start.elapsed_time(end))
+        fused_mems.append(torch.cuda.max_memory_allocated() / (1024 * 1024))
+        del lp, ent, h, w
+
+    # --- Reference (single-GPU, full weight) timing ---
+    ref_times = []
+    ref_mems = []
+    for _ in range(5):
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats()
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+        start.record()
+        h = hidden.detach().clone().requires_grad_(True)
+        w = weight_full.detach().clone().requires_grad_(True)
+        logits = (h.float() @ w.float().t())
+        log_softmax = torch.nn.functional.log_softmax(logits, dim=-1)
+        lp = log_softmax.gather(dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
+        probs = log_softmax.exp()
+        ent = -(probs * log_softmax).sum(dim=-1)
+        (lp.sum() + ent.sum()).backward()
+        end.record()
+        torch.cuda.synchronize()
+        ref_times.append(start.elapsed_time(end))
+        ref_mems.append(torch.cuda.max_memory_allocated() / (1024 * 1024))
+        del lp, ent, h, w
+
+    ref_med = sorted(ref_times)[len(ref_times) // 2]
+    fused_med = sorted(fused_times)[len(fused_times) // 2]
+    ref_peak = max(ref_mems)
+    fused_peak = max(fused_mems)
+    speedup = ref_med / fused_med if fused_med > 0 else math.inf
+    mem_ratio = fused_peak / ref_peak if ref_peak > 0 else math.inf
+
+    print(
+        f"\n[LCE-TP2-Bench rank={rank}] tokens={num_tokens} hidden={hidden_size} vocab={vocab_size} "
+        f"dtype={dtype}\n"
+        f"            reference: {ref_med:7.2f} ms / {ref_peak:7.1f} MB peak\n"
+        f"            fused    : {fused_med:7.2f} ms / {fused_peak:7.1f} MB peak\n"
+        f"            speedup  : {speedup:5.2f}x   memory_ratio: {mem_ratio:5.2f}x"
+    )
+
+    assert fused_med < ref_med * 1.5, (
+        f"Fused TP=2 LCE is more than 1.5x slower than reference "
+        f"(fused={fused_med:.2f}ms ref={ref_med:.2f}ms)."
+    )
+    assert fused_peak < ref_peak * 1.2, (
+        f"Fused TP=2 LCE peak memory exceeds reference by >20% "
+        f"(fused={fused_peak:.1f}MB ref={ref_peak:.1f}MB)."
+    )
+
+    dist.destroy_process_group()
+
+
+# ---------------------------------------------------------------------------
+# Performance benchmark (single-GPU)
 # ---------------------------------------------------------------------------
 
 
