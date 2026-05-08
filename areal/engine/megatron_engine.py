@@ -6973,10 +6973,7 @@ class MegatronEngine(TrainEngine):
                     #   is deterministic and preserves monotonic
                     #   sub-ULP trajectories.
                     #
-                    # NOTES
-                    #   * slime/verl do not address this. Research of
-                    #     https://github.com/THUDM/slime ,
-                    #     https://github.com/volcengine/verl , SGLang
+                    # NOTES SGLang
                     #     v0.5.9 and Megatron-LM core_r0.16.0 confirms
                     #     they all ship bf16 round-to-nearest. See
                     #     megatron distrib_optimizer.py
@@ -6998,6 +6995,42 @@ class MegatronEngine(TrainEngine):
                         )
                     except Exception:
                         _sd_on = True
+                    # [MTPSlimeAlign-v66] When slime-align is ON,
+                    # disable v28 SigmaDeltaBf16 entirely.  Slime's
+                    # _weight_to_hf_format performs only a shape
+                    # transform + RNE bf16 cast; no residual carry,
+                    # no sub-ULP drift injection.  Leaving v28 ON
+                    # under SLIME_ALIGN ships ULP-noisy MTP
+                    # weights, which (per spec_v1.log.9) drives
+                    # AcceptEMA from ~0.32 to ~0.18 within 30s of a
+                    # single ship.  Gating v28 here matches the I)
+                    # promise of the SLIME_ALIGN banner: AReaL's
+                    # ship-side mutation surface == slime's.
+                    try:
+                        _v66_slime = (
+                            _os_v16.environ.get(
+                                'AREAL_MTP_SLIME_ALIGN', '1'
+                            ) == '1'
+                        )
+                    except Exception:
+                        _v66_slime = True
+                    if _v66_slime and _sd_on:
+                        _sd_on = False
+                        if not getattr(
+                            self, '_v66_i_logged', False
+                        ):
+                            try:
+                                self.logger.info(
+                                    '[MTPSlimeAlign] I) v28 '
+                                    'SigmaDeltaBf16 DISABLED under '
+                                    'AREAL_MTP_SLIME_ALIGN=1 (slime '
+                                    'ships clean RNE bf16; no '
+                                    'residual carry, no sub-ULP '
+                                    'dither).'
+                                )
+                                self._v66_i_logged = True
+                            except Exception:
+                                pass
                     if _sd_on:
                         # [v34] Defensive torch import: v28 SigmaDelta
                         # block references _torch_v16 but the original
