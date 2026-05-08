@@ -1336,16 +1336,19 @@ class MegatronEngine(TrainEngine):
 
         if not hasattr(self, "_nsys_flush_registered"):
             self._nsys_flush_registered = True
-            import signal
+            import threading
 
-            def _nsys_flush_handler(signum, frame):
-                try:
-                    torch.cuda.cudart().cudaProfilerStop()
-                except Exception:
-                    pass
-                raise SystemExit(128 + signum)
+            if threading.current_thread() is threading.main_thread():
+                import signal
 
-            signal.signal(signal.SIGTERM, _nsys_flush_handler)
+                def _nsys_flush_handler(signum, frame):
+                    try:
+                        torch.cuda.cudart().cudaProfilerStop()
+                    except Exception:
+                        pass
+                    raise SystemExit(128 + signum)
+
+                signal.signal(signal.SIGTERM, _nsys_flush_handler)
 
     def _update_bucket_weights_from_distributed(
         self,
