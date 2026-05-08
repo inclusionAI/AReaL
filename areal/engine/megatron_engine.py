@@ -871,6 +871,27 @@ class MegatronEngine(TrainEngine):
         self._ensure_ready()
         self.optimizer_zero_grad()
 
+        if not hasattr(self, "_lce_profiler"):
+            lce_profiler_dir = os.environ.get("AREAL_LCE_PROFILER_DIR", "")
+            if lce_profiler_dir:
+                import torch.profiler
+
+                self._lce_profiler = torch.profiler.profile(
+                    activities=[
+                        torch.profiler.ProfilerActivity.CPU,
+                        torch.profiler.ProfilerActivity.CUDA,
+                    ],
+                    record_shapes=True,
+                    profile_memory=True,
+                    schedule=torch.profiler.schedule(
+                        wait=1, warmup=1, active=1, repeat=1
+                    ),
+                    on_trace_ready=torch.profiler.tensorboard_trace_handler(
+                        lce_profiler_dir
+                    ),
+                )
+                self._lce_profiler.start()
+
         input_batched, _ = self._normalize_batch_input(input_)
 
         # Step 1: Prepare micro-batches
@@ -905,7 +926,12 @@ class MegatronEngine(TrainEngine):
         )
 
         # Step 4: Optimizer step
-        return self.optimizer_step()
+        result = self.optimizer_step()
+
+        if hasattr(self, "_lce_profiler"):
+            self._lce_profiler.step()
+
+        return result
 
     @torch.no_grad()
     def eval_batch(
@@ -1307,6 +1333,19 @@ class MegatronEngine(TrainEngine):
 
         if self.model is None:
             raise RuntimeError("Model is not initialized.")
+
+        if not hasattr(self, "_nsys_flush_registered"):
+            self._nsys_flush_registered = True
+            import signal
+
+            def _nsys_flush_handler(signum, frame):
+                try:
+                    torch.cuda.cudart().cudaProfilerStop()
+                except Exception:
+                    pass
+                raise SystemExit(128 + signum)
+
+            signal.signal(signal.SIGTERM, _nsys_flush_handler)
 
     def _update_bucket_weights_from_distributed(
         self,
