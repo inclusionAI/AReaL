@@ -5,12 +5,29 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
+import httpx
+import openai
 
 from areal.api.workflow_api import RolloutWorkflow
 from areal.experimental.openai.proxy.server import deserialize_interactions
 from areal.infra import workflow_context
 from areal.infra.utils.http import async_http_retry
 from areal.utils import logging, stats_tracker
+
+# Exception types that indicate a transient connection failure (expected during shutdown).
+# When these occur we log a short one-liner instead of a full traceback.
+_CONNECTION_ERROR_TYPES: tuple[type[BaseException], ...] = (
+    httpx.ConnectError,
+    httpx.RemoteProtocolError,
+    httpx.ReadError,
+    aiohttp.ClientConnectorError,
+    aiohttp.ServerDisconnectedError,
+    ConnectionRefusedError,
+    ConnectionResetError,
+    OSError,
+    openai.APIConnectionError,
+)
+
 
 if TYPE_CHECKING:
     from areal.api.engine_api import InferenceEngine
@@ -149,20 +166,27 @@ class InferenceServiceWorkflow(RolloutWorkflow):
             )
             finished = True
         except Exception as exc:
-            logger.warning(
-                "Agent task failed (%s: %s). This trajectory will be rejected.",
-                type(exc).__name__,
-                exc,
-                exc_info=True,
+            is_conn_err = isinstance(exc, _CONNECTION_ERROR_TYPES) or (
+                exc.__cause__ is not None
+                and isinstance(exc.__cause__, _CONNECTION_ERROR_TYPES)
             )
+            if is_conn_err:
+                logger.warning(
+                    "Agent task failed (%s). Trajectory rejected (connection lost).",
+                    type(exc).__name__,
+                )
+            else:
+                logger.warning(
+                    "Agent task failed (%s: %s). This trajectory will be rejected.",
+                    type(exc).__name__,
+                    exc,
+                    exc_info=True,
+                )
             if not finished:
                 try:
                     await self._set_last_reward(http_session, 0.0, session_api_key)
                 except Exception:
-                    logger.warning(
-                        "Failed to finish session %s after agent failure",
-                        session_id,
-                    )
+                    pass
             raise
 
         interactions = await self._export_interactions(
