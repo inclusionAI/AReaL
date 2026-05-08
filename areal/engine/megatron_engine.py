@@ -148,6 +148,33 @@ class _MegatronModelList(list):
             yield parameter
 
 
+_LCE_KERNEL_PREFIXES = (
+    "efficient_entropy_kernel",
+    "lce_backward",
+    "triton_poi",
+)
+
+
+def _print_lce_summary(prof: torch.profiler.profile, rank: int) -> None:
+    logger = logging.getLogger("LCEProfiler")
+    events = prof.key_averages()
+    lce_rows: list[tuple[str, float, float, float]] = []
+    for evt in events:
+        key = evt.key
+        if any(p in key for p in _LCE_KERNEL_PREFIXES):
+            cuda_ms = evt.cuda_time_total / 1000.0
+            cpu_ms = evt.cpu_time_total / 1000.0
+            calls = evt.count
+            lce_rows.append((key, cuda_ms, cpu_ms, calls))
+    if not lce_rows:
+        logger.info(f"[Rank {rank}] No LCE Triton kernels found in profiler trace.")
+        return
+    header = f"[Rank {rank}] LCE Kernel Profiling Summary (CUDA ms / CPU ms / calls):"
+    logger.info(header)
+    for key, cuda_ms, cpu_ms, calls in lce_rows:
+        logger.info(f"  {key}: {cuda_ms:.3f} / {cpu_ms:.3f} / {calls}")
+
+
 class MegatronEngine(TrainEngine):
     def __init__(self, config: TrainEngineConfig):
         self.config = config
@@ -774,8 +801,6 @@ class MegatronEngine(TrainEngine):
                 and not cp_local
             )
 
-            lce_label = "fused_lce" if should_capture else "materialized_lce"
-            torch.cuda.nvtx.range_push(f"lce_forward/{lce_label}")
             with capture_lm_head_hidden(
                 model, enabled=should_capture
             ) as capture:
@@ -796,8 +821,6 @@ class MegatronEngine(TrainEngine):
                 mb_input.orig_mb[FUSED_LCE_HIDDEN_KEY] = capture.hidden
                 mb_input.orig_mb[FUSED_LCE_WEIGHT_KEY] = capture.weight
                 mb_input.orig_mb["_fused_lce_active"] = True
-
-            torch.cuda.nvtx.range_pop()
 
             # Release tree attention metadata after forward pass
             for key in tree_attn_keys:
@@ -871,26 +894,7 @@ class MegatronEngine(TrainEngine):
         self._ensure_ready()
         self.optimizer_zero_grad()
 
-        if not hasattr(self, "_lce_profiler"):
-            lce_profiler_dir = os.environ.get("AREAL_LCE_PROFILER_DIR", "")
-            if lce_profiler_dir:
-                import torch.profiler
-
-                self._lce_profiler = torch.profiler.profile(
-                    activities=[
-                        torch.profiler.ProfilerActivity.CPU,
-                        torch.profiler.ProfilerActivity.CUDA,
-                    ],
-                    record_shapes=True,
-                    profile_memory=True,
-                    schedule=torch.profiler.schedule(
-                        wait=1, warmup=1, active=1, repeat=1
-                    ),
-                    on_trace_ready=torch.profiler.tensorboard_trace_handler(
-                        lce_profiler_dir
-                    ),
-                )
-                self._lce_profiler.start()
+        self._maybe_init_lce_profiler()
 
         input_batched, _ = self._normalize_batch_input(input_)
 
@@ -928,8 +932,7 @@ class MegatronEngine(TrainEngine):
         # Step 4: Optimizer step
         result = self.optimizer_step()
 
-        if hasattr(self, "_lce_profiler"):
-            self._lce_profiler.step()
+        self._maybe_step_lce_profiler()
 
         return result
 
@@ -1334,21 +1337,60 @@ class MegatronEngine(TrainEngine):
         if self.model is None:
             raise RuntimeError("Model is not initialized.")
 
-        if not hasattr(self, "_nsys_flush_registered"):
-            self._nsys_flush_registered = True
-            import threading
+    _LCE_PROFILER_KEY = "_lce_profiler"
+    _LCE_PROFILER_ENV = "ARENAL_LCE_PROFILER_DIR"
 
-            if threading.current_thread() is threading.main_thread():
-                import signal
+    def _maybe_init_lce_profiler(self) -> None:
+        if hasattr(self, self._LCE_PROFILER_KEY):
+            return
+        profiler_dir = os.environ.get(self._LCE_PROFILER_ENV, "")
+        if not profiler_dir:
+            setattr(self, self._LCE_PROFILER_KEY, None)
+            return
 
-                def _nsys_flush_handler(signum, frame):
-                    try:
-                        torch.cuda.cudart().cudaProfilerStop()
-                    except Exception:
-                        pass
-                    raise SystemExit(128 + signum)
+        import torch.profiler
 
-                signal.signal(signal.SIGTERM, _nsys_flush_handler)
+        rank = dist.get_rank() if dist.is_initialized() else 0
+        output_dir = os.path.join(profiler_dir, f"rank_{rank}")
+        os.makedirs(output_dir, exist_ok=True)
+
+        def _lce_trace_handler(prof: torch.profiler.profile) -> None:
+            torch.profiler.tensorboard_trace_handler(output_dir)(prof)
+            _print_lce_summary(prof, rank)
+
+        setattr(
+            self,
+            self._LCE_PROFILER_KEY,
+            torch.profiler.profile(
+                activities=[
+                    torch.profiler.ProfilerActivity.CPU,
+                    torch.profiler.ProfilerActivity.CUDA,
+                ],
+                record_shapes=True,
+                profile_memory=True,
+                with_stack=True,
+                schedule=torch.profiler.schedule(
+                    wait=2, warmup=1, active=3, repeat=1
+                ),
+                on_trace_ready=_lce_trace_handler,
+            ),
+        )
+        getattr(self, self._LCE_PROFILER_KEY).start()
+        logger = logging.getLogger("LCEProfiler")
+        logger.info(
+            f"[Rank {rank}] torch.profiler started, traces will be saved to {output_dir} "
+            f"(schedule: wait=2, warmup=1, active=3)"
+        )
+
+    def _maybe_step_lce_profiler(self) -> None:
+        profiler = getattr(self, self._LCE_PROFILER_KEY, None)
+        if profiler is None:
+            return
+        profiler.step()
+        if profiler.profiler is None:
+            logger = logging.getLogger("LCEProfiler")
+            rank = dist.get_rank() if dist.is_initialized() else 0
+            logger.info(f"[Rank {rank}] torch.profiler finished and stopped.")
 
     def _update_bucket_weights_from_distributed(
         self,
@@ -1924,7 +1966,6 @@ class MegatronEngine(TrainEngine):
                     and fused_hidden is not None
                     and fused_weight is not None
                 ):
-                    torch.cuda.nvtx.range_push("lce_loss/fused_lce")
                     logprobs, entropy = linear_cross_entropy_logprobs_entropy(
                         fused_hidden,
                         fused_weight,
@@ -1942,9 +1983,7 @@ class MegatronEngine(TrainEngine):
                     proxy = logprobs.detach().float()
                     vocab_min_logits = proxy
                     vocab_max_logits = proxy
-                    torch.cuda.nvtx.range_pop()
                 else:
-                    torch.cuda.nvtx.range_push("lce_loss/materialized_lce")
                     logprobs, entropy = gather_logprobs_entropy(
                         output,
                         labels,
@@ -1955,7 +1994,6 @@ class MegatronEngine(TrainEngine):
                     )
                     vocab_min_logits = output.detach().min(-1).values.float()
                     vocab_max_logits = output.detach().max(-1).values.float()
-                    torch.cuda.nvtx.range_pop()
             loss = loss_fn(
                 logprobs,
                 entropy,
@@ -2000,7 +2038,6 @@ class MegatronEngine(TrainEngine):
                 and fused_hidden is not None
                 and fused_weight is not None
             ):
-                torch.cuda.nvtx.range_push("lce_forward_result/fused_lce")
                 logprobs = linear_cross_entropy_logprobs(
                     fused_hidden,
                     fused_weight,
@@ -2010,9 +2047,7 @@ class MegatronEngine(TrainEngine):
                     if mpu.get_tensor_model_parallel_world_size() > 1
                     else None,
                 )
-                torch.cuda.nvtx.range_pop()
                 return logprobs
-            torch.cuda.nvtx.range_push("lce_forward_result/materialized_lce")
             logprobs = gather_logprobs(
                 output,
                 labels,
@@ -2021,7 +2056,6 @@ class MegatronEngine(TrainEngine):
                 if mpu.get_tensor_model_parallel_world_size() > 1
                 else None,
             )
-            torch.cuda.nvtx.range_pop()
             return logprobs
         else:
             values = output.squeeze(-1)
