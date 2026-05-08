@@ -31,8 +31,8 @@ class ConnectRequest(BaseModel):
     pair_name: str
     train_worker_urls: list[str]
     inference_worker_urls: list[str]
-    nccl_master_addr: str
-    nccl_master_port: int
+    nccl_master_addr: str = ""
+    nccl_master_port: int = 0
     mode: str = "awex"  # "awex" or "disk"
     save_path: str = ""
     use_lora: bool = False

@@ -480,12 +480,12 @@ class TestRouterEndpoints:
             headers=admin_headers(),
         )
         assert resp.status_code == 503
-        assert "No healthy workers" in resp.json()["detail"]
+        assert "No registered workers" in resp.json()["detail"]
 
     # ----- /route — pinned worker unhealthy -----
 
     @pytest.mark.asyncio
-    async def test_route_pinned_worker_unhealthy_503(self, client):
+    async def test_route_pinned_worker_unhealthy_still_routes(self, client):
         # Register worker + session
         await client.post(
             "/register",
@@ -507,13 +507,14 @@ class TestRouterEndpoints:
         wr: WorkerRegistry = client._transport.app.state.worker_registry  # type: ignore[attr-defined]
         await wr.update_health(WORKER_1, False)
 
+        # Routing still returns the pinned worker even if unhealthy
         resp = await client.post(
             "/route",
             json={"api_key": "sess-key-1", "path": "/chat/completions"},
             headers=admin_headers(),
         )
-        assert resp.status_code == 503
-        assert "Pinned worker unhealthy" in resp.json()["detail"]
+        assert resp.status_code == 200
+        assert resp.json()["worker_addr"] == WORKER_1
 
     # ----- /route — session_id lookup -----
 
