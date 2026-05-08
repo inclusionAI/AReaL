@@ -200,50 +200,22 @@ def _tp2_available() -> bool:
 _tp2_skip = pytest.mark.skipif(not _tp2_available(), reason="TP=2 requires >= 2 CUDA GPUs")
 
 
-import sys
-
-
-def _log(msg: str) -> None:
-    """Real-time log to stderr (unbuffered, bypasses pytest capture)."""
-    import os
-
-    rank = os.environ.get("RANK", "?")
-    local_rank = os.environ.get("LOCAL_RANK", "?")
-    sys.stderr.write(f"[LCE-TP2 rank={rank} local_rank={local_rank}] {msg}\n")
-    sys.stderr.flush()
-
-
 def _init_tp2():
     """Initialise a 2-rank NCCL process group; return (rank, group)."""
     import os
 
     import torch.distributed as dist
 
-    _log("Entering _init_tp2")
-
     if dist.is_initialized():
-        _log("dist already initialized, creating new subgroup")
         rank = dist.get_rank()
         world_size = dist.get_world_size()
-        _log(f"rank={rank} world_size={world_size}")
         group = dist.new_group(ranks=list(range(world_size)), backend="nccl")
-        _log(f"subgroup created, group={group}")
         return rank, group
-
-    _log("dist NOT initialized, calling init_process_group")
-    master_addr = os.environ.get("MASTER_ADDR", "127.0.0.1")
-    master_port = os.environ.get("MASTER_PORT", "29500")
-    _log(f"MASTER_ADDR={master_addr} MASTER_PORT={master_port}")
-    _log(f"RANK={os.environ.get('RANK', '?')} WORLD_SIZE={os.environ.get('WORLD_SIZE', '?')} "
-         f"LOCAL_RANK={os.environ.get('LOCAL_RANK', '?')} LOCAL_WORLD_SIZE={os.environ.get('LOCAL_WORLD_SIZE', '?')}")
 
     dist.init_process_group(backend="nccl")
     rank = dist.get_rank()
     world_size = dist.get_world_size()
-    _log(f"init_process_group done, rank={rank} world_size={world_size}")
-
     group = dist.new_group(ranks=list(range(world_size)), backend="nccl")
-    _log(f"subgroup created")
     return rank, group
 
 
@@ -266,12 +238,9 @@ def test_linear_cross_entropy_tp2_correctness(
 
     from areal.utils.kernel import linear_cross_entropy
 
-    _log(f"test start: tokens={num_tokens} hidden={hidden_size} vocab={vocab_size} dtype={dtype}")
-
     rank, tp_group = _init_tp2()
     world_size = dist.get_world_size(tp_group)
     assert world_size == 2
-    _log(f"init done: rank={rank} world_size={world_size}")
 
     torch.cuda.set_device(rank)
     device = f"cuda:{rank}"
@@ -279,16 +248,13 @@ def test_linear_cross_entropy_tp2_correctness(
     vocab_per_rank = vocab_size // world_size
     assert vocab_size % world_size == 0, "vocab_size must be divisible by world_size"
 
-    _log("Creating inputs...")
     g = torch.Generator(device=device).manual_seed(42)
     hidden = (torch.randn(num_tokens, hidden_size, dtype=dtype, device=device, generator=g) * 0.02)
     labels = torch.randint(0, vocab_size, (num_tokens,), device=device, generator=g)
     weight_full = (torch.randn(vocab_size, hidden_size, dtype=dtype, device=device, generator=g) * 0.02)
     weight_shard = weight_full[rank * vocab_per_rank : (rank + 1) * vocab_per_rank].contiguous()
-    _log(f"Inputs ready: hidden={hidden.shape} weight_shard={weight_shard.shape} labels={labels.shape}")
 
     # --- Reference (single-GPU, full weight) ---
-    _log("Running reference path...")
     hidden_ref = hidden.detach().clone().requires_grad_(True)
     weight_ref = weight_full.detach().clone().requires_grad_(True)
     logits = (hidden_ref.float() @ weight_ref.float().t())
@@ -297,44 +263,31 @@ def test_linear_cross_entropy_tp2_correctness(
     probs = log_softmax.exp()
     ref_h = -(probs * log_softmax).sum(dim=-1)
     (ref_lp.sum() + 0.5 * ref_h.sum()).backward()
-    _log(f"Reference done: ref_lp={ref_lp.shape} ref_h={ref_h.shape}")
 
     # --- Fused TP=2 ---
-    _log("Running fused TP=2 path...")
     hidden_fused = hidden.detach().clone().requires_grad_(True)
     weight_fused = weight_shard.detach().clone().requires_grad_(True)
-    _log(f"Calling linear_cross_entropy with tp_group={tp_group}...")
     fused_lp, fused_h = linear_cross_entropy(
         hidden_fused, weight_fused, labels, 1.0, "none", tp_group
     )
-    _log(f"Fused forward done: fused_lp={fused_lp.shape} fused_h={fused_h.shape}")
-    _log("Running fused backward...")
     (fused_lp.sum() + 0.5 * fused_h.sum()).backward()
-    _log("Fused backward done")
 
     if dtype == torch.float32:
         rtol, atol = 1e-3, 1e-3
     else:
         rtol, atol = 5e-2, 5e-2
 
-    _log("Asserting logprobs...")
     torch.testing.assert_close(fused_lp.float(), ref_lp.float(), rtol=rtol, atol=atol)
-    _log("Asserting entropy...")
     torch.testing.assert_close(fused_h.float(), ref_h.float(), rtol=rtol, atol=atol)
-    _log("Asserting d_hidden...")
     torch.testing.assert_close(hidden_fused.grad.float(), hidden_ref.grad.float(), rtol=rtol, atol=atol)
-    _log("Asserting d_weight...")
     torch.testing.assert_close(
         weight_fused.grad.float(),
         weight_ref.grad[rank * vocab_per_rank : (rank + 1) * vocab_per_rank].float(),
         rtol=rtol,
         atol=atol,
     )
-    _log("All assertions passed!")
 
-    _log("Calling dist.barrier before cleanup...")
     dist.barrier(tp_group)
-    _log("Test complete, NOT destroying process group (kept for subsequent tests)")
 
 
 @_tp2_skip
@@ -359,7 +312,6 @@ def test_linear_cross_entropy_tp2_performance_benchmark(
     rank, tp_group = _init_tp2()
     world_size = dist.get_world_size(tp_group)
     assert world_size == 2
-    _log(f"perf bench init done: rank={rank} world_size={world_size}")
 
     torch.cuda.set_device(rank)
     device = f"cuda:{rank}"
@@ -368,17 +320,14 @@ def test_linear_cross_entropy_tp2_performance_benchmark(
     vocab_per_rank = vocab_size // world_size
     assert vocab_size % world_size == 0
 
-    _log("Creating inputs...")
     g = torch.Generator(device=device).manual_seed(0)
     hidden = (torch.randn(num_tokens, hidden_size, dtype=dtype, device=device, generator=g) * 0.02)
     labels = torch.randint(0, vocab_size, (num_tokens,), device=device, generator=g)
     weight_full = (torch.randn(vocab_size, hidden_size, dtype=dtype, device=device, generator=g) * 0.02)
     weight_shard = weight_full[rank * vocab_per_rank : (rank + 1) * vocab_per_rank].contiguous()
-    _log(f"Inputs ready: hidden={hidden.shape} weight_shard={weight_shard.shape}")
 
     # --- warm-up ---
-    _log("Warm-up fused...")
-    for i in range(2):
+    for _ in range(2):
         h = hidden.detach().clone().requires_grad_(True)
         w = weight_shard.detach().clone().requires_grad_(True)
         lp, ent = linear_cross_entropy(h, w, labels, 1.0, "none", tp_group)
@@ -386,10 +335,8 @@ def test_linear_cross_entropy_tp2_performance_benchmark(
         del lp, ent, h, w
         gc.collect()
         torch.cuda.empty_cache()
-    _log("Warm-up fused done")
 
-    _log("Warm-up reference...")
-    for i in range(2):
+    for _ in range(2):
         h = hidden.detach().clone().requires_grad_(True)
         w = weight_full.detach().clone().requires_grad_(True)
         logits = (h.float() @ w.float().t())
@@ -401,13 +348,11 @@ def test_linear_cross_entropy_tp2_performance_benchmark(
         del lp, ent, h, w
         gc.collect()
         torch.cuda.empty_cache()
-    _log("Warm-up reference done")
 
     # --- Fused TP=2 timing ---
-    _log("Fused TP=2 timing (5 iters)...")
     fused_times = []
     fused_mems = []
-    for i in range(5):
+    for _ in range(5):
         torch.cuda.synchronize()
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
@@ -423,13 +368,11 @@ def test_linear_cross_entropy_tp2_performance_benchmark(
         fused_times.append(start.elapsed_time(end))
         fused_mems.append(torch.cuda.max_memory_allocated() / (1024 * 1024))
         del lp, ent, h, w
-    _log(f"Fused timing done: median={sorted(fused_times)[len(fused_times)//2]:.2f}ms")
 
     # --- Reference (single-GPU, full weight) timing ---
-    _log("Reference timing (5 iters)...")
     ref_times = []
     ref_mems = []
-    for i in range(5):
+    for _ in range(5):
         torch.cuda.synchronize()
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
@@ -449,7 +392,6 @@ def test_linear_cross_entropy_tp2_performance_benchmark(
         ref_times.append(start.elapsed_time(end))
         ref_mems.append(torch.cuda.max_memory_allocated() / (1024 * 1024))
         del lp, ent, h, w
-    _log(f"Reference timing done: median={sorted(ref_times)[len(ref_times)//2]:.2f}ms")
 
     ref_med = sorted(ref_times)[len(ref_times) // 2]
     fused_med = sorted(fused_times)[len(fused_times) // 2]
@@ -474,8 +416,6 @@ def test_linear_cross_entropy_tp2_performance_benchmark(
         f"Fused TP=2 LCE peak memory exceeds reference by >20% "
         f"(fused={fused_peak:.1f}MB ref={ref_peak:.1f}MB)."
     )
-
-    _log("TP2 perf bench complete, NOT destroying process group")
 
 
 # ---------------------------------------------------------------------------
