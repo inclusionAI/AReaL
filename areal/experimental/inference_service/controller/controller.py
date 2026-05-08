@@ -439,6 +439,7 @@ class RolloutControllerV2:
         logger.info("Inference servers: %s", self._inf_addrs)
 
         router_host, router_port = await router_task
+        self._forked_services.append((guard_addr_0, "router", 0))
         self._router_addr = f"http://{format_hostport(router_host, router_port)}"
         logger.info("Router: %s", self._router_addr)
 
@@ -478,7 +479,7 @@ class RolloutControllerV2:
                 str(agent_cfg.engine_max_tokens),
             ]
 
-        async def _fork_data_proxy(group_idx: int) -> tuple[str, int]:
+        async def _fork_data_proxy(group_idx: int) -> tuple[str, int, str]:
             if self.external_mode:
                 head_worker = inf_workers[group_idx]
             else:
@@ -497,12 +498,13 @@ class RolloutControllerV2:
                     "--backend-type",
                     inf_backend or "sglang",
                 ]
-            return await self._async_fork_on_guard(
+            host, port = await self._async_fork_on_guard(
                 guard_addr=guard_addr,
                 role="data-proxy",
                 worker_index=group_idx,
                 raw_cmd=dp_cmd,
             )
+            return host, port, guard_addr
 
         gw_cmd = [
             sys.executable,
@@ -518,21 +520,26 @@ class RolloutControllerV2:
             _DEFAULT_SERVICE_LOG_LEVEL,
         ]
 
-        all_results = await asyncio.gather(
-            *[_fork_data_proxy(i) for i in range(dp_size)],
+        gw_task = asyncio.ensure_future(
             self._async_fork_on_guard(
                 guard_addr=guard_addr_0,
                 role="gateway",
                 worker_index=0,
                 raw_cmd=gw_cmd,
-            ),
+            )
+        )
+        dp_results = await asyncio.gather(
+            *[_fork_data_proxy(i) for i in range(dp_size)]
         )
 
-        for dp_host, dp_port in all_results[:-1]:
+        # Track data-proxies in group order, then gateway — deterministic cleanup.
+        for group_idx, (dp_host, dp_port, dp_guard) in enumerate(dp_results):
             self._data_proxy_addrs.append(f"http://{format_hostport(dp_host, dp_port)}")
+            self._forked_services.append((dp_guard, "data-proxy", group_idx))
         logger.info("Data proxies: %s", self._data_proxy_addrs)
 
-        gw_host, gw_port = all_results[-1]
+        gw_host, gw_port = await gw_task
+        self._forked_services.append((guard_addr_0, "gateway", 0))
         self._gateway_addr = f"http://{format_hostport(gw_host, gw_port)}"
         logger.info("Gateway: %s", self._gateway_addr)
 
@@ -625,7 +632,9 @@ class RolloutControllerV2:
         else:
             raise ValueError(f"Unsupported inference backend: {inf_backend!r}")
 
-        async def _fork_group(group_idx: int) -> tuple[str, int]:
+        async def _fork_group(
+            group_idx: int,
+        ) -> tuple[str, int, list[tuple[str, str, int]]]:
             group_workers = inf_workers[
                 group_idx * nnodes_per_instance : (group_idx + 1) * nnodes_per_instance
             ]
@@ -646,10 +655,7 @@ class RolloutControllerV2:
                 rendezvous_port = rendezvous_data["ports"][0]
                 dist_init_addr = format_hostport(rendezvous_host, rendezvous_port)
 
-            head_inf_host = None
-            head_inf_port = None
-
-            for node_rank, worker in enumerate(group_workers):
+            async def _fork_node(node_rank: int, worker: Any) -> tuple[str, int, str]:
                 guard_addr = (
                     f"http://{format_hostport(worker.ip, int(worker.worker_ports[0]))}"
                 )
@@ -661,8 +667,8 @@ class RolloutControllerV2:
                 )
                 resp.raise_for_status()
                 port_data = resp.json()
-                inf_host = port_data["host"]
-                inf_port = port_data["ports"][0]
+                inf_host: str = port_data["host"]
+                inf_port: int = port_data["ports"][0]
 
                 cmd = _build_launch_cmd(
                     host=inf_host,
@@ -703,28 +709,22 @@ class RolloutControllerV2:
                     timeout=30.0,
                 )
                 resp.raise_for_status()
-                self._forked_services.append(
-                    (
-                        guard_addr,
-                        "inf-server",
-                        group_idx * nnodes_per_instance + node_rank,
-                    )
-                )
+                return inf_host, inf_port, guard_addr
 
-                if node_rank == 0:
-                    head_inf_host = inf_host
-                    head_inf_port = inf_port
+            node_results = await asyncio.gather(
+                *[_fork_node(rank, w) for rank, w in enumerate(group_workers)]
+            )
 
-            if head_inf_host is None or head_inf_port is None:
-                raise RuntimeError(
-                    f"No head worker resolved for group {group_idx}; "
-                    f"expected {nnodes_per_instance} workers per group"
-                )
-            return (head_inf_host, head_inf_port)
+            head_inf_host, head_inf_port, _ = node_results[0]
+            forked: list[tuple[str, str, int]] = [
+                (guard_addr, "inf-server", group_idx * nnodes_per_instance + rank)
+                for rank, (_, _, guard_addr) in enumerate(node_results)
+            ]
+            return (head_inf_host, head_inf_port, forked)
 
         group_results = await asyncio.gather(*[_fork_group(i) for i in range(dp_size)])
 
-        for host, port in group_results:
+        for host, port, forked in group_results:
             addr = f"http://{format_hostport(host, port)}"
             self._inf_addrs.append(addr)
             self.server_infos.append(
@@ -734,6 +734,7 @@ class RolloutControllerV2:
                     process=None,  # type: ignore[arg-type]
                 )
             )
+            self._forked_services.extend(forked)
 
         # Wait for all inference servers to be healthy in parallel
         await asyncio.gather(
@@ -1787,6 +1788,12 @@ class RolloutControllerV2:
         raw_cmd: list[str],
         health_path: str = "/health",
     ) -> tuple[str, int]:
+        """Async fork a process on a RPCGuard worker via ``/fork``.
+
+        Returns ``(host, port)`` of the forked service.  The caller is
+        responsible for appending to ``_forked_services`` to maintain
+        deterministic cleanup ordering when multiple forks run concurrently.
+        """
         client = await self._get_async_client()
         resp = await client.post(
             f"{guard_addr}/alloc_ports", json={"count": 1}, timeout=30.0
@@ -1805,8 +1812,6 @@ class RolloutControllerV2:
 
         resp = await client.post(f"{guard_addr}/fork", json=fork_payload, timeout=30.0)
         resp.raise_for_status()
-
-        self._forked_services.append((guard_addr, role, worker_index))
 
         addr = f"http://{format_hostport(host, port)}"
         await self._async_wait_for_service(f"{addr}{health_path}", role)
