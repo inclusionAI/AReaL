@@ -5,10 +5,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
+import httpx
+import openai
 
 from areal.api.workflow_api import RolloutWorkflow
 from areal.experimental.openai.proxy.server import deserialize_interactions
 from areal.infra import workflow_context
+from areal.infra.utils.http import async_http_retry
 from areal.utils import logging, stats_tracker
 
 if TYPE_CHECKING:
@@ -24,6 +27,18 @@ _GRANT_CAPACITY_PATHNAME = "grant_capacity"
 _RL_START_SESSION_PATHNAME = "rl/start_session"
 _RL_SET_REWARD_PATHNAME = "rl/set_reward"
 _EXPORT_TRAJECTORIES_PATHNAME = "export_trajectories"
+
+_CONNECTION_ERROR_TYPES: tuple[type[BaseException], ...] = (
+    httpx.ConnectError,
+    httpx.RemoteProtocolError,
+    httpx.ReadError,
+    aiohttp.ClientConnectorError,
+    aiohttp.ServerDisconnectedError,
+    ConnectionRefusedError,
+    ConnectionResetError,
+    OSError,
+    openai.APIConnectionError,
+)
 
 
 class InferenceServiceWorkflow(RolloutWorkflow):
@@ -45,12 +60,14 @@ class InferenceServiceWorkflow(RolloutWorkflow):
         self.export_style = export_style
         self.timeout = timeout
 
+    @async_http_retry
     async def _grant_capacity(self, session: aiohttp.ClientSession) -> None:
         url = f"{self.gateway_addr}/{_GRANT_CAPACITY_PATHNAME}"
         headers = {"Authorization": f"Bearer {self._admin_api_key}"}
         async with session.post(url, headers=headers) as resp:
             resp.raise_for_status()
 
+    @async_http_retry
     async def _start_session(
         self, session: aiohttp.ClientSession, task_id: str
     ) -> tuple[str, str]:
@@ -62,6 +79,7 @@ class InferenceServiceWorkflow(RolloutWorkflow):
             data = await resp.json()
         return data["session_id"], data["api_key"]
 
+    @async_http_retry
     async def _set_last_reward(
         self,
         session: aiohttp.ClientSession,
@@ -77,6 +95,7 @@ class InferenceServiceWorkflow(RolloutWorkflow):
         trajectory_id = data.get("trajectory_id")
         return int(trajectory_id) if trajectory_id is not None else None
 
+    @async_http_retry
     async def _export_interactions(
         self,
         session: aiohttp.ClientSession,
@@ -143,16 +162,28 @@ class InferenceServiceWorkflow(RolloutWorkflow):
                 http_session, final_reward, session_api_key
             )
             finished = True
-        except Exception:
-            logger.warning("Agent task failed. This trajectory will be rejected.")
+        except Exception as exc:
+            is_conn_err = isinstance(exc, _CONNECTION_ERROR_TYPES) or (
+                exc.__cause__ is not None
+                and isinstance(exc.__cause__, _CONNECTION_ERROR_TYPES)
+            )
+            if is_conn_err:
+                logger.warning(
+                    "Agent task failed (%s). Trajectory rejected (connection lost).",
+                    type(exc).__name__,
+                )
+            else:
+                logger.warning(
+                    "Agent task failed (%s: %s). This trajectory will be rejected.",
+                    type(exc).__name__,
+                    exc,
+                    exc_info=True,
+                )
             if not finished:
                 try:
                     await self._set_last_reward(http_session, 0.0, session_api_key)
                 except Exception:
-                    logger.warning(
-                        "Failed to finish session %s after agent failure",
-                        session_id,
-                    )
+                    pass
             raise
 
         interactions = await self._export_interactions(

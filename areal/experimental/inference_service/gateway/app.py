@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import traceback
 from contextlib import asynccontextmanager
 
 import httpx
@@ -38,6 +39,7 @@ from areal.experimental.inference_service.gateway.streaming import (
     resolve_worker_addr,
     revoke_session_in_router,
 )
+from areal.infra.utils.http import create_httpx_client
 from areal.utils import logging
 
 logger = logging.getLogger("InferenceGateway")
@@ -83,7 +85,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        app.state.http_client = httpx.AsyncClient(timeout=config.router_timeout)
+        app.state.http_client = create_httpx_client(timeout=config.router_timeout)
         try:
             yield
         finally:
@@ -106,7 +108,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
             return app.state.http_client
         except AttributeError:
             if _fallback_client is None:
-                _fallback_client = httpx.AsyncClient(timeout=config.router_timeout)
+                _fallback_client = create_httpx_client(timeout=config.router_timeout)
             return _fallback_client
 
     # =========================================================================
@@ -315,6 +317,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
                     )
             except Exception as exc:
                 logger.error("Failed to register session in router: %s", exc)
+                traceback.print_exc()
                 return JSONResponse(
                     {
                         "error": f"Session created on worker but router registration failed: {exc}"

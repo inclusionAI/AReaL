@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 
 from areal.api.cli_args import InferenceEngineConfig
 from areal.api.io_struct import LocalInfServerInfo
+from areal.infra.utils.http import async_http_retry, create_httpx_client
 from areal.utils import logging
 from areal.utils.network import format_hostport
 
@@ -1876,10 +1877,19 @@ class RolloutControllerV2:
         """
         current_loop = asyncio.get_running_loop()
         if self._async_client is None or self._async_client_loop is not current_loop:
-            self._async_client = httpx.AsyncClient(timeout=self.config.request_timeout)
+            old = self._async_client
+            self._async_client = create_httpx_client(
+                timeout=self.config.request_timeout
+            )
             self._async_client_loop = current_loop
+            if old is not None:
+                try:
+                    await old.aclose()
+                except Exception:
+                    pass
         return self._async_client
 
+    @async_http_retry
     async def _async_gateway_http_post(
         self, endpoint: str, payload: dict[str, Any]
     ) -> None:
@@ -1903,3 +1913,19 @@ class RolloutControllerV2:
                 )
         except httpx.HTTPError as exc:
             raise RuntimeError(f"Failed to POST {endpoint}: {exc}") from exc
+
+    @async_http_retry
+    async def _async_data_proxy_post(
+        self, addr: str, endpoint: str, payload: dict[str, Any]
+    ) -> None:
+        """POST directly to a data proxy, bypassing gateway/router resolution."""
+        url = f"{addr}{endpoint}"
+        try:
+            client = await self._get_async_client()
+            resp = await client.post(url, json=payload)
+            if resp.status_code >= 400:
+                raise RuntimeError(
+                    f"Data proxy {url} returned {resp.status_code}: {resp.text}"
+                )
+        except httpx.HTTPError as exc:
+            raise RuntimeError(f"Failed to POST {url}: {exc}") from exc

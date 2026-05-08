@@ -10,6 +10,8 @@ import uvicorn
 
 from areal.experimental.inference_service.data_proxy.app import create_app
 from areal.experimental.inference_service.data_proxy.config import DataProxyConfig
+from areal.infra.utils.http import get_default_uvicorn_kwargs
+from areal.utils.logging import suppress_http_loggers
 from areal.utils.network import format_hostport
 
 
@@ -96,8 +98,16 @@ def main():
         engine_max_tokens=args.engine_max_tokens,
         chat_template_type=args.chat_template_type,
     )
+    suppress_http_loggers()
     app = create_app(config)
-    uvicorn.run(app, host=config.host, port=config.port, log_level=config.log_level)
+    uvicorn.run(
+        app,
+        host=config.host,
+        port=config.port,
+        log_level=config.log_level,
+        access_log=False,
+        **get_default_uvicorn_kwargs(),
+    )
 
 
 if __name__ == "__main__":

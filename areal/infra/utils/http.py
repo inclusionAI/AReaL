@@ -5,12 +5,72 @@ from http import HTTPStatus
 from typing import Any
 
 import aiohttp
+import httpx
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from areal.utils import logging
 from areal.utils.network import format_hostport, split_hostport
 
 DEFAULT_RETRIES = 1
 DEFAULT_REQUEST_TIMEOUT = 3600
+
+# ---------------------------------------------------------------------------
+# Shared capacity defaults for httpx clients and uvicorn servers
+# ---------------------------------------------------------------------------
+HTTPX_MAX_CONNECTIONS = 4096
+HTTPX_MAX_KEEPALIVE_CONNECTIONS = 1024
+HTTPX_KEEPALIVE_EXPIRY = 30
+HTTPX_RETRIES = 3
+
+UVICORN_BACKLOG = 4096
+UVICORN_LIMIT_CONCURRENCY = 4096
+
+
+def get_default_httpx_limits() -> httpx.Limits:
+    """Return shared httpx.Limits for high-concurrency services."""
+    return httpx.Limits(
+        max_connections=HTTPX_MAX_CONNECTIONS,
+        max_keepalive_connections=HTTPX_MAX_KEEPALIVE_CONNECTIONS,
+        keepalive_expiry=HTTPX_KEEPALIVE_EXPIRY,
+    )
+
+
+def create_httpx_client(timeout: float | None = 120.0, **kwargs) -> httpx.AsyncClient:
+    """Create an httpx.AsyncClient with shared pool limits and transport-level retries."""
+    transport = httpx.AsyncHTTPTransport(
+        retries=HTTPX_RETRIES,
+        limits=get_default_httpx_limits(),
+    )
+    return httpx.AsyncClient(timeout=timeout, transport=transport, **kwargs)
+
+
+def get_default_uvicorn_kwargs() -> dict[str, Any]:
+    """Return shared uvicorn capacity kwargs to spread into uvicorn.run()."""
+    return {
+        "backlog": UVICORN_BACKLOG,
+        "limit_concurrency": UVICORN_LIMIT_CONCURRENCY,
+    }
+
+
+async_http_retry = retry(
+    stop=stop_after_attempt(8),
+    wait=wait_exponential(multiplier=1, min=1, max=30),
+    retry=retry_if_exception_type((aiohttp.ClientError, OSError, RuntimeError)),
+    reraise=True,
+)
+
+# Retry decorator for httpx-based calls (gateway forwarding).
+async_httpx_retry = retry(
+    stop=stop_after_attempt(4),
+    wait=wait_exponential(multiplier=0.5, min=0.5, max=4),
+    retry=retry_if_exception_type(httpx.TransportError),
+    reraise=True,
+)
 
 
 logger = logging.getLogger("HTTPUtils")

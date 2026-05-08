@@ -8,6 +8,8 @@ import uvicorn
 
 from areal.experimental.training_service.data_proxy.app import create_app
 from areal.experimental.training_service.data_proxy.config import TrainDataProxyConfig
+from areal.infra.utils.http import get_default_uvicorn_kwargs
+from areal.utils.logging import suppress_http_loggers
 
 
 def main():
@@ -40,8 +42,16 @@ def main():
         warmup_timeout=args.warmup_timeout,
     )
 
+    suppress_http_loggers()
     app = create_app(config)
-    uvicorn.run(app, host=config.host, port=config.port, log_level=config.log_level)
+    uvicorn.run(
+        app,
+        host=config.host,
+        port=config.port,
+        log_level=config.log_level,
+        access_log=False,
+        **get_default_uvicorn_kwargs(),
+    )
 
 
 if __name__ == "__main__":

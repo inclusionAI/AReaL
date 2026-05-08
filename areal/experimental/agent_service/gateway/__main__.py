@@ -42,7 +42,13 @@ def main() -> None:
         ),
         admin_api_key=config.admin_api_key,
     )
-    uvicorn.run(app, host=config.host, port=config.port, log_level=config.log_level)
+    uvicorn.run(
+        app,
+        host=config.host,
+        port=config.port,
+        log_level=config.log_level,
+        access_log=False,
+    )
 
 
 if __name__ == "__main__":
