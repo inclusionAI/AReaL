@@ -865,7 +865,37 @@ class MegatronEngine(TrainEngine):
                     # state (the LM-head was monkey-patched to a no-op),
                     # so the unpadded tensor is the hidden we want to
                     # feed into the fused kernel.
+                    #
+                    # Megatron's outer ``Float16Module`` wraps the inner
+                    # ``GPTModel`` and, on the last pipeline stage,
+                    # *upcasts the wrapped module's outputs to fp32*
+                    # (see ``Float16Module.forward(..., fp32_output=True)``
+                    # and ``float16_to_fp32`` in
+                    # ``megatron.core.transformer.module``). The captured
+                    # hidden was already cast to ``weight.dtype`` (bf16/fp16)
+                    # inside ``capture_lm_head_hidden._patched_forward`` to
+                    # mirror ``ColumnParallelLinear``'s implicit downcast,
+                    # but ``Float16Module``'s post-hoc upcast then re-promotes
+                    # the tensor returned to mcore back to fp32. The Triton
+                    # GEMM in ``efficient_entropy_forward`` requires both
+                    # operands to share the same dtype; without re-aligning
+                    # here, the kernel raises
+                    #     "Both operands must be same dtype. Got fp32 and
+                    #      bf16; falling back to reference path."
+                    # and silently disables the fused fast path.
+                    #
+                    # ``Tensor.to(dtype)`` is autograd-aware; backward will
+                    # auto-upcast gradients to the upstream fp32 dtype, which
+                    # is exactly what mcore would have produced anyway.
                     if mb_input.orig_mb.get("_fused_lce_active", False):
+                        fused_weight = mb_input.orig_mb.get(
+                            FUSED_LCE_WEIGHT_KEY
+                        )
+                        if (
+                            fused_weight is not None
+                            and output.dtype != fused_weight.dtype
+                        ):
+                            output = output.to(fused_weight.dtype)
                         mb_input.orig_mb[FUSED_LCE_HIDDEN_KEY] = output
             return output, functools.partial(_process_output, mb_input.orig_mb)
 
