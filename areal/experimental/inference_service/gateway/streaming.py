@@ -44,6 +44,7 @@ async def _use_client(
             yield c
 
 
+@async_httpx_retry
 async def query_router(
     router_addr: str,
     api_key: str | None = None,
@@ -113,10 +114,14 @@ async def query_router(
             )
         resp.raise_for_status()
         return resp.json()["worker_addr"]
+    except RouterKeyRejectedError:
+        raise
     except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
         raise RouterUnreachableError(f"Router unreachable: {exc}") from exc
     except httpx.TimeoutException as exc:
         raise RouterUnreachableError(f"Router timed out: {exc}") from exc
+    except httpx.TransportError as exc:
+        raise RouterUnreachableError(f"Router transport error: {exc}") from exc
     except httpx.HTTPStatusError as exc:
         raise RouterUnreachableError(
             f"Router returned HTTP {exc.response.status_code}: {exc}"
@@ -278,6 +283,8 @@ async def register_model_in_router(
         return resp.json()
     except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
         raise RouterUnreachableError(f"Router unreachable: {exc}") from exc
+    except httpx.TransportError as exc:
+        raise RouterUnreachableError(f"Router transport error: {exc}") from exc
 
 
 async def route_external_model(
@@ -306,6 +313,8 @@ async def route_external_model(
         raise
     except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
         raise RouterUnreachableError(f"Router unreachable: {exc}") from exc
+    except httpx.TransportError as exc:
+        raise RouterUnreachableError(f"Router transport error: {exc}") from exc
 
 
 async def list_models_from_router(
@@ -326,6 +335,8 @@ async def list_models_from_router(
         return resp.json().get("models", [])
     except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
         raise RouterUnreachableError(f"Router unreachable: {exc}") from exc
+    except httpx.TransportError as exc:
+        raise RouterUnreachableError(f"Router transport error: {exc}") from exc
 
 
 async def remove_model_from_router(

@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any, cast
 import httpx
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 
-from areal.infra.utils.http import async_http_retry
+from areal.infra.utils.http import async_http_retry, create_httpx_client
 
 if TYPE_CHECKING:
     from areal.api.scheduler_api import Scheduler, Worker
@@ -556,8 +556,6 @@ class RolloutControllerV2:
         admin_api_key: str,
         server_args: dict[str, Any] | None,
     ) -> None:
-        import httpx
-
         if inf_backend == "sglang":
             from areal.api.cli_args import SGLangConfig
 
@@ -575,19 +573,20 @@ class RolloutControllerV2:
             ]
             head_worker = group_workers[0]
             head_guard_addr = f"http://{format_hostport(head_worker.ip, int(head_worker.worker_ports[0]))}"
+            client = await self._get_async_client()
 
             dist_init_addr = None
             if nnodes_per_instance > 1:
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    resp = await client.post(
-                        f"{head_guard_addr}/alloc_ports",
-                        json={"count": 1},
-                    )
-                    resp.raise_for_status()
-                    rendezvous_data = resp.json()
-                    rendezvous_host = rendezvous_data["host"]
-                    rendezvous_port = rendezvous_data["ports"][0]
-                    dist_init_addr = format_hostport(rendezvous_host, rendezvous_port)
+                resp = await client.post(
+                    f"{head_guard_addr}/alloc_ports",
+                    json={"count": 1},
+                    timeout=30.0,
+                )
+                resp.raise_for_status()
+                rendezvous_data = resp.json()
+                rendezvous_host = rendezvous_data["host"]
+                rendezvous_port = rendezvous_data["ports"][0]
+                dist_init_addr = format_hostport(rendezvous_host, rendezvous_port)
 
             head_inf_host = None
             head_inf_port = None
@@ -597,15 +596,15 @@ class RolloutControllerV2:
                     f"http://{format_hostport(worker.ip, int(worker.worker_ports[0]))}"
                 )
 
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    resp = await client.post(
-                        f"{guard_addr}/alloc_ports",
-                        json={"count": 1},
-                    )
-                    resp.raise_for_status()
-                    port_data = resp.json()
-                    inf_host = port_data["host"]
-                    inf_port = port_data["ports"][0]
+                resp = await client.post(
+                    f"{guard_addr}/alloc_ports",
+                    json={"count": 1},
+                    timeout=30.0,
+                )
+                resp.raise_for_status()
+                port_data = resp.json()
+                inf_host = port_data["host"]
+                inf_port = port_data["ports"][0]
 
                 server_args.update(
                     host=inf_host,
@@ -641,12 +640,12 @@ class RolloutControllerV2:
                         "VLLM_ALLOW_RUNTIME_LORA_UPDATING": "True",
                     }
 
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    resp = await client.post(
-                        f"{guard_addr}/fork",
-                        json=fork_payload,
-                    )
-                    resp.raise_for_status()
+                resp = await client.post(
+                    f"{guard_addr}/fork",
+                    json=fork_payload,
+                    timeout=30.0,
+                )
+                resp.raise_for_status()
                 self._forked_services.append(
                     (
                         guard_addr,
@@ -710,20 +709,18 @@ class RolloutControllerV2:
     async def _async_wait_for_service(
         self, url: str, name: str, timeout: float | None = None
     ) -> None:
-        import httpx
-
         timeout = timeout or self.config.setup_timeout
         deadline = time.monotonic() + timeout
-        async with httpx.AsyncClient(timeout=2.0) as client:
-            while time.monotonic() < deadline:
-                try:
-                    resp = await client.get(url)
-                    if resp.status_code == 200:
-                        logger.info("%s is ready at %s", name, url)
-                        return
-                except Exception:
-                    pass
-                await asyncio.sleep(0.1)
+        client = await self._get_async_client()
+        while time.monotonic() < deadline:
+            try:
+                resp = await client.get(url, timeout=2.0)
+                if resp.status_code == 200:
+                    logger.info("%s is ready at %s", name, url)
+                    return
+            except Exception:
+                pass
+            await asyncio.sleep(0.1)
         raise TimeoutError(f"{name} did not become healthy at {url} within {timeout}s")
 
     def _register_data_proxies_in_router(self) -> None:
@@ -1748,24 +1745,24 @@ class RolloutControllerV2:
         raw_cmd: list[str],
         health_path: str = "/health",
     ) -> tuple[str, int]:
-        import httpx
+        client = await self._get_async_client()
+        resp = await client.post(
+            f"{guard_addr}/alloc_ports", json={"count": 1}, timeout=30.0
+        )
+        resp.raise_for_status()
+        port_data = resp.json()
+        host = port_data["host"]
+        port = port_data["ports"][0]
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(f"{guard_addr}/alloc_ports", json={"count": 1})
-            resp.raise_for_status()
-            port_data = resp.json()
-            host = port_data["host"]
-            port = port_data["ports"][0]
+        cmd = list(raw_cmd) + ["--host", host, "--port", str(port)]
+        fork_payload: dict[str, Any] = {
+            "role": role,
+            "worker_index": worker_index,
+            "raw_cmd": cmd,
+        }
 
-            cmd = list(raw_cmd) + ["--host", host, "--port", str(port)]
-            fork_payload: dict[str, Any] = {
-                "role": role,
-                "worker_index": worker_index,
-                "raw_cmd": cmd,
-            }
-
-            resp = await client.post(f"{guard_addr}/fork", json=fork_payload)
-            resp.raise_for_status()
+        resp = await client.post(f"{guard_addr}/fork", json=fork_payload, timeout=30.0)
+        resp.raise_for_status()
 
         self._forked_services.append((guard_addr, role, worker_index))
 
@@ -1832,8 +1829,16 @@ class RolloutControllerV2:
         """
         current_loop = asyncio.get_running_loop()
         if self._async_client is None or self._async_client_loop is not current_loop:
-            self._async_client = httpx.AsyncClient(timeout=self.config.request_timeout)
+            old = self._async_client
+            self._async_client = create_httpx_client(
+                timeout=self.config.request_timeout
+            )
             self._async_client_loop = current_loop
+            if old is not None:
+                try:
+                    await old.aclose()
+                except Exception:
+                    pass
         return self._async_client
 
     @async_http_retry

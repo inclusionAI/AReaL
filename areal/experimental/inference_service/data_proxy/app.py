@@ -231,7 +231,7 @@ async def _post_online_ready_callback(
         if client is not None:
             resp = await _do(client)
         else:
-            async with httpx.AsyncClient(timeout=timeout) as c:
+            async with create_httpx_client(timeout=timeout) as c:
                 resp = await _do(c)
 
         if resp.status_code >= 400:
@@ -542,8 +542,8 @@ def create_app(config: DataProxyConfig) -> FastAPI:
                 async def _stream_and_cache():
                     success = False
                     try:
-                        async with httpx.AsyncClient(
-                            timeout=httpx.Timeout(config.request_timeout)
+                        async with create_httpx_client(
+                            timeout=config.request_timeout
                         ) as stream_client:
                             async with stream_client.stream(
                                 "POST",
