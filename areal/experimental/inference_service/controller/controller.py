@@ -1094,7 +1094,7 @@ class RolloutControllerV2:
         count: int,
         timeout: float | None = None,
         raise_timeout: bool = True,
-    ) -> list[dict[str, Any] | None]:
+    ) -> list[list[dict[str, Any]] | None]:
         self._ensure_initialized()
         return self.workflow_executor.wait(
             count, timeout=timeout, raise_timeout=raise_timeout
@@ -1105,7 +1105,7 @@ class RolloutControllerV2:
         task_id: int,
         timeout: float | None = None,
         raise_timeout: bool = True,
-    ) -> dict[str, Any] | None:
+    ) -> list[dict[str, Any]] | None:
         return self.workflow_executor.wait_for_task(
             task_id,
             timeout=timeout,
@@ -1121,36 +1121,6 @@ class RolloutControllerV2:
         group_size: int = 1,
         batch_size: int | None = None,
     ) -> list[dict[str, Any]]:
-        """Submit a batch of data items and wait for all results.
-
-        Parameters
-        ----------
-        data : list[dict[str, Any]] | None
-            A list of data dicts to submit for rollout.  When ``None``
-            (online-agent mode), a list of ``batch_size`` empty dicts is
-            used automatically; ``batch_size`` **must** be provided in
-            this case.
-        workflow : Any
-            Agent instance, agent class, import-path string, or ``None``
-            for online mode.
-        workflow_kwargs : dict[str, Any] | None
-            Keyword arguments forwarded to the workflow/agent constructor.
-        should_accept_fn : Any
-            Optional predicate ``(trajectory_dict) -> bool`` used to
-            filter results.
-        group_size : int
-            Number of times to run the workflow per input (default ``1``).
-        batch_size : int | None
-            Expected batch size.  **Required** when ``data`` is ``None``;
-            when ``data`` is provided, an optional consistency check
-            ensures ``len(data) == batch_size``.  Pass ``None`` (default)
-            to skip the check.
-
-        Returns
-        -------
-        list[dict[str, Any]]
-            A list of trajectory dicts (one per completed rollout).
-        """
         if not self._gateway_addr:
             raise RuntimeError("RolloutControllerV2.initialize() must be called first")
         self._ensure_initialized()
@@ -1177,8 +1147,7 @@ class RolloutControllerV2:
                 should_accept_fn=resolved_accept_fn,
             )
         results = self.workflow_executor.wait(count=len(data))
-        # Return list of trajectories (matching RolloutController API)
-        return [r for r in results if r is not None]
+        return [d for r in results if r is not None for d in r]
 
     def prepare_batch(
         self,
@@ -1237,14 +1206,12 @@ class RolloutControllerV2:
             group_size,
         )
         resolved_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
-        results = self.workflow_executor.prepare_batch(
+        return self.workflow_executor.prepare_batch(
             dataloader=dataloader,
             workflow=resolved_workflow,
             should_accept_fn=resolved_accept_fn,
             dynamic_bs=dynamic_bs,
         )
-        # Return list of trajectories (matching RolloutController API)
-        return [r for r in results if r is not None]
 
     async def chat_completion(
         self,

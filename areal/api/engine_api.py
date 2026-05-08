@@ -234,7 +234,7 @@ class TrainEngine(abc.ABC):
         dataloader: StatefulDataLoader,
         workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
-        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        should_accept_fn: Callable[[list[dict[str, Any]]], bool] | str | None = None,
         group_size: int = 1,
         dynamic_bs: bool = False,
     ) -> list[dict[str, Any]]:
@@ -768,7 +768,7 @@ class InferenceEngine(abc.ABC):
 
     def wait(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
-    ) -> list[dict[str, Any] | None]:
+    ) -> list[list[dict[str, Any]] | None]:
         """Wait for a specified number of requests to complete, with a timeout.
 
         Should be used together with preceding `submit`.
@@ -797,7 +797,7 @@ class InferenceEngine(abc.ABC):
 
     def wait_for_task(
         self, task_id: int, timeout: float | None = None, raise_timeout: bool = True
-    ) -> dict[str, Any] | None:
+    ) -> list[dict[str, Any]] | None:
         """Wait for a specific task to complete by task_id.
 
         Parameters
@@ -811,8 +811,8 @@ class InferenceEngine(abc.ABC):
 
         Returns
         -------
-        dict[str, Any] | None
-            Trajectory dict, or None if rejected or timeout with raise_timeout=False
+        list[dict[str, Any]] | None
+            Trajectory list, or None if rejected or timeout with raise_timeout=False
 
         Raises
         ------

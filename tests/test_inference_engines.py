@@ -249,7 +249,8 @@ def test_staleness_control(inference_engine, bs, ofp, n_samples):
             engine.wait(count=bs * 2, timeout=10)
     else:
         results = engine.wait(count=bs * 2, timeout=10)
-        result = concat_padded_tensors([r for r in results if r is not None])
+        flat = [d for r in results if r is not None for d in r]
+        result = concat_padded_tensors(flat)
         assert result["attention_mask"].shape[0] == bs * 2 * n_samples
 
     # Update model version
@@ -265,9 +266,9 @@ def test_staleness_control(inference_engine, bs, ofp, n_samples):
         with pytest.raises(TimeoutError):
             engine.wait(count=bs * 4, timeout=5)
     else:
-        # 2 * bs samples haved been retrived above
         results_list = engine.wait(count=bs * 2, timeout=5)
-        results = concat_padded_tensors([r for r in results_list if r is not None])
+        flat = [d for r in results_list if r is not None for d in r]
+        results = concat_padded_tensors(flat)
         assert results["attention_mask"].shape[0] == bs * 2 * n_samples
 
     engine.destroy()

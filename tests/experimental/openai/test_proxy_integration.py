@@ -206,7 +206,6 @@ class TestProxyIntegration:
                 workflow="tests.experimental.openai.utils.SimpleAgent",
             )
 
-            # Verify result structure - rollout_batch now returns list[dict]
             assert isinstance(result, list)
             assert len(result) > 0
             assert isinstance(result[0], dict)

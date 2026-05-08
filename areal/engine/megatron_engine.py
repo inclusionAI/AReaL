@@ -675,7 +675,7 @@ class MegatronEngine(TrainEngine):
         dataloader: StatefulDataLoader,
         workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
-        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        should_accept_fn: Callable[[list[dict[str, Any]]], bool] | str | None = None,
         group_size: int = 1,
         dynamic_bs: bool = False,
     ) -> list[dict[str, Any]]:

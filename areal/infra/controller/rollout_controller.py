@@ -66,7 +66,7 @@ class _RemoteRolloutTaskInput:
 @dataclass
 class _RemoteRolloutResult:
     task_id: int
-    trajectory: dict[str, Any]
+    trajectory: list[dict[str, Any]]
 
 
 class RolloutController:
@@ -901,10 +901,8 @@ class RolloutController:
 
     def wait(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
-    ) -> list[dict[str, Any] | None]:
-        # Delegate to dispatcher and extract trajectories
+    ) -> list[list[dict[str, Any]] | None]:
         results = self.dispatcher.wait_results(count, timeout, raise_timeout)
-        # Log and trace
         if self.config.enable_rollout_tracing:
             logger.info("Rollout results are ready!")
 
@@ -933,8 +931,7 @@ class RolloutController:
                 group_size=group_size,
             )
         results = self.wait(count=len(data))
-        # Return list of trajectories
-        return [r for r in results if r is not None]
+        return [d for r in results if r is not None for d in r]
 
     @trace_perf("rollout_controller.prepare_batch", category="scheduler")
     def prepare_batch(
@@ -979,9 +976,7 @@ class RolloutController:
             self.data_generator, batch_size=dataloader.batch_size, dynamic_bs=dynamic_bs
         )
 
-        # Return list of trajectories
-        trajectories = [r.trajectory if r is not None else None for r in results]
-        return [t for t in trajectories if t is not None]
+        return [d for r in results if r is not None for d in r.trajectory]
 
     async def agenerate(self, req: ModelRequest) -> ModelResponse:
         """Asynchronously generate a response for the given request.

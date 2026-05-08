@@ -487,11 +487,7 @@ class TestRolloutControllerSubmitAndWait:
 
 class TestRolloutControllerBatchOperations:
     def test_rollout_batch_returns_list_of_dicts(self):
-        """Verify RolloutController returns list of regular dicts, NOT RTensors.
-
-        Unlike TrainController which uses RTensors for distributed batch storage,
-        RolloutController uses task-based round-robin and returns list of regular Python dicts.
-        """
+        """Verify RolloutController returns list of regular dicts, NOT RTensors."""
         from areal.infra.rpc.rtensor import RTensor
 
         config = create_test_config(consumer_batch_size=16, max_concurrent_rollouts=50)
@@ -511,10 +507,8 @@ class TestRolloutControllerBatchOperations:
             workflow_kwargs={},
         )
 
-        # Verify batch is a dict, not RTensor
         assert isinstance(batch, list), "RolloutController should return list of dicts"
 
-        # Verify no RTensors in the result
         for item in batch:
             assert isinstance(item, dict), "Each item should be a dict"
             for key, value in item.items():
@@ -544,7 +538,6 @@ class TestRolloutControllerBatchOperations:
             workflow_kwargs={},
         )
 
-        # Check that all trajectories are returned (each as a separate dict)
         assert len(batch) == 4
 
         controller.destroy()
@@ -567,7 +560,6 @@ class TestRolloutControllerBatchOperations:
             workflow_kwargs={},
         )
 
-        # Check that all trajectories are returned (each as a separate dict)
         assert len(batch) == 10
 
         controller.destroy()
@@ -1034,7 +1026,7 @@ def test_rollout_controller_integration(tmp_path, model_path):
             ),
         )
         assert isinstance(result, list)
-        assert len(result) == bs
+        assert len(result) >= bs
         assert isinstance(result[0], dict)
         assert "attention_mask" in result[0]
     finally:

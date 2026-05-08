@@ -32,11 +32,10 @@ from areal.infra import workflow_context
 from .workflow_context import WorkflowContext
 from areal.experimental.openai.types import (
     InteractionWithTokenLogpReward,
-    concat_string_interactions,
 )
 from areal.utils import logging, perf_tracer, stats_tracker
 from areal.infra.utils.concurrent import get_executor
-from areal.utils.data import concat_padded_tensors, cycle_dataloader
+from areal.utils.data import cycle_dataloader
 from areal.utils.perf_tracer import trace_perf, trace_session_event
 from logging import Logger
 
@@ -233,14 +232,14 @@ class _RolloutTaskInput:
     task_id: int
     data: dict[str, Any]
     workflow: RolloutWorkflow
-    should_accept_fn: Callable[[dict[str, Any]], bool] | None = None
+    should_accept_fn: Callable[[list[dict[str, Any]]], bool] | None = None
     is_eval: bool = False
 
 
 @dataclass
 class _RolloutResult:
     task_id: int
-    trajectory: dict[str, Any]
+    trajectory: list[dict[str, Any]]
 
 
 # Batch size for fetching from the async task runner
@@ -833,7 +832,7 @@ class WorkflowExecutor:
 
     async def _dump_trajectory(
         self,
-        traj: dict[str, Any] | None,
+        traj: list[dict[str, Any]] | None,
         task_id: int,
         is_eval: bool,
     ) -> tuple[bool, str]:
@@ -848,76 +847,70 @@ class WorkflowExecutor:
         if tokenizer is None:
             return False, "tokenizer not configured"
 
-        # Extract tensors
-        input_ids = traj.get("input_ids")
-        rewards = traj.get("rewards")
-        loss_mask = traj.get("loss_mask")
-        attention_mask = traj.get("attention_mask")
+        for sample_idx, sample in enumerate(traj):
+            input_ids = sample.get("input_ids")
+            rewards = sample.get("rewards")
+            loss_mask = sample.get("loss_mask")
+            attention_mask = sample.get("attention_mask")
 
-        if (
-            input_ids is None
-            or rewards is None
-            or loss_mask is None
-            or attention_mask is None
-        ):
-            return (
-                False,
-                "missing required tensor fields: input_ids, rewards, attention_mask, or loss_mask",
-            )
+            if (
+                input_ids is None
+                or rewards is None
+                or loss_mask is None
+                or attention_mask is None
+            ):
+                continue
 
-        if "versions" not in traj:
-            self.logger.warning(
-                "Trajectory missing 'versions' field, defaulting to current inference engine version."
-            )
-            versions = [self.inference_engine.get_version()]
-        else:
-            versions = traj["versions"].flatten().tolist()
-
-        tail_version = max(versions)
-        head_version = min(versions)
-        # Create versioned directory
-        version_dir = os.path.join(dump_dir, str(tail_version))
-        await aiofiles.os.makedirs(version_dir, exist_ok=True)
-
-        # Handle batched trajectories
-        batch_size = input_ids.shape[0]
-
-        file_path = os.path.join(version_dir, f"{task_id}.jsonl")
-        async with aiofiles.open(file_path, "a") as f:
-            for i in range(batch_size):
-                seqlen = attention_mask[i].sum().item()
-                if seqlen == 0:
-                    continue
-                ids = input_ids[i, :seqlen].tolist()
-                mask = loss_mask[i, :seqlen].tolist()
-                # Skip samples with empty completions (all prompt, no completion tokens)
-                if mask[-1] != 1:
-                    continue
-
-                prompt_end = seqlen - sum(mask)
-                prompt_ids = ids[:prompt_end]
-                completion_ids = ids[prompt_end:]
-
-                # Decode to text
-                prompt_text = tokenizer.decode(prompt_ids, skip_special_tokens=False)
-                completion_text = tokenizer.decode(
-                    completion_ids, skip_special_tokens=False
+            if "versions" not in sample:
+                self.logger.warning(
+                    "Trajectory missing 'versions' field, defaulting to current inference engine version."
                 )
+                versions = [self.inference_engine.get_version()]
+            else:
+                versions = sample["versions"].flatten().tolist()
 
-                reward = rewards[i].item()
+            tail_version = max(versions)
+            head_version = min(versions)
+            version_dir = os.path.join(dump_dir, str(tail_version))
+            await aiofiles.os.makedirs(version_dir, exist_ok=True)
 
-                record = {
-                    "task_id": task_id,
-                    "sample_idx": i,
-                    "seqlen": seqlen,
-                    "prompt_len": prompt_end,
-                    "head_version": head_version,
-                    "tail_version": tail_version,
-                    "reward": reward,
-                    "prompt": prompt_text,
-                    "completion": completion_text,
-                }
-                await f.write(json.dumps(record) + "\n")
+            batch_size = input_ids.shape[0]
+            file_path = os.path.join(version_dir, f"{task_id}.jsonl")
+            async with aiofiles.open(file_path, "a") as f:
+                for i in range(batch_size):
+                    seqlen = attention_mask[i].sum().item()
+                    if seqlen == 0:
+                        continue
+                    ids = input_ids[i, :seqlen].tolist()
+                    mask = loss_mask[i, :seqlen].tolist()
+                    if mask[-1] != 1:
+                        continue
+
+                    prompt_end = seqlen - sum(mask)
+                    prompt_ids = ids[:prompt_end]
+                    completion_ids = ids[prompt_end:]
+
+                    prompt_text = tokenizer.decode(
+                        prompt_ids, skip_special_tokens=False
+                    )
+                    completion_text = tokenizer.decode(
+                        completion_ids, skip_special_tokens=False
+                    )
+
+                    reward = rewards[i].item()
+
+                    record = {
+                        "task_id": task_id,
+                        "sample_idx": sample_idx * batch_size + i,
+                        "seqlen": seqlen,
+                        "prompt_len": prompt_end,
+                        "head_version": head_version,
+                        "tail_version": tail_version,
+                        "reward": reward,
+                        "prompt": prompt_text,
+                        "completion": completion_text,
+                    }
+                    await f.write(json.dumps(record) + "\n")
         return True, ""
 
     def initialize(self, logger=None, train_data_parallel_size: int | None = None):
@@ -1044,7 +1037,7 @@ class WorkflowExecutor:
             )
 
             manager = self.staleness_manager
-            traj: dict[str, Any] | None = None
+            traj: dict[str, Any] | list[dict[str, Any]] | None = None
             should_accept_fn = pending_task.should_accept_fn
             should_accept: bool | None = None
             reason: str | None = None
@@ -1070,21 +1063,31 @@ class WorkflowExecutor:
                                 self._expected_trajectory_keys,
                             )
 
-                # Convert InteractionWithTokenLogpReward to tensor dict if needed.
-                # External-API interactions have no tensor data; fall back to
-                # concat_string_interactions which produces a plain dict of
-                # request/response strings instead of padded tensors.
+                # Convert InteractionWithTokenLogpReward to list of dicts.
+                # Each interaction becomes an individual dict in the result list.
                 if isinstance(traj, dict) and all(
                     isinstance(v, InteractionWithTokenLogpReward) for v in traj.values()
                 ):
                     if all(v.has_tensor_data for v in traj.values()):
-                        traj = concat_padded_tensors(
-                            [v.to_tensor_dict() for v in traj.values()]
-                        )
+                        traj = [v.to_tensor_dict() for v in traj.values()]
                     else:
-                        traj = concat_string_interactions(traj)
+                        traj = [
+                            {
+                                "request": v.messages,
+                                "response": (
+                                    v.output_message_list[0]["content"]
+                                    if v.output_message_list
+                                    else ""
+                                ),
+                                "reward": v.reward,
+                            }
+                            for v in traj.values()
+                        ]
+                elif isinstance(traj, dict):
+                    # Raw tensor dict from workflow — wrap in list for consistency
+                    traj = [traj]
 
-                assert traj is None or isinstance(traj, dict), traj
+                assert traj is None or isinstance(traj, list), traj
 
                 if traj is None:
                     should_accept_traj = False
@@ -1095,7 +1098,7 @@ class WorkflowExecutor:
                     else:
                         should_accept = bool(should_accept_fn(traj))
                     should_accept_traj = bool(should_accept)
-                    if not should_accept_traj and should_accept_fn is not None:
+                    if not should_accept_traj:
                         reason = "rejected"
 
                 # Dump trajectory to file
@@ -1158,7 +1161,7 @@ class WorkflowExecutor:
         self,
         data: dict[str, Any],
         workflow: RolloutWorkflow,
-        should_accept_fn: Callable[[dict[str, Any]], bool] = None,
+        should_accept_fn: Callable[[list[dict[str, Any]]], bool] | None = None,
         task_id: int | None = None,
         is_eval: bool = False,
     ) -> int:
@@ -1186,47 +1189,28 @@ class WorkflowExecutor:
 
     def wait(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
-    ) -> list[dict[str, Any] | None]:
+    ) -> list[list[dict[str, Any]] | None]:
         """Wait for the completion of `count` workflows.
 
-        Returns a list of trajectory dictionaries (or None for rejected rollouts).
+        Returns a list of trajectory lists (or None for rejected rollouts).
         Results are sorted by creation time and shuffled for diversity.
 
         See :meth:`~areal.api.engine_api.InferenceEngine.wait` for parameters.
         """
-        # Delegate to dispatcher and extract trajectories
         results = self.dispatcher.wait_results(count, timeout, raise_timeout)
-        # Log and trace
         if self.config.enable_rollout_tracing:
             self.logger.info("Rollout results are ready!")
         return [r.trajectory if r is not None else None for r in results]
 
     def wait_for_task(
         self, task_id: int, timeout: float | None = None, raise_timeout: bool = True
-    ) -> dict[str, Any] | None:
-        """
-        Wait for a specific workflow task to complete.
-        Parameters
-        ----------
-        task_id : int
-            The ID of the workflow task to wait for.
-        timeout : float or None, optional
-            Maximum time to wait for the task to complete, in seconds. If None, wait indefinitely.
-        raise_timeout : bool, optional
-            If True, raise TimeoutError if the task does not complete within the timeout.
+    ) -> list[dict[str, Any]] | None:
+        """Wait for a specific workflow task to complete.
+
         Returns
         -------
-        dict[str, Any] or None
-            The trajectory dictionary for the completed task, or None if the rollout was rejected.
-        Raises
-        ------
-        ValueError
-            If the task_id is invalid.
-        TimeoutError
-            If the task does not complete within the specified timeout and raise_timeout is True.
-        See Also
-        --------
-        :meth:`~areal.api.engine_api.InferenceEngine.wait_for_task`
+        list[dict[str, Any]] or None
+            List of trajectory dicts for the completed task, or None if rejected.
         """
         result = self.dispatcher.wait_for_task(task_id, timeout, raise_timeout)
 
@@ -1251,9 +1235,7 @@ class WorkflowExecutor:
         Returns
         -------
         list[dict[str, Any]]
-            A list of trajectory dictionaries, one per accepted rollout result.
-            Each trajectory is a dict of tensors with shape [batch_size, seqlen, ...],
-            where batch_size can vary per trajectory depending on the workflow output.
+            A flat list of trajectory dicts, one per individual sample.
         """
         perf_tracer.instant(
             "workflow_executor.rollout_batch",
@@ -1266,15 +1248,14 @@ class WorkflowExecutor:
                 workflow=workflow,
             )
         results = self.wait(count=len(data))
-        # Return list of trajectory dicts (filter out None)
-        return [r for r in results if r is not None]
+        return [d for r in results if r is not None for d in r]
 
     @trace_perf("workflow_executor.prepare_batch", category="scheduler")
     def prepare_batch(
         self,
         dataloader: StatefulDataLoader,
         workflow: RolloutWorkflow,
-        should_accept_fn: Callable[[dict[str, Any]], bool] = None,
+        should_accept_fn: Callable[[list[dict[str, Any]]], bool] | None = None,
         dynamic_bs: bool = False,
     ) -> list[dict[str, Any]]:
         """Prepare a batch with controlled staleness.
@@ -1299,15 +1280,12 @@ class WorkflowExecutor:
         Returns
         -------
         list[dict[str, Any]]
-            A list of trajectory dictionaries, one per accepted rollout result.
-            Each trajectory is a dict of tensors with shape [batch_size, seqlen, ...],
-            where batch_size can vary per trajectory depending on the workflow output.
+            A flat list of trajectory dicts, one per individual sample.
         """
 
         def task_input_generator():
             for data in cycle_dataloader(dataloader):
                 for item in data:
-                    # Workflow is already resolved by RemoteInfEngine
                     task_id = self._task_id_generator.next()
                     perf_tracer.register_task(task_id)
                     yield _RolloutTaskInput(
@@ -1320,14 +1298,12 @@ class WorkflowExecutor:
         if not hasattr(self, "data_generator"):
             self.data_generator = task_input_generator()
 
-        # Delegate to dispatcher
         assert dataloader.batch_size is not None
         results = self.dispatcher.active_submit_and_wait(
             self.data_generator, batch_size=dataloader.batch_size, dynamic_bs=dynamic_bs
         )
 
-        # Return list of trajectory dicts (filter out None)
-        return [r.trajectory for r in results if r is not None]
+        return [d for r in results if r is not None for d in r.trajectory]
 
     def pause(self):
         """Pause request submission for async rollout.

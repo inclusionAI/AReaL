@@ -114,8 +114,6 @@ class DistRolloutCoordinator:
         ----------
         trajectories : list[dict[str, Any]] | None
             List of trajectory dicts from data parallel head, None for other ranks.
-            Each trajectory is a dict of tensors with shape [batch_size, seqlen, ...],
-            where batch_size can vary per trajectory.
 
         Returns
         -------
@@ -189,7 +187,7 @@ class DistRolloutCoordinator:
             If rollout engine not connected via connect_engine()
         """
 
-        trajectories = None
+        trajectories: list[dict[str, Any]] | None = None
         if self.train_engine.is_data_parallel_head():
             trajectories = self.rollout_engine.rollout_batch(
                 data,
@@ -208,7 +206,7 @@ class DistRolloutCoordinator:
         dataloader: StatefulDataLoader,
         workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
-        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        should_accept_fn: Callable[[list[dict[str, Any]]], bool] | str | None = None,
         group_size: int = 1,
         dynamic_bs: bool = False,
     ) -> list[dict[str, Any]]:
@@ -246,7 +244,7 @@ class DistRolloutCoordinator:
             If rollout engine not connected via connect_engine()
         """
 
-        trajectories = None
+        trajectories: list[dict[str, Any]] | None = None
         if self.train_engine.is_data_parallel_head():
             trajectories = self.rollout_engine.prepare_batch(
                 dataloader,

@@ -655,18 +655,18 @@ class RemoteInfEngine(InferenceEngine):
         return resolved
 
     def _resolve_should_accept_fn(
-        self, should_accept_fn: Callable[[dict[str, Any]], bool] | str | None
-    ) -> Callable[[dict[str, Any]], bool] | None:
+        self, should_accept_fn: Callable[[list[dict[str, Any]]], bool] | str | None
+    ) -> Callable[[list[dict[str, Any]]], bool] | None:
         """Resolve should_accept_fn parameter to a callable or None.
 
         Parameters
         ----------
-        should_accept_fn : Callable[[Dict[str, Any]], bool] | str | None
+        should_accept_fn : Callable[[list[dict[str, Any]]], bool] | str | None
             The should_accept_fn specification
 
         Returns
         -------
-        Callable[[Dict[str, Any]], bool] | None
+        Callable[[list[dict[str, Any]]], bool] | None
             A callable for trajectory filtering, or None
 
         Raises
@@ -1025,7 +1025,7 @@ class RemoteInfEngine(InferenceEngine):
         data: dict[str, Any],
         workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
-        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        should_accept_fn: Callable[[list[dict[str, Any]]], bool] | str | None = None,
         group_size: int = 1,
         task_id: int | None = None,
         callback_addr: str | None = None,
@@ -1042,7 +1042,7 @@ class RemoteInfEngine(InferenceEngine):
             The workflow to use for rollout generation
         workflow_kwargs : Dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor
-        should_accept_fn : Callable[[Dict[str, Any]], bool] | str, optional
+        should_accept_fn : Callable[[list[dict[str, Any]]], bool] | str, optional
             A function or module path for trajectory filtering
         group_size : int
             Number of times to run the workflow per input and concatenate results.
@@ -1081,7 +1081,7 @@ class RemoteInfEngine(InferenceEngine):
 
     def wait(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
-    ) -> list[dict[str, Any] | None]:
+    ) -> list[list[dict[str, Any]] | None]:
         """Wait for a specified number of requests to complete.
 
         Parameters
@@ -1095,8 +1095,8 @@ class RemoteInfEngine(InferenceEngine):
 
         Returns
         -------
-        list[dict[str, Any] | None]
-            A list of trajectory dictionaries. Each element may be None for rejected trajectories.
+        list[list[dict[str, Any]] | None]
+            A list of trajectory lists. Each element may be None for rejected trajectories.
             Returns an empty list if timeout exceeded and raise_timeout is False.
         """
         return self.workflow_executor.wait(
@@ -1105,7 +1105,7 @@ class RemoteInfEngine(InferenceEngine):
 
     def wait_for_task(
         self, task_id: int, timeout: float | None = None, raise_timeout: bool = True
-    ) -> dict[str, Any] | None:
+    ) -> list[dict[str, Any]] | None:
         """Wait for a specific submitted task to complete."""
         return self.workflow_executor.wait_for_task(task_id, timeout, raise_timeout)
 
@@ -1136,13 +1136,10 @@ class RemoteInfEngine(InferenceEngine):
         Returns
         -------
         list[dict[str, Any]]
-            A list of trajectory dictionaries, one per accepted rollout result.
-            Each trajectory is a dict of tensors with shape [batch_size, seqlen, ...],
-            where batch_size can vary per trajectory depending on the workflow output.
+            A flat list of trajectory dicts, one per individual sample.
         """
         assert workflow is not None, "Workflow must be specified for rollout_batch."
 
-        # Resolve workflow to a RolloutWorkflow instance
         resolved_workflow = self._resolve_workflow(
             workflow, workflow_kwargs, group_size
         )
@@ -1157,7 +1154,7 @@ class RemoteInfEngine(InferenceEngine):
         dataloader: StatefulDataLoader,
         workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
-        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        should_accept_fn: Callable[[list[dict[str, Any]]], bool] | str | None = None,
         group_size: int = 1,
         dynamic_bs: bool = False,
     ) -> list[dict[str, Any]]:
@@ -1171,7 +1168,7 @@ class RemoteInfEngine(InferenceEngine):
             The workflow to use for rollout generation
         workflow_kwargs : Dict[str, Any], optional
             Keyword arguments to pass to the workflow constructor
-        should_accept_fn : Callable[[Dict[str, Any]], bool] | str, optional
+        should_accept_fn : Callable[[list[dict[str, Any]]], bool] | str, optional
             A function or module path for trajectory filtering
         group_size : int
             Number of times to run the workflow per input and concatenate results.
@@ -1182,13 +1179,10 @@ class RemoteInfEngine(InferenceEngine):
         Returns
         -------
         list[dict[str, Any]]
-            A list of trajectory dictionaries, one per accepted rollout result.
-            Each trajectory is a dict of tensors with shape [batch_size, seqlen, ...],
-            where batch_size can vary per trajectory depending on the workflow output.
+            A flat list of trajectory dicts, one per individual sample.
         """
         assert workflow is not None, "Workflow must be specified for prepare_batch."
 
-        # Resolve workflow to a RolloutWorkflow instance
         resolved_workflow = self._resolve_workflow(
             workflow, workflow_kwargs, group_size
         )

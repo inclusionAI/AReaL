@@ -395,7 +395,7 @@ class RemotevLLMEngine(InferenceEngine):
         data: dict[str, Any],
         workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
-        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        should_accept_fn: Callable[[list[dict[str, Any]]], bool] | str | None = None,
         group_size: int = 1,
         task_id: int | None = None,
         callback_addr: str | None = None,
@@ -417,13 +417,13 @@ class RemotevLLMEngine(InferenceEngine):
 
     def wait(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
-    ) -> list[dict[str, Any] | None]:
+    ) -> list[list[dict[str, Any]] | None]:
         """Wait for a specified number of requests to complete."""
         return self._engine.wait(count, timeout, raise_timeout)
 
     def wait_for_task(
         self, task_id: int, timeout: float | None = None, raise_timeout: bool = True
-    ) -> dict[str, Any] | None:
+    ) -> list[dict[str, Any]] | None:
         """Wait for a specific task to complete by task_id."""
         return self._engine.wait_for_task(task_id, timeout, raise_timeout)
 
@@ -433,7 +433,7 @@ class RemotevLLMEngine(InferenceEngine):
         workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
         group_size: int = 1,
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any]]:
         """Submit a batch of requests and wait for results.
 
         This method does not support asynchronous rollout and should be used for offline
@@ -451,10 +451,10 @@ class RemotevLLMEngine(InferenceEngine):
         dataloader: StatefulDataLoader,
         workflow: WorkflowLike,
         workflow_kwargs: dict[str, Any] | None = None,
-        should_accept_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        should_accept_fn: Callable[[list[dict[str, Any]]], bool] | str | None = None,
         group_size: int = 1,
         dynamic_bs: bool = False,
-    ):
+    ) -> list[dict[str, Any]]:
         """Asynchronously submit and wait until a full batch is ready."""
         return self._engine.prepare_batch(
             dataloader=dataloader,
