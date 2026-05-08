@@ -461,6 +461,13 @@ class FSDPEngineConfig:
         },
     )
 
+    use_fused_moe: bool = field(
+        default=True,
+        metadata={
+            "help": ""
+        },
+    )
+
 
 @dataclass
 class ArchonFP8Config:

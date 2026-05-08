@@ -106,7 +106,17 @@ from areal.utils.data import (
     split_padded_tensor_dict_into_mb_list,
     unpad_logits,
 )
-from areal.utils.functional import gather_logprobs, gather_logprobs_entropy
+from areal.engine.megatron_utils.fused_lce_capture import (
+    FUSED_LCE_HIDDEN_KEY,
+    FUSED_LCE_WEIGHT_KEY,
+    capture_lm_head_hidden,
+)
+from areal.utils.functional import (
+    gather_logprobs,
+    gather_logprobs_entropy,
+    linear_cross_entropy_logprobs,
+    linear_cross_entropy_logprobs_entropy,
+)
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.utils.lock import DistributedLock
 from areal.utils.network import find_free_ports, format_host_for_url, gethostip
@@ -710,6 +720,17 @@ class MegatronEngine(TrainEngine):
     ) -> None:
         self._ensure_ready()
 
+        # Resolve once per call: whether the fused linear-cross-entropy path
+        # should engage. We engage it only on the pipeline-last stage, in
+        # non-critic mode, and outside the tree-training branch (those branches
+        # bring their own gather kernels and additional invariants we do not
+        # currently extend).
+        use_fused_lce = (
+            getattr(self.config, "use_fused_linear_ce", False)
+            and not self.config.is_critic
+            and not self.enable_tree_training
+        )
+
         def forward_step(batch_iter, model):
             mb_input: MicroBatchItem = next(batch_iter)
 
@@ -740,11 +761,39 @@ class MegatronEngine(TrainEngine):
             cp_size = mpu.get_context_parallel_world_size()
             cp_local = cp_size > 1
 
-            output = packed_context_parallel_forward(
-                model,
-                mb_input.padded_mb,
-                gather_cp_output=not cp_local,
+            # Engage fused linear-cross-entropy capture only on the pipeline
+            # last stage; the LM head only exists there. CP-local logit-gather
+            # path keeps the standard materialised-logits route because the
+            # split-and-gather machinery operates on the [seq, vocab] tensor.
+            model_vp_stage_for_capture = getattr(model, "vp_stage", 0)
+            should_capture = (
+                use_fused_lce
+                and mpu.is_pipeline_last_stage(
+                    ignore_virtual=False, vp_stage=model_vp_stage_for_capture
+                )
+                and not cp_local
             )
+
+            with capture_lm_head_hidden(
+                model, enabled=should_capture
+            ) as capture:
+                output = packed_context_parallel_forward(
+                    model,
+                    mb_input.padded_mb,
+                    gather_cp_output=not cp_local,
+                )
+
+            # Stash captured hidden + LM-head weight on the orig_mb dict so
+            # the downstream loss/forward callbacks can pick them up via the
+            # standard `inputs` argument (which is the *same* dict).
+            if (
+                capture is not None
+                and capture.hidden is not None
+                and capture.weight is not None
+            ):
+                mb_input.orig_mb[FUSED_LCE_HIDDEN_KEY] = capture.hidden
+                mb_input.orig_mb[FUSED_LCE_WEIGHT_KEY] = capture.weight
+                mb_input.orig_mb["_fused_lce_active"] = True
 
             # Release tree attention metadata after forward pass
             for key in tree_attn_keys:
@@ -784,6 +833,13 @@ class MegatronEngine(TrainEngine):
                         cu_seqlens=cu_seqlens,
                         old_cu_seqlens=mb_input.old_cu_seqlens,
                     )
+                    # When fused-LCE capture is active, the model's
+                    # ``output`` is actually the pre-projection hidden
+                    # state (the LM-head was monkey-patched to a no-op),
+                    # so the unpadded tensor is the hidden we want to
+                    # feed into the fused kernel.
+                    if mb_input.orig_mb.get("_fused_lce_active", False):
+                        mb_input.orig_mb[FUSED_LCE_HIDDEN_KEY] = output
             return output, functools.partial(_process_output, mb_input.orig_mb)
 
         forward_backward_func = get_forward_backward_func()
@@ -1814,16 +1870,42 @@ class MegatronEngine(TrainEngine):
                     labels = cp_local_labels
                 else:
                     labels = torch.roll(inputs["input_ids"], shifts=-1, dims=-1)
-                logprobs, entropy = gather_logprobs_entropy(
-                    output,
-                    labels,
-                    temperature=self.config.temperature,
-                    tp_group=mpu.get_tensor_model_parallel_group()
-                    if mpu.get_tensor_model_parallel_world_size() > 1
-                    else None,
-                )
-                vocab_min_logits = output.detach().min(-1).values.float()
-                vocab_max_logits = output.detach().max(-1).values.float()
+                fused_active = inputs.get("_fused_lce_active", False)
+                fused_hidden = inputs.get(FUSED_LCE_HIDDEN_KEY)
+                fused_weight = inputs.get(FUSED_LCE_WEIGHT_KEY)
+                if (
+                    fused_active
+                    and fused_hidden is not None
+                    and fused_weight is not None
+                ):
+                    logprobs, entropy = linear_cross_entropy_logprobs_entropy(
+                        fused_hidden,
+                        fused_weight,
+                        labels,
+                        temperature=self.config.temperature,
+                        tp_group=mpu.get_tensor_model_parallel_group()
+                        if mpu.get_tensor_model_parallel_world_size() > 1
+                        else None,
+                    )
+                    # vocab_min/max_logits are diagnostics consumed by the
+                    # clip-ratio statistics inside the PPO loss; the fused
+                    # kernel never materialises the [seq, vocab] tensor, so
+                    # we substitute finite proxies derived from the chosen
+                    # logprobs (cheap and never stalls training).
+                    proxy = logprobs.detach().float()
+                    vocab_min_logits = proxy
+                    vocab_max_logits = proxy
+                else:
+                    logprobs, entropy = gather_logprobs_entropy(
+                        output,
+                        labels,
+                        temperature=self.config.temperature,
+                        tp_group=mpu.get_tensor_model_parallel_group()
+                        if mpu.get_tensor_model_parallel_world_size() > 1
+                        else None,
+                    )
+                    vocab_min_logits = output.detach().min(-1).values.float()
+                    vocab_max_logits = output.detach().max(-1).values.float()
             loss = loss_fn(
                 logprobs,
                 entropy,
@@ -1860,6 +1942,24 @@ class MegatronEngine(TrainEngine):
                 )
                 return logprobs
             labels = torch.roll(inputs["input_ids"], shifts=-1, dims=-1)
+            fused_active = inputs.get("_fused_lce_active", False)
+            fused_hidden = inputs.get(FUSED_LCE_HIDDEN_KEY)
+            fused_weight = inputs.get(FUSED_LCE_WEIGHT_KEY)
+            if (
+                fused_active
+                and fused_hidden is not None
+                and fused_weight is not None
+            ):
+                logprobs = linear_cross_entropy_logprobs(
+                    fused_hidden,
+                    fused_weight,
+                    labels,
+                    temperature=self.config.temperature,
+                    tp_group=mpu.get_tensor_model_parallel_group()
+                    if mpu.get_tensor_model_parallel_world_size() > 1
+                    else None,
+                )
+                return logprobs
             logprobs = gather_logprobs(
                 output,
                 labels,
