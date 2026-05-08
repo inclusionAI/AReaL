@@ -354,6 +354,12 @@ class TestPPBridgeModule:
         bridge.bind()
 
 
+@pytest.mark.skipif(
+    not __import__("areal.utils.pkg_version", fromlist=["is_available"]).is_available(
+        "sglang"
+    ),
+    reason="sglang package not installed",
+)
 class TestLocalLaunchPPSizeThreading:
     """``rl_trainer.py`` and the local controller path
     must thread ``pp_size`` through to ``SGLangConfig.build_args`` /

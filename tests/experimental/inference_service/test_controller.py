@@ -385,7 +385,7 @@ class TestRolloutControllerV2Construction:
         controller._callback_host = "127.0.0.1"
         controller._callback_port = 19000
 
-        with patch.object(controller, "_fork_on_guard") as mock_fork:
+        with patch.object(controller, "_async_fork_on_guard") as mock_fork:
             mock_fork.side_effect = [
                 ("127.0.0.1", 18081),
                 ("127.0.0.1", 18082),
@@ -401,7 +401,11 @@ class TestRolloutControllerV2Construction:
                 ],
             )
 
-        data_proxy_cmd = mock_fork.call_args_list[1].kwargs["raw_cmd"]
+        data_proxy_calls = [
+            c for c in mock_fork.call_args_list if c.kwargs.get("role") == "data-proxy"
+        ]
+        assert len(data_proxy_calls) == 1
+        data_proxy_cmd = data_proxy_calls[0].kwargs["raw_cmd"]
         assert "--set-reward-finish-timeout" in data_proxy_cmd
         assert "7.5" in data_proxy_cmd
         assert "--callback-server-addr" in data_proxy_cmd
@@ -732,7 +736,7 @@ class TestMultiNodeConfig:
         controller._callback_host = "127.0.0.1"
         controller._callback_port = 19000
 
-        with patch.object(controller, "_fork_on_guard") as mock_fork:
+        with patch.object(controller, "_async_fork_on_guard") as mock_fork:
             mock_fork.side_effect = [
                 ("127.0.0.1", 18081),  # router
                 ("127.0.0.1", 18082),  # data proxy (only 1, on head)
@@ -789,14 +793,15 @@ class TestMultiNodeConfig:
         controller._callback_host = "127.0.0.1"
         controller._callback_port = 19000
 
-        # Track requests.post calls to /alloc_ports and /fork
+        # Track async client .post calls to /alloc_ports and /fork
         alloc_port_counter = 0
         fork_calls = []
 
-        def mock_requests_post(url, json=None, timeout=None):
+        async def mock_async_post(url, json=None, timeout=None):
             nonlocal alloc_port_counter
             resp = MagicMock()
             resp.status_code = 200
+            resp.raise_for_status = MagicMock()
             if "/alloc_ports" in url:
                 alloc_port_counter += 1
                 resp.json.return_value = {
@@ -809,12 +814,15 @@ class TestMultiNodeConfig:
                 resp.json.return_value = {"status": "success"}
             return resp
 
+        mock_async_client = AsyncMock()
+        mock_async_client.post = mock_async_post
+
         with (
             patch.object(
-                controller._sync_client, "post", side_effect=mock_requests_post
-            ) as mock_post,
-            patch.object(controller, "_fork_on_guard") as mock_fork,
-            patch.object(controller, "_wait_for_service"),
+                controller, "_get_async_client", return_value=mock_async_client
+            ),
+            patch.object(controller, "_async_fork_on_guard") as mock_fork,
+            patch.object(controller, "_async_wait_for_service"),
             patch(
                 "areal.api.cli_args.pkg_version.is_version_greater_or_equal",
                 return_value=True,
@@ -837,13 +845,10 @@ class TestMultiNodeConfig:
         job = create_call.kwargs.get("job") or create_call.args[0]
         assert job.replicas == 2
 
-        # requests.post calls:
+        # Async client .post calls for inf server fork:
         # 1 rendezvous alloc (nnodes_per_instance > 1) + 2 node allocs + 2 forks = 5
-        post_calls = mock_post.call_args_list
-        alloc_calls = [c for c in post_calls if "/alloc_ports" in str(c)]
-        fork_post_calls = [c for c in post_calls if "/fork" in str(c)]
-        assert len(alloc_calls) == 3  # 1 rendezvous + 2 per-node
-        assert len(fork_post_calls) == 2  # 1 per node in the group
+        assert alloc_port_counter == 3  # 1 rendezvous + 2 per-node
+        assert len(fork_calls) == 2  # 1 per node in the group
 
         # Verify fork payloads have correct worker_index and role
         assert fork_calls[0]["role"] == "inf-server"
