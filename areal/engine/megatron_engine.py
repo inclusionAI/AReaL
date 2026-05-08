@@ -883,6 +883,42 @@ class MegatronEngine(TrainEngine):
         )
 
     def update_weights(self, meta: WeightUpdateMeta):
+        # [MTPShipEntryAudit-v65] First-line audit: prove the ship
+        # entry was even reached.  log.8 ran ~10min and never hit
+        # ship; zero v64 records emitted.  This audit fires before
+        # any rollout-connection check so we can distinguish 'ship
+        # never invoked' from 'ship invoked but failed inside'.
+        try:
+            import logging as _v65_log_mod
+            import time as _v65_time_mod
+            _v65_lg = _v65_log_mod.getLogger(__name__)
+            try:
+                _v65_ver = int(self.get_version())
+            except Exception:
+                _v65_ver = -1
+            try:
+                _v65_meta_type = str(getattr(meta, 'type', '?'))
+            except Exception:
+                _v65_meta_type = '?'
+            try:
+                _v65_meta_path = str(getattr(meta, 'path', ''))
+            except Exception:
+                _v65_meta_path = ''
+            _v65_lg.info(
+                "[MTPShipEntryAudit-v65] update_weights ENTER "
+                "version=%d meta_type=%s meta_path=%s ts=%.3f",
+                _v65_ver, _v65_meta_type, _v65_meta_path,
+                _v65_time_mod.time(),
+            )
+        except Exception as _e_v65:
+            try:
+                import logging as _v65_log_mod_b
+                _v65_log_mod_b.getLogger(__name__).warning(
+                    "[MTPShipEntryAudit-v65] entry-audit failure: %r",
+                    _e_v65,
+                )
+            except Exception:
+                pass
         self._check_rollout_engine_connected()
         if meta.type == "xccl":
             assert self.weight_update_group_initialized
