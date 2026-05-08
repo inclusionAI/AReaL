@@ -192,6 +192,12 @@ class LinearCrossEntropy(torch.autograd.Function):
                 _summarize("backward.dlogprobs", dlogprobs)
                 _summarize("backward.dentropy", dentropy)
 
+            # PyTorch autograd may produce non-contiguous gradient tensors
+            # (e.g. expanded views from broadcast). Triton kernels require
+            # contiguous inputs, so ensure contiguity before dispatching.
+            dlogprobs = dlogprobs.contiguous()
+            dentropy = dentropy.contiguous()
+
             d_hidden, d_weight = kernels.efficient_entropy_backward(
                 dlogprobs,
                 dentropy,
