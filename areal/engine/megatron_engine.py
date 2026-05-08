@@ -3065,6 +3065,128 @@ class MegatronEngine(TrainEngine):
                                     embedding=self_model.embedding,
                                     **(extra_block_kwargs or {}),
                                 )
+                                # [MTPModelStructAudit-v62] one-shot:
+                                # confirm self_model.mtp IS wired
+                                # and list its layer-0 sub-module
+                                # parameter names + shapes so we
+                                # can cross-check against mcore
+                                # ship list on the NEXT run.
+                                try:
+                                    if not getattr(_engine_ref,
+                                            '_v62_struct_logged', False):
+                                        _v62_mtp_mod = getattr(
+                                            self_model, 'mtp', None)
+                                        _v62_dec_has_mtp = hasattr(
+                                            getattr(self_model,
+                                                    'decoder', object()),
+                                            'mtp_layers')
+                                        _v62_mtp_proc = getattr(
+                                            self_model, 'mtp_process', None)
+                                        _v62_names = []
+                                        if _v62_mtp_mod is not None:
+                                            try:
+                                                _v62_L0 = _v62_mtp_mod.layers[0]
+                                                for _v62_pn, _v62_pp in (
+                                                        _v62_L0.named_parameters()):
+                                                    _v62_names.append(
+                                                        (_v62_pn,
+                                                         tuple(_v62_pp.shape),
+                                                         str(_v62_pp.dtype)))
+                                            except Exception:
+                                                pass
+                                        _logger.info(
+                                            '[MTPModelStructAudit-v62] '
+                                            'self_model.mtp=%s '
+                                            'mtp_process=%s '
+                                            'mtp_in_postprocess_arg=%s '
+                                            'decoder.mtp_layers?=%s '
+                                            'layer0_params=%s',
+                                            type(_v62_mtp_mod).__name__
+                                            if _v62_mtp_mod is not None else 'None',
+                                            _v62_mtp_proc,
+                                            bool(mtp_in_postprocess),
+                                            _v62_dec_has_mtp,
+                                            _v62_names[:32],
+                                        )
+                                        _engine_ref._v62_struct_logged = True
+                                except Exception as _e_v62_s:
+                                    try:
+                                        _logger.info(
+                                            '[MTPModelStructAudit-v62] '
+                                            'failure: %r', _e_v62_s)
+                                    except Exception:
+                                        pass
+
+                            # [MTPInputIdsAudit-v62] log input_ids /
+                            # labels / hidden_states shape BEFORE the
+                            # chunk so we can verify whether the
+                            # decoder really produced 1+mtp_num_layers
+                            # concatenated seq_len chunks (the signal
+                            # that MTP block ran and the shift-by-1
+                            # label alignment is correct).
+                            try:
+                                _v62_gs = getattr(
+                                    _engine_ref, '_global_step', 0)
+                                if (_mtp_diag_mb_counter[0] == 0
+                                        and (_v62_gs <= 3
+                                             or _v62_gs % 100 == 0)):
+                                    try:
+                                        _v62_iid_sh = (
+                                            tuple(input_ids.shape)
+                                            if input_ids is not None
+                                            else None)
+                                        _v62_iid_f8 = (
+                                            [int(x) for x in
+                                             input_ids.reshape(-1)[:8].tolist()]
+                                            if input_ids is not None else [])
+                                    except Exception:
+                                        _v62_iid_sh = None
+                                        _v62_iid_f8 = []
+                                    try:
+                                        _v62_lb_sh = (
+                                            tuple(labels.shape)
+                                            if labels is not None
+                                            else None)
+                                        _v62_lb_f8 = (
+                                            [int(x) for x in
+                                             labels.reshape(-1)[:8].tolist()]
+                                            if labels is not None else [])
+                                    except Exception:
+                                        _v62_lb_sh = None
+                                        _v62_lb_f8 = []
+                                    try:
+                                        _v62_hs_sh = tuple(
+                                            hidden_states.shape)
+                                        _v62_hs_f8 = [
+                                            float(x) for x in
+                                            hidden_states.detach()
+                                            .float().reshape(-1)[:8]
+                                            .tolist()]
+                                    except Exception:
+                                        _v62_hs_sh = None
+                                        _v62_hs_f8 = []
+                                    _logger.info(
+                                        '[MTPInputIdsAudit-v62] '
+                                        'step=%d mtp_num_layers=%s '
+                                        'input_ids.shape=%s '
+                                        'input_ids.first8=%s '
+                                        'labels.shape=%s '
+                                        'labels.first8=%s '
+                                        'hidden_states.shape=%s '
+                                        'hidden_states.first8=%s',
+                                        _v62_gs,
+                                        self_model.config.mtp_num_layers,
+                                        _v62_iid_sh, _v62_iid_f8,
+                                        _v62_lb_sh, _v62_lb_f8,
+                                        _v62_hs_sh, _v62_hs_f8,
+                                    )
+                            except Exception as _e_v62_i:
+                                try:
+                                    _logger.info(
+                                        '[MTPInputIdsAudit-v62] '
+                                        'failure: %r', _e_v62_i)
+                                except Exception:
+                                    pass
 
                             if not self_model.post_process:
                                 return hidden_states
@@ -3076,6 +3198,52 @@ class MegatronEngine(TrainEngine):
                                     1 + self_model.config.mtp_num_layers,
                                     dim=0,
                                 )
+                                # [MTPHsChunkAudit-v62] per-chunk
+                                # stats: if the MTP block really ran
+                                # inside `self.mtp(...)`, chunks
+                                # should be DISTINCT; if they are
+                                # identical the MTP block was NOT
+                                # exercised and the decline comes
+                                # from the main backbone only.
+                                try:
+                                    _v62_cgs = getattr(
+                                        _engine_ref, '_global_step', 0)
+                                    if (_mtp_diag_mb_counter[0] == 0
+                                            and (_v62_cgs <= 3
+                                                 or _v62_cgs % 100 == 0)):
+                                        for _v62_ci, _v62_ch in enumerate(
+                                                hidden_states_list):
+                                            try:
+                                                _v62_chf = _v62_ch.detach().float()
+                                                _v62_l2 = float(_v62_chf.norm().item())
+                                                _v62_am = float(
+                                                    _v62_chf.abs().mean().item())
+                                                _v62_ax = float(
+                                                    _v62_chf.abs().max().item())
+                                                _v62_f8 = [
+                                                    float(x) for x in
+                                                    _v62_chf.reshape(-1)[:8].tolist()]
+                                                _logger.info(
+                                                    '[MTPHsChunkAudit-v62] '
+                                                    'step=%d chunk=%d/%d '
+                                                    'shape=%s abs_mean=%.6e '
+                                                    'abs_max=%.6e l2=%.6e '
+                                                    'first8=%s',
+                                                    _v62_cgs, _v62_ci,
+                                                    len(hidden_states_list),
+                                                    tuple(_v62_ch.shape),
+                                                    _v62_am, _v62_ax, _v62_l2,
+                                                    _v62_f8,
+                                                )
+                                            except Exception:
+                                                continue
+                                except Exception as _e_v62_c:
+                                    try:
+                                        _logger.info(
+                                            '[MTPHsChunkAudit-v62] '
+                                            'failure: %r', _e_v62_c)
+                                    except Exception:
+                                        pass
                                 hidden_states = hidden_states_list[0]
                                 if loss_mask is None:
                                     loss_mask = torch.ones_like(mtp_labels)
@@ -3220,6 +3388,52 @@ class MegatronEngine(TrainEngine):
                                     mtp_loss = self_model.compute_language_model_loss(
                                         mtp_labels, mtp_logits
                                     )
+                                    # [MTPLossPerLayerAudit-v62]
+                                    # break down aggregated
+                                    # mtp_loss per mtp layer so
+                                    # we can see whether layer-0
+                                    # is learning (CE decreasing)
+                                    # even while spec_accept_rate
+                                    # declines.
+                                    try:
+                                        _v62_lgs = getattr(
+                                            _engine_ref, '_global_step', 0)
+                                        if (_mtp_diag_mb_counter[0] == 0
+                                                and (_v62_lgs <= 3
+                                                     or _v62_lgs % 100 == 0)):
+                                            try:
+                                                _v62_ml_sum = float(
+                                                    mtp_loss.detach()
+                                                    .float().sum().item())
+                                            except Exception:
+                                                _v62_ml_sum = float('nan')
+                                            try:
+                                                _v62_nt = int(
+                                                    num_tokens.detach()
+                                                    .sum().item())
+                                            except Exception:
+                                                _v62_nt = -1
+                                            _v62_mean = (
+                                                _v62_ml_sum / _v62_nt
+                                                if _v62_nt > 0 else float('nan'))
+                                            _logger.info(
+                                                '[MTPLossPerLayerAudit-v62] '
+                                                'step=%d mtp_layer=%d '
+                                                'loss_sum=%.4f '
+                                                'num_tokens=%d '
+                                                'loss_mean=%.4f',
+                                                _v62_lgs,
+                                                mtp_layer_number,
+                                                _v62_ml_sum, _v62_nt,
+                                                _v62_mean,
+                                            )
+                                    except Exception as _e_v62_l:
+                                        try:
+                                            _logger.info(
+                                                '[MTPLossPerLayerAudit-v62] '
+                                                'failure: %r', _e_v62_l)
+                                        except Exception:
+                                            pass
                                     mtp_loss = loss_mask * mtp_loss
                                     try:
                                         _d05_step = getattr(
@@ -7790,6 +8004,54 @@ class MegatronEngine(TrainEngine):
                 )
             except Exception:
                 pass
+        # [MTPShipHashAudit-v62] rank-0 full list dump with hash
+        # so that next round we can cross-check exactly which
+        # HF-named bytes were shipped versus what the draft
+        # engine received / applied.  This is independent of
+        # the existing v54/v56/v61 summaries; focuses only on
+        # deterministic content-hash identity of each tensor.
+        if (_collect_mtp_for_draft and mtp_hf_tensors
+                and dist.get_rank() == 0):
+            try:
+                import hashlib as _v62_hashlib
+                for _v62_hn, _v62_ht in mtp_hf_tensors:
+                    try:
+                        _v62_cpu = (
+                            _v62_ht.detach().contiguous()
+                            .cpu().view(torch.uint8))
+                        _v62_nb = _v62_cpu.numel()
+                        _v62_h = _v62_hashlib.sha256(
+                            _v62_cpu.numpy().tobytes()).hexdigest()[:16]
+                        _v62_f8 = [
+                            float(x) for x in
+                            _v62_ht.detach().float()
+                            .reshape(-1)[:8].tolist()]
+                        self.logger.info(
+                            '[MTPShipHashAudit-v62] version=%s '
+                            'hf_name=%s dtype=%s shape=%s '
+                            'bytes=%d sha256_16=%s first8=%s',
+                            getattr(meta, 'version', None),
+                            _v62_hn,
+                            str(_v62_ht.dtype),
+                            tuple(_v62_ht.shape),
+                            _v62_nb, _v62_h, _v62_f8,
+                        )
+                    except Exception as _e_v62_t:
+                        try:
+                            self.logger.info(
+                                '[MTPShipHashAudit-v62] '
+                                'tensor %s failure: %r',
+                                _v62_hn, _e_v62_t)
+                        except Exception:
+                            pass
+            except Exception as _e_v62_out:
+                try:
+                    self.logger.info(
+                        '[MTPShipHashAudit-v62] outer failure: %r',
+                        _e_v62_out)
+                except Exception:
+                    pass
+
         if _collect_mtp_for_draft and mtp_hf_tensors and dist.get_rank() == 0:
             try:
                 tp_size = (
