@@ -774,6 +774,8 @@ class MegatronEngine(TrainEngine):
                 and not cp_local
             )
 
+            lce_label = "fused_lce" if should_capture else "materialized_lce"
+            torch.cuda.nvtx.range_push(f"lce_forward/{lce_label}")
             with capture_lm_head_hidden(
                 model, enabled=should_capture
             ) as capture:
@@ -794,6 +796,8 @@ class MegatronEngine(TrainEngine):
                 mb_input.orig_mb[FUSED_LCE_HIDDEN_KEY] = capture.hidden
                 mb_input.orig_mb[FUSED_LCE_WEIGHT_KEY] = capture.weight
                 mb_input.orig_mb["_fused_lce_active"] = True
+
+            torch.cuda.nvtx.range_pop()
 
             # Release tree attention metadata after forward pass
             for key in tree_attn_keys:
@@ -1878,6 +1882,7 @@ class MegatronEngine(TrainEngine):
                     and fused_hidden is not None
                     and fused_weight is not None
                 ):
+                    torch.cuda.nvtx.range_push("lce_loss/fused_lce")
                     logprobs, entropy = linear_cross_entropy_logprobs_entropy(
                         fused_hidden,
                         fused_weight,
@@ -1895,7 +1900,9 @@ class MegatronEngine(TrainEngine):
                     proxy = logprobs.detach().float()
                     vocab_min_logits = proxy
                     vocab_max_logits = proxy
+                    torch.cuda.nvtx.range_pop()
                 else:
+                    torch.cuda.nvtx.range_push("lce_loss/materialized_lce")
                     logprobs, entropy = gather_logprobs_entropy(
                         output,
                         labels,
@@ -1906,6 +1913,7 @@ class MegatronEngine(TrainEngine):
                     )
                     vocab_min_logits = output.detach().min(-1).values.float()
                     vocab_max_logits = output.detach().max(-1).values.float()
+                    torch.cuda.nvtx.range_pop()
             loss = loss_fn(
                 logprobs,
                 entropy,
@@ -1950,6 +1958,7 @@ class MegatronEngine(TrainEngine):
                 and fused_hidden is not None
                 and fused_weight is not None
             ):
+                torch.cuda.nvtx.range_push("lce_forward_result/fused_lce")
                 logprobs = linear_cross_entropy_logprobs(
                     fused_hidden,
                     fused_weight,
@@ -1959,7 +1968,9 @@ class MegatronEngine(TrainEngine):
                     if mpu.get_tensor_model_parallel_world_size() > 1
                     else None,
                 )
+                torch.cuda.nvtx.range_pop()
                 return logprobs
+            torch.cuda.nvtx.range_push("lce_forward_result/materialized_lce")
             logprobs = gather_logprobs(
                 output,
                 labels,
@@ -1968,6 +1979,7 @@ class MegatronEngine(TrainEngine):
                 if mpu.get_tensor_model_parallel_world_size() > 1
                 else None,
             )
+            torch.cuda.nvtx.range_pop()
             return logprobs
         else:
             values = output.squeeze(-1)
