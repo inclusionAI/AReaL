@@ -144,6 +144,9 @@ jobs:
       CONTAINER_IMAGE: ghcr.io/inclusionai/areal-runtime:dev-${{ matrix.variant }}
       CONTAINER_NAME: areal-nightly-${{ matrix.variant }}
     steps:
+      - name: Clean workspace
+        run: sudo rm -rf "${{ github.workspace }}"/*
+
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref || github.sha }}
@@ -213,6 +216,7 @@ jobs:
         run: |
           docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
           docker logout ghcr.io 2>/dev/null || true
+          sudo find "${{ github.workspace }}" -not -user "$(id -u)" -delete 2>/dev/null || true
 
   stop-runner:
     name: Stop areal-nightly instance
