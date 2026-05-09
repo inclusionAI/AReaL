@@ -178,9 +178,6 @@ jobs:
           MODEL_NAME: Qwen/Qwen3-0.6B
         run: |
           MODEL_CACHE=/opt/hf_cache
-          sudo mkdir -p "$MODEL_CACHE"
-          sudo chmod 777 "$MODEL_CACHE"
-          MODEL_LOCAL="$MODEL_CACHE/$MODEL_NAME"
 
           declare -A VARIANT_SHORT=( [sglang]=s [vllm]=v )
 
