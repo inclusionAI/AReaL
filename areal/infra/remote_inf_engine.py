@@ -1104,6 +1104,92 @@ class RemoteInfEngine(InferenceEngine):
                 else:
                     _v64_w_raw = repr(_v64_w_blob).encode("utf-8")
                 _v64_w_h = _v64_w_hash.sha256(_v64_w_raw).hexdigest()[:16]
+                # [MTPWireBytesFloatAudit-v67] decode the
+                # base64 fp32 payload and log first8/last8 +
+                # abs_mean/abs_max/l2.  Compare against the
+                # most recent [MTPShipPostAGAudit-v64] for the
+                # same hf_name to detect any mutation between
+                # megatron convert_to_hf and the actual wire
+                # send to sglang.
+                try:
+                    import base64 as _v67_b64
+                    import struct as _v67_struct
+                    _v67_payload = None
+                    if isinstance(_v64_w_blob, str):
+                        try:
+                            _v67_payload = _v67_b64.b64decode(
+                                _v64_w_blob, validate=False)
+                        except Exception:
+                            _v67_payload = None
+                    elif isinstance(
+                        _v64_w_blob, (bytes, bytearray)
+                    ):
+                        _v67_payload = bytes(_v64_w_blob)
+                    if _v67_payload is not None and len(
+                        _v67_payload
+                    ) >= 32:
+                        _v67_n = len(_v67_payload) // 4
+                        _v67_first_n = min(8, _v67_n)
+                        _v67_last_n = min(8, _v67_n)
+                        _v67_first8 = list(
+                            _v67_struct.unpack(
+                                "<%df" % _v67_first_n,
+                                _v67_payload[:4 * _v67_first_n],
+                            )
+                        )
+                        _v67_last8 = list(
+                            _v67_struct.unpack(
+                                "<%df" % _v67_last_n,
+                                _v67_payload[-4 * _v67_last_n:],
+                            )
+                        )
+                        _v67_sample = min(_v67_n, 65536)
+                        _v67_floats = list(
+                            _v67_struct.unpack(
+                                "<%df" % _v67_sample,
+                                _v67_payload[:4 * _v67_sample],
+                            )
+                        )
+                        _v67_abs_mean = (
+                            sum(abs(_x) for _x in _v67_floats)
+                            / max(1, len(_v67_floats))
+                        )
+                        _v67_abs_max = max(
+                            (abs(_x) for _x in _v67_floats),
+                            default=0.0,
+                        )
+                        _v67_l2_sq = sum(
+                            _x * _x for _x in _v67_floats
+                        )
+                        _v67_l2 = _v67_l2_sq ** 0.5
+                        logger.info(
+                            "[MTPWireBytesFloatAudit-v67] "
+                            "hf_name=%s nbytes=%d nfloats=%d "
+                            "first8=%s last8=%s "
+                            "abs_mean=%.6e abs_max=%.6e "
+                            "l2_sample=%.6e sample_n=%d",
+                            _v64_w_name, len(_v67_payload),
+                            _v67_n, _v67_first8, _v67_last8,
+                            _v67_abs_mean, _v67_abs_max,
+                            _v67_l2, _v67_sample,
+                        )
+                    else:
+                        logger.info(
+                            "[MTPWireBytesFloatAudit-v67] "
+                            "hf_name=%s SKIPPED reason=%s",
+                            _v64_w_name,
+                            "no_payload" if _v67_payload is None
+                            else "payload_too_short",
+                        )
+                except Exception as _e_v67_a:
+                    try:
+                        logger.warning(
+                            "[MTPWireBytesFloatAudit-v67] "
+                            "hf_name=%s failure: %r",
+                            _v64_w_name, _e_v67_a,
+                        )
+                    except Exception:
+                        pass
                 logger.info(
                     "[MTPWireBytesAudit-v64] hf_name=%s "
                     "blob_type=%s blob_size=%d sha256_16=%s",
@@ -1146,9 +1232,26 @@ class RemoteInfEngine(InferenceEngine):
             try:
                 import hashlib as _v64_pr_hash
                 import requests as _v64_pr_req
+                # [MTPDraftSglangProbeInternal-v67] sglang
+                # MiMoMTP.load_weights re-keys HF names
+                # "model.mtp_layers.0.{input_proj,
+                #  token_layernorm,hidden_layernorm,
+                #  final_layernorm}.weight"
+                # to internal
+                # "model.{input_proj,token_layernorm,
+                #  hidden_layernorm,final_layernorm}.weight"
+                # (and "model.mtp_block.*" for transformer).
+                # /get_weights_by_name expects the INTERNAL
+                # name; querying the HF name returns 400.
+                # We probe both so at least one set returns
+                # data, allowing wire <-> draft comparison.
                 _v64_pr_targets = [
                     "model.mtp_layers.0.input_proj.weight",
                     "model.mtp_layers.0.token_layernorm.weight",
+                    "model.input_proj.weight",
+                    "model.token_layernorm.weight",
+                    "model.hidden_layernorm.weight",
+                    "model.final_layernorm.weight",
                 ]
                 for _v64_pr_addr in self.addresses:
                     for _v64_pr_n in _v64_pr_targets:
