@@ -116,11 +116,17 @@ def test_linear_cross_entropy_correctness(
         hidden, weight, labels, temperature=1.0
     )
 
-    # Tolerances are dtype-dependent; bf16/fp16 inputs widen them as expected.
+    # Tolerances are dtype-dependent. The fused kernel performs the same
+    # matmul + log-softmax math as the reference, so fp32 inputs should agree
+    # to within a few ulps (~1e-5). bf16 / fp16 inputs are widened only to
+    # absorb the documented matmul-accumulation drift; anything looser would
+    # mask real numerical regressions.
     if dtype == torch.float32:
-        rtol, atol = 1e-4, 1e-4
-    else:
-        rtol, atol = 5e-2, 5e-2
+        rtol, atol = 1e-5, 1e-5
+    elif dtype == torch.bfloat16:
+        rtol, atol = 2e-2, 2e-2
+    else:  # float16
+        rtol, atol = 1e-2, 1e-2
 
     torch.testing.assert_close(
         fused_logprobs.float(), ref_logprobs.float(), rtol=rtol, atol=atol
@@ -142,15 +148,40 @@ def test_linear_cross_entropy_temperature(temperature: float) -> None:
     fused_lp, fused_h = linear_cross_entropy_logprobs_entropy(
         hidden, weight, labels, temperature=temperature
     )
-    torch.testing.assert_close(fused_lp, ref_lp, rtol=1e-4, atol=1e-4)
-    torch.testing.assert_close(fused_h, ref_h, rtol=1e-4, atol=1e-4)
+    # fp32 inputs: fused vs reference must agree to ~1e-5 (a few ulps).
+    torch.testing.assert_close(fused_lp, ref_lp, rtol=1e-5, atol=1e-5)
+    torch.testing.assert_close(fused_h, ref_h, rtol=1e-5, atol=1e-5)
 
 
-def test_linear_cross_entropy_backward_matches_reference() -> None:
-    """Backward gradients on hidden/weight match autograd through the reference."""
+@pytest.mark.parametrize(
+    "num_tokens,hidden_size,vocab_size",
+    [
+        # Small shape: catches obvious correctness bugs cheaply.
+        (64, 256, 2048),
+        # Medium shape: typical SFT microbatch.
+        (512, 1024, 32000),
+        # Large shape: stresses the fused backward at LLM-class dimensions
+        # where the materialised reference begins to dominate memory but is
+        # still fp32-tractable on a single GPU. This is the configuration
+        # most likely to surface accumulation-order bugs in d_hidden /
+        # d_weight reductions.
+        (2048, 2048, 32000),
+    ],
+    ids=["small_64x256x2048", "medium_512x1024x32k", "large_2048x2048x32k"],
+)
+def test_linear_cross_entropy_backward_matches_reference(
+    num_tokens: int,
+    hidden_size: int,
+    vocab_size: int,
+) -> None:
+    """Backward gradients on hidden/weight match autograd through the reference.
+
+    Runs across small / medium / large shapes so that any accumulation-order
+    drift in the fused d_hidden / d_weight kernels is caught at scale rather
+    than only on toy inputs.
+    """
     from areal.utils.kernel import linear_cross_entropy
 
-    num_tokens, hidden_size, vocab_size = 64, 256, 2048
     hidden_a, weight_a, labels = _make_inputs(
         num_tokens, hidden_size, vocab_size, torch.float32
     )
@@ -175,16 +206,25 @@ def test_linear_cross_entropy_backward_matches_reference() -> None:
     )
     (fused_lp.sum() + 0.5 * fused_h.sum()).backward()
 
+    # fp32 inputs: backward must match the reference to ~1e-4. The fused
+    # kernel's d_weight accumulates ``num_tokens`` partial products, so we
+    # use a slightly looser absolute tolerance for d_weight at the largest
+    # shape; rtol stays tight to catch directional errors.
     torch.testing.assert_close(
-        hidden_a.grad, hidden_b.grad, rtol=5e-3, atol=5e-3
+        hidden_a.grad, hidden_b.grad, rtol=1e-4, atol=1e-4
     )
+    weight_atol = 1e-4 if num_tokens <= 512 else 5e-4
     torch.testing.assert_close(
-        weight_a.grad, weight_b.grad, rtol=5e-3, atol=5e-3
+        weight_a.grad, weight_b.grad, rtol=1e-4, atol=weight_atol
     )
 
 
 # ---------------------------------------------------------------------------
 # Tensor-parallel (TP=2) correctness + performance
+#
+# These tests are invoked through pytest, while the 2-rank distributed body is
+# launched with subprocess.run(["torchrun", ...]) following the repository's
+# distributed-test pattern. Users do not need to run torchrun manually.
 # ---------------------------------------------------------------------------
 
 
@@ -197,100 +237,77 @@ def _tp2_available() -> bool:
     return True
 
 
-_tp2_skip = pytest.mark.skipif(not _tp2_available(), reason="TP=2 requires >= 2 CUDA GPUs")
+_tp2_skip = pytest.mark.skipif(
+    not _tp2_available(), reason="TP=2 requires >= 2 CUDA GPUs"
+)
 
 
-def _init_tp2():
-    """Initialise a 2-rank NCCL process group; return (rank, group)."""
-    import os
+def _run_lce_tp2_with_torchrun(
+    test_type: str,
+    num_tokens: int,
+    hidden_size: int,
+    vocab_size: int,
+    dtype: str = "bfloat16",
+) -> None:
+    import subprocess
 
-    import torch.distributed as dist
+    from areal.utils.network import find_free_ports
 
-    if dist.is_initialized():
-        rank = dist.get_rank()
-        world_size = dist.get_world_size()
-        group = dist.new_group(ranks=list(range(world_size)), backend="nccl")
-        return rank, group
-
-    dist.init_process_group(backend="nccl")
-    rank = dist.get_rank()
-    world_size = dist.get_world_size()
-    group = dist.new_group(ranks=list(range(world_size)), backend="nccl")
-    return rank, group
+    port = find_free_ports(1)[0]
+    try:
+        subprocess.run(
+            [
+                "torchrun",
+                "--nproc_per_node=2",
+                "--nnodes=1",
+                "--master-addr=localhost",
+                f"--master_port={port}",
+                "tests/torchrun/run_lce_tp2.py",
+                f"--test_type={test_type}",
+                f"--num_tokens={num_tokens}",
+                f"--hidden_size={hidden_size}",
+                f"--vocab_size={vocab_size}",
+                f"--dtype={dtype}",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as e:
+        pytest.fail(
+            "TP=2 LCE torchrun test failed:\n"
+            f"STDOUT:\n{e.stdout}\n"
+            f"STDERR:\n{e.stderr}"
+        )
 
 
 @_tp2_skip
+@pytest.mark.multi_gpu
 @pytest.mark.parametrize(
-    "num_tokens,hidden_size,vocab_size,dtype",
+    "num_tokens,hidden_size,vocab_size,dtype_str",
     [
-        (128, 512, 8192, torch.float32),
-        (256, 1024, 32000, torch.bfloat16),
+        (128, 512, 8192, "float32"),
+        (256, 1024, 32000, "bfloat16"),
     ],
 )
 def test_linear_cross_entropy_tp2_correctness(
     num_tokens: int,
     hidden_size: int,
     vocab_size: int,
-    dtype: torch.dtype,
+    dtype_str: str,
 ) -> None:
-    """TP=2 fused forward+backward must match the materialised single-GPU reference."""
-    import torch.distributed as dist
+    """TP=2 fused forward+backward matches a full-vocab reference.
 
-    from areal.utils.kernel import linear_cross_entropy
-
-    rank, tp_group = _init_tp2()
-    world_size = dist.get_world_size(tp_group)
-    assert world_size == 2
-
-    torch.cuda.set_device(rank)
-    device = f"cuda:{rank}"
-
-    vocab_per_rank = vocab_size // world_size
-    assert vocab_size % world_size == 0, "vocab_size must be divisible by world_size"
-
-    g = torch.Generator(device=device).manual_seed(42)
-    hidden = (torch.randn(num_tokens, hidden_size, dtype=dtype, device=device, generator=g) * 0.02)
-    labels = torch.randint(0, vocab_size, (num_tokens,), device=device, generator=g)
-    weight_full = (torch.randn(vocab_size, hidden_size, dtype=dtype, device=device, generator=g) * 0.02)
-    weight_shard = weight_full[rank * vocab_per_rank : (rank + 1) * vocab_per_rank].contiguous()
-
-    # --- Reference (single-GPU, full weight) ---
-    hidden_ref = hidden.detach().clone().requires_grad_(True)
-    weight_ref = weight_full.detach().clone().requires_grad_(True)
-    logits = (hidden_ref.float() @ weight_ref.float().t())
-    log_softmax = torch.nn.functional.log_softmax(logits, dim=-1)
-    ref_lp = log_softmax.gather(dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
-    probs = log_softmax.exp()
-    ref_h = -(probs * log_softmax).sum(dim=-1)
-    (ref_lp.sum() + 0.5 * ref_h.sum()).backward()
-
-    # --- Fused TP=2 ---
-    hidden_fused = hidden.detach().clone().requires_grad_(True)
-    weight_fused = weight_shard.detach().clone().requires_grad_(True)
-    fused_lp, fused_h = linear_cross_entropy(
-        hidden_fused, weight_fused, labels, 1.0, "none", tp_group
+    The 2-rank worker is launched via torchrun inside this pytest test, so the
+    caller can use a normal pytest command.
+    """
+    _run_lce_tp2_with_torchrun(
+        "correctness", num_tokens, hidden_size, vocab_size, dtype_str
     )
-    (fused_lp.sum() + 0.5 * fused_h.sum()).backward()
-
-    if dtype == torch.float32:
-        rtol, atol = 1e-3, 1e-3
-    else:
-        rtol, atol = 5e-2, 5e-2
-
-    torch.testing.assert_close(fused_lp.float(), ref_lp.float(), rtol=rtol, atol=atol)
-    torch.testing.assert_close(fused_h.float(), ref_h.float(), rtol=rtol, atol=atol)
-    torch.testing.assert_close(hidden_fused.grad.float(), hidden_ref.grad.float(), rtol=rtol, atol=atol)
-    torch.testing.assert_close(
-        weight_fused.grad.float(),
-        weight_ref.grad[rank * vocab_per_rank : (rank + 1) * vocab_per_rank].float(),
-        rtol=rtol,
-        atol=atol,
-    )
-
-    dist.barrier(tp_group)
 
 
 @_tp2_skip
+@pytest.mark.multi_gpu
 @pytest.mark.slow
 @pytest.mark.parametrize(
     "num_tokens,hidden_size,vocab_size",
@@ -304,117 +321,9 @@ def test_linear_cross_entropy_tp2_performance_benchmark(
     hidden_size: int,
     vocab_size: int,
 ) -> None:
-    """TP=2 fused vs materialised forward+backward time and peak memory."""
-    import torch.distributed as dist
-
-    from areal.utils.kernel import linear_cross_entropy
-
-    rank, tp_group = _init_tp2()
-    world_size = dist.get_world_size(tp_group)
-    assert world_size == 2
-
-    torch.cuda.set_device(rank)
-    device = f"cuda:{rank}"
-    dtype = torch.bfloat16
-
-    vocab_per_rank = vocab_size // world_size
-    assert vocab_size % world_size == 0
-
-    g = torch.Generator(device=device).manual_seed(0)
-    hidden = (torch.randn(num_tokens, hidden_size, dtype=dtype, device=device, generator=g) * 0.02)
-    labels = torch.randint(0, vocab_size, (num_tokens,), device=device, generator=g)
-    weight_full = (torch.randn(vocab_size, hidden_size, dtype=dtype, device=device, generator=g) * 0.02)
-    weight_shard = weight_full[rank * vocab_per_rank : (rank + 1) * vocab_per_rank].contiguous()
-
-    # --- warm-up ---
-    for _ in range(2):
-        h = hidden.detach().clone().requires_grad_(True)
-        w = weight_shard.detach().clone().requires_grad_(True)
-        lp, ent = linear_cross_entropy(h, w, labels, 1.0, "none", tp_group)
-        (lp.sum() + ent.sum()).backward()
-        del lp, ent, h, w
-        gc.collect()
-        torch.cuda.empty_cache()
-
-    for _ in range(2):
-        h = hidden.detach().clone().requires_grad_(True)
-        w = weight_full.detach().clone().requires_grad_(True)
-        logits = (h.float() @ w.float().t())
-        log_softmax = torch.nn.functional.log_softmax(logits, dim=-1)
-        lp = log_softmax.gather(dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
-        probs = log_softmax.exp()
-        ent = -(probs * log_softmax).sum(dim=-1)
-        (lp.sum() + ent.sum()).backward()
-        del lp, ent, h, w
-        gc.collect()
-        torch.cuda.empty_cache()
-
-    # --- Fused TP=2 timing ---
-    fused_times = []
-    fused_mems = []
-    for _ in range(5):
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
-        torch.cuda.reset_peak_memory_stats()
-        start = torch.cuda.Event(enable_timing=True)
-        end = torch.cuda.Event(enable_timing=True)
-        start.record()
-        h = hidden.detach().clone().requires_grad_(True)
-        w = weight_shard.detach().clone().requires_grad_(True)
-        lp, ent = linear_cross_entropy(h, w, labels, 1.0, "none", tp_group)
-        (lp.sum() + ent.sum()).backward()
-        end.record()
-        torch.cuda.synchronize()
-        fused_times.append(start.elapsed_time(end))
-        fused_mems.append(torch.cuda.max_memory_allocated() / (1024 * 1024))
-        del lp, ent, h, w
-
-    # --- Reference (single-GPU, full weight) timing ---
-    ref_times = []
-    ref_mems = []
-    for _ in range(5):
-        torch.cuda.synchronize()
-        torch.cuda.empty_cache()
-        torch.cuda.reset_peak_memory_stats()
-        start = torch.cuda.Event(enable_timing=True)
-        end = torch.cuda.Event(enable_timing=True)
-        start.record()
-        h = hidden.detach().clone().requires_grad_(True)
-        w = weight_full.detach().clone().requires_grad_(True)
-        logits = (h.float() @ w.float().t())
-        log_softmax = torch.nn.functional.log_softmax(logits, dim=-1)
-        lp = log_softmax.gather(dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
-        probs = log_softmax.exp()
-        ent = -(probs * log_softmax).sum(dim=-1)
-        (lp.sum() + ent.sum()).backward()
-        end.record()
-        torch.cuda.synchronize()
-        ref_times.append(start.elapsed_time(end))
-        ref_mems.append(torch.cuda.max_memory_allocated() / (1024 * 1024))
-        del lp, ent, h, w
-
-    ref_med = sorted(ref_times)[len(ref_times) // 2]
-    fused_med = sorted(fused_times)[len(fused_times) // 2]
-    ref_peak = max(ref_mems)
-    fused_peak = max(fused_mems)
-    speedup = ref_med / fused_med if fused_med > 0 else math.inf
-    mem_ratio = fused_peak / ref_peak if ref_peak > 0 else math.inf
-
-    print(
-        f"\n[LCE-TP2-Bench rank={rank}] tokens={num_tokens} hidden={hidden_size} vocab={vocab_size} "
-        f"dtype={dtype}\n"
-        f"            reference: {ref_med:7.2f} ms / {ref_peak:7.1f} MB peak\n"
-        f"            fused    : {fused_med:7.2f} ms / {fused_peak:7.1f} MB peak\n"
-        f"            speedup  : {speedup:5.2f}x   memory_ratio: {mem_ratio:5.2f}x"
-    )
-
-    assert fused_med < ref_med * 1.5, (
-        f"Fused TP=2 LCE is more than 1.5x slower than reference "
-        f"(fused={fused_med:.2f}ms ref={ref_med:.2f}ms)."
-    )
-    assert fused_peak < ref_peak * 1.2, (
-        f"Fused TP=2 LCE peak memory exceeds reference by >20% "
-        f"(fused={fused_peak:.1f}MB ref={ref_peak:.1f}MB)."
+    """TP=2 fused vs TP-materialised forward+backward time and peak memory."""
+    _run_lce_tp2_with_torchrun(
+        "performance", num_tokens, hidden_size, vocab_size
     )
 
 
