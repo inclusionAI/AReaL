@@ -194,6 +194,7 @@ jobs:
               --device=/dev/fuse \
               --security-opt=apparmor:unconfined \
               -e HF_TOKEN="$HF_TOKEN" \
+              -e HF_HOME=/model_cache \
               -e WANDB_API_KEY="$WANDB_API_KEY" \
               -e TOKENIZERS_PARALLELISM=false \
               -v "$WORKSPACE:/workspace" \
@@ -202,14 +203,14 @@ jobs:
               "$IMAGE_REPO:dev-$variant" \
               bash -lc '
                 export PATH=/opt/.venv/bin:$PATH
-                huggingface-cli download '"$MODEL_NAME"' --local-dir /model_cache/'"$MODEL_NAME"'
+                huggingface-cli download '"$MODEL_NAME"'
                 uv pip install -e . --no-deps
                 python3 examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml \
                   experiment_name='"$EXPERIMENT_NAME"' trial_name='"$trial_name"' \
                   stats_logger.wandb.mode=online \
                   rollout.backend='"$variant"':d1 actor.backend='"$TRAIN_BACKEND"':d1 \
                   cluster.n_nodes=1 cluster.n_gpus_per_node=2 \
-                  actor.path=/model_cache/'"$MODEL_NAME"' \
+                  actor.path='"$MODEL_NAME"' \
                   scheduler.type=local train_dataset.batch_size=64
               '
             sudo find "$WORKSPACE" -not -user "$(id -u)" -delete 2>/dev/null || true
