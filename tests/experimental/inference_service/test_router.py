@@ -149,20 +149,46 @@ class TestSessionRegistry:
     async def test_register_session(self):
         reg = SessionRegistry()
         await reg.register_session("key-1", "id-1", WORKER_1)
-        assert await reg.lookup_by_key("key-1") == WORKER_1
-        assert await reg.lookup_by_id("id-1") == WORKER_1
+        pin = await reg.lookup_by_key("key-1")
+        assert pin is not None
+        assert pin.worker_addr == WORKER_1
+        pin_id = await reg.lookup_by_id("id-1")
+        assert pin_id is not None
+        assert pin_id.worker_addr == WORKER_1
+
+    @pytest.mark.asyncio
+    async def test_register_session_with_model_context(self):
+        reg = SessionRegistry()
+        await reg.register_session(
+            "key-1",
+            "id-1",
+            WORKER_1,
+            model="gpt-4",
+            url="https://api.openai.com",
+            api_key="sk-xxx",
+        )
+        pin = await reg.lookup_by_key("key-1")
+        assert pin is not None
+        assert pin.worker_addr == WORKER_1
+        assert pin.model == "gpt-4"
+        assert pin.url == "https://api.openai.com"
+        assert pin.api_key == "sk-xxx"
 
     @pytest.mark.asyncio
     async def test_lookup_by_key(self):
         reg = SessionRegistry()
         await reg.register_session("key-1", "id-1", WORKER_1)
-        assert await reg.lookup_by_key("key-1") == WORKER_1
+        pin = await reg.lookup_by_key("key-1")
+        assert pin is not None
+        assert pin.worker_addr == WORKER_1
 
     @pytest.mark.asyncio
     async def test_lookup_by_id(self):
         reg = SessionRegistry()
         await reg.register_session("key-1", "id-1", WORKER_1)
-        assert await reg.lookup_by_id("id-1") == WORKER_1
+        pin = await reg.lookup_by_id("id-1")
+        assert pin is not None
+        assert pin.worker_addr == WORKER_1
 
     @pytest.mark.asyncio
     async def test_lookup_unknown_key(self):
@@ -187,7 +213,9 @@ class TestSessionRegistry:
         assert await reg.lookup_by_id("id-1") is None
         assert await reg.lookup_by_id("id-2") is None
         # Worker 2 sessions untouched
-        assert await reg.lookup_by_key("key-3") == WORKER_2
+        pin = await reg.lookup_by_key("key-3")
+        assert pin is not None
+        assert pin.worker_addr == WORKER_2
 
     @pytest.mark.asyncio
     async def test_count(self):
@@ -204,7 +232,9 @@ class TestSessionRegistry:
         reg = SessionRegistry()
         await reg.register_session("key-1", "id-1", WORKER_1)
         await reg.register_session("key-1", "id-1", WORKER_2)
-        assert await reg.lookup_by_key("key-1") == WORKER_2
+        pin = await reg.lookup_by_key("key-1")
+        assert pin is not None
+        assert pin.worker_addr == WORKER_2
 
 
 # =============================================================================

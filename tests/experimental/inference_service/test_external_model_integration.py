@@ -19,6 +19,7 @@ from areal.experimental.inference_service.gateway.app import (
 )
 from areal.experimental.inference_service.gateway.config import GatewayConfig
 from areal.experimental.inference_service.gateway.streaming import (
+    RouteResult,
     RouterKeyRejectedError,
 )
 from areal.experimental.inference_service.router.app import (
@@ -78,7 +79,7 @@ class TestGatewayUnifiedExportTrajectories:
         mock_revoke,
         gateway_client,
     ):
-        mock_query_router.return_value = WORKER_ADDR
+        mock_query_router.return_value = RouteResult(worker_addr=WORKER_ADDR)
         mock_forward.return_value = httpx.Response(
             200,
             json={
@@ -107,7 +108,7 @@ class TestGatewayUnifiedExportTrajectories:
         mock_revoke,
         gateway_client,
     ):
-        mock_query_router.return_value = WORKER_ADDR
+        mock_query_router.return_value = RouteResult(worker_addr=WORKER_ADDR)
         mock_forward.return_value = httpx.Response(200, json={"interactions": []})
 
         resp = await gateway_client.post(
@@ -269,7 +270,7 @@ async def test_external_model_flow_end_to_end_gateway_router_data_proxy(router_c
             admin_api_key: str | None = None,
             model: str | None = None,
             client: httpx.AsyncClient | None = None,
-        ) -> str:
+        ) -> RouteResult:
             del router_addr, path, timeout, admin_api_key, client
             payload: dict = {}
             if model is not None:
@@ -286,7 +287,12 @@ async def test_external_model_flow_end_to_end_gateway_router_data_proxy(router_c
             if resp.status_code in (404, 503):
                 raise RouterKeyRejectedError("routing failed", resp.status_code)
             resp.raise_for_status()
-            return resp.json()["worker_addr"]
+            data = resp.json()
+            return RouteResult(
+                worker_addr=data["worker_addr"],
+                url=data.get("url"),
+                api_key=data.get("api_key"),
+            )
 
         async def _forward_request(
             upstream_url: str,

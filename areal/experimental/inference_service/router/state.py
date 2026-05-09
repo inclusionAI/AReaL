@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
-"""Worker and session registries for the Router service.
+"""Worker, session, and model registries for the Router service.
 
 All state is in-memory (lost on restart). Thread-safe via asyncio.Lock.
 """
@@ -22,6 +22,16 @@ class WorkerInfo:
     is_healthy: bool = True
     active_requests: int = 0
     registered_at: float = field(default_factory=time.time)
+
+
+@dataclass
+class SessionPin:
+    """A session pinned to a specific worker with model context."""
+
+    worker_addr: str
+    model: str | None = None
+    url: str | None = None
+    api_key: str | None = None
 
 
 class WorkerRegistry:
@@ -91,37 +101,53 @@ class WorkerRegistry:
 
 
 class SessionRegistry:
-    """Maps session API keys and session IDs to worker addresses.
+    """Maps session API keys and session IDs to workers with model context.
+
+    Each session is stored as a :class:`SessionPin` containing the
+    worker address and the model context (name, URL, provider API key)
+    that was active when the session was created.
 
     Pinning persists after reward is set (needed for
-    ``/export_trajectories``). Cleaned up after export_trajectories or
-    when a worker is deleted.
+    ``/export_trajectories``). Cleaned up after export or when a worker
+    is deleted.
     """
 
     def __init__(self) -> None:
-        self._key_to_worker: dict[str, str] = {}  # session_api_key -> worker_addr
-        self._id_to_worker: dict[str, str] = {}  # session_id -> worker_addr
+        self._key_to_pin: dict[str, SessionPin] = {}  # session_api_key -> pin
+        self._id_to_pin: dict[str, SessionPin] = {}  # session_id -> pin
         self._id_to_key: dict[str, str] = {}  # session_id -> session_api_key
         self._lock = asyncio.Lock()
 
     async def register_session(
-        self, session_key: str, session_id: str, worker_addr: str
+        self,
+        session_key: str,
+        session_id: str,
+        worker_addr: str,
+        model: str | None = None,
+        url: str | None = None,
+        api_key: str | None = None,
     ) -> None:
-        """Store both session_key→worker and session_id→worker. Upsert semantics."""
+        """Store a session pin. Upsert semantics."""
+        pin = SessionPin(
+            worker_addr=worker_addr,
+            model=model,
+            url=url,
+            api_key=api_key,
+        )
         async with self._lock:
-            self._key_to_worker[session_key] = worker_addr
-            self._id_to_worker[session_id] = worker_addr
+            self._key_to_pin[session_key] = pin
+            self._id_to_pin[session_id] = pin
             self._id_to_key[session_id] = session_key
 
-    async def lookup_by_key(self, session_key: str) -> str | None:
-        """Return the worker address pinned to a session API key, or None."""
+    async def lookup_by_key(self, session_key: str) -> SessionPin | None:
+        """Return the pin for a session API key, or None."""
         async with self._lock:
-            return self._key_to_worker.get(session_key)
+            return self._key_to_pin.get(session_key)
 
-    async def lookup_by_id(self, session_id: str) -> str | None:
-        """Return the worker address pinned to a session ID, or None."""
+    async def lookup_by_id(self, session_id: str) -> SessionPin | None:
+        """Return the pin for a session ID, or None."""
         async with self._lock:
-            return self._id_to_worker.get(session_id)
+            return self._id_to_pin.get(session_id)
 
     async def revoke_by_worker(self, worker_addr: str) -> int:
         """Remove all sessions pinned to a worker (cascade on deletion).
@@ -130,33 +156,33 @@ class SessionRegistry:
         """
         async with self._lock:
             keys_to_remove = [
-                k for k, v in self._key_to_worker.items() if v == worker_addr
+                k for k, v in self._key_to_pin.items() if v.worker_addr == worker_addr
             ]
             ids_to_remove = [
-                k for k, v in self._id_to_worker.items() if v == worker_addr
+                k for k, v in self._id_to_pin.items() if v.worker_addr == worker_addr
             ]
             for k in keys_to_remove:
-                del self._key_to_worker[k]
+                del self._key_to_pin[k]
             for k in ids_to_remove:
                 self._id_to_key.pop(k, None)
-                del self._id_to_worker[k]
+                del self._id_to_pin[k]
             return len(keys_to_remove)
 
     async def revoke_session(self, session_id: str) -> bool:
         """Remove a single session by its ID.
 
-        Removes both the session_id→worker and session_key→worker mappings.
+        Removes both the session_id and session_key mappings.
         Called after ``/export_trajectories`` to prevent unbounded growth.
 
         Returns True if the session was found and removed, False otherwise.
         """
         async with self._lock:
-            if session_id not in self._id_to_worker:
+            if session_id not in self._id_to_pin:
                 return False
-            del self._id_to_worker[session_id]
+            del self._id_to_pin[session_id]
             session_key = self._id_to_key.pop(session_id, None)
             if session_key is not None:
-                self._key_to_worker.pop(session_key, None)
+                self._key_to_pin.pop(session_key, None)
             return True
 
     async def session_key_for_id(self, session_id: str) -> str | None:
@@ -166,7 +192,7 @@ class SessionRegistry:
     async def count(self) -> int:
         """Return the number of registered session keys."""
         async with self._lock:
-            return len(self._key_to_worker)
+            return len(self._key_to_pin)
 
 
 @dataclass

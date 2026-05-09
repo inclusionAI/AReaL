@@ -5,10 +5,6 @@
 The Router is a separate FastAPI service from the Gateway.
 It owns worker health state, session→worker mappings, and routing strategy.
 It never proxies traffic — it only answers routing queries.
-
-Endpoint names are aligned with
-``areal.experimental.agent_service.router.app``:
-``/register``, ``/unregister``, ``/route``, ``/remove_session``.
 """
 
 from __future__ import annotations
@@ -34,12 +30,11 @@ logger = logging.getLogger("InferenceRouter")
 
 
 # =============================================================================
-# Auth helpers (same pattern as data proxy)
+# Auth
 # =============================================================================
 
 
 def _extract_bearer_token(request: Request) -> str:
-    """Extract API token from Authorization header."""
     auth_header = request.headers.get("authorization", "")
     if auth_header.lower().startswith("bearer "):
         return auth_header[7:].strip()
@@ -50,7 +45,6 @@ def _extract_bearer_token(request: Request) -> str:
 
 
 def _require_admin_key(request: Request, admin_key: str) -> str:
-    """Validate that the request carries the admin API key."""
     token = _extract_bearer_token(request)
     if not hmac.compare_digest(token, admin_key):
         raise HTTPException(status_code=403, detail="Invalid admin API key.")
@@ -82,6 +76,9 @@ class RegisterSessionRequest(BaseModel):
     session_api_key: str
     session_id: str
     worker_addr: str
+    model: str | None = None
+    url: str | None = None
+    provider_api_key: str | None = None
 
 
 class RemoveSessionRequest(BaseModel):
@@ -137,7 +134,7 @@ class RemoveSessionResponse(BaseModel):
     persistent: bool
 
 
-class WorkerInfo(BaseModel):
+class WorkerInfoResponse(BaseModel):
     worker_id: str
     addr: str
     healthy: bool
@@ -145,7 +142,7 @@ class WorkerInfo(BaseModel):
 
 
 class WorkersResponse(BaseModel):
-    workers: list[WorkerInfo]
+    workers: list[WorkerInfoResponse]
 
 
 class RegisterModelResponse(BaseModel):
@@ -182,7 +179,6 @@ def create_app(config: RouterConfig) -> FastAPI:
     strategy = get_strategy(config.routing_strategy)
 
     async def _poll_workers() -> None:
-        """Background task: periodically poll worker /health endpoints."""
         while True:
             workers = await worker_registry.get_all_workers()
 
@@ -296,85 +292,86 @@ def create_app(config: RouterConfig) -> FastAPI:
     async def route(body: RouteRequest, request: Request):
         _require_admin_key(request, config.admin_api_key)
 
-        # Step A: resolve model → candidate worker addrs
-        model_addrs: list[str] | None = None
-        if body.model is not None:
-            info = await model_registry.get(body.model)
-            if info is not None:
-                model_addrs = info.data_proxy_addrs
-        if model_addrs is None:
-            first = await model_registry.first()
-            if first is not None:
-                model_addrs = first.data_proxy_addrs
-
-        def _filter_by_model(workers: list, addrs: list[str] | None) -> list:
-            if addrs is None:
-                return workers
-            addr_set = set(addrs)
-            return [w for w in workers if w.worker_addr in addr_set]
-
-        # Step B: session_id lookup
+        # Step 1: Check session pinning (by session_id or api_key)
+        pin = None
         if body.session_id is not None:
-            worker = await session_registry.lookup_by_id(body.session_id)
-            if worker is not None:
-                return RouteResponse(worker_addr=worker)
-            if model_addrs is None:
-                raise HTTPException(status_code=404, detail="Session not found")
+            pin = await session_registry.lookup_by_id(body.session_id)
+        elif body.api_key is not None:
+            pin = await session_registry.lookup_by_key(body.api_key)
 
-        # Step C: model-only routing (no api_key/session_id)
-        if body.api_key is None and model_addrs is not None:
-            all_workers = await worker_registry.get_all_workers()
-            candidates = _filter_by_model(all_workers, model_addrs)
-            if not candidates:
-                raise HTTPException(status_code=503, detail="No registered workers")
-            worker = strategy.pick(candidates)
-            if worker is None:
-                raise HTTPException(status_code=503, detail="No registered workers")
-            info = (
-                await model_registry.get(body.model)
-                if body.model
-                else await model_registry.first()
-            )
+        if pin is not None:
             return RouteResponse(
-                worker_addr=worker.worker_addr,
-                url=info.url if info else None,
-                api_key=info.api_key if info else None,
+                worker_addr=pin.worker_addr,
+                url=pin.url,
+                api_key=pin.api_key,
             )
 
-        if body.api_key is None and body.model is not None and model_addrs is None:
-            raise HTTPException(
-                status_code=404, detail=f"Model '{body.model}' not found"
-            )
+        # Step 2: No pinned session — pick a worker via model + strategy
+        model_info = await _resolve_model(body.model)
+
+        if body.session_id is not None:
+            raise HTTPException(status_code=404, detail="Session not found")
 
         if body.api_key is None:
+            if body.model is not None:
+                if model_info is None:
+                    raise HTTPException(
+                        status_code=404, detail=f"Model '{body.model}' not found"
+                    )
+                worker = await _pick_worker(model_info)
+                return RouteResponse(
+                    worker_addr=worker.worker_addr,
+                    url=model_info.url,
+                    api_key=model_info.api_key,
+                )
             raise HTTPException(
                 status_code=422,
-                detail="Either 'api_key' or 'session_id' must be provided",
+                detail="Either 'api_key', 'session_id', or 'model' must be provided",
             )
 
-        # Step C: Session key → pinned worker
-        pinned = await session_registry.lookup_by_key(body.api_key)
-        if pinned is not None:
-            return RouteResponse(worker_addr=pinned)
+        if not hmac.compare_digest(body.api_key, config.admin_api_key):
+            raise HTTPException(status_code=404, detail="Unknown API key")
 
-        # Step D: Admin key → pick from model addrs
-        if hmac.compare_digest(body.api_key, config.admin_api_key):
-            all_workers = await worker_registry.get_all_workers()
-            candidates = _filter_by_model(all_workers, model_addrs)
-            if not candidates:
-                raise HTTPException(status_code=503, detail="No registered workers")
-            worker = strategy.pick(candidates)
-            if worker is None:
-                raise HTTPException(status_code=503, detail="No registered workers")
-            await session_registry.register_session(
-                body.api_key,
-                "__hitl__",
-                worker.worker_addr,
-            )
-            return RouteResponse(worker_addr=worker.worker_addr)
+        worker = await _pick_worker(model_info)
 
-        # Step E: Unknown key
-        raise HTTPException(status_code=404, detail="Unknown API key")
+        # Pin admin key for HITL sticky routing
+        await session_registry.register_session(
+            session_key=body.api_key,
+            session_id="__hitl__",
+            worker_addr=worker.worker_addr,
+            model=model_info.name if model_info else None,
+            url=model_info.url if model_info else None,
+            api_key=model_info.api_key if model_info else None,
+        )
+
+        return RouteResponse(
+            worker_addr=worker.worker_addr,
+            url=model_info.url if model_info else None,
+            api_key=model_info.api_key if model_info else None,
+        )
+
+    async def _resolve_model(model_name: str | None):
+        """Resolve model name to ModelInfo. Falls back to first registered."""
+        if model_name is not None:
+            info = await model_registry.get(model_name)
+            if info is not None:
+                return info
+        return await model_registry.first()
+
+    async def _pick_worker(model_info):
+        """Pick a worker filtered by model's data_proxy_addrs."""
+        all_workers = await worker_registry.get_all_workers()
+        if model_info is not None and model_info.data_proxy_addrs:
+            addr_set = set(model_info.data_proxy_addrs)
+            candidates = [w for w in all_workers if w.worker_addr in addr_set]
+        else:
+            candidates = all_workers
+        if not candidates:
+            raise HTTPException(status_code=503, detail="No registered workers")
+        worker = strategy.pick(candidates)
+        if worker is None:
+            raise HTTPException(status_code=503, detail="No registered workers")
+        return worker
 
     # =========================================================================
     # Session registration (admin key required)
@@ -384,7 +381,12 @@ def create_app(config: RouterConfig) -> FastAPI:
     async def register_session(body: RegisterSessionRequest, request: Request):
         _require_admin_key(request, config.admin_api_key)
         await session_registry.register_session(
-            body.session_api_key, body.session_id, body.worker_addr
+            session_key=body.session_api_key,
+            session_id=body.session_id,
+            worker_addr=body.worker_addr,
+            model=body.model,
+            url=body.url,
+            api_key=body.provider_api_key,
         )
         return StatusResponse(status="ok")
 
@@ -394,11 +396,6 @@ def create_app(config: RouterConfig) -> FastAPI:
 
     @app.post("/remove_session", response_model=RemoveSessionResponse)
     async def remove_session(body: RemoveSessionRequest, request: Request):
-        """Remove a session from the registry after export.
-
-        Called by the gateway after ``/export_trajectories`` completes to
-        prevent unbounded memory growth in the session registry.
-        """
         _require_admin_key(request, config.admin_api_key)
         session_key = await session_registry.session_key_for_id(body.session_id)
         is_hitl_persistent = session_key is not None and hmac.compare_digest(
@@ -425,7 +422,7 @@ def create_app(config: RouterConfig) -> FastAPI:
         all_workers = await worker_registry.get_all_workers()
         return WorkersResponse(
             workers=[
-                WorkerInfo(
+                WorkerInfoResponse(
                     worker_id=w.worker_id,
                     addr=w.worker_addr,
                     healthy=w.is_healthy,
@@ -486,7 +483,6 @@ def create_app(config: RouterConfig) -> FastAPI:
 
     @app.get("/resolve_worker/{worker_id}", response_model=ResolveWorkerResponse)
     async def resolve_worker(worker_id: str, request: Request):
-        """Resolve a worker_id to its address."""
         _require_admin_key(request, config.admin_api_key)
         worker = await worker_registry.get_by_id(worker_id)
         if worker is None:

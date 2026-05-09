@@ -18,6 +18,7 @@ from areal.experimental.inference_service.gateway.app import (
 )
 from areal.experimental.inference_service.gateway.config import GatewayConfig
 from areal.experimental.inference_service.gateway.streaming import (
+    RouteResult,
     RouterKeyRejectedError,
 )
 from areal.experimental.inference_service.router.app import (
@@ -240,7 +241,7 @@ class TestGatewayExternalEndpoints:
         mock_forward,
         gateway_client,
     ):
-        mock_query_router.return_value = WORKER_ADDR
+        mock_query_router.return_value = RouteResult(worker_addr=WORKER_ADDR)
         mock_forward.return_value = httpx.Response(200, json={"id": "ext-chat-1"})
 
         resp = await gateway_client.post(
@@ -261,7 +262,7 @@ class TestGatewayExternalEndpoints:
         mock_forward_sse,
         gateway_client,
     ):
-        mock_query_router.return_value = WORKER_ADDR
+        mock_query_router.return_value = RouteResult(worker_addr=WORKER_ADDR)
 
         async def _stream() -> AsyncGenerator[bytes, None]:
             yield b"data: hello\n\n"
@@ -290,7 +291,7 @@ class TestGatewayExternalEndpoints:
         mock_forward,
         gateway_client,
     ):
-        mock_query_router.return_value = WORKER_ADDR
+        mock_query_router.return_value = RouteResult(worker_addr=WORKER_ADDR)
         mock_forward.return_value = httpx.Response(200, json={"id": "internal-chat"})
 
         resp = await gateway_client.post(
@@ -314,7 +315,7 @@ class TestGatewayExternalEndpoints:
         mock_forward,
         gateway_client,
     ):
-        mock_query_router.return_value = WORKER_ADDR
+        mock_query_router.return_value = RouteResult(worker_addr=WORKER_ADDR)
         mock_forward.return_value = httpx.Response(200, json={"id": "internal-chat"})
 
         resp = await gateway_client.post(
@@ -343,7 +344,7 @@ class TestGatewayExternalEndpoints:
         mock_forward,
         gateway_client,
     ):
-        mock_query_router.return_value = WORKER_ADDR
+        mock_query_router.return_value = RouteResult(worker_addr=WORKER_ADDR)
         mock_forward.return_value = httpx.Response(
             200,
             json={
@@ -703,7 +704,7 @@ async def test_external_model_end_to_end_register_then_chat(router_config):
             admin_api_key: str | None = None,
             model: str | None = None,
             client: httpx.AsyncClient | None = None,
-        ) -> str:
+        ) -> RouteResult:
             del router_addr, path, timeout, admin_api_key, client
             payload: dict[str, str] = {}
             if model is not None:
@@ -723,9 +724,19 @@ async def test_external_model_end_to_end_register_then_chat(router_config):
                 if resp.status_code == 503:
                     raise RouterKeyRejectedError("no healthy workers", 503)
                 resp.raise_for_status()
-                return resp.json()["worker_addr"]
+                data = resp.json()
+                return RouteResult(
+                    worker_addr=data["worker_addr"],
+                    url=data.get("url"),
+                    api_key=data.get("api_key"),
+                )
             resp.raise_for_status()
-            return resp.json()["worker_addr"]
+            data = resp.json()
+            return RouteResult(
+                worker_addr=data["worker_addr"],
+                url=data.get("url"),
+                api_key=data.get("api_key"),
+            )
 
         async def _forward_request(
             upstream_url: str,

@@ -138,7 +138,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
             pass
 
         try:
-            worker_addr = await query_router(
+            route = await query_router(
                 config.router_addr,
                 token,
                 "/chat/completions",
@@ -150,6 +150,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
         except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)
 
+        worker_addr = route.worker_addr
         if is_streaming:
             return StreamingResponse(
                 forward_sse_stream(
@@ -276,7 +277,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
         token = require_admin_key(request, config.admin_api_key)
 
         try:
-            worker_addr = await query_router(
+            route_result = await query_router(
                 config.router_addr,
                 token,
                 "/rl/start_session",
@@ -287,6 +288,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
         except (RouterUnreachableError, RouterKeyRejectedError) as exc:
             return _router_error_response(exc)
 
+        worker_addr = route_result.worker_addr
         body = await request.body()
         headers = _forwarding_headers(dict(request.headers))
 
@@ -312,6 +314,8 @@ def create_app(config: GatewayConfig) -> FastAPI:
                         worker_addr,
                         config.router_timeout,
                         admin_api_key=config.admin_api_key,
+                        url=route_result.url,
+                        provider_api_key=route_result.api_key,
                         client=_client(),
                     )
             except Exception as exc:
@@ -348,7 +352,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
             pass
 
         try:
-            worker_addr = await query_router(
+            route = await query_router(
                 config.router_addr,
                 token,
                 "/rl/set_reward",
@@ -361,7 +365,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
             return _router_error_response(exc)
 
         resp = await forward_request(
-            f"{worker_addr}/rl/set_reward",
+            f"{route.worker_addr}/rl/set_reward",
             body,
             headers,
             config.forward_timeout,
@@ -501,7 +505,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
             return JSONResponse({"error": "session_id is required"}, status_code=400)
 
         try:
-            worker_addr = await query_router(
+            route = await query_router(
                 config.router_addr,
                 timeout=config.router_timeout,
                 session_id=session_id,
@@ -514,7 +518,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
 
         headers = _forwarding_headers(dict(request.headers))
         resp = await forward_request(
-            f"{worker_addr}/export_trajectories",
+            f"{route.worker_addr}/export_trajectories",
             body,
             headers,
             config.forward_timeout,

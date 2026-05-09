@@ -15,6 +15,7 @@ import pytest_asyncio
 from areal.experimental.inference_service.gateway.app import create_app
 from areal.experimental.inference_service.gateway.config import GatewayConfig
 from areal.experimental.inference_service.gateway.streaming import (
+    RouteResult,
     RouterKeyRejectedError,
     RouterUnreachableError,
 )
@@ -120,7 +121,7 @@ class TestAdminEndpoints:
         self, mock_query_router, mock_forward, client
     ):
         """Admin key → /chat/completions (non-streaming) → response forwarded."""
-        mock_query_router.return_value = WORKER_ADDR
+        mock_query_router.return_value = RouteResult(worker_addr=WORKER_ADDR)
 
         # Simulate data proxy response
         mock_resp = httpx.Response(
@@ -148,7 +149,7 @@ class TestAdminEndpoints:
         self, mock_query_router, mock_forward_sse, client
     ):
         """Admin key → /chat/completions (streaming) → SSE forwarded."""
-        mock_query_router.return_value = WORKER_ADDR
+        mock_query_router.return_value = RouteResult(worker_addr=WORKER_ADDR)
 
         async def _stream():
             yield b'data: {"choices": [{"delta": {"content": "Hi"}}]}\n\n'
@@ -176,7 +177,7 @@ class TestAdminEndpoints:
         self, mock_query_router, mock_forward, mock_register, client
     ):
         """Admin key → /rl/start_session → forwarded, response intercepted, session registered."""
-        mock_query_router.return_value = WORKER_ADDR
+        mock_query_router.return_value = RouteResult(worker_addr=WORKER_ADDR)
         session_resp_data = {
             "session_id": "task-1-0",
             "api_key": "sess-key-xyz",
@@ -208,7 +209,7 @@ class TestAdminEndpoints:
         self, mock_query_router, mock_forward, mock_register, client
     ):
         """If router registration fails after session creation → 502."""
-        mock_query_router.return_value = WORKER_ADDR
+        mock_query_router.return_value = RouteResult(worker_addr=WORKER_ADDR)
         mock_forward.return_value = httpx.Response(
             201, json={"session_id": "t-0", "api_key": "k"}
         )
@@ -230,7 +231,7 @@ class TestAdminEndpoints:
         self, mock_forward, mock_query_router, mock_revoke, client
     ):
         """Admin key → /export_trajectories → routed by session_id, session revoked."""
-        mock_query_router.return_value = WORKER_ADDR
+        mock_query_router.return_value = RouteResult(worker_addr=WORKER_ADDR)
         mock_forward.return_value = httpx.Response(200, json={"interactions": []})
 
         resp = await client.post(
@@ -251,7 +252,7 @@ class TestAdminEndpoints:
     async def test_online_export_with_trajectory_id_requests_router_cleanup(
         self, mock_forward, mock_query_router, mock_revoke, client
     ):
-        mock_query_router.return_value = WORKER_ADDR
+        mock_query_router.return_value = RouteResult(worker_addr=WORKER_ADDR)
         mock_forward.return_value = httpx.Response(200, json={"interactions": []})
 
         resp = await client.post(
@@ -292,7 +293,7 @@ class TestSessionEndpoints:
         self, mock_query_router, mock_forward, client
     ):
         """Session key → /chat/completions → forwarded to pinned worker."""
-        mock_query_router.return_value = WORKER_ADDR
+        mock_query_router.return_value = RouteResult(worker_addr=WORKER_ADDR)
         mock_forward.return_value = httpx.Response(
             200,
             json={"id": "chatcmpl-2", "choices": [{"message": {"content": "OK"}}]},
@@ -316,7 +317,7 @@ class TestSessionEndpoints:
         self, mock_query_router, mock_forward, client
     ):
         """Session key → /rl/set_reward (finish=True) → forwarded to pinned worker."""
-        mock_query_router.return_value = WORKER_ADDR
+        mock_query_router.return_value = RouteResult(worker_addr=WORKER_ADDR)
         mock_forward.return_value = httpx.Response(
             200,
             json={"message": "success", "interaction_count": 5, "finished": True},
@@ -335,7 +336,7 @@ class TestSessionEndpoints:
     @patch(f"{MODULE}.query_router", new_callable=AsyncMock)
     async def test_session_set_reward(self, mock_query_router, mock_forward, client):
         """Session key → /rl/set_reward → forwarded to pinned worker."""
-        mock_query_router.return_value = WORKER_ADDR
+        mock_query_router.return_value = RouteResult(worker_addr=WORKER_ADDR)
         mock_forward.return_value = httpx.Response(200, json={"message": "success"})
 
         resp = await client.post(
@@ -352,7 +353,7 @@ class TestSessionEndpoints:
     async def test_set_reward_returns_ready_transition_without_router_notification(
         self, mock_query_router, mock_forward, client
     ):
-        mock_query_router.return_value = WORKER_ADDR
+        mock_query_router.return_value = RouteResult(worker_addr=WORKER_ADDR)
         mock_forward.return_value = httpx.Response(
             200,
             json={
@@ -378,7 +379,7 @@ class TestSessionEndpoints:
     async def test_set_reward_duplicate_ready_transition_is_forwarded_as_is(
         self, mock_query_router, mock_forward, client
     ):
-        mock_query_router.return_value = WORKER_ADDR
+        mock_query_router.return_value = RouteResult(worker_addr=WORKER_ADDR)
         mock_forward.return_value = httpx.Response(
             200,
             json={
@@ -567,7 +568,7 @@ class TestStartSessionCapacity:
         Gateway no longer manages capacity — that is handled by the
         router's ``/register_session`` endpoint.
         """
-        mock_query_router.return_value = WORKER_ADDR
+        mock_query_router.return_value = RouteResult(worker_addr=WORKER_ADDR)
         mock_forward.return_value = httpx.Response(
             201, json={"session_id": "t-0", "api_key": "k"}
         )

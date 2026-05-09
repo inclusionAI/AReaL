@@ -21,6 +21,7 @@ from areal.experimental.inference_service.data_proxy.session import SessionStore
 from areal.experimental.inference_service.gateway.app import create_app as create_gw_app
 from areal.experimental.inference_service.gateway.config import GatewayConfig
 from areal.experimental.inference_service.gateway.streaming import (
+    RouteResult,
     RouterKeyRejectedError,
     RouterUnreachableError,
 )
@@ -177,7 +178,7 @@ async def online_stack(monkeypatch):
             admin_api_key: str | None = None,
             model: str | None = None,
             client: httpx.AsyncClient | None = None,
-        ) -> str:
+        ) -> RouteResult:
             del router_addr, timeout, client
             payload: dict[str, str] = {}
             if model is not None:
@@ -198,7 +199,12 @@ async def online_stack(monkeypatch):
                 raise RouterKeyRejectedError(detail, resp.status_code)
             if resp.status_code >= 400:
                 raise RouterUnreachableError(resp.text)
-            return resp.json()["worker_addr"]
+            data = resp.json()
+            return RouteResult(
+                worker_addr=data["worker_addr"],
+                url=data.get("url"),
+                api_key=data.get("api_key"),
+            )
 
         async def _forward_request(
             url: str,
@@ -289,7 +295,9 @@ async def test_online_stack_latest_ready_export_keeps_session_pinned(online_stac
     assert list(export_resp.json()["interactions"]) == ["chatcmpl-test1"]
 
     session_registry = router_app.state.session_registry
-    assert await session_registry.lookup_by_id("__hitl__") == DATA_PROXY_ADDR
+    pin = await session_registry.lookup_by_id("__hitl__")
+    assert pin is not None
+    assert pin.worker_addr == DATA_PROXY_ADDR
 
 
 @pytest.mark.asyncio

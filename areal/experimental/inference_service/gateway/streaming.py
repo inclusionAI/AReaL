@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -44,6 +45,15 @@ async def _use_client(
             yield c
 
 
+@dataclass
+class RouteResult:
+    """Full route response from the Router, including model context."""
+
+    worker_addr: str
+    url: str | None = None
+    api_key: str | None = None
+
+
 @async_httpx_retry
 async def query_router(
     router_addr: str,
@@ -55,33 +65,7 @@ async def query_router(
     admin_api_key: str | None = None,
     model: str | None = None,
     client: httpx.AsyncClient | None = None,
-) -> str:
-    """Ask the Router for a worker address.
-
-    POST ``{router_addr}/route`` with ``{"api_key": ..., "path": ...}``
-    or ``{"session_id": ...}``.
-    Returns the ``worker_addr`` string.
-
-    Parameters
-    ----------
-    admin_api_key : str | None
-        When set, sent as ``Authorization: Bearer <key>`` so the Router
-        can authenticate the request.
-    session_id : str | None
-        Pin routing to the session's worker.
-    model : str | None
-        Route to a specific model's data proxies.
-    client : httpx.AsyncClient | None
-        Shared HTTP client.  When ``None``, a per-request client is created
-        (backwards-compatible, but less efficient).
-
-    Raises
-    ------
-    RouterUnreachableError
-        Router is unreachable or returned an unexpected HTTP error.
-    RouterKeyRejectedError
-        Router returned 404 (unknown key / session) or 503 (no healthy workers).
-    """
+) -> RouteResult:
     payload: dict[str, str] = {}
     if model is not None:
         payload["model"] = model
@@ -113,7 +97,12 @@ async def query_router(
                 data.get("detail", data.get("error", "No healthy workers")), 503
             )
         resp.raise_for_status()
-        return resp.json()["worker_addr"]
+        data = resp.json()
+        return RouteResult(
+            worker_addr=data["worker_addr"],
+            url=data.get("url"),
+            api_key=data.get("api_key"),
+        )
     except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
         raise RouterUnreachableError(f"Router unreachable: {exc}") from exc
     except httpx.TimeoutException as exc:
@@ -135,6 +124,9 @@ async def register_session_in_router(
     timeout: float,
     admin_api_key: str | None = None,
     *,
+    model: str | None = None,
+    url: str | None = None,
+    provider_api_key: str | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> None:
     """Register a session→worker mapping in the Router.
@@ -147,14 +139,22 @@ async def register_session_in_router(
         if admin_api_key is not None:
             headers["Authorization"] = f"Bearer {admin_api_key}"
 
+        payload: dict[str, Any] = {
+            "session_api_key": session_api_key,
+            "session_id": session_id,
+            "worker_addr": worker_addr,
+        }
+        if model is not None:
+            payload["model"] = model
+        if url is not None:
+            payload["url"] = url
+        if provider_api_key is not None:
+            payload["provider_api_key"] = provider_api_key
+
         async with _use_client(client, timeout) as c:
             resp = await c.post(
                 f"{router_addr}/register_session",
-                json={
-                    "session_api_key": session_api_key,
-                    "session_id": session_id,
-                    "worker_addr": worker_addr,
-                },
+                json=payload,
                 headers=headers,
                 timeout=timeout,
             )
