@@ -200,38 +200,6 @@ async def revoke_session_in_router(
 
 
 @async_httpx_retry
-async def grant_capacity_in_router(
-    router_addr: str,
-    admin_api_key: str,
-    timeout: float,
-    *,
-    client: httpx.AsyncClient | None = None,
-) -> dict:
-    """Forward a grant_capacity request to the Router.
-
-    POST ``{router_addr}/grant_capacity`` with admin key auth.
-    Returns the JSON response body from the router.
-    """
-    try:
-        async with _use_client(client, timeout) as c:
-            resp = await c.post(
-                f"{router_addr}/grant_capacity",
-                headers={"Authorization": f"Bearer {admin_api_key}"},
-                timeout=timeout,
-            )
-        resp.raise_for_status()
-        return resp.json()
-    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
-        raise RouterUnreachableError(
-            f"Router unreachable for grant_capacity: {exc}"
-        ) from exc
-    except Exception as exc:
-        raise RouterUnreachableError(
-            f"Failed to grant capacity in router: {exc}"
-        ) from exc
-
-
-@async_httpx_retry
 async def get_all_worker_addrs(
     router_addr: str,
     admin_api_key: str,

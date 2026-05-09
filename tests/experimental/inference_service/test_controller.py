@@ -577,7 +577,6 @@ class TestInferenceServiceWorkflow:
             admin_api_key="test-key",
             timeout=3.0,
         )
-        workflow._grant_capacity = AsyncMock()
 
         with (
             patch(
@@ -615,7 +614,6 @@ class TestInferenceServiceWorkflow:
 
         assert result is not None
         assert "chatcmpl-1" in result
-        workflow._grant_capacity.assert_awaited_once()
         controller.wait_for_online_trajectory.assert_awaited_once_with(timeout=3.0)
         mock_http_session.post.assert_called_once()
         mock_deserialize.assert_called_once_with({"chatcmpl-1": {}})
@@ -635,7 +633,6 @@ class TestInferenceServiceWorkflow:
             gateway_addr="http://test:8080",
             admin_api_key="test-key",
         )
-        workflow._grant_capacity = AsyncMock()
         workflow._start_session = AsyncMock(return_value=("sess-1", "sess-api-key-1"))
         workflow._set_last_reward = AsyncMock(return_value=None)
         workflow._export_interactions = AsyncMock(
@@ -661,7 +658,6 @@ class TestInferenceServiceWorkflow:
 
         assert result is not None
         assert "chatcmpl-1" in result
-        workflow._grant_capacity.assert_awaited_once()
         workflow._start_session.assert_awaited_once()
         workflow._set_last_reward.assert_awaited_once_with(
             mock_http_session, 1.0, "sess-api-key-1"

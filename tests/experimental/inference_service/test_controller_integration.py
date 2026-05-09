@@ -140,16 +140,9 @@ def _make_solid_color_png_b64(width: int, height: int, color: tuple) -> str:
 def _do_vlm_chat_session(
     ctrl, task_id: str, messages: list, *, max_tokens: int = 64
 ) -> dict:
-    """grant_capacity → start_session → chat/completions → end_session."""
+    """start_session → chat/completions → end_session."""
     gw = ctrl._gateway_addr
     admin = "test-admin"
-
-    resp = httpx.post(
-        f"{gw}/grant_capacity",
-        headers={"Authorization": f"Bearer {admin}"},
-        timeout=10.0,
-    )
-    assert resp.status_code == 200, resp.text
 
     resp = httpx.post(
         f"{gw}/rl/start_session",
@@ -885,14 +878,6 @@ class TestControllerFullInitialization:
         gw = ctrl._gateway_addr
         admin_key = "test-admin"
 
-        # --- grant capacity ---
-        resp = httpx.post(
-            f"{gw}/grant_capacity",
-            headers={"Authorization": f"Bearer {admin_key}"},
-            timeout=10.0,
-        )
-        assert resp.status_code == 200, resp.text
-
         # --- start session ---
         resp = httpx.post(
             f"{gw}/rl/start_session",
@@ -1118,13 +1103,6 @@ class TestControllerOnlineWorkflow:
         gateway_url = ctrl.proxy_gateway_addr
         assert ctrl.config.admin_api_key is not None
         admin_key = ctrl.config.admin_api_key
-
-        grant_resp = httpx.post(
-            f"{gateway_url}/grant_capacity",
-            headers={"Authorization": f"Bearer {admin_key}"},
-            timeout=10.0,
-        )
-        assert grant_resp.status_code == 200, grant_resp.text
 
         start_resp = httpx.post(
             f"{gateway_url}/rl/start_session",

@@ -23,7 +23,6 @@ from pydantic import BaseModel
 
 from areal.experimental.inference_service.router.config import RouterConfig
 from areal.experimental.inference_service.router.state import (
-    CapacityManager,
     ModelRegistry,
     SessionRegistry,
     WorkerRegistry,
@@ -113,7 +112,6 @@ class HealthResponse(BaseModel):
     status: str
     workers: int
     sessions: int
-    capacity: int
     strategy: str
 
 
@@ -170,11 +168,6 @@ class ResolveWorkerResponse(BaseModel):
     worker_addr: str
 
 
-class CapacityResponse(BaseModel):
-    status: str
-    capacity: int
-
-
 # =============================================================================
 # App factory
 # =============================================================================
@@ -186,7 +179,6 @@ def create_app(config: RouterConfig) -> FastAPI:
     worker_registry = WorkerRegistry()
     session_registry = SessionRegistry()
     model_registry = ModelRegistry()
-    capacity_manager = CapacityManager()
     strategy = get_strategy(config.routing_strategy)
 
     async def _poll_workers() -> None:
@@ -218,7 +210,6 @@ def create_app(config: RouterConfig) -> FastAPI:
         app.state.worker_registry = worker_registry
         app.state.session_registry = session_registry
         app.state.model_registry = model_registry
-        app.state.capacity_manager = capacity_manager
         app.state.strategy = strategy
         try:
             yield
@@ -237,7 +228,6 @@ def create_app(config: RouterConfig) -> FastAPI:
     app.state.worker_registry = worker_registry
     app.state.session_registry = session_registry
     app.state.model_registry = model_registry
-    app.state.capacity_manager = capacity_manager
     app.state.strategy = strategy
 
     # =========================================================================
@@ -248,12 +238,10 @@ def create_app(config: RouterConfig) -> FastAPI:
     async def health():
         all_workers = await worker_registry.get_all_workers()
         session_count = await session_registry.count()
-        capacity = await capacity_manager.get_capacity()
         return HealthResponse(
             status="ok",
             workers=len(all_workers),
             sessions=session_count,
-            capacity=capacity,
             strategy=config.routing_strategy,
         )
 
@@ -390,23 +378,11 @@ def create_app(config: RouterConfig) -> FastAPI:
 
     # =========================================================================
     # Session registration (admin key required)
-    #
-    # Acquires a capacity permit before registering. Returns 429 when
-    # no permits remain.
     # =========================================================================
 
     @app.post("/register_session", response_model=StatusResponse)
     async def register_session(body: RegisterSessionRequest, request: Request):
         _require_admin_key(request, config.admin_api_key)
-
-        # Acquire a capacity permit — reject with 429 if none remain
-        acquired = await capacity_manager.try_acquire()
-        if not acquired:
-            raise HTTPException(
-                status_code=429,
-                detail="No available capacity to start a new session",
-            )
-
         await session_registry.register_session(
             body.session_api_key, body.session_id, body.worker_addr
         )
@@ -520,17 +496,5 @@ def create_app(config: RouterConfig) -> FastAPI:
         return ResolveWorkerResponse(
             worker_id=worker.worker_id, worker_addr=worker.worker_addr
         )
-
-    # =========================================================================
-    # Capacity management (admin key required)
-    # =========================================================================
-
-    @app.post("/grant_capacity", response_model=CapacityResponse)
-    async def grant_capacity(request: Request):
-        """Increment session capacity by 1."""
-        _require_admin_key(request, config.admin_api_key)
-        new_capacity = await capacity_manager.grant()
-        logger.debug("Capacity granted — now %d", new_capacity)
-        return CapacityResponse(status="ok", capacity=new_capacity)
 
     return app

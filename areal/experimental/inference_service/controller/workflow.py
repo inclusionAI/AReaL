@@ -23,7 +23,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("InferenceServiceWorkflow")
 
-_GRANT_CAPACITY_PATHNAME = "grant_capacity"
 _RL_START_SESSION_PATHNAME = "rl/start_session"
 _RL_SET_REWARD_PATHNAME = "rl/set_reward"
 _EXPORT_TRAJECTORIES_PATHNAME = "export_trajectories"
@@ -59,13 +58,6 @@ class InferenceServiceWorkflow(RolloutWorkflow):
         self.discount = discount
         self.export_style = export_style
         self.timeout = timeout
-
-    @async_http_retry
-    async def _grant_capacity(self, session: aiohttp.ClientSession) -> None:
-        url = f"{self.gateway_addr}/{_GRANT_CAPACITY_PATHNAME}"
-        headers = {"Authorization": f"Bearer {self._admin_api_key}"}
-        async with session.post(url, headers=headers) as resp:
-            resp.raise_for_status()
 
     @async_http_retry
     async def _start_session(
@@ -123,7 +115,6 @@ class InferenceServiceWorkflow(RolloutWorkflow):
     ) -> dict[str, InteractionWithTokenLogpReward] | None:
         del engine
         http_session = await workflow_context.get_aiohttp_session()
-        await self._grant_capacity(http_session)
 
         if self.agent is not None:
             return await self._run_offline(http_session, data)

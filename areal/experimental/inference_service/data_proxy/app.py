@@ -730,11 +730,6 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         serialized = serialize_interactions(interactions)
         return ExportTrajectoriesResponse(interactions=serialized)
 
-    # NOTE: /grant_capacity has been removed from data proxy. Capacity-based
-    # staleness control is now managed at the router level — see
-    # areal.experimental.inference_service.router.app for the /grant_capacity
-    # endpoint.
-
     # =========================================================================
     # Runtime backend reconfiguration (for fork-based deployment)
     # =========================================================================

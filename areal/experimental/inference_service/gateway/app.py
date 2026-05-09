@@ -30,7 +30,6 @@ from areal.experimental.inference_service.gateway.streaming import (
     broadcast_to_workers,
     forward_request,
     forward_sse_stream,
-    grant_capacity_in_router,
     list_models_from_router,
     query_router,
     register_model_in_router,
@@ -601,25 +600,6 @@ def create_app(config: GatewayConfig) -> FastAPI:
             )
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=502)
-
-    @app.post("/grant_capacity")
-    async def grant_capacity(request: Request):
-        """Forward capacity grant to the Router (not data proxies).
-
-        Staleness control lives at the router level — data proxies do not
-        track capacity.
-        """
-        require_admin_key(request, config.admin_api_key)
-        try:
-            result = await grant_capacity_in_router(
-                config.router_addr,
-                config.admin_api_key,
-                config.router_timeout,
-                client=_client(),
-            )
-        except RouterUnreachableError as exc:
-            return _router_error_response(exc)
-        return result
 
     # =========================================================================
     # Compatibility aliases for RolloutCallback — map /callback/* to endpoints
