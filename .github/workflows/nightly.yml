@@ -139,6 +139,9 @@ jobs:
     env:
       IMAGE_REPO: ghcr.io/inclusionai/areal-runtime
     steps:
+      - name: Clean workspace
+        run: sudo rm -rf "${{ github.workspace }}"/* 2>/dev/null || true
+
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref || github.sha }}
