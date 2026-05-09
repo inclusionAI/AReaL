@@ -59,6 +59,11 @@ from areal.engine.core.model import disable_dropout_in_model
 from areal.engine.megatron_utils.checkpointer import MegatronCheckpointManager
 from areal.engine.megatron_utils.deterministic import set_deterministic_algorithms
 from areal.engine.megatron_utils.fp8 import FP8BlockwiseTensorHelper
+from areal.engine.megatron_utils.fused_lce_capture import (
+    FUSED_LCE_HIDDEN_KEY,
+    FUSED_LCE_WEIGHT_KEY,
+    capture_lm_head_hidden,
+)
 from areal.engine.megatron_utils.megatron import (
     all_gather_param,
     convert_to_hf,
@@ -106,11 +111,6 @@ from areal.utils.data import (
     split_padded_tensor_dict_into_mb_list,
     unpad_logits,
 )
-from areal.engine.megatron_utils.fused_lce_capture import (
-    FUSED_LCE_HIDDEN_KEY,
-    FUSED_LCE_WEIGHT_KEY,
-    capture_lm_head_hidden,
-)
 from areal.utils.functional import (
     gather_logprobs,
     gather_logprobs_entropy,
@@ -146,33 +146,6 @@ class _MegatronModelList(list):
     def parameters(self, *args, **kwargs) -> Iterator[nn.Parameter]:
         for _, parameter in self.named_parameters(*args, **kwargs):
             yield parameter
-
-
-_LCE_KERNEL_PREFIXES = (
-    "efficient_entropy_kernel",
-    "lce_backward",
-    "triton_poi",
-)
-
-
-def _print_lce_summary(prof: torch.profiler.profile, rank: int) -> None:
-    logger = logging.getLogger("LCEProfiler")
-    events = prof.key_averages()
-    lce_rows: list[tuple[str, float, float, float]] = []
-    for evt in events:
-        key = evt.key
-        if any(p in key for p in _LCE_KERNEL_PREFIXES):
-            cuda_ms = evt.cuda_time_total / 1000.0
-            cpu_ms = evt.cpu_time_total / 1000.0
-            calls = evt.count
-            lce_rows.append((key, cuda_ms, cpu_ms, calls))
-    if not lce_rows:
-        logger.info(f"[Rank {rank}] No LCE Triton kernels found in profiler trace.")
-        return
-    header = f"[Rank {rank}] LCE Kernel Profiling Summary (CUDA ms / CPU ms / calls):"
-    logger.info(header)
-    for key, cuda_ms, cpu_ms, calls in lce_rows:
-        logger.info(f"  {key}: {cuda_ms:.3f} / {cpu_ms:.3f} / {calls}")
 
 
 class MegatronEngine(TrainEngine):
@@ -924,8 +897,6 @@ class MegatronEngine(TrainEngine):
         self._ensure_ready()
         self.optimizer_zero_grad()
 
-        self._maybe_init_lce_profiler()
-
         input_batched, _ = self._normalize_batch_input(input_)
 
         # Step 1: Prepare micro-batches
@@ -961,8 +932,6 @@ class MegatronEngine(TrainEngine):
 
         # Step 4: Optimizer step
         result = self.optimizer_step()
-
-        self._maybe_step_lce_profiler()
 
         return result
 
@@ -1366,61 +1335,6 @@ class MegatronEngine(TrainEngine):
 
         if self.model is None:
             raise RuntimeError("Model is not initialized.")
-
-    _LCE_PROFILER_KEY = "_lce_profiler"
-    _LCE_PROFILER_ENV = "ARENAL_LCE_PROFILER_DIR"
-
-    def _maybe_init_lce_profiler(self) -> None:
-        if hasattr(self, self._LCE_PROFILER_KEY):
-            return
-        profiler_dir = os.environ.get(self._LCE_PROFILER_ENV, "")
-        if not profiler_dir:
-            setattr(self, self._LCE_PROFILER_KEY, None)
-            return
-
-        import torch.profiler
-
-        rank = dist.get_rank() if dist.is_initialized() else 0
-        output_dir = os.path.join(profiler_dir, f"rank_{rank}")
-        os.makedirs(output_dir, exist_ok=True)
-
-        def _lce_trace_handler(prof: torch.profiler.profile) -> None:
-            torch.profiler.tensorboard_trace_handler(output_dir)(prof)
-            _print_lce_summary(prof, rank)
-
-        setattr(
-            self,
-            self._LCE_PROFILER_KEY,
-            torch.profiler.profile(
-                activities=[
-                    torch.profiler.ProfilerActivity.CPU,
-                    torch.profiler.ProfilerActivity.CUDA,
-                ],
-                record_shapes=True,
-                profile_memory=True,
-                with_stack=True,
-                schedule=torch.profiler.schedule(
-                    wait=2, warmup=1, active=3, repeat=1
-                ),
-                on_trace_ready=_lce_trace_handler,
-            ),
-        )
-        getattr(self, self._LCE_PROFILER_KEY).start()
-        logger = logging.getLogger("LCEProfiler")
-        logger.info(
-            f"[Rank {rank}] torch.profiler started, traces will be saved to {output_dir} "
-            f"(schedule: wait=2, warmup=1, active=3)"
-        )
-
-    def _maybe_step_lce_profiler(self) -> None:
-        profiler = getattr(self, self._LCE_PROFILER_KEY, None)
-        if profiler is None:
-            return
-        profiler.step()
-        if profiler.profiler is None:
-            logger = logging.getLogger("LCEProfiler")
-            rank = dist.get_rank() if dist.is_initialized() else 0
-            logger.info(f"[Rank {rank}] torch.profiler finished and stopped.")
 
     def _update_bucket_weights_from_distributed(
         self,
