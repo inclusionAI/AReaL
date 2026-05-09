@@ -129,24 +129,16 @@ jobs:
             throw new Error(`Timed out waiting for runner ${instanceName} to come online.`);
 
   nightly-tests:
-    name: Run nightly tests (${{ matrix.variant }})
+    name: Run nightly tests
     needs: start-runner
+    environment: nightly
     runs-on:
       - self-hosted
       - areal-nightly
-    strategy:
-      fail-fast: false
-      max-parallel: 1
-      matrix:
-        variant: [sglang, vllm]
     timeout-minutes: 480
     env:
-      CONTAINER_IMAGE: ghcr.io/inclusionai/areal-runtime:dev-${{ matrix.variant }}
-      CONTAINER_NAME: areal-nightly-${{ matrix.variant }}
+      IMAGE_REPO: ghcr.io/inclusionai/areal-runtime
     steps:
-      - name: Clean workspace
-        run: sudo rm -rf "${{ github.workspace }}"/*
-
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref || github.sha }}
@@ -154,67 +146,81 @@ jobs:
       - name: Log in to GitHub Container Registry
         run: echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u inclusionai --password-stdin
 
-      - name: Pull latest runtime image
-        run: docker pull "$CONTAINER_IMAGE"
-
-      - name: Start container
+      - name: Pull latest runtime images
         run: |
-          docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
-          docker run --name "$CONTAINER_NAME" -d \
-            --runtime=nvidia --gpus all \
-            --net=host \
-            --shm-size=54g \
-            --ulimit nofile=1048576:1048576 \
-            --cap-add=SYS_ADMIN \
-            --device=/dev/fuse \
-            --security-opt=apparmor:unconfined \
-            -e HF_TOKEN="${{ secrets.HF_TOKEN }}" \
-            -e TOKENIZERS_PARALLELISM=false \
-            -v "${{ github.workspace }}:/workspace" \
-            -w /workspace \
-            --entrypoint=/bin/bash \
-            "$CONTAINER_IMAGE" \
-            -lc "trap : TERM INT; sleep infinity & wait"
-
-      - name: Install AReaL from source
-        run: |
-          docker exec "$CONTAINER_NAME" bash -lc '
-            export PATH=/opt/.venv/bin:$PATH
-            uv pip install -e . --no-deps
-          '
+          docker pull "$IMAGE_REPO:dev-sglang"
+          docker pull "$IMAGE_REPO:dev-vllm"
 
       - name: Determine run parameters
         id: params
         run: |
           BACKENDS=("fsdp" "megatron" "archon")
+          BACKEND_SHORT=("f" "m" "a")
           DAY_OF_YEAR=$(date -u +%j)
           BACKEND_INDEX=$(( (10#$DAY_OF_YEAR - 1) % 3 ))
           echo "experiment_name=nightly-gsm8k-$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
-          echo "trial_name=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+          echo "trial_date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
           echo "train_backend=${BACKENDS[$BACKEND_INDEX]}" >> "$GITHUB_OUTPUT"
+          echo "train_backend_short=${BACKEND_SHORT[$BACKEND_INDEX]}" >> "$GITHUB_OUTPUT"
 
-      - name: Run training
+      - name: Run training (sglang + vllm)
         env:
-          VARIANT: ${{ matrix.variant }}
           EXPERIMENT_NAME: ${{ steps.params.outputs.experiment_name }}
-          TRIAL_NAME: ${{ steps.params.outputs.trial_name }}
+          TRIAL_DATE: ${{ steps.params.outputs.trial_date }}
           TRAIN_BACKEND: ${{ steps.params.outputs.train_backend }}
+          TRAIN_BACKEND_SHORT: ${{ steps.params.outputs.train_backend_short }}
+          WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          WORKSPACE: ${{ github.workspace }}
+          MODEL_NAME: Qwen/Qwen3-0.6B
         run: |
-          docker exec "$CONTAINER_NAME" bash -lc '
-            export PATH=/opt/.venv/bin:$PATH
-            python3 examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml \
-              experiment_name='"$EXPERIMENT_NAME"' trial_name='"$TRIAL_NAME"' \
-              stats_logger.wandb.mode=disabled \
-              rollout.backend='"$VARIANT"':d1 actor.backend='"$TRAIN_BACKEND"':d1 \
-              cluster.n_nodes=1 cluster.n_gpus_per_node=2 \
-              actor.path=Qwen/Qwen3-0.6B \
-              scheduler.type=local train_dataset.batch_size=64
-          '
+          MODEL_CACHE=/opt/hf_cache
+          sudo mkdir -p "$MODEL_CACHE"
+          sudo chmod 777 "$MODEL_CACHE"
+          MODEL_LOCAL="$MODEL_CACHE/$MODEL_NAME"
 
-      - name: Teardown container
+          declare -A VARIANT_SHORT=( [sglang]=s [vllm]=v )
+
+          run_variant() {
+            local variant=$1
+            local trial_name="${TRAIN_BACKEND_SHORT}.${VARIANT_SHORT[$variant]}-${TRIAL_DATE}"
+            echo "=== Running variant: $variant (trial: $trial_name) ==="
+            docker run --rm \
+              --runtime=nvidia --gpus all \
+              --net=host \
+              --shm-size=500g \
+              --ulimit nofile=1048576:1048576 \
+              --cap-add=SYS_ADMIN \
+              --device=/dev/fuse \
+              --security-opt=apparmor:unconfined \
+              -e HF_TOKEN="$HF_TOKEN" \
+              -e WANDB_API_KEY="$WANDB_API_KEY" \
+              -e TOKENIZERS_PARALLELISM=false \
+              -v "$WORKSPACE:/workspace" \
+              -v "$MODEL_CACHE:/model_cache" \
+              -w /workspace \
+              "$IMAGE_REPO:dev-$variant" \
+              bash -lc '
+                export PATH=/opt/.venv/bin:$PATH
+                huggingface-cli download '"$MODEL_NAME"' --local-dir /model_cache/'"$MODEL_NAME"'
+                uv pip install -e . --no-deps
+                python3 examples/math/gsm8k_rl.py --config examples/math/gsm8k_grpo.yaml \
+                  experiment_name='"$EXPERIMENT_NAME"' trial_name='"$trial_name"' \
+                  stats_logger.wandb.mode=online \
+                  rollout.backend='"$variant"':d1 actor.backend='"$TRAIN_BACKEND"':d1 \
+                  cluster.n_nodes=1 cluster.n_gpus_per_node=2 \
+                  actor.path=/model_cache/'"$MODEL_NAME"' \
+                  scheduler.type=local train_dataset.batch_size=64
+              '
+            sudo find "$WORKSPACE" -not -user "$(id -u)" -delete 2>/dev/null || true
+          }
+
+          run_variant sglang
+          run_variant vllm
+
+      - name: Cleanup
         if: always()
         run: |
-          docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
           docker logout ghcr.io 2>/dev/null || true
           sudo find "${{ github.workspace }}" -not -user "$(id -u)" -delete 2>/dev/null || true
 
