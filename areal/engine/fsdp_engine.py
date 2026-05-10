@@ -1632,17 +1632,9 @@ class FSDPEngine(TrainEngine):
     ):
         """Save model in HuggingFace format.
 
-        For full models (``use_lora=False``), the entire ``state_dict`` is
-        written via :meth:`PreTrainedModel.save_pretrained`.
-
-        For LoRA models (``use_lora=True``), only the trainable LoRA
-        adapter parameters are written, in the standard PEFT layout
-        (``adapter_model.safetensors`` + ``adapter_config.json``).  This
-        is the format that SGLang's ``/load_lora_adapter`` endpoint
-        expects, so the existing disk-based weight update path
-        (``meta.use_lora=True`` -> ``build_disk_weight_update_requests``
-        -> ``/load_lora_adapter``) becomes end-to-end functional without
-        any additional dispatch logic.
+        LoRA mode writes adapter-only PEFT files for SGLang's
+        ``/load_lora_adapter`` endpoint; non-LoRA mode writes a full HF
+        model directory.
         """
         if self.model is None:
             raise RuntimeError("Model not initialized")
@@ -1665,59 +1657,7 @@ class FSDPEngine(TrainEngine):
                     tokenizer.save_pretrained(path)
                 if processor is not None:
                     processor.save_pretrained(path)
-            # Record on-disk artefact size as a wandb metric so the
-            # weight-sync data volume is observable.  LoRA disk sync
-            # uses adapter-only PEFT files (~ tens of MB), full-model
-            # sync uses the full HF directory (~ hundreds of MB to GBs);
-            # plotting these side-by-side makes the bandwidth saving
-            # explicit.
-            self._log_disk_save_size(path)
         dist.barrier(group=self.cpu_group)
-
-    def _log_disk_save_size(self, path: str) -> None:
-        """Record the on-disk size of a checkpoint directory as a wandb metric.
-
-        Sums the bytes of every regular file under ``path`` (recursively)
-        and reports the total under flat top-level keys
-        ``weight_update_disk_bytes`` (always populated) plus a
-        format-specific key (``weight_update_disk_lora_bytes`` when
-        ``self.config.use_lora`` is True, otherwise
-        ``weight_update_disk_full_bytes``).
-
-        The metrics are written via the **default** ``stats_tracker`` so
-        they flow through the same tracker that already drives wandb
-        panels for ``ppo_actor`` etc.  Using a top-level (no ``/``) key
-        avoids creating a separate wandb panel group that the user
-        might overlook.
-
-        Called on rank 0 only; failures are swallowed because metric
-        emission must never break the training loop.
-        """
-        try:
-            total_bytes = 0
-            for root, _dirs, files in os.walk(path):
-                for fname in files:
-                    fpath = os.path.join(root, fname)
-                    try:
-                        total_bytes += os.path.getsize(fpath)
-                    except OSError:
-                        # File may have been racily deleted; skip it.
-                        continue
-            kwargs: dict[str, float] = {
-                "weight_update_disk_bytes": float(total_bytes),
-            }
-            if self.config.use_lora:
-                kwargs["weight_update_disk_lora_bytes"] = float(total_bytes)
-            else:
-                kwargs["weight_update_disk_full_bytes"] = float(total_bytes)
-            stats_tracker.scalar(**kwargs)
-            self.logger.info(
-                f"[weight_update_disk] saved {total_bytes} bytes to {path} "
-                f"(use_lora={self.config.use_lora})"
-            )
-        except Exception as e:
-            # Metric emission must never break training.
-            self.logger.warning(f"Failed to record disk-save size metric: {e}")
 
     def _save_lora_adapter_to_hf(
         self,
@@ -1726,27 +1666,14 @@ class FSDPEngine(TrainEngine):
     ):
         """Save only LoRA adapter weights in standard PEFT format.
 
-        Filters ``state_dict`` for LoRA adapter tensors, strips the active
-        adapter name segment (``.default.``) from each key so the result
-        matches the layout produced by ``PeftModel.save_pretrained`` /
-        ``get_peft_model_state_dict`` (and hence what SGLang's
-        ``/load_lora_adapter`` expects), and writes:
-
-          * ``adapter_model.safetensors`` -- adapter tensor file
-          * ``adapter_config.json`` -- PEFT-compatible LoRA config
-
-        Called on rank 0 only.
+        The saved layout matches what SGLang's ``/load_lora_adapter``
+        endpoint expects.
         """
         import json
 
         from safetensors.torch import save_file as safetensors_save_file
 
-        # PEFT's named_parameters() / state_dict include the active adapter
-        # name in keys, e.g. "...lora_A.default.weight".  The standard PEFT
-        # adapter file format (as produced by get_peft_model_state_dict /
-        # save_pretrained) strips this adapter name, yielding
-        # "...lora_A.weight".  SGLang's /load_lora_adapter expects the
-        # stripped format.
+        # PEFT adapter files omit the active adapter segment, e.g. ".default.".
         adapter_name = "default"  # PEFT default adapter name
         lora_keywords = ("lora_A", "lora_B", "lora_embedding_A", "lora_embedding_B")
 

@@ -1,27 +1,4 @@
-"""Unit tests for LoRA disk-based weight synchronization.
-
-The disk-mode LoRA sync flow on FSDP + SGLang is:
-
-* Training side (FSDP):  ``FSDPEngine._save_model_to_hf`` branches on
-  ``self.config.use_lora``.  When ``use_lora=True`` it calls
-  ``_save_lora_adapter_to_hf`` which:
-    - filters the full state_dict for ``lora_A`` / ``lora_B`` /
-      ``lora_embedding_A`` / ``lora_embedding_B`` keys,
-    - strips the active-adapter segment ``.default.`` so the layout
-      matches what ``peft.PeftModel.save_pretrained`` would produce
-      (and what SGLang's ``/load_lora_adapter`` expects),
-    - writes ``adapter_model.safetensors`` + ``adapter_config.json``.
-
-* Inference side (SGLang): ``SGLangBackend.build_disk_weight_update_requests``
-  routes ``meta.use_lora=True`` to ``HttpRequest("/load_lora_adapter", ...)``
-  and the standard full-model branch to ``/update_weights_from_disk``.
-
-These unit tests exercise (a) the LoRA filtering / key normalisation
-logic, (b) the ``WeightUpdateMeta`` schema, (c) the SGLang
-request-building dispatch, and (d) the ``get_versioned_lora_name``
-utility.  They are CPU-only and do not require any GPU or running
-SGLang server.
-"""
+"""Unit tests for LoRA disk-based weight synchronization."""
 
 import copy
 import json
@@ -36,16 +13,7 @@ from areal.api.cli_args import TrainEngineConfig
 from areal.api.io_struct import get_versioned_lora_name
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-# NOTE: This keyword tuple MUST stay in sync with the one inside
-# ``FSDPEngine._save_lora_adapter_to_hf``.  The companion test
-# ``tests/test_lora_adapter_save.py`` exercises the production method
-# directly; the helper-based tests in this file are a fast smoke layer
-# that does not require importing the engine.
+# Keep this in sync with ``FSDPEngine._save_lora_adapter_to_hf``.
 _LORA_KEYWORDS = ("lora_A", "lora_B", "lora_embedding_A", "lora_embedding_B")
 
 
@@ -493,39 +461,3 @@ class TestDiskSyncHandshake:
             req = SGLangBackend().build_disk_weight_update_requests(m).requests[0]
             assert req.payload["lora_name"] == f"my-lora-v{v}"
             assert req.payload["lora_path"].endswith(f"weight_update_v{v}")
-
-    def test_disk_lora_dispatch_emits_send_size_metric(self, tmp_path):
-        """Both branches of ``build_disk_weight_update_requests`` MUST
-        record the on-disk byte count via the default ``stats_tracker``
-        under flat top-level keys (no scope prefix).  The detailed
-        contract is exercised in ``tests/test_lora_disk_size_metrics.py``;
-        this is a lightweight integration smoke that wires the dispatch
-        and the metric emitter together.
-        """
-        from unittest.mock import patch
-
-        from areal.engine.sglang_remote import SGLangBackend
-
-        adapter_dir = tmp_path / "weight_update_v0"
-        adapter_dir.mkdir()
-        (adapter_dir / "adapter_model.safetensors").write_bytes(b"\x00" * 16)
-        meta = WeightUpdateMeta(
-            type="disk",
-            use_lora=True,
-            lora_name="L",
-            version=0,
-            path=str(adapter_dir),
-        )
-        with patch(
-            "areal.engine.sglang_remote.stats_tracker.scalar"
-        ) as mock_scalar:
-            SGLangBackend().build_disk_weight_update_requests(meta)
-        assert mock_scalar.called, (
-            "build_disk_weight_update_requests must record send-size metrics"
-        )
-        kwargs = mock_scalar.call_args.kwargs
-        assert "weight_update_send_bytes" in kwargs
-        assert "weight_update_send_lora_bytes" in kwargs
-        # Flat top-level keys -- never scoped under a subgroup.
-        for k in kwargs:
-            assert "/" not in k, f"metric key must be flat, got {k}"

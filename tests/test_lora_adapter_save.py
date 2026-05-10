@@ -1,19 +1,7 @@
 """Unit tests for ``FSDPEngine._save_lora_adapter_to_hf``.
 
-These tests invoke the real production method (no helper copy) on a
-lightweight stub object that quacks like an FSDPEngine.  We feed it a
-synthetic state_dict matching the exact key shape produced by
-``peft.get_peft_model`` on a HuggingFace transformer (i.e. with the
-``base_model.model.`` prefix and the ``.default.`` adapter segment),
-let the method write to a tmp directory, then assert that:
-
-* ``adapter_model.safetensors`` exists, parses, and contains ONLY
-  LoRA tensors with ``.default.`` stripped (the format SGLang's
-  ``/load_lora_adapter`` consumes);
-* ``adapter_config.json`` is well-formed PEFT JSON with the required
-  fields populated from the engine's ``TrainEngineConfig``.
-
-The tests are CPU-only and require no FSDP / GPU.
+The saved adapter must contain only LoRA tensors and PEFT metadata that
+SGLang's ``/load_lora_adapter`` can consume.
 """
 
 from __future__ import annotations
@@ -27,24 +15,19 @@ import torch
 from safetensors.torch import load_file as safetensors_load_file
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _make_lora_state_dict() -> dict[str, torch.Tensor]:
     """Synthetic state_dict in PEFT layout (``base_model.model.`` +
     ``.default.``).  Mixes base, lora_A, lora_B, and an embedding LoRA
     pair so all four LoRA keywords are exercised.
     """
     return {
-        # Base weights -- must be filtered out.
+        # Base weights must be filtered out.
         "base_model.model.model.embed_tokens.weight": torch.zeros(10, 4),
         "base_model.model.model.layers.0.self_attn.q_proj.base_layer.weight": torch.zeros(
             4, 4
         ),
         "base_model.model.lm_head.weight": torch.zeros(10, 4),
-        # LoRA tensors -- must be kept and have ``.default.`` stripped.
+        # LoRA tensors must be kept with ``.default.`` stripped.
         "base_model.model.model.layers.0.self_attn.q_proj.lora_A.default.weight": torch.ones(
             8, 4
         ),
@@ -93,11 +76,6 @@ def _invoke(engine_stub, path, state_dict):
     return FSDPEngine._save_lora_adapter_to_hf(engine_stub, path, state_dict)
 
 
-# ---------------------------------------------------------------------------
-# Tests: the safetensors output
-# ---------------------------------------------------------------------------
-
-
 class TestAdapterSafetensors:
     def test_only_lora_keys_are_written(self, tmp_path):
         engine = _make_engine_stub()
@@ -110,9 +88,7 @@ class TestAdapterSafetensors:
         assert f.stat().st_size > 0
 
         loaded = safetensors_load_file(str(f))
-        # 4 lora_A/B layer pairs + 2 lora_embedding_A/B = 6 tensors
         assert len(loaded) == 6
-        # No base / lm_head keys leaked through.
         for k in loaded:
             assert "base_layer" not in k
             assert "lm_head" not in k
@@ -125,12 +101,7 @@ class TestAdapterSafetensors:
 
         loaded = safetensors_load_file(str(d / "adapter_model.safetensors"))
         for k in loaded:
-            # The PEFT adapter file format never carries the active
-            # adapter name segment.  SGLang's loader assumes it's gone.
             assert ".default." not in k
-            # Each remaining key must end in `.weight` and contain a
-            # LoRA keyword somewhere (covering both the linear and
-            # embedding cases).
             assert k.endswith(".weight"), k
             assert any(
                 kw in k
@@ -170,11 +141,6 @@ class TestAdapterSafetensors:
             _invoke(engine, str(d), bare_state)
 
 
-# ---------------------------------------------------------------------------
-# Tests: adapter_config.json
-# ---------------------------------------------------------------------------
-
-
 class TestAdapterConfigJson:
     def _read(self, d) -> dict:
         with open(os.path.join(str(d), "adapter_config.json")) as f:
@@ -187,7 +153,6 @@ class TestAdapterConfigJson:
         _invoke(engine, str(d), _make_lora_state_dict())
 
         cfg = self._read(d)
-        # Mandatory PEFT fields:
         assert cfg["peft_type"] == "LORA"
         assert cfg["task_type"] == "CAUSAL_LM"
         assert cfg["r"] == 16
@@ -230,17 +195,8 @@ class TestAdapterConfigJson:
         assert cfg["base_model_name_or_path"] == "/some/where/qwen3-0.6b"
 
 
-# ---------------------------------------------------------------------------
-# Tests: directory layout matches what /load_lora_adapter expects.
-# ---------------------------------------------------------------------------
-
-
 class TestLoadLoraAdapterContract:
-    """The on-disk layout produced by ``_save_lora_adapter_to_hf`` MUST be
-    exactly what SGLang's ``/load_lora_adapter`` reads.  This test pins
-    the contract so a future refactor cannot silently break the
-    inference side.
-    """
+    """Pin the PEFT layout consumed by SGLang's LoRA loader."""
 
     def test_two_files_present(self, tmp_path):
         engine = _make_engine_stub()

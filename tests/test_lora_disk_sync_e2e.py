@@ -1,19 +1,4 @@
-"""End-to-end test for LoRA disk-based weight synchronization.
-
-This test launches ``torchrun`` with the helper script
-``tests/torchrun/run_lora_disk_sync.py`` which:
-
-1. Creates a small Qwen3-0.6B model with FSDP + LoRA + ``weight_update_mode="disk"``.
-2. Writes a PEFT-format adapter checkpoint via
-   ``FSDPEngine._save_model_to_hf`` and verifies the on-disk artefacts.
-3. Verifies the model can still run a forward pass after the save.
-
-The test requires GPUs and is marked ``@pytest.mark.slow`` and
-``@pytest.mark.sglang`` following AReaL test conventions.
-
-Usage:
-  pytest tests/test_lora_disk_sync_e2e.py -v
-"""
+"""End-to-end test for FSDP LoRA adapter-only disk saves."""
 
 import os
 import subprocess
@@ -30,18 +15,7 @@ MODEL_PATH = os.environ.get(
 
 
 def _run_torchrun_test(alloc_mode: str, output: str, n_gpus: int | None = None):
-    """Launch the torchrun helper script and check the result.
-
-    Parameters
-    ----------
-    alloc_mode : str
-        Backend allocation string, e.g. ``"fsdp:d1t1"``.
-    output : str
-        Path to the result file that the torchrun script writes.
-    n_gpus : int, optional
-        Override number of GPUs.  If ``None``, it is derived from
-        ``alloc_mode``.
-    """
+    """Launch the torchrun helper script and check the result."""
     port = find_free_ports(1)[0]
     if n_gpus is None:
         n_gpus = ModelAllocation.from_str(alloc_mode).parallel.world_size

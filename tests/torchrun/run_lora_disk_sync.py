@@ -1,33 +1,4 @@
-"""Torchrun script for LoRA disk-sync end-to-end validation.
-
-This script is launched via ``torchrun`` from the e2e test
-(``tests/test_lora_disk_sync_e2e.py``).  It:
-
-1. Creates a small Qwen3-0.6B model with LoRA adapters on the FSDP engine.
-2. Calls ``FSDPEngine._save_model_to_hf`` (the production code path used
-   by ``_update_weights_from_disk``) under ``use_lora=True``.
-3. Validates the on-disk artefacts:
-     * ``adapter_model.safetensors`` exists and is non-empty.
-     * ``adapter_config.json`` exists, parses, and has the PEFT-required
-       fields (``peft_type='LORA'``, ``r``, ``lora_alpha``,
-       ``target_modules``).
-     * Every adapter tensor key matches the PEFT layout consumed by
-       SGLang's ``/load_lora_adapter`` (i.e. contains a LoRA keyword
-       and does NOT contain the active-adapter ``.default.`` segment).
-4. Verifies the in-memory model still runs a forward pass.
-5. Writes ``"Passed"`` / ``"Failed"`` to an output file (rank 0 only).
-
-Note: the new disk-mode LoRA sync path does not require any NCCL
-process group on the inference side; SGLang loads the adapter directly
-from disk via its existing ``/load_lora_adapter`` endpoint.  This
-script therefore exercises the *training-side* contract end-to-end and
-leaves the SGLang HTTP request-building to the unit tests in
-``tests/test_lora_disk_sync.py``.
-
-Usage (invoked by the e2e test, not directly):
-  torchrun --nproc_per_node=N tests/torchrun/run_lora_disk_sync.py \
-      --backend fsdp:d1t1 --output /tmp/result.out
-"""
+"""Torchrun E2E validation for FSDP LoRA adapter-only disk saves."""
 
 import argparse
 import json
@@ -185,11 +156,7 @@ def verify_adapter_artifacts(adapter_dir: str, *, lora_rank: int, lora_alpha: in
             print(f"ERROR: adapter key must end with '.weight': {k}", flush=True)
             return False
 
-    # Adapter-only saves should be tens of MB at most (Qwen3-0.6B + r=8
-    # is around 19MB).  If the artefact is GB-scale the engine almost
-    # certainly fell back to a full-model save -- the very bug that
-    # this whole disk-sync path exists to fix.  Cap at 200 MB to leave
-    # plenty of headroom while still flagging a regression.
+    # Catch accidental full-model saves.
     total_bytes = 0
     for root, _dirs, files in os.walk(adapter_dir):
         for fname in files:
