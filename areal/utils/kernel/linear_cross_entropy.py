@@ -1,13 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """
-``LinearCrossEntropy`` autograd Function for AReaL.
+Fused linear + cross-entropy autograd Function.
 
-This module exposes a drop-in replacement for the
-``logits = hidden @ weight.T`` -> ``log_softmax`` -> per-token
-log-probability and entropy pipeline. Internally it dispatches to a Triton
-kernel that fuses the matmul with the cross-entropy
-reduction so that the ``[num_tokens, vocab_size]`` logits tensor is never
-materialized.
+Dispatches to a Triton kernel that fuses the matmul with cross-entropy
+so that the ``[num_tokens, vocab_size]`` logits tensor is never materialised.
 """
 
 from __future__ import annotations
@@ -17,28 +13,19 @@ import torch.distributed as dist
 
 
 class LinearCrossEntropy(torch.autograd.Function):
-    """Fused linear + cross-entropy / token-entropy autograd Function.
-
-    Forward signature:
+    """Fused linear + cross-entropy autograd Function.
 
     Args:
-        hidden: ``(num_tokens, hidden_size)`` or
-            ``(batch_size, seq_len, hidden_size)``. Must be contiguous on
-            CUDA.
-        weight: ``(vocab_size, hidden_size)`` lm-head weight. Must be
-            contiguous on CUDA.
-        labels: integer label ids; either ``(num_tokens,)`` or
-            ``(batch_size, seq_len)``.
+        hidden: ``(num_tokens, hidden_size)`` contiguous CUDA tensor.
+        weight: ``(vocab_size, hidden_size)`` lm-head weight, contiguous CUDA.
+        labels: ``(num_tokens,)`` integer label ids on CUDA.
         temperature: softmax temperature; defaults to ``1.0``.
-        reduction: only ``"none"`` is supported and returns per-token
-            negative log-likelihood.
-        dist_process_group: optional tensor-parallel group for vocab-sharded
-            ``weight``. ``labels`` must contain *global* vocab ids on every
-            rank; the kernel handles the per-rank slice internally.
+        reduction: only ``"none"`` is supported.
+        dist_process_group: optional TP group for vocab-sharded ``weight``.
+            ``labels`` must contain *global* vocab ids on every rank.
 
     Returns:
-        ``(logprobs, entropy)`` where both tensors have shape
-        ``(num_tokens,)``.
+        ``(logprobs, entropy)`` both shaped ``(num_tokens,)``.
     """
 
     @staticmethod
@@ -56,8 +43,6 @@ class LinearCrossEntropy(torch.autograd.Function):
         if not isinstance(reduction, str):
             raise TypeError(f"reduction must be str, got {type(reduction)}")
 
-        # Local import keeps Triton dependency lazy: tests can still
-        # import this module on machines without Triton.
         from areal.utils.kernel import kernels
 
         REDUCTION = kernels.get_entropy_reduction_enum_number(reduction.lower())
@@ -68,9 +53,6 @@ class LinearCrossEntropy(torch.autograd.Function):
         if labels.dim() != 1:
             labels = labels.reshape(-1)
 
-        # Triton kernels demand contiguous CUDA tensors; bail out loudly
-        # on misuse rather than silently materialising copies on a hot
-        # path.
         assert hidden.is_cuda and weight.is_cuda and labels.is_cuda, (
             "LinearCrossEntropy requires CUDA inputs"
         )
@@ -121,9 +103,6 @@ class LinearCrossEntropy(torch.autograd.Function):
             _entropy_b,
         ) = ctx.saved_tensors
 
-        # PyTorch autograd may produce non-contiguous gradient tensors
-        # (e.g. expanded views from broadcast). Triton kernels require
-        # contiguous inputs, so ensure contiguity before dispatching.
         dlogprobs = dlogprobs.contiguous()
         dentropy = dentropy.contiguous()
 
@@ -142,32 +121,9 @@ class LinearCrossEntropy(torch.autograd.Function):
             ctx.dist_process_group,
         )
 
-        # TP all-reduce on d_hidden.
-        #
-        # Why this is required:
-        # ``efficient_entropy_backward`` computes a *local* contribution
-        # ``d_hidden_local = d_logits_local @ weight_local`` where each TP
-        # rank holds only a vocab-shard of ``weight``. The mathematically
-        # correct gradient is the sum across the TP group:
-        #     d_hidden = sum_over_tp_ranks(d_logits_local @ weight_local).
-        # In Megatron's normal forward, the surrounding
-        # ``ColumnParallelLinear`` (output_layer) inserts this all-reduce
-        # via ``linear_with_grad_accumulation_and_async_allreduce``. The
-        # fused-LCE fast path monkey-patches ``output_layer.forward`` to
-        # return ``(hidden, None)`` (an autograd identity), which bypasses
-        # mcore's machinery — so the all-reduce vanishes unless we
-        # reproduce it here.
-        #
-        # Without this reduction, TP > 1 silently produces gradients that
-        # equal each rank's local partial, leading to incorrect training
-        # that is *not* caught by any forward-only invariant since the
-        # forward kernel already all-reduces (max / logsumexp / entropy
-        # auxiliaries) inside ``efficient_entropy_forward``.
-        #
-        # ``d_weight`` does NOT need an all-reduce: each rank legitimately
-        # owns its vocab slice's weights, so the gradient on the local
-        # weight shard is correctly local-only — exactly mirroring how
-        # mcore handles ColumnParallel weight grads.
+        # TP all-reduce on d_hidden: the fused path bypasses mcore's
+        # ColumnParallelLinear which normally inserts this reduction.
+        # d_weight does NOT need all-reduce (each rank owns its vocab shard).
         if (
             ctx.dist_process_group is not None
             and dist.get_world_size(ctx.dist_process_group) > 1
@@ -180,7 +136,6 @@ class LinearCrossEntropy(torch.autograd.Function):
 
         d_hidden = d_hidden.view(ctx.original_hidden_shape)
 
-        # Order matches forward: hidden, weight, labels, temperature, reduction, group
         return d_hidden, d_weight, None, None, None, None
 
 
@@ -192,10 +147,7 @@ def linear_cross_entropy(
     reduction: str = "none",
     dist_process_group: dist.ProcessGroup | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Functional wrapper around :class:`LinearCrossEntropy`.
-
-    Returns per-token ``(logprobs, entropy)``.
-    """
+    """Functional wrapper around :class:`LinearCrossEntropy`."""
     return LinearCrossEntropy.apply(
         hidden, weight, labels, temperature, reduction, dist_process_group
     )

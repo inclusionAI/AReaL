@@ -720,11 +720,6 @@ class MegatronEngine(TrainEngine):
     ) -> None:
         self._ensure_ready()
 
-        # Resolve once per call: whether the fused linear-cross-entropy path
-        # should engage. We engage it only on the pipeline-last stage, in
-        # non-critic mode, and outside the tree-training branch (those branches
-        # bring their own gather kernels and additional invariants we do not
-        # currently extend).
         use_fused_lce = (
             getattr(self.config, "use_fused_linear_ce", False)
             and not self.config.is_critic
@@ -761,10 +756,6 @@ class MegatronEngine(TrainEngine):
             cp_size = mpu.get_context_parallel_world_size()
             cp_local = cp_size > 1
 
-            # Engage fused linear-cross-entropy capture only on the pipeline
-            # last stage; the LM head only exists there. CP-local logit-gather
-            # path keeps the standard materialised-logits route because the
-            # split-and-gather machinery operates on the [seq, vocab] tensor.
             model_vp_stage_for_capture = getattr(model, "vp_stage", 0)
             should_capture = (
                 use_fused_lce
@@ -783,9 +774,6 @@ class MegatronEngine(TrainEngine):
                     gather_cp_output=not cp_local,
                 )
 
-            # Stash captured hidden + LM-head weight on the orig_mb dict so
-            # the downstream loss/forward callbacks can pick them up via the
-            # standard `inputs` argument (which is the *same* dict).
             if (
                 capture is not None
                 and capture.hidden is not None
@@ -833,33 +821,7 @@ class MegatronEngine(TrainEngine):
                         cu_seqlens=cu_seqlens,
                         old_cu_seqlens=mb_input.old_cu_seqlens,
                     )
-                    # When fused-LCE capture is active, the model's
-                    # ``output`` is actually the pre-projection hidden
-                    # state (the LM-head was monkey-patched to a no-op),
-                    # so the unpadded tensor is the hidden we want to
-                    # feed into the fused kernel.
-                    #
-                    # Megatron's outer ``Float16Module`` wraps the inner
-                    # ``GPTModel`` and, on the last pipeline stage,
-                    # *upcasts the wrapped module's outputs to fp32*
-                    # (see ``Float16Module.forward(..., fp32_output=True)``
-                    # and ``float16_to_fp32`` in
-                    # ``megatron.core.transformer.module``). The captured
-                    # hidden was already cast to ``weight.dtype`` (bf16/fp16)
-                    # inside ``capture_lm_head_hidden._patched_forward`` to
-                    # mirror ``ColumnParallelLinear``'s implicit downcast,
-                    # but ``Float16Module``'s post-hoc upcast then re-promotes
-                    # the tensor returned to mcore back to fp32. The Triton
-                    # GEMM in ``efficient_entropy_forward`` requires both
-                    # operands to share the same dtype; without re-aligning
-                    # here, the kernel raises
-                    #     "Both operands must be same dtype. Got fp32 and
-                    #      bf16; falling back to reference path."
-                    # and silently disables the fused fast path.
-                    #
-                    # ``Tensor.to(dtype)`` is autograd-aware; backward will
-                    # auto-upcast gradients to the upstream fp32 dtype, which
-                    # is exactly what mcore would have produced anyway.
+                    # Re-align Float16Module's fp32 hidden to lm-head weight dtype.
                     if mb_input.orig_mb.get("_fused_lce_active", False):
                         fused_weight = mb_input.orig_mb.get(
                             FUSED_LCE_WEIGHT_KEY
@@ -1919,11 +1881,6 @@ class MegatronEngine(TrainEngine):
                         if mpu.get_tensor_model_parallel_world_size() > 1
                         else None,
                     )
-                    # vocab_min/max_logits are diagnostics consumed by the
-                    # clip-ratio statistics inside the PPO loss; the fused
-                    # kernel never materialises the [seq, vocab] tensor, so
-                    # we substitute finite proxies derived from the chosen
-                    # logprobs (cheap and never stalls training).
                     proxy = logprobs.detach().float()
                     vocab_min_logits = proxy
                     vocab_max_logits = proxy

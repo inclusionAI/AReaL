@@ -40,9 +40,6 @@ import torch
 import torch.distributed as dist
 
 
-# --- Device helpers -----------------------------------------------------------
-# AReaL relies on torch directly for CUDA device primitives used by the
-# Triton kernels below.
 def _is_cuda_available() -> bool:
     return torch.cuda.is_available()
 
@@ -131,9 +128,6 @@ _REDUCTION_NONE = 0
 
 
 def get_entropy_reduction_enum_number(reduction: str) -> int:
-    """
-    Validate the only supported reduction mode and return its kernel code.
-    """
     if reduction == "none":
         return _REDUCTION_NONE
     raise ValueError(f"Only reduction='none' is supported, got {reduction!r}")
@@ -512,9 +506,6 @@ def efficient_entropy_forward(
     temperature: float | None = 1.0,
     dist_process_group: dist.ProcessGroup | None = None,
 ) -> list[torch.Tensor]:
-    """
-    forward host function
-    """
     assert hidden.is_cuda and weight.is_cuda and labels.is_cuda
     assert weight.device == hidden.device and labels.device == hidden.device
     assert hidden.dim() == 2 and weight.dim() == 2 and labels.dim() == 1
@@ -829,9 +820,6 @@ def efficient_entropy_backward(
     temperature: float | None = 1.0,
     dist_process_group: dist.ProcessGroup | None = None,
 ) -> list[torch.Tensor]:
-    """
-    backward host function
-    """
     assert hidden.is_cuda and weight.is_cuda and labels.is_cuda
     assert weight.device == hidden.device and labels.device == hidden.device
     assert hidden.dim() == 2 and weight.dim() == 2 and labels.dim() == 1
