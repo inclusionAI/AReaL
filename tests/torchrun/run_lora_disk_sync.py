@@ -38,8 +38,6 @@ import torch
 import torch.distributed as dist
 from safetensors.torch import load_file as safetensors_load_file
 
-from tests.utils import get_model_path
-
 from areal.api import FinetuneSpec
 from areal.api.alloc_mode import ModelAllocation
 from areal.api.cli_args import (
@@ -51,8 +49,8 @@ from areal.api.cli_args import (
 from areal.engine import FSDPEngine
 from areal.infra.platforms import current_platform
 
-DEFAULT_MODEL_PATH = get_model_path(
-    "/storage/openpsi/models/Qwen__Qwen3-0.6B/", "Qwen/Qwen3-0.6B"
+DEFAULT_MODEL_PATH = os.environ.get(
+    "AREAL_LORA_DISK_SYNC_MODEL_PATH", "/workspace/models/Qwen3-0.6B"
 )
 
 
