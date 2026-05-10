@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """
 Implementations of the linear cross entropy with token entropy kernel.
 
