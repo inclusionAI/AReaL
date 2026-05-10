@@ -633,7 +633,9 @@ class TestInferenceServiceWorkflow:
             gateway_addr="http://test:8080",
             admin_api_key="test-key",
         )
-        workflow._start_session = AsyncMock(return_value=("sess-1", "sess-api-key-1"))
+        workflow._start_session = AsyncMock(
+            return_value=("grp-test-1", [("sess-1", "sess-api-key-1")])
+        )
         workflow._set_last_reward = AsyncMock(return_value=None)
         workflow._export_interactions = AsyncMock(
             return_value={"chatcmpl-1": mock_interaction}
@@ -659,11 +661,9 @@ class TestInferenceServiceWorkflow:
         assert result is not None
         assert "chatcmpl-1" in result
         workflow._start_session.assert_awaited_once()
-        workflow._set_last_reward.assert_awaited_once_with(
-            mock_http_session, 1.0, "sess-api-key-1"
-        )
+        workflow._set_last_reward.assert_awaited_once()
         workflow._export_interactions.assert_awaited_once_with(
-            mock_http_session, "sess-1", trajectory_id=None
+            mock_http_session, ["sess-1"], group_id="grp-test-1"
         )
 
 

@@ -179,6 +179,16 @@ class ModelInfo:
     data_proxy_addrs: list[str] = field(default_factory=list)
 
 
+@dataclass
+class GroupInfo:
+    """A registered group of sessions."""
+
+    group_id: str
+    worker_addr: str
+    session_ids: list[str] = field(default_factory=list)
+    created_at: float = field(default_factory=time.time)
+
+
 class ModelRegistry:
     """Thread-safe registry for model routing."""
 
@@ -218,3 +228,37 @@ class ModelRegistry:
     async def remove(self, name: str) -> bool:
         async with self._lock:
             return self._models.pop(name, None) is not None
+
+
+class GroupRegistry:
+    """Maps group IDs to worker addresses and member session IDs."""
+
+    def __init__(self) -> None:
+        self._groups: dict[str, GroupInfo] = {}
+        self._lock = asyncio.Lock()
+
+    async def register_group(
+        self, group_id: str, worker_addr: str, session_ids: list[str]
+    ) -> None:
+        """Store a group mapping. Raises ValueError if group_id already exists."""
+        async with self._lock:
+            if group_id in self._groups:
+                raise ValueError(f"Group {group_id} already registered")
+            self._groups[group_id] = GroupInfo(
+                group_id=group_id,
+                worker_addr=worker_addr,
+                session_ids=list(session_ids),
+            )
+
+    async def lookup(self, group_id: str) -> GroupInfo | None:
+        """Return the GroupInfo for a group_id, or None."""
+        async with self._lock:
+            return self._groups.get(group_id)
+
+    async def revoke(self, group_id: str) -> list[str]:
+        """Remove a group. Returns the session_ids that were in the group."""
+        async with self._lock:
+            info = self._groups.pop(group_id, None)
+            if info is None:
+                return []
+            return info.session_ids
