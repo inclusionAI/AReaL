@@ -1605,23 +1605,7 @@ class FSDPEngine(TrainEngine):
             fut = self.rollout_engine.update_weights_from_disk(meta)
 
         assert meta.path is not None
-        # LoRA disk-sync incremental strategy:
-        #   * First weight update (version == 1): save the FULL base+LoRA
-        #     merged model so SGLang can ingest via /update_weights_from_disk.
-        #   * Subsequent updates (version >= 2): save adapter-only PEFT
-        #     artefact so SGLang can ingest via /load_lora_adapter.
-        # The non-LoRA path is unchanged: always full model save.
-        save_full_for_lora_first_step = (
-            self.config.use_lora
-            and meta.version is not None
-            and meta.version <= 1
-        )
-        self._save_model_to_hf(
-            meta.path,
-            self.tokenizer,
-            self.processor,
-            force_full_model=save_full_for_lora_first_step,
-        )
+        self._save_model_to_hf(meta.path, self.tokenizer, self.processor)
         # dist.barrier() are called when _save_model_to_hf finished
 
         if dist.get_rank() == 0:
@@ -1645,7 +1629,6 @@ class FSDPEngine(TrainEngine):
         path: str,
         tokenizer: PreTrainedTokenizerFast | None,
         processor: ProcessorMixin | None,
-        force_full_model: bool = False,
     ):
         """Save model in HuggingFace format.
 
@@ -1660,13 +1643,6 @@ class FSDPEngine(TrainEngine):
         (``meta.use_lora=True`` -> ``build_disk_weight_update_requests``
         -> ``/load_lora_adapter``) becomes end-to-end functional without
         any additional dispatch logic.
-
-        ``force_full_model=True`` overrides the LoRA branch and always
-        writes the full base+LoRA-merged HF model.  This is used by the
-        very first weight update so SGLang can do a
-        ``/update_weights_from_disk`` full warm-load before switching to
-        adapter-only ``/load_lora_adapter`` deltas on subsequent
-        updates.
         """
         if self.model is None:
             raise RuntimeError("Model not initialized")
@@ -1680,8 +1656,7 @@ class FSDPEngine(TrainEngine):
         # save huggingface model on rank 0
         if dist.get_rank() == 0:
             os.makedirs(path, exist_ok=True)
-            saved_as_lora_adapter = self.config.use_lora and not force_full_model
-            if saved_as_lora_adapter:
+            if self.config.use_lora:
                 self._save_lora_adapter_to_hf(path, state_dict)
             else:
                 self.model.save_pretrained(path, state_dict=state_dict)
@@ -1691,28 +1666,29 @@ class FSDPEngine(TrainEngine):
                 if processor is not None:
                     processor.save_pretrained(path)
             # Record on-disk artefact size as a wandb metric so the
-            # full-model -> adapter-only size collapse across steps is
-            # visible.  For the first LoRA disk sync we save the full
-            # model warmup; subsequent adapter-only saves should be
-            # ~10-100x smaller.
-            self._log_disk_save_size(path, saved_as_lora_adapter=saved_as_lora_adapter)
+            # weight-sync data volume is observable.  LoRA disk sync
+            # uses adapter-only PEFT files (~ tens of MB), full-model
+            # sync uses the full HF directory (~ hundreds of MB to GBs);
+            # plotting these side-by-side makes the bandwidth saving
+            # explicit.
+            self._log_disk_save_size(path)
         dist.barrier(group=self.cpu_group)
 
-    def _log_disk_save_size(self, path: str, saved_as_lora_adapter: bool = False) -> None:
+    def _log_disk_save_size(self, path: str) -> None:
         """Record the on-disk size of a checkpoint directory as a wandb metric.
 
         Sums the bytes of every regular file under ``path`` (recursively)
         and reports the total under flat top-level keys
         ``weight_update_disk_bytes`` (always populated) plus a
-        format-specific key (``weight_update_disk_lora_bytes`` for an
-        adapter-only PEFT save, ``weight_update_disk_full_bytes`` for a
-        full HF model save).
+        format-specific key (``weight_update_disk_lora_bytes`` when
+        ``self.config.use_lora`` is True, otherwise
+        ``weight_update_disk_full_bytes``).
 
         The metrics are written via the **default** ``stats_tracker`` so
-        they are exported through the same tracker that already drives
-        wandb panels for ``ppo_actor`` etc.  Using a top-level (no
-        ``/``) key avoids creating a separate wandb panel group that
-        the user might overlook.
+        they flow through the same tracker that already drives wandb
+        panels for ``ppo_actor`` etc.  Using a top-level (no ``/``) key
+        avoids creating a separate wandb panel group that the user
+        might overlook.
 
         Called on rank 0 only; failures are swallowed because metric
         emission must never break the training loop.
@@ -1730,15 +1706,14 @@ class FSDPEngine(TrainEngine):
             kwargs: dict[str, float] = {
                 "weight_update_disk_bytes": float(total_bytes),
             }
-            if saved_as_lora_adapter:
+            if self.config.use_lora:
                 kwargs["weight_update_disk_lora_bytes"] = float(total_bytes)
             else:
                 kwargs["weight_update_disk_full_bytes"] = float(total_bytes)
             stats_tracker.scalar(**kwargs)
             self.logger.info(
                 f"[weight_update_disk] saved {total_bytes} bytes to {path} "
-                f"(use_lora={self.config.use_lora}, "
-                f"saved_as_lora_adapter={saved_as_lora_adapter})"
+                f"(use_lora={self.config.use_lora})"
             )
         except Exception as e:
             # Metric emission must never break training.

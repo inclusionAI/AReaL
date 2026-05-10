@@ -130,20 +130,7 @@ class SGLangBackend:
         self, meta: WeightUpdateMeta
     ) -> WeightUpdateRequests:
         """Build SGLang disk weight update requests."""
-        # LoRA disk-sync incremental strategy:
-        #   * version <= 1 (first sync) and use_lora=True:
-        #       train side wrote the FULL base+LoRA-merged HF model;
-        #       hit /update_weights_from_disk to do a full warm-load.
-        #   * version >= 2 and use_lora=True:
-        #       train side wrote an adapter-only PEFT artefact;
-        #       hit /load_lora_adapter so SGLang only ingests deltas.
-        #   * use_lora=False: always /update_weights_from_disk.
-        use_lora_adapter_endpoint = (
-            meta.use_lora
-            and meta.version is not None
-            and meta.version > 1
-        )
-        if use_lora_adapter_endpoint:
+        if meta.use_lora:
             if not meta.lora_name:
                 raise ValueError("LoRA name is required for LoRA update.")
             if meta.version is None:
@@ -156,12 +143,11 @@ class SGLangBackend:
                     payload={"lora_name": lora_name, "lora_path": str(meta.path)},
                 )
             ]
-            self._log_disk_send_size(meta, sent_as_lora_adapter=True)
+            self._log_disk_send_size(meta, use_lora=True)
             return WeightUpdateRequests(requests=requests)
         else:
-            # Full model update (covers non-LoRA always, and the
-            # version<=1 first-sync warm-load for LoRA).
-            self._log_disk_send_size(meta, sent_as_lora_adapter=False)
+            # Full model update
+            self._log_disk_send_size(meta, use_lora=False)
             return WeightUpdateRequests(
                 requests=[
                     HttpRequest(
@@ -175,14 +161,14 @@ class SGLangBackend:
             )
 
     @staticmethod
-    def _log_disk_send_size(meta: WeightUpdateMeta, *, sent_as_lora_adapter: bool) -> None:
+    def _log_disk_send_size(meta: WeightUpdateMeta, *, use_lora: bool) -> None:
         """Record the size of weights the inference side will pull from disk.
 
         For disk-mode weight updates, the HTTP payload itself is just a
         pointer (``model_path`` or ``lora_path``) -- the actual bytes
         SGLang loads come from that on-disk directory.  We surface the
-        aggregate file size via the default ``stats_tracker`` under flat
-        top-level keys (no scope prefix) so the values land in the
+        aggregate file size via the **default** ``stats_tracker`` under
+        flat top-level keys (no scope prefix) so the values land in the
         same wandb panel group as ``ppo_actor/*`` and don't get hidden
         in a separate auto-generated panel:
 
@@ -211,7 +197,7 @@ class SGLangBackend:
             kwargs: dict[str, float] = {
                 "weight_update_send_bytes": float(total_bytes),
             }
-            if sent_as_lora_adapter:
+            if use_lora:
                 kwargs["weight_update_send_lora_bytes"] = float(total_bytes)
             else:
                 kwargs["weight_update_send_full_bytes"] = float(total_bytes)
