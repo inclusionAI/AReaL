@@ -23,9 +23,14 @@ class LinearCrossEntropy(torch.autograd.Function):
         reduction: only ``"none"`` is supported.
         dist_process_group: optional TP group for vocab-sharded ``weight``.
             ``labels`` must contain *global* vocab ids on every rank.
+        return_max_logits: when ``True``, the autograd Function additionally
+            returns the per-token raw-logit max (kernel-internal
+            ``max(logits/temperature)`` re-scaled by ``temperature``). The
+            extra output is detached / non-differentiable.
 
     Returns:
-        ``(logprobs, entropy)`` both shaped ``(num_tokens,)``.
+        ``(logprobs, entropy)`` both shaped ``(num_tokens,)``; or
+        ``(logprobs, entropy, max_logits)`` when ``return_max_logits=True``.
     """
 
     @staticmethod
@@ -37,7 +42,8 @@ class LinearCrossEntropy(torch.autograd.Function):
         temperature: float | None = 1.0,
         reduction: str | None = "none",
         dist_process_group: dist.ProcessGroup | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+        return_max_logits: bool = False,
+    ) -> tuple[torch.Tensor, torch.Tensor] | tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         if not isinstance(temperature, float):
             temperature = float(temperature)
         if not isinstance(reduction, str):
@@ -84,6 +90,17 @@ class LinearCrossEntropy(torch.autograd.Function):
         ctx.should_return_fp32_grad = False
         ctx.temperature = temperature
 
+        if return_max_logits:
+            # ``_maximum`` is the per-token max of ``logits / temperature``
+            # (post-temperature, online-softmax accumulator). Multiply back
+            # by ``temperature`` to recover the raw-logit max so the value
+            # matches ``raw_logits.max(-1).values`` from the non-fused path.
+            if temperature != 1.0:
+                max_logits = _maximum.detach() * temperature
+            else:
+                max_logits = _maximum.detach().clone()
+            return logprobs, entropy, max_logits
+
         return logprobs, entropy
 
     @staticmethod
@@ -91,6 +108,7 @@ class LinearCrossEntropy(torch.autograd.Function):
         ctx,
         dlogprobs: torch.Tensor,
         dentropy: torch.Tensor,
+        dmax_logits: torch.Tensor | None = None,
     ) -> tuple:
         from areal.utils.kernel import kernels
 
@@ -136,7 +154,7 @@ class LinearCrossEntropy(torch.autograd.Function):
 
         d_hidden = d_hidden.view(ctx.original_hidden_shape)
 
-        return d_hidden, d_weight, None, None, None, None
+        return d_hidden, d_weight, None, None, None, None, None
 
 
 def linear_cross_entropy(
@@ -146,8 +164,10 @@ def linear_cross_entropy(
     temperature: float = 1.0,
     reduction: str = "none",
     dist_process_group: dist.ProcessGroup | None = None,
-) -> tuple[torch.Tensor, torch.Tensor]:
+    return_max_logits: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor] | tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Functional wrapper around :class:`LinearCrossEntropy`."""
     return LinearCrossEntropy.apply(
-        hidden, weight, labels, temperature, reduction, dist_process_group
+        hidden, weight, labels, temperature, reduction, dist_process_group,
+        return_max_logits,
     )

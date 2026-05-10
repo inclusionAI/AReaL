@@ -42,7 +42,8 @@ def _reference_logprobs_entropy(
     labels: torch.Tensor,
     temperature: float,
     tp_group: dist.ProcessGroup | None,
-) -> tuple[torch.Tensor, torch.Tensor]:
+    return_max_logits: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor] | tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     flat_hidden = hidden.reshape(-1, hidden.shape[-1])
     flat_labels = labels.reshape(-1)
 
@@ -62,6 +63,14 @@ def _reference_logprobs_entropy(
     ).squeeze(-1)
     probs = log_softmax.exp()
     entropy = -(probs * log_softmax).sum(dim=-1)
+    if return_max_logits:
+        # Return max of the post-temperature logits, scaled back by ``temperature``
+        # so the value matches ``raw_logits.max(-1).values`` (matches the
+        # non-fused telemetry path exactly).
+        max_logits = logits.detach().max(dim=-1).values.float()
+        if temperature != 1.0:
+            max_logits = max_logits * temperature
+        return log_probs_labels, entropy, max_logits
     return log_probs_labels, entropy
 
 
@@ -71,7 +80,8 @@ def linear_cross_entropy_logprobs_entropy(
     labels: torch.Tensor,
     temperature: float = 1.0,
     tp_group: dist.ProcessGroup | None = None,
-) -> tuple[torch.Tensor, torch.Tensor]:
+    return_max_logits: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor] | tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Compute per-token log-prob and entropy via the fused kernel.
 
     Falls back to the materialised reference path when the fused kernel is
@@ -85,9 +95,16 @@ def linear_cross_entropy_logprobs_entropy(
             *global* vocab ids.
         temperature: softmax temperature.
         tp_group: optional tensor-parallel group when ``weight`` is sharded.
+        return_max_logits: when ``True``, additionally returns the per-token
+            max of the **raw** (pre-temperature) logits, shape ``labels.shape``,
+            dtype ``float32``. The fused kernel internally tracks
+            ``max(logits/temperature)``; we multiply it back by ``temperature``
+            so the value is numerically identical to
+            ``raw_logits.max(-1).values`` from the non-fused path.
 
     Returns:
-        ``(logprobs, entropy)`` both shaped like ``labels``.
+        ``(logprobs, entropy)`` both shaped like ``labels``; or
+        ``(logprobs, entropy, max_logits)`` when ``return_max_logits=True``.
     """
     leading_shape = labels.shape
 
@@ -101,6 +118,16 @@ def linear_cross_entropy_logprobs_entropy(
             )
         else:
             try:
+                if return_max_logits:
+                    logprobs, entropy, max_logits = linear_cross_entropy(
+                        hidden, weight, labels, temperature, "none", tp_group,
+                        return_max_logits=True,
+                    )
+                    return (
+                        logprobs.reshape(leading_shape),
+                        entropy.reshape(leading_shape),
+                        max_logits.reshape(leading_shape),
+                    )
                 logprobs, entropy = linear_cross_entropy(
                     hidden, weight, labels, temperature, "none", tp_group,
                 )
@@ -110,6 +137,15 @@ def linear_cross_entropy_logprobs_entropy(
                     "Fused LCE kernel raised %s; falling back to reference.", exc,
                 )
 
+    if return_max_logits:
+        logprobs, entropy, max_logits = _reference_logprobs_entropy(
+            hidden, weight, labels, temperature, tp_group, return_max_logits=True,
+        )
+        return (
+            logprobs.reshape(leading_shape),
+            entropy.reshape(leading_shape),
+            max_logits.reshape(leading_shape),
+        )
     logprobs, entropy = _reference_logprobs_entropy(
         hidden, weight, labels, temperature, tp_group
     )

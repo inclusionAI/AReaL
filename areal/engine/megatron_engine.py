@@ -1872,18 +1872,23 @@ class MegatronEngine(TrainEngine):
                     and fused_hidden is not None
                     and fused_weight is not None
                 ):
-                    logprobs, entropy = linear_cross_entropy_logprobs_entropy(
-                        fused_hidden,
-                        fused_weight,
-                        labels,
-                        temperature=self.config.temperature,
-                        tp_group=mpu.get_tensor_model_parallel_group()
-                        if mpu.get_tensor_model_parallel_world_size() > 1
-                        else None,
+                    logprobs, entropy, vocab_max_logits = (
+                        linear_cross_entropy_logprobs_entropy(
+                            fused_hidden,
+                            fused_weight,
+                            labels,
+                            temperature=self.config.temperature,
+                            tp_group=mpu.get_tensor_model_parallel_group()
+                            if mpu.get_tensor_model_parallel_world_size() > 1
+                            else None,
+                            return_max_logits=True,
+                        )
                     )
-                    proxy = logprobs.detach().float()
-                    vocab_min_logits = proxy
-                    vocab_max_logits = proxy
+                    # Fused kernel does not track per-token vocab min logits;
+                    # skip the min telemetry rather than report a misleading
+                    # proxy. Consumers must guard ``vocab_min_logits`` and
+                    # ``vocab_max_logits`` independently.
+                    vocab_min_logits = None
                 else:
                     logprobs, entropy = gather_logprobs_entropy(
                         output,

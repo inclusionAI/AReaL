@@ -114,6 +114,20 @@ def _is_compatible(post_process_module: torch.nn.Module) -> bool:
         )
         return False
 
+    # The Triton kernel hard-requires hidden_size to be a multiple of 128
+    # (BLOCK_HD constant). Surface this constraint at the gating layer so
+    # incompatible models fall back to the materialised path before the
+    # autograd graph is built; an assert raised inside ``backward`` would
+    # otherwise hard-kill the training loop.
+    hidden_size = getattr(config, "hidden_size", None)
+    if hidden_size is None or hidden_size % 128 != 0:
+        logger.warning(
+            "Fused LCE disabled: hidden_size=%s is not a multiple of 128 "
+            "(Triton kernel BLOCK_HD constraint).",
+            hidden_size,
+        )
+        return False
+
     return True
 
 
