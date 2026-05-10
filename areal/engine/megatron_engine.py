@@ -860,9 +860,7 @@ class MegatronEngine(TrainEngine):
                 and not cp_local
             )
 
-            with capture_lm_head_hidden(
-                model, enabled=should_capture
-            ) as capture:
+            with capture_lm_head_hidden(model, enabled=should_capture) as capture:
                 output = packed_context_parallel_forward(
                     model,
                     mb_input.padded_mb,
@@ -916,9 +914,7 @@ class MegatronEngine(TrainEngine):
                     )
                     # Re-align Float16Module's fp32 hidden to lm-head weight dtype.
                     if mb_input.orig_mb.get("_fused_lce_active", False):
-                        fused_weight = mb_input.orig_mb.get(
-                            FUSED_LCE_WEIGHT_KEY
-                        )
+                        fused_weight = mb_input.orig_mb.get(FUSED_LCE_WEIGHT_KEY)
                         if (
                             fused_weight is not None
                             and output.dtype != fused_weight.dtype
@@ -2234,11 +2230,7 @@ class MegatronEngine(TrainEngine):
             fused_active = inputs.get("_fused_lce_active", False)
             fused_hidden = inputs.get(FUSED_LCE_HIDDEN_KEY)
             fused_weight = inputs.get(FUSED_LCE_WEIGHT_KEY)
-            if (
-                fused_active
-                and fused_hidden is not None
-                and fused_weight is not None
-            ):
+            if fused_active and fused_hidden is not None and fused_weight is not None:
                 logprobs = linear_cross_entropy_logprobs(
                     fused_hidden,
                     fused_weight,

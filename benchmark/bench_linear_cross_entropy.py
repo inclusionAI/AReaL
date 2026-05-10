@@ -149,9 +149,7 @@ def _check_correctness(hidden, weight, labels, dtype, tp_group=None):
         rtol, atol = 2e-2, 2e-2
 
     torch.testing.assert_close(fused_lp.float(), ref_lp.float(), rtol=rtol, atol=atol)
-    torch.testing.assert_close(
-        fused_ent.float(), ref_ent.float(), rtol=rtol, atol=atol
-    )
+    torch.testing.assert_close(fused_ent.float(), ref_ent.float(), rtol=rtol, atol=atol)
     torch.testing.assert_close(fused_dh.float(), ref_dh.float(), rtol=rtol, atol=atol)
     torch.testing.assert_close(fused_dw.float(), ref_dw.float(), rtol=rtol, atol=atol)
 

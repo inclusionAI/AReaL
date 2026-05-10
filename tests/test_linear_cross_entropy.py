@@ -70,20 +70,14 @@ def _make_inputs(
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     g = torch.Generator(device=device).manual_seed(seed)
     hidden = (
-        torch.randn(
-            num_tokens, hidden_size, dtype=dtype, device=device, generator=g
-        )
+        torch.randn(num_tokens, hidden_size, dtype=dtype, device=device, generator=g)
         * 0.02
     )
     weight = (
-        torch.randn(
-            vocab_size, hidden_size, dtype=dtype, device=device, generator=g
-        )
+        torch.randn(vocab_size, hidden_size, dtype=dtype, device=device, generator=g)
         * 0.02
     )
-    labels = torch.randint(
-        0, vocab_size, (num_tokens,), device=device, generator=g
-    )
+    labels = torch.randint(0, vocab_size, (num_tokens,), device=device, generator=g)
     return hidden.contiguous(), weight.contiguous(), labels.contiguous()
 
 
@@ -210,9 +204,7 @@ def test_linear_cross_entropy_backward_matches_reference(
     # kernel's d_weight accumulates ``num_tokens`` partial products, so we
     # use a slightly looser absolute tolerance for d_weight at the largest
     # shape; rtol stays tight to catch directional errors.
-    torch.testing.assert_close(
-        hidden_a.grad, hidden_b.grad, rtol=1e-4, atol=1e-4
-    )
+    torch.testing.assert_close(hidden_a.grad, hidden_b.grad, rtol=1e-4, atol=1e-4)
     weight_atol = 1e-4 if num_tokens <= 512 else 5e-4
     torch.testing.assert_close(
         weight_a.grad, weight_b.grad, rtol=1e-4, atol=weight_atol
@@ -275,9 +267,7 @@ def _run_lce_tp2_with_torchrun(
         )
     except subprocess.CalledProcessError as e:
         pytest.fail(
-            "TP=2 LCE torchrun test failed:\n"
-            f"STDOUT:\n{e.stdout}\n"
-            f"STDERR:\n{e.stderr}"
+            f"TP=2 LCE torchrun test failed:\nSTDOUT:\n{e.stdout}\nSTDERR:\n{e.stderr}"
         )
 
 
@@ -322,9 +312,7 @@ def test_linear_cross_entropy_tp2_performance_benchmark(
     vocab_size: int,
 ) -> None:
     """TP=2 fused vs TP-materialised forward+backward time and peak memory."""
-    _run_lce_tp2_with_torchrun(
-        "performance", num_tokens, hidden_size, vocab_size
-    )
+    _run_lce_tp2_with_torchrun("performance", num_tokens, hidden_size, vocab_size)
 
 
 # ---------------------------------------------------------------------------
@@ -342,7 +330,9 @@ def _peak_memory_mb(fn, *args, **kwargs) -> tuple[float, float]:
     start.record()
     out = fn(*args, **kwargs)
     if isinstance(out, tuple):
-        loss = sum(t.float().sum() for t in out if t.requires_grad or t.grad_fn is not None)
+        loss = sum(
+            t.float().sum() for t in out if t.requires_grad or t.grad_fn is not None
+        )
     else:
         loss = out.float().sum()
     loss.backward()
@@ -395,9 +385,7 @@ def test_linear_cross_entropy_performance_benchmark(
     captured numbers are also printed for human review.
     """
     dtype = torch.bfloat16
-    hidden, weight, labels = _make_inputs(
-        num_tokens, hidden_size, vocab_size, dtype
-    )
+    hidden, weight, labels = _make_inputs(num_tokens, hidden_size, vocab_size, dtype)
 
     # warm-up
     for _ in range(2):

@@ -43,7 +43,9 @@ def _reference_logprobs_entropy(
     temperature: float,
     tp_group: dist.ProcessGroup | None,
     return_max_logits: bool = False,
-) -> tuple[torch.Tensor, torch.Tensor] | tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> (
+    tuple[torch.Tensor, torch.Tensor] | tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+):
     flat_hidden = hidden.reshape(-1, hidden.shape[-1])
     flat_labels = labels.reshape(-1)
 
@@ -81,7 +83,9 @@ def linear_cross_entropy_logprobs_entropy(
     temperature: float = 1.0,
     tp_group: dist.ProcessGroup | None = None,
     return_max_logits: bool = False,
-) -> tuple[torch.Tensor, torch.Tensor] | tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> (
+    tuple[torch.Tensor, torch.Tensor] | tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+):
     """Compute per-token log-prob and entropy via the fused kernel.
 
     Falls back to the materialised reference path when the fused kernel is
@@ -120,7 +124,12 @@ def linear_cross_entropy_logprobs_entropy(
             try:
                 if return_max_logits:
                     logprobs, entropy, max_logits = linear_cross_entropy(
-                        hidden, weight, labels, temperature, "none", tp_group,
+                        hidden,
+                        weight,
+                        labels,
+                        temperature,
+                        "none",
+                        tp_group,
                         return_max_logits=True,
                     )
                     return (
@@ -129,17 +138,28 @@ def linear_cross_entropy_logprobs_entropy(
                         max_logits.reshape(leading_shape),
                     )
                 logprobs, entropy = linear_cross_entropy(
-                    hidden, weight, labels, temperature, "none", tp_group,
+                    hidden,
+                    weight,
+                    labels,
+                    temperature,
+                    "none",
+                    tp_group,
                 )
                 return logprobs.reshape(leading_shape), entropy.reshape(leading_shape)
             except Exception as exc:
                 logger.warning(
-                    "Fused LCE kernel raised %s; falling back to reference.", exc,
+                    "Fused LCE kernel raised %s; falling back to reference.",
+                    exc,
                 )
 
     if return_max_logits:
         logprobs, entropy, max_logits = _reference_logprobs_entropy(
-            hidden, weight, labels, temperature, tp_group, return_max_logits=True,
+            hidden,
+            weight,
+            labels,
+            temperature,
+            tp_group,
+            return_max_logits=True,
         )
         return (
             logprobs.reshape(leading_shape),

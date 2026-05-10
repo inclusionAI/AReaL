@@ -43,7 +43,10 @@ class LinearCrossEntropy(torch.autograd.Function):
         reduction: str | None = "none",
         dist_process_group: dist.ProcessGroup | None = None,
         return_max_logits: bool = False,
-    ) -> tuple[torch.Tensor, torch.Tensor] | tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> (
+        tuple[torch.Tensor, torch.Tensor]
+        | tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+    ):
         if not isinstance(temperature, float):
             temperature = float(temperature)
         if not isinstance(reduction, str):
@@ -62,9 +65,9 @@ class LinearCrossEntropy(torch.autograd.Function):
         assert hidden.is_cuda and weight.is_cuda and labels.is_cuda, (
             "LinearCrossEntropy requires CUDA inputs"
         )
-        assert hidden.is_contiguous() and weight.is_contiguous() and labels.is_contiguous(), (
-            "LinearCrossEntropy requires contiguous tensors"
-        )
+        assert (
+            hidden.is_contiguous() and weight.is_contiguous() and labels.is_contiguous()
+        ), "LinearCrossEntropy requires contiguous tensors"
 
         (
             logprobs,
@@ -81,9 +84,7 @@ class LinearCrossEntropy(torch.autograd.Function):
             dist_process_group,
         )
 
-        ctx.save_for_backward(
-            hidden, weight, labels, _maximum, _accumulate, _entropy_b
-        )
+        ctx.save_for_backward(hidden, weight, labels, _maximum, _accumulate, _entropy_b)
         ctx.original_hidden_shape = original_hidden_shape
         ctx.REDUCTION = REDUCTION
         ctx.dist_process_group = dist_process_group
@@ -165,9 +166,16 @@ def linear_cross_entropy(
     reduction: str = "none",
     dist_process_group: dist.ProcessGroup | None = None,
     return_max_logits: bool = False,
-) -> tuple[torch.Tensor, torch.Tensor] | tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> (
+    tuple[torch.Tensor, torch.Tensor] | tuple[torch.Tensor, torch.Tensor, torch.Tensor]
+):
     """Functional wrapper around :class:`LinearCrossEntropy`."""
     return LinearCrossEntropy.apply(
-        hidden, weight, labels, temperature, reduction, dist_process_group,
+        hidden,
+        weight,
+        labels,
+        temperature,
+        reduction,
+        dist_process_group,
         return_max_logits,
     )

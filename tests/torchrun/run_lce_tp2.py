@@ -240,7 +240,9 @@ def _test_tp2_performance(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--test_type", choices=["correctness", "performance"], required=True)
+    parser.add_argument(
+        "--test_type", choices=["correctness", "performance"], required=True
+    )
     parser.add_argument("--num_tokens", type=int, required=True)
     parser.add_argument("--hidden_size", type=int, required=True)
     parser.add_argument("--vocab_size", type=int, required=True)

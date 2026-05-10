@@ -81,13 +81,12 @@ def _is_compatible(post_process_module: torch.nn.Module) -> bool:
     if getattr(config, "use_mup", False):
         _warn_incompatible_once(
             "use_mup",
-            "Fused LCE disabled: MuP scaling is enabled (config.use_mup=True)."
+            "Fused LCE disabled: MuP scaling is enabled (config.use_mup=True).",
         )
         return False
     if getattr(config, "mtp_num_layers", 0):
         _warn_incompatible_once(
-            "mtp",
-            "Fused LCE disabled: MTP is enabled (config.mtp_num_layers>0)."
+            "mtp", "Fused LCE disabled: MTP is enabled (config.mtp_num_layers>0)."
         )
         return False
 
