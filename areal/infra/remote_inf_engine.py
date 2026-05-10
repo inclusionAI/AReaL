@@ -1209,6 +1209,244 @@ class RemoteInfEngine(InferenceEngine):
                 )
             except Exception:
                 pass
+        # [MTPWireBundleAudit-v68] In sglang's update_weights_from_tensor
+        # protocol the megatron side calls
+        #   per_rank = [(name, LocalSerializedTensor(values=[inner_b]))
+        #               for name, inner_b in pairs]
+        #   outer    = MultiprocessingSerializer.serialize(per_rank)
+        #   payload  = {"serialized_named_tensors": [b64(outer)] * tp_size}
+        # Therefore on the wire serialized_named_tensors[0] is NOT a
+        # (name, blob) tuple but a single base64 string of the outer
+        # bundle, which the v64/v67 audits could not iterate over and
+        # produced n_hashed=0 in log.11.  v68 base64-decodes the outer
+        # bundle, deserializes it via sglang's MultiprocessingSerializer,
+        # extracts the inner LocalSerializedTensor for each MTP target,
+        # deserializes that to a torch.Tensor, and logs first8/last8 +
+        # abs_mean/abs_max/l2 + sha256_16 of the actual fp32 wire bytes.
+        try:
+            import base64 as _v68_b64
+            import hashlib as _v68_hash
+            import struct as _v68_struct
+            _v68_named_outer = serialized_payload.get(
+                "serialized_named_tensors", []
+            ) if isinstance(serialized_payload, dict) else []
+            _v68_targets = (
+                "model.mtp_layers.0.token_layernorm.weight",
+                "model.mtp_layers.0.hidden_layernorm.weight",
+                "model.mtp_layers.0.input_proj.weight",
+                "model.mtp_layers.0.final_layernorm.weight",
+                "model.mtp_layers.0.input_layernorm.weight",
+                "model.mtp_layers.0.post_attention_layernorm.weight",
+                "model.mtp_layers.0.self_attn.o_proj.weight",
+                "model.mtp_layers.0.self_attn.q_proj.weight",
+                "model.mtp_layers.0.self_attn.k_proj.weight",
+                "model.mtp_layers.0.self_attn.v_proj.weight",
+                "model.mtp_layers.0.mlp.gate_proj.weight",
+                "model.mtp_layers.0.mlp.up_proj.weight",
+                "model.mtp_layers.0.mlp.down_proj.weight",
+            )
+            _v68_handled = 0
+            for _v68_outer_idx, _v68_outer_item in enumerate(
+                _v68_named_outer
+            ):
+                # Phase 1: decode outer base64 bundle
+                _v68_outer_bytes = None
+                if isinstance(_v68_outer_item, str):
+                    try:
+                        _v68_outer_bytes = _v68_b64.b64decode(
+                            _v68_outer_item, validate=False)
+                    except Exception as _e_v68_b:
+                        logger.warning(
+                            "[MTPWireBundleAudit-v68] outer_idx=%d "
+                            "b64 decode failed: %r",
+                            _v68_outer_idx, _e_v68_b,
+                        )
+                        continue
+                elif isinstance(_v68_outer_item, (bytes, bytearray)):
+                    _v68_outer_bytes = bytes(_v68_outer_item)
+                else:
+                    logger.info(
+                        "[MTPWireBundleAudit-v68] outer_idx=%d "
+                        "unexpected_type=%s — skipping",
+                        _v68_outer_idx,
+                        type(_v68_outer_item).__name__,
+                    )
+                    continue
+                if not _v68_outer_bytes:
+                    continue
+                logger.info(
+                    "[MTPWireBundleAudit-v68] outer_idx=%d "
+                    "b64_len=%d outer_bytes=%d sha256_16=%s",
+                    _v68_outer_idx,
+                    len(_v68_outer_item) if isinstance(
+                        _v68_outer_item, str) else -1,
+                    len(_v68_outer_bytes),
+                    _v68_hash.sha256(
+                        _v68_outer_bytes
+                    ).hexdigest()[:16],
+                )
+                # Phase 2: import sglang serializer
+                try:
+                    from sglang.srt.utils import (
+                        MultiprocessingSerializer as _v68_MPS,
+                    )
+                except Exception as _e_v68_imp_mps:
+                    logger.warning(
+                        "[MTPWireBundleAudit-v68] cannot import "
+                        "MultiprocessingSerializer: %r",
+                        _e_v68_imp_mps,
+                    )
+                    continue
+                try:
+                    _v68_per_rank = _v68_MPS.deserialize(
+                        _v68_outer_bytes)
+                except Exception as _e_v68_dso:
+                    logger.warning(
+                        "[MTPWireBundleAudit-v68] outer "
+                        "deserialize failed: %r", _e_v68_dso,
+                    )
+                    continue
+                if not isinstance(
+                    _v68_per_rank, (list, tuple)
+                ):
+                    logger.info(
+                        "[MTPWireBundleAudit-v68] per_rank type=%s "
+                        "len=N/A — unexpected",
+                        type(_v68_per_rank).__name__,
+                    )
+                    continue
+                _v68_all_names = []
+                for _v68_pair in _v68_per_rank:
+                    if (
+                        isinstance(_v68_pair, (list, tuple))
+                        and len(_v68_pair) >= 1
+                    ):
+                        _v68_all_names.append(_v68_pair[0])
+                logger.info(
+                    "[MTPWireBundleAudit-v68] per_rank n_pairs=%d "
+                    "all_names=%s",
+                    len(_v68_per_rank), _v68_all_names,
+                )
+                # Phase 3: enumerate inner pairs, audit targets
+                for _v68_pair in _v68_per_rank:
+                    if not (
+                        isinstance(_v68_pair, (list, tuple))
+                        and len(_v68_pair) >= 2
+                    ):
+                        continue
+                    _v68_name = _v68_pair[0]
+                    _v68_lst = _v68_pair[1]
+                    if _v68_name not in _v68_targets:
+                        continue
+                    # LocalSerializedTensor.values[0] holds inner bytes
+                    _v68_inner = None
+                    try:
+                        _v68_inner = getattr(
+                            _v68_lst, "values", None)
+                        if (
+                            isinstance(_v68_inner, (list, tuple))
+                            and len(_v68_inner) >= 1
+                        ):
+                            _v68_inner_b = _v68_inner[0]
+                        else:
+                            _v68_inner_b = _v68_inner
+                    except Exception:
+                        _v68_inner_b = None
+                    if _v68_inner_b is None:
+                        logger.info(
+                            "[MTPWireBundleAudit-v68] hf_name=%s "
+                            "NO_INNER lst_type=%s",
+                            _v68_name, type(_v68_lst).__name__,
+                        )
+                        continue
+                    # Inner is itself a serialized torch.Tensor blob
+                    try:
+                        _v68_tensor = _v68_MPS.deserialize(
+                            _v68_inner_b)
+                    except Exception as _e_v68_dsi:
+                        logger.warning(
+                            "[MTPWireBundleAudit-v68] hf_name=%s "
+                            "inner deserialize failed: %r",
+                            _v68_name, _e_v68_dsi,
+                        )
+                        continue
+                    try:
+                        import torch as _v68_torch
+                        if isinstance(_v68_tensor, _v68_torch.Tensor):
+                            _v68_t_cpu = _v68_tensor.detach().to(
+                                "cpu", dtype=_v68_torch.float32
+                            ).contiguous()
+                            _v68_flat = _v68_t_cpu.flatten()
+                            _v68_n_el = int(_v68_flat.numel())
+                            _v68_first_n = min(8, _v68_n_el)
+                            _v68_last_n = min(8, _v68_n_el)
+                            _v68_first8 = (
+                                _v68_flat[:_v68_first_n].tolist()
+                            )
+                            _v68_last8 = (
+                                _v68_flat[-_v68_last_n:].tolist()
+                                if _v68_last_n > 0 else []
+                            )
+                            _v68_abs_mean = float(
+                                _v68_flat.abs().mean().item()
+                            ) if _v68_n_el > 0 else 0.0
+                            _v68_abs_max = float(
+                                _v68_flat.abs().max().item()
+                            ) if _v68_n_el > 0 else 0.0
+                            _v68_l2 = float(
+                                _v68_flat.norm(p=2).item()
+                            ) if _v68_n_el > 0 else 0.0
+                            _v68_raw = (
+                                _v68_flat.numpy().tobytes()
+                                if _v68_n_el > 0 else b""
+                            )
+                            _v68_sha = _v68_hash.sha256(
+                                _v68_raw
+                            ).hexdigest()[:16]
+                            logger.info(
+                                "[MTPWireBundleAudit-v68] "
+                                "hf_name=%s shape=%s dtype=%s "
+                                "numel=%d sha256_16=%s "
+                                "first8=%s last8=%s "
+                                "abs_mean=%.6e abs_max=%.6e "
+                                "l2=%.6e",
+                                _v68_name,
+                                tuple(_v68_tensor.shape),
+                                str(_v68_tensor.dtype),
+                                _v68_n_el, _v68_sha,
+                                _v68_first8, _v68_last8,
+                                _v68_abs_mean, _v68_abs_max,
+                                _v68_l2,
+                            )
+                            _v68_handled += 1
+                        else:
+                            logger.info(
+                                "[MTPWireBundleAudit-v68] "
+                                "hf_name=%s inner_type=%s — not a "
+                                "torch.Tensor",
+                                _v68_name,
+                                type(_v68_tensor).__name__,
+                            )
+                    except Exception as _e_v68_tens:
+                        logger.warning(
+                            "[MTPWireBundleAudit-v68] hf_name=%s "
+                            "tensor handling failed: %r",
+                            _v68_name, _e_v68_tens,
+                        )
+            logger.info(
+                "[MTPWireBundleAudit-v68] summary handled=%d "
+                "outer_n=%d addresses=%s",
+                _v68_handled, len(_v68_named_outer),
+                self.addresses,
+            )
+        except Exception as _e_v68:
+            try:
+                logger.warning(
+                    "[MTPWireBundleAudit-v68] outer failure: %r",
+                    _e_v68,
+                )
+            except Exception:
+                pass
         http_req = HttpRequest(
             endpoint="/update_weights_from_tensor",
             payload=serialized_payload,
@@ -1288,6 +1526,70 @@ class RemoteInfEngine(InferenceEngine):
                                 "name=%s FAIL err=%r",
                                 _v64_pr_addr, _v64_pr_n,
                                 _e_v64_pr_inner,
+                            )
+                # [MTPDraftSglangProbeExt-v68] previous probe
+                # always returned 400 for both HF and the
+                # mtp_layers.0-stripped names.  v68 widens the
+                # probe to also try sglang internal MiMoMTP
+                # rekeys for the transformer block:
+                #   model.mtp_block.input_layernorm.weight
+                #   model.mtp_block.post_attention_layernorm.weight
+                #   model.mtp_block.self_attn.{q,k,v,o}_proj.weight
+                #   model.mtp_block.mlp.{gate,up,down}_proj.weight
+                # plus the truly bare names sglang may use
+                # ("input_proj.weight", "token_layernorm.weight",
+                #  ...).  At least one of these should succeed
+                # if sglang holds the MTP weights at all.
+                _v68_pr_extra = [
+                    "model.mtp_block.input_layernorm.weight",
+                    "model.mtp_block.post_attention_layernorm.weight",
+                    "model.mtp_block.self_attn.q_proj.weight",
+                    "model.mtp_block.self_attn.k_proj.weight",
+                    "model.mtp_block.self_attn.v_proj.weight",
+                    "model.mtp_block.self_attn.o_proj.weight",
+                    "model.mtp_block.mlp.gate_proj.weight",
+                    "model.mtp_block.mlp.up_proj.weight",
+                    "model.mtp_block.mlp.down_proj.weight",
+                    "input_proj.weight",
+                    "token_layernorm.weight",
+                    "hidden_layernorm.weight",
+                    "final_layernorm.weight",
+                ]
+                for _v68_pr_addr in self.addresses:
+                    for _v68_pr_n in _v68_pr_extra:
+                        _v68_pr_url = (
+                            f"http://{_v68_pr_addr}/get_weights_by_name"
+                        )
+                        try:
+                            _v68_pr_resp = _v64_pr_req.post(
+                                _v68_pr_url,
+                                json={
+                                    "name": _v68_pr_n,
+                                    "truncate_size": 32,
+                                },
+                                timeout=10,
+                            )
+                            _v68_pr_status = int(
+                                _v68_pr_resp.status_code)
+                            _v68_pr_body = _v68_pr_resp.text
+                            _v68_pr_h = _v64_pr_hash.sha256(
+                                _v68_pr_body.encode("utf-8")
+                            ).hexdigest()[:16]
+                            logger.info(
+                                "[MTPDraftSglangProbeExt-v68] addr=%s "
+                                "name=%s status=%d body_len=%d "
+                                "sha256_16=%s head=%.300s",
+                                _v68_pr_addr, _v68_pr_n,
+                                _v68_pr_status,
+                                len(_v68_pr_body),
+                                _v68_pr_h, _v68_pr_body,
+                            )
+                        except Exception as _e_v68_pr_inner:
+                            logger.info(
+                                "[MTPDraftSglangProbeExt-v68] addr=%s "
+                                "name=%s FAIL err=%r",
+                                _v68_pr_addr, _v68_pr_n,
+                                _e_v68_pr_inner,
                             )
             except Exception as _e_v64_pr:
                 try:
