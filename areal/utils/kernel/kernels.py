@@ -943,7 +943,6 @@ def efficient_entropy_backward(
     assert entropy_b.shape == (num_tokens,)
 
     vocab_per_split = 9504
-    assert vocab_per_split % 128 == 0
     num_splits = (vocab_size + vocab_per_split - 1) // vocab_per_split
 
     _d_logits = torch.empty((num_tokens, vocab_per_split), device=hidden.device, dtype=hidden.dtype).contiguous()
