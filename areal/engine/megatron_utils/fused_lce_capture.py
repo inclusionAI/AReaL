@@ -7,8 +7,9 @@ The fused LCE kernel needs ``(hidden, weight)`` instead of materialised
 ``output_layer.forward`` to capture those tensors for one microbatch.
 
 Compatibility: incompatible with MuP (``use_mup``), MTP
-(``mtp_num_layers > 0``), and critic heads.  The engine falls back to
-the materialised path automatically when any of these conditions hold.
+(``mtp_num_layers > 0``), critic heads, and hidden sizes that do not
+satisfy the fused-kernel alignment requirement.  The engine falls back
+to the materialised path automatically when any of these conditions hold.
 """
 
 from __future__ import annotations
@@ -29,6 +30,8 @@ logger = logging.getLogger("FusedLCECapture")
 
 FUSED_LCE_HIDDEN_KEY = "_fused_lce_hidden"
 FUSED_LCE_WEIGHT_KEY = "_fused_lce_weight"
+_HIDDEN_SIZE_ALIGNMENT = 128
+_WARNED_INCOMPATIBILITIES: set[str] = set()
 
 
 @dataclass
@@ -48,18 +51,42 @@ def _unwrap_to_post_process_module(model: torch.nn.Module) -> torch.nn.Module | 
     return None
 
 
+def _warn_incompatible_once(key: str, message: str, *args: object) -> None:
+    if key in _WARNED_INCOMPATIBILITIES:
+        return
+    _WARNED_INCOMPATIBILITIES.add(key)
+    logger.warning(message, *args)
+
+
+def _get_lm_head_hidden_size(
+    config: object,
+    output_layer: torch.nn.Module,
+) -> int | None:
+    hidden_size = getattr(config, "hidden_size", None)
+    if hidden_size is not None:
+        return int(hidden_size)
+
+    weight = getattr(output_layer, "weight", None)
+    if weight is not None and hasattr(weight, "shape") and len(weight.shape) > 0:
+        return int(weight.shape[-1])
+
+    return None
+
+
 def _is_compatible(post_process_module: torch.nn.Module) -> bool:
     config = getattr(post_process_module, "config", None)
     if config is None:
         return False
 
     if getattr(config, "use_mup", False):
-        logger.warning(
+        _warn_incompatible_once(
+            "use_mup",
             "Fused LCE disabled: MuP scaling is enabled (config.use_mup=True)."
         )
         return False
     if getattr(config, "mtp_num_layers", 0):
-        logger.warning(
+        _warn_incompatible_once(
+            "mtp",
             "Fused LCE disabled: MTP is enabled (config.mtp_num_layers>0)."
         )
         return False
@@ -68,11 +95,22 @@ def _is_compatible(post_process_module: torch.nn.Module) -> bool:
     if output_layer is None:
         return False
 
+    hidden_size = _get_lm_head_hidden_size(config, output_layer)
+    if hidden_size is not None and hidden_size % _HIDDEN_SIZE_ALIGNMENT != 0:
+        _warn_incompatible_once(
+            f"hidden_size:{hidden_size}",
+            "Fused LCE disabled: hidden_size=%s is not divisible by %s.",
+            hidden_size,
+            _HIDDEN_SIZE_ALIGNMENT,
+        )
+        return False
+
     parallel_output = getattr(post_process_module, "parallel_output", True)
     if not parallel_output:
-        logger.warning(
+        _warn_incompatible_once(
+            "parallel_output",
             "Fused LCE disabled: model has parallel_output=False; "
-            "would require an extra TP gather."
+            "would require an extra TP gather.",
         )
         return False
 
