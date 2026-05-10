@@ -276,10 +276,28 @@ def _setup_openai_client():
     with _lock:
         _admin_api_key = openai_cfg.admin_api_key
         if _admin_api_key == DEFAULT_ADMIN_API_KEY:
-            logger.warning(
-                "Using default admin API key. Change 'admin_api_key' in "
-                "OpenAIProxyConfig for non-local deployments."
+            # The default admin key is publicly known. Refuse to use it when
+            # the server is reachable from outside the local host, otherwise
+            # any attacker who can reach this port can call admin endpoints
+            # (grant_capacity, start_session, export_trajectories, ...).
+            loopback_hosts = {"127.0.0.1", "::1", "localhost"}
+            allow_override = (
+                os.environ.get("AREAL_ALLOW_DEFAULT_ADMIN_KEY", "0") == "1"
             )
+            if _server_host in loopback_hosts or allow_override:
+                logger.warning(
+                    "Using default admin API key. Change 'admin_api_key' in "
+                    "OpenAIProxyConfig before exposing this server on a network."
+                )
+            else:
+                raise RuntimeError(
+                    "Refusing to start proxy rollout server on non-loopback "
+                    f"host {_server_host!r} with the default admin API key "
+                    f"({DEFAULT_ADMIN_API_KEY!r}). Set 'admin_api_key' in "
+                    "OpenAIProxyConfig to a unique secret, or set "
+                    "AREAL_ALLOW_DEFAULT_ADMIN_KEY=1 to acknowledge the risk "
+                    "in a trusted environment."
+                )
 
 
 @app.post("/configure")
