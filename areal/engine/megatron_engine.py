@@ -55,7 +55,7 @@ from areal.engine.core.distributed import (
     init_custom_process_group,
     warmup_process_groups,
 )
-from areal.engine.core.model import disable_dropout_in_model
+from areal.engine.core.model import disable_dropout_in_model, is_valid_vision_model
 from areal.engine.megatron_utils.checkpointer import MegatronCheckpointManager
 from areal.engine.megatron_utils.deterministic import set_deterministic_algorithms
 from areal.engine.megatron_utils.fp8 import FP8BlockwiseTensorHelper
@@ -73,6 +73,7 @@ from areal.engine.megatron_utils.megatron import (
 from areal.engine.megatron_utils.megatron_lora import get_vllm_lora_target_modules
 from areal.engine.megatron_utils.packed_context_parallel import (
     packed_context_parallel_forward,
+    reassemble_cp_packed_logprobs,
     split_packed_seqs_for_context_parallel,
 )
 from areal.engine.megatron_utils.pipeline_parallel import (
@@ -117,7 +118,7 @@ from areal.utils.functional import (
     linear_cross_entropy_logprobs,
     linear_cross_entropy_logprobs_entropy,
 )
-from areal.utils.hf_utils import load_hf_tokenizer
+from areal.utils.hf_utils import load_hf_processor_and_tokenizer, load_hf_tokenizer
 from areal.utils.lock import DistributedLock
 from areal.utils.network import find_free_ports, format_host_for_url, gethostip
 from areal.utils.offload import is_tms_enabled, torch_memory_saver
@@ -191,6 +192,8 @@ class MegatronEngine(TrainEngine):
         self.quantization_config: dict[str, int | str | list[str]] | None = None
         self.bridge_cls: str = getattr(self.mcore_config, "bridge_type", "mbridge")
         self.bridge_lora: MegatronBridgeLoRA | None = None
+        self.is_vision_model: bool = False
+        self.processor = None
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         if parallel_strategy is None:
@@ -325,6 +328,22 @@ class MegatronEngine(TrainEngine):
             self.tf_config = configure_pipeline_layer_splits(
                 self.parallel_strategy, self.hf_config, self.tf_config
             )
+
+            self.is_vision_model = is_valid_vision_model(self.hf_config.model_type)
+            if self.is_vision_model:
+                if self.parallel_strategy.context_parallel_size > 1:
+                    raise NotImplementedError(
+                        "Context parallel (CP > 1) is not supported with VLM models. "
+                        f"Got context_parallel_size={self.parallel_strategy.context_parallel_size} "
+                        f"for model_type={self.hf_config.model_type}."
+                    )
+                self.processor, self.tokenizer = load_hf_processor_and_tokenizer(
+                    self.config.path
+                )
+                self.logger.info(
+                    f"VLM model detected (type={self.hf_config.model_type}). "
+                    f"Loaded processor and tokenizer."
+                )
 
             self.quantization_config = getattr(
                 self.hf_config, "quantization_config", None
@@ -772,6 +791,7 @@ class MegatronEngine(TrainEngine):
                     model,
                     mb_input.padded_mb,
                     gather_cp_output=not cp_local,
+                    is_vision_model=self.is_vision_model,
                 )
 
             if (
@@ -805,14 +825,11 @@ class MegatronEngine(TrainEngine):
                     cp_labels = split_packed_seqs_for_context_parallel(
                         rolled_ids, padded_cu_seqlens
                     )
-                    cp_loss_mask = split_packed_seqs_for_context_parallel(
-                        mb_input.padded_mb["loss_mask"], padded_cu_seqlens
-                    )
-                    cp_cu_seqlens = padded_cu_seqlens // cp_size
                     cp_inputs = dict(mb_input.orig_mb)
                     cp_inputs["_cp_local_labels"] = cp_labels
-                    cp_inputs["loss_mask"] = cp_loss_mask
-                    cp_inputs["cu_seqlens"] = cp_cu_seqlens
+                    cp_inputs["_cp_padded_cu_seqlens"] = padded_cu_seqlens
+                    cp_inputs["_cp_padding_length"] = mb_input.padding_length
+                    cp_inputs["_cp_old_cu_seqlens"] = mb_input.old_cu_seqlens
                     return output, functools.partial(_process_output, cp_inputs)
                 else:
                     output = unpad_logits(
@@ -893,9 +910,9 @@ class MegatronEngine(TrainEngine):
         )
 
         # Step 4: Optimizer step
-        result = self.optimizer_step()
-
-        return result
+        stats = self.optimizer_step()
+        stats["num_micro_batches"] = len(mb_list.mbs)
+        return stats
 
     @torch.no_grad()
     def eval_batch(
@@ -1860,6 +1877,7 @@ class MegatronEngine(TrainEngine):
                 )
             else:
                 cp_local_labels = inputs.get("_cp_local_labels")
+                cp_padded_cu_seqlens = inputs.get("_cp_padded_cu_seqlens")
                 if cp_local_labels is not None:
                     labels = cp_local_labels
                 else:
@@ -1900,6 +1918,48 @@ class MegatronEngine(TrainEngine):
                     )
                     vocab_min_logits = output.detach().min(-1).values.float()
                     vocab_max_logits = output.detach().max(-1).values.float()
+                    if cp_padded_cu_seqlens is not None:
+                        logprobs = reassemble_cp_packed_logprobs(
+                            logprobs, cp_padded_cu_seqlens
+                        )
+                        entropy = reassemble_cp_packed_logprobs(
+                            entropy, cp_padded_cu_seqlens
+                        )
+                        vocab_min_logits = reassemble_cp_packed_logprobs(
+                            vocab_min_logits, cp_padded_cu_seqlens
+                        )
+                        vocab_max_logits = reassemble_cp_packed_logprobs(
+                            vocab_max_logits, cp_padded_cu_seqlens
+                        )
+                        cp_padding_length = inputs.get("_cp_padding_length", 0)
+                        cp_old_cu_seqlens = inputs.get("_cp_old_cu_seqlens")
+                        logprobs = unpad_logits(
+                            logprobs,
+                            cp_padding_length,
+                            cp_padded_cu_seqlens,
+                            cp_old_cu_seqlens,
+                        )
+                        entropy = unpad_logits(
+                            entropy,
+                            cp_padding_length,
+                            cp_padded_cu_seqlens,
+                            cp_old_cu_seqlens,
+                        )
+                        vocab_min_logits = unpad_logits(
+                            vocab_min_logits,
+                            cp_padding_length,
+                            cp_padded_cu_seqlens,
+                            cp_old_cu_seqlens,
+                        )
+                        vocab_max_logits = unpad_logits(
+                            vocab_max_logits,
+                            cp_padding_length,
+                            cp_padded_cu_seqlens,
+                            cp_old_cu_seqlens,
+                        )
+                        inputs = {
+                            k: v for k, v in inputs.items() if not k.startswith("_cp_")
+                        }
             loss = loss_fn(
                 logprobs,
                 entropy,
