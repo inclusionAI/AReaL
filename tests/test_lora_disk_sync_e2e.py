@@ -15,6 +15,7 @@ Usage:
   pytest tests/test_lora_disk_sync_e2e.py -v
 """
 
+import os
 import subprocess
 
 import pytest
@@ -51,21 +52,20 @@ def _run_torchrun_test(alloc_mode: str, output: str, n_gpus: int | None = None):
         f"--backend={alloc_mode}",
         f"--output={output}",
     ]
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
 
     try:
-        result = subprocess.run(
+        subprocess.run(
             cmd,
             check=True,
-            capture_output=True,
-            text=True,
             timeout=300,
+            env=env,
         )
-        print(result.stdout)
     except subprocess.CalledProcessError as e:
         pytest.fail(
             f"torchrun failed with exit code {e.returncode}.\n"
-            f"stdout:\n{e.stdout}\n"
-            f"stderr:\n{e.stderr}"
+            "See the live torchrun output above for details."
         )
     except subprocess.TimeoutExpired:
         pytest.fail("torchrun timed out after 300 seconds.")
