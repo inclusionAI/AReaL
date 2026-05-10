@@ -1665,7 +1665,54 @@ class FSDPEngine(TrainEngine):
                     tokenizer.save_pretrained(path)
                 if processor is not None:
                     processor.save_pretrained(path)
+            # Record on-disk artefact size as a wandb metric so the
+            # full-model -> adapter-only size collapse across steps is
+            # visible.  For LoRA disk sync the first checkpoint may
+            # still be a full-model warmup save; subsequent adapter-only
+            # saves are expected to be ~10-100x smaller.
+            self._log_disk_save_size(path)
         dist.barrier(group=self.cpu_group)
+
+    def _log_disk_save_size(self, path: str) -> None:
+        """Record the on-disk size of a checkpoint directory as a wandb metric.
+
+        Sums the bytes of every regular file under ``path`` (recursively)
+        and reports the total under ``weight_update_disk/*``.  When
+        ``self.config.use_lora`` is True the size is also reported under
+        a dedicated ``lora_bytes`` key so the LoRA-only series is easy
+        to plot side-by-side with the full-model series.
+
+        Called on rank 0 only; failures are swallowed because metric
+        emission must never break the training loop.
+        """
+        try:
+            total_bytes = 0
+            for root, _dirs, files in os.walk(path):
+                for fname in files:
+                    fpath = os.path.join(root, fname)
+                    try:
+                        total_bytes += os.path.getsize(fpath)
+                    except OSError:
+                        # File may have been racily deleted; skip it.
+                        continue
+            scope = "weight_update_disk"
+            if self.config.use_lora:
+                stats_tracker.get(scope).scalar(
+                    lora_bytes=float(total_bytes),
+                    bytes=float(total_bytes),
+                )
+            else:
+                stats_tracker.get(scope).scalar(
+                    full_bytes=float(total_bytes),
+                    bytes=float(total_bytes),
+                )
+            self.logger.info(
+                f"[weight_update_disk] saved {total_bytes} bytes to {path} "
+                f"(use_lora={self.config.use_lora})"
+            )
+        except Exception as e:
+            # Metric emission must never break training.
+            self.logger.warning(f"Failed to record disk-save size metric: {e}")
 
     def _save_lora_adapter_to_hf(
         self,

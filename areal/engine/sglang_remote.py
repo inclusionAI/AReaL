@@ -143,9 +143,11 @@ class SGLangBackend:
                     payload={"lora_name": lora_name, "lora_path": str(meta.path)},
                 )
             ]
+            self._log_disk_send_size(meta, use_lora=True)
             return WeightUpdateRequests(requests=requests)
         else:
             # Full model update
+            self._log_disk_send_size(meta, use_lora=False)
             return WeightUpdateRequests(
                 requests=[
                     HttpRequest(
@@ -157,6 +159,53 @@ class SGLangBackend:
                     )
                 ]
             )
+
+    @staticmethod
+    def _log_disk_send_size(meta: WeightUpdateMeta, *, use_lora: bool) -> None:
+        """Record the size of weights the inference side will pull from disk.
+
+        For disk-mode weight updates, the HTTP payload itself is just a
+        pointer (``model_path`` or ``lora_path``) -- the actual bytes
+        SGLang loads come from that on-disk directory.  We surface the
+        aggregate file size here so wandb can show:
+
+          * ``weight_update_send/lora_bytes`` for adapter-only sends,
+          * ``weight_update_send/full_bytes`` for full-model sends,
+          * ``weight_update_send/bytes``     for either, in a single
+            unified series.
+
+        Failures are swallowed because metric emission must never break
+        the weight-update path.
+        """
+        path = meta.path
+        if path is None:
+            return
+        try:
+            total_bytes = 0
+            if os.path.isdir(path):
+                for root, _dirs, files in os.walk(path):
+                    for fname in files:
+                        fpath = os.path.join(root, fname)
+                        try:
+                            total_bytes += os.path.getsize(fpath)
+                        except OSError:
+                            continue
+            elif os.path.isfile(path):
+                total_bytes = os.path.getsize(path)
+            scope = "weight_update_send"
+            if use_lora:
+                stats_tracker.get(scope).scalar(
+                    lora_bytes=float(total_bytes),
+                    bytes=float(total_bytes),
+                )
+            else:
+                stats_tracker.get(scope).scalar(
+                    full_bytes=float(total_bytes),
+                    bytes=float(total_bytes),
+                )
+        except Exception:
+            # Metric emission must never break the weight-update path.
+            pass
 
     def build_distributed_weight_update_requests(
         self, meta: WeightUpdateMeta, param_specs: list[ParamSpec]
