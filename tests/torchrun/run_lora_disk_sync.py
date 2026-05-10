@@ -225,8 +225,8 @@ def test_lora_disk_sync(
     success = True
 
     alloc_mode = ModelAllocation.from_str(backend)
-    dp = alloc_mode.parallel.dp
-    tp = alloc_mode.parallel.tp
+    dp = alloc_mode.parallel.dp_size
+    tp = alloc_mode.parallel.tp_size
 
     print(
         f"[Rank {rank}] Starting LoRA disk sync test | "
