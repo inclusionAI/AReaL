@@ -145,6 +145,9 @@ def verify_adapter_artifacts(adapter_dir: str, *, lora_rank: int, lora_alpha: in
     if cfg.get("peft_type") != "LORA":
         print(f"ERROR: peft_type != LORA: {cfg.get('peft_type')}", flush=True)
         return False
+    if cfg.get("task_type") != "CAUSAL_LM":
+        print(f"ERROR: task_type != CAUSAL_LM: {cfg.get('task_type')}", flush=True)
+        return False
     if cfg.get("r") != lora_rank:
         print(f"ERROR: r mismatch: {cfg.get('r')} vs {lora_rank}", flush=True)
         return False
@@ -156,6 +159,15 @@ def verify_adapter_artifacts(adapter_dir: str, *, lora_rank: int, lora_alpha: in
         return False
     if "target_modules" not in cfg:
         print("ERROR: target_modules missing from adapter_config.json", flush=True)
+        return False
+    # ``base_model_name_or_path`` is required by SGLang's
+    # /load_lora_adapter when it has to materialize the adapter on the
+    # base model side.
+    if "base_model_name_or_path" not in cfg:
+        print(
+            "ERROR: base_model_name_or_path missing from adapter_config.json",
+            flush=True,
+        )
         return False
 
     # Validate adapter_model.safetensors keys: every key must be a LoRA
@@ -171,6 +183,38 @@ def verify_adapter_artifacts(adapter_dir: str, *, lora_rank: int, lora_alpha: in
         if ".default." in k:
             print(f"ERROR: '.default.' was not stripped from key: {k}", flush=True)
             return False
+        if not k.endswith(".weight"):
+            print(f"ERROR: adapter key must end with '.weight': {k}", flush=True)
+            return False
+
+    # Adapter-only saves should be tens of MB at most (Qwen3-0.6B + r=8
+    # is around 19MB).  If the artefact is GB-scale the engine almost
+    # certainly fell back to a full-model save -- the very bug that
+    # this whole disk-sync path exists to fix.  Cap at 200 MB to leave
+    # plenty of headroom while still flagging a regression.
+    total_bytes = 0
+    for root, _dirs, files in os.walk(adapter_dir):
+        for fname in files:
+            try:
+                total_bytes += os.path.getsize(os.path.join(root, fname))
+            except OSError:
+                continue
+    if total_bytes <= 0:
+        print(f"ERROR: adapter directory total size is zero: {adapter_dir}", flush=True)
+        return False
+    if total_bytes > 200 * 1024 * 1024:
+        print(
+            f"ERROR: adapter directory size {total_bytes} bytes exceeds 200 MB ceiling -- "
+            f"this likely means the engine fell back to a full-model save instead of "
+            f"saving only the LoRA adapter.",
+            flush=True,
+        )
+        return False
+    print(
+        f"[verify] adapter_dir={adapter_dir} total_bytes={total_bytes} "
+        f"(adapter-only, well under full-model size)",
+        flush=True,
+    )
     return True
 
 

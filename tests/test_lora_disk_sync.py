@@ -41,6 +41,11 @@ from areal.api.io_struct import get_versioned_lora_name
 # ---------------------------------------------------------------------------
 
 
+# NOTE: This keyword tuple MUST stay in sync with the one inside
+# ``FSDPEngine._save_lora_adapter_to_hf``.  The companion test
+# ``tests/test_lora_adapter_save.py`` exercises the production method
+# directly; the helper-based tests in this file are a fast smoke layer
+# that does not require importing the engine.
 _LORA_KEYWORDS = ("lora_A", "lora_B", "lora_embedding_A", "lora_embedding_B")
 
 
@@ -171,7 +176,12 @@ class TestWeightUpdateMetaForLoRA:
         meta = WeightUpdateMeta(type="disk")
         assert meta.use_lora is False
         assert meta.lora_name == ""
+        assert meta.lora_int_id == 0
         assert meta.version is None
+        # Default peft_config must be an empty dict (not None) so
+        # downstream callers can do a plain ``meta.peft_config.get(...)``
+        # without a None-check.
+        assert meta.peft_config == {}
 
     def test_construct_lora_meta(self):
         meta = WeightUpdateMeta(
@@ -483,3 +493,39 @@ class TestDiskSyncHandshake:
             req = SGLangBackend().build_disk_weight_update_requests(m).requests[0]
             assert req.payload["lora_name"] == f"my-lora-v{v}"
             assert req.payload["lora_path"].endswith(f"weight_update_v{v}")
+
+    def test_disk_lora_dispatch_emits_send_size_metric(self, tmp_path):
+        """Both branches of ``build_disk_weight_update_requests`` MUST
+        record the on-disk byte count via the default ``stats_tracker``
+        under flat top-level keys (no scope prefix).  The detailed
+        contract is exercised in ``tests/test_lora_disk_size_metrics.py``;
+        this is a lightweight integration smoke that wires the dispatch
+        and the metric emitter together.
+        """
+        from unittest.mock import patch
+
+        from areal.engine.sglang_remote import SGLangBackend
+
+        adapter_dir = tmp_path / "weight_update_v0"
+        adapter_dir.mkdir()
+        (adapter_dir / "adapter_model.safetensors").write_bytes(b"\x00" * 16)
+        meta = WeightUpdateMeta(
+            type="disk",
+            use_lora=True,
+            lora_name="L",
+            version=0,
+            path=str(adapter_dir),
+        )
+        with patch(
+            "areal.engine.sglang_remote.stats_tracker.scalar"
+        ) as mock_scalar:
+            SGLangBackend().build_disk_weight_update_requests(meta)
+        assert mock_scalar.called, (
+            "build_disk_weight_update_requests must record send-size metrics"
+        )
+        kwargs = mock_scalar.call_args.kwargs
+        assert "weight_update_send_bytes" in kwargs
+        assert "weight_update_send_lora_bytes" in kwargs
+        # Flat top-level keys -- never scoped under a subgroup.
+        for k in kwargs:
+            assert "/" not in k, f"metric key must be flat, got {k}"
