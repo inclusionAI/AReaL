@@ -23,6 +23,7 @@ from pydantic import BaseModel
 
 from areal.experimental.inference_service.router.config import RouterConfig
 from areal.experimental.inference_service.router.state import (
+    GroupRegistry,
     ModelRegistry,
     SessionRegistry,
     WorkerRegistry,
@@ -78,14 +79,19 @@ class RouteRequest(BaseModel):
     model: str | None = None
 
 
-class RegisterSessionRequest(BaseModel):
+class SessionEntry(BaseModel):
     session_api_key: str
     session_id: str
+
+
+class RegisterSessionRequest(BaseModel):
+    sessions: list[SessionEntry]
     worker_addr: str
+    group_id: str
 
 
 class RemoveSessionRequest(BaseModel):
-    session_id: str
+    group_id: str
 
 
 class RegisterModelRequest(BaseModel):
@@ -134,7 +140,6 @@ class RouteResponse(BaseModel):
 class RemoveSessionResponse(BaseModel):
     status: str
     removed: bool
-    persistent: bool
 
 
 class WorkerInfo(BaseModel):
@@ -179,6 +184,7 @@ def create_app(config: RouterConfig) -> FastAPI:
     worker_registry = WorkerRegistry()
     session_registry = SessionRegistry()
     model_registry = ModelRegistry()
+    group_registry = GroupRegistry()
     strategy = get_strategy(config.routing_strategy)
 
     async def _poll_workers() -> None:
@@ -210,6 +216,7 @@ def create_app(config: RouterConfig) -> FastAPI:
         app.state.worker_registry = worker_registry
         app.state.session_registry = session_registry
         app.state.model_registry = model_registry
+        app.state.group_registry = group_registry
         app.state.strategy = strategy
         try:
             yield
@@ -228,6 +235,7 @@ def create_app(config: RouterConfig) -> FastAPI:
     app.state.worker_registry = worker_registry
     app.state.session_registry = session_registry
     app.state.model_registry = model_registry
+    app.state.group_registry = group_registry
     app.state.strategy = strategy
 
     # =========================================================================
@@ -383,9 +391,17 @@ def create_app(config: RouterConfig) -> FastAPI:
     @app.post("/register_session", response_model=StatusResponse)
     async def register_session(body: RegisterSessionRequest, request: Request):
         _require_admin_key(request, config.admin_api_key)
-        await session_registry.register_session(
-            body.session_api_key, body.session_id, body.worker_addr
+
+        for entry in body.sessions:
+            await session_registry.register_session(
+                entry.session_api_key, entry.session_id, body.worker_addr
+            )
+
+        session_ids = [e.session_id for e in body.sessions]
+        await group_registry.register_group(
+            body.group_id, body.worker_addr, session_ids
         )
+
         return StatusResponse(status="ok")
 
     # =========================================================================
@@ -394,25 +410,14 @@ def create_app(config: RouterConfig) -> FastAPI:
 
     @app.post("/remove_session", response_model=RemoveSessionResponse)
     async def remove_session(body: RemoveSessionRequest, request: Request):
-        """Remove a session from the registry after export.
-
-        Called by the gateway after ``/export_trajectories`` completes to
-        prevent unbounded memory growth in the session registry.
-        """
         _require_admin_key(request, config.admin_api_key)
-        session_key = await session_registry.session_key_for_id(body.session_id)
-        is_hitl_persistent = session_key is not None and hmac.compare_digest(
-            session_key, config.admin_api_key
-        )
-        removed = (
-            False
-            if is_hitl_persistent
-            else await session_registry.revoke_session(body.session_id)
-        )
+
+        session_ids = await group_registry.revoke(body.group_id)
+        for sid in session_ids:
+            await session_registry.revoke_session(sid)
         return RemoveSessionResponse(
             status="ok",
-            removed=removed,
-            persistent=is_hitl_persistent,
+            removed=len(session_ids) > 0,
         )
 
     # =========================================================================

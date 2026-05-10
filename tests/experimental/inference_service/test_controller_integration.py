@@ -113,7 +113,7 @@ def _export_trajectory_with_retry(
         last_response = httpx.post(
             f"{gateway_url}/export_trajectories",
             json={
-                "session_id": session_id,
+                "session_ids": [session_id],
                 "discount": discount,
                 "style": "individual",
             },
@@ -151,7 +151,7 @@ def _do_vlm_chat_session(
         timeout=30.0,
     )
     assert resp.status_code == 201, resp.text
-    session_api_key = resp.json()["api_key"]
+    session_api_key = resp.json()["sessions"][0]["session_api_key"]
 
     resp = httpx.post(
         f"{gw}/chat/completions",
@@ -887,7 +887,7 @@ class TestControllerFullInitialization:
         )
         assert resp.status_code == 201, resp.text
         session = resp.json()
-        session_api_key = session["api_key"]
+        session_api_key = session["sessions"][0]["session_api_key"]
 
         # --- non-streaming chat completion ---
         resp = httpx.post(
@@ -1112,8 +1112,8 @@ class TestControllerOnlineWorkflow:
         )
         assert start_resp.status_code == 201, start_resp.text
         session = start_resp.json()
-        session_id = session["session_id"]
-        session_api_key = session["api_key"]
+        session_id = session["sessions"][0]["session_id"]
+        session_api_key = session["sessions"][0]["session_api_key"]
 
         first_chat = httpx.post(
             f"{gateway_url}/chat/completions",

@@ -129,32 +129,30 @@ async def query_router(
 @async_httpx_retry
 async def register_session_in_router(
     router_addr: str,
-    session_api_key: str,
-    session_id: str,
+    sessions: list[dict[str, str]],
     worker_addr: str,
     timeout: float,
     admin_api_key: str | None = None,
     *,
+    group_id: str,
     client: httpx.AsyncClient | None = None,
 ) -> None:
-    """Register a session→worker mapping in the Router.
-
-    POST ``{router_addr}/register_session``.
-    Called by the gateway after intercepting ``/rl/start_session`` response.
-    """
+    """Register session(s) and their group in the Router atomically."""
     try:
         headers = {}
         if admin_api_key is not None:
             headers["Authorization"] = f"Bearer {admin_api_key}"
 
+        payload: dict[str, Any] = {
+            "sessions": sessions,
+            "worker_addr": worker_addr,
+            "group_id": group_id,
+        }
+
         async with _use_client(client, timeout) as c:
             resp = await c.post(
                 f"{router_addr}/register_session",
-                json={
-                    "session_api_key": session_api_key,
-                    "session_id": session_id,
-                    "worker_addr": worker_addr,
-                },
+                json=payload,
                 headers=headers,
                 timeout=timeout,
             )
@@ -171,23 +169,17 @@ async def register_session_in_router(
 async def revoke_session_in_router(
     router_addr: str,
     admin_api_key: str,
-    session_id: str,
-    timeout: float,
+    group_id: str,
+    timeout: float = 2.0,
     *,
     client: httpx.AsyncClient | None = None,
 ) -> None:
-    """Remove a session from the Router's session registry.
-
-    POST ``{router_addr}/remove_session`` with admin key auth and
-    JSON body ``{"session_id": ...}``.
-    Called after ``/export_trajectories`` to prevent unbounded memory growth.
-    Best-effort: logs errors but never raises.
-    """
+    """Best-effort removal of a session group from the Router's registry."""
     try:
         async with _use_client(client, timeout) as c:
             resp = await c.post(
                 f"{router_addr}/remove_session",
-                json={"session_id": session_id},
+                json={"group_id": group_id},
                 headers={"Authorization": f"Bearer {admin_api_key}"},
                 timeout=timeout,
             )
@@ -196,7 +188,7 @@ async def revoke_session_in_router(
                 "remove_session returned %d: %s", resp.status_code, resp.text
             )
     except Exception as exc:
-        logger.warning("Failed to remove session %s in router: %s", session_id, exc)
+        logger.warning("Failed to remove group %s in router: %s", group_id, exc)
 
 
 @async_httpx_retry

@@ -1580,13 +1580,15 @@ class RolloutControllerV2:
 
     # -- Workflow resolution helpers ----------------------------------------
 
-    def _wrap_agent(self, agent: Any):
+    def _wrap_agent(self, agent: Any, group_size: int = 1):
         """Wrap an agent in an InferenceServiceWorkflow.
 
         Parameters
         ----------
         agent : Any
             The agent to wrap (any object with an async ``run()`` method).
+        group_size : int
+            Number of parallel trajectories per episode.
         """
         from areal.experimental.inference_service.controller.workflow import (
             InferenceServiceWorkflow,
@@ -1609,6 +1611,7 @@ class RolloutControllerV2:
             admin_api_key=admin_api_key,
             discount=turn_discount,
             export_style=export_style,
+            group_size=group_size,
         )
 
     def _resolve_workflow(
@@ -1651,28 +1654,25 @@ class RolloutControllerV2:
 
         # (a) None → online mode: create InferenceServiceWorkflow without agent
         if workflow is None:
+            if group_size > 1:
+                raise ValueError(
+                    "Online mode (workflow=None) does not support group_size > 1. "
+                    f"Got group_size={group_size}."
+                )
+
             from areal.experimental.inference_service.controller.workflow import (
                 InferenceServiceWorkflow,
             )
 
             online_kwargs = dict(workflow_kwargs or {})
             online_kwargs.pop("controller", None)
-            resolved = InferenceServiceWorkflow(
+            return InferenceServiceWorkflow(
                 controller=self,
                 agent=None,
                 gateway_addr=self._gateway_addr,
                 admin_api_key=self.config.admin_api_key,
                 **online_kwargs,
             )
-
-            if group_size > 1:
-                from areal.infra.remote_inf_engine import GroupedRolloutWorkflow
-
-                resolved = GroupedRolloutWorkflow(
-                    resolved, group_size, logging.getLogger("RolloutController")
-                )
-
-            return resolved
 
         # (b) Resolve workflow input (string import path, class, or instance).
         #     Defer instantiation until after the RolloutWorkflow guard.
@@ -1703,16 +1703,8 @@ class RolloutControllerV2:
                 f"Got workflow={workflow!r}"
             )
 
-        # (d) Wrap the agent in InferenceServiceWorkflow
-        resolved = self._wrap_agent(agent)
-
-        # (e) Optionally wrap in GroupedRolloutWorkflow
-        if group_size > 1:
-            from areal.infra.remote_inf_engine import GroupedRolloutWorkflow
-
-            resolved = GroupedRolloutWorkflow(
-                resolved, group_size, logging.getLogger("RolloutController")
-            )
+        # (d) Wrap the agent in InferenceServiceWorkflow (with group_size)
+        resolved = self._wrap_agent(agent, group_size=group_size)
 
         return resolved
 

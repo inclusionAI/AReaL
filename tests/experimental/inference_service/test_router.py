@@ -366,9 +366,11 @@ class TestRouterEndpoints:
         await client.post(
             "/register_session",
             json={
-                "session_api_key": "sess-key-1",
-                "session_id": "task-0-0",
+                "sessions": [
+                    {"session_api_key": "sess-key-1", "session_id": "task-0-0"}
+                ],
                 "worker_addr": WORKER_1,
+                "group_id": "grp-test-1",
             },
             headers=admin_headers(),
         )
@@ -436,9 +438,11 @@ class TestRouterEndpoints:
         await client.post(
             "/register_session",
             json={
-                "session_api_key": "sess-key-1",
-                "session_id": "task-0-0",
+                "sessions": [
+                    {"session_api_key": "sess-key-1", "session_id": "task-0-0"}
+                ],
                 "worker_addr": WORKER_1,
+                "group_id": "grp-test-2",
             },
             headers=admin_headers(),
         )
@@ -490,9 +494,11 @@ class TestRouterEndpoints:
         await client.post(
             "/register_session",
             json={
-                "session_api_key": "sess-key-1",
-                "session_id": "task-0-0",
+                "sessions": [
+                    {"session_api_key": "sess-key-1", "session_id": "task-0-0"}
+                ],
                 "worker_addr": WORKER_1,
+                "group_id": "grp-test-4",
             },
             headers=admin_headers(),
         )
@@ -517,9 +523,11 @@ class TestRouterEndpoints:
         await client.post(
             "/register_session",
             json={
-                "session_api_key": "sess-key-1",
-                "session_id": "task-0-0",
+                "sessions": [
+                    {"session_api_key": "sess-key-1", "session_id": "task-0-0"}
+                ],
                 "worker_addr": WORKER_1,
+                "group_id": "grp-test-3",
             },
             headers=admin_headers(),
         )
@@ -570,9 +578,11 @@ class TestRouterEndpoints:
         resp = await client.post(
             "/register_session",
             json={
-                "session_api_key": "sess-key-1",
-                "session_id": "task-0-0",
+                "sessions": [
+                    {"session_api_key": "sess-key-1", "session_id": "task-0-0"}
+                ],
                 "worker_addr": WORKER_1,
+                "group_id": "grp-test-5",
             },
         )
         assert resp.status_code == 401
@@ -591,9 +601,11 @@ class TestRouterEndpoints:
         resp = await client.post(
             "/register_session",
             json={
-                "session_api_key": "sess-key-1",
-                "session_id": "task-0-0",
+                "sessions": [
+                    {"session_api_key": "sess-key-1", "session_id": "task-0-0"}
+                ],
                 "worker_addr": WORKER_1,
+                "group_id": "grp-test-6",
             },
             headers=admin_headers(),
         )
@@ -604,43 +616,6 @@ class TestRouterEndpoints:
         route_resp = await client.post(
             "/route",
             json={"api_key": "sess-key-1", "path": "/chat/completions"},
-            headers=admin_headers(),
-        )
-        assert route_resp.status_code == 200
-        assert route_resp.json()["worker_addr"] == WORKER_1
-
-    @pytest.mark.asyncio
-    async def test_remove_session_keeps_hitl_persistent_binding(self, client):
-        await client.post(
-            "/register",
-            json={"worker_addr": WORKER_1},
-            headers=admin_headers(),
-        )
-
-        await client.post(
-            "/route",
-            json={
-                "api_key": ADMIN_KEY,
-                "path": "/chat/completions",
-            },
-            headers=admin_headers(),
-        )
-
-        resp = await client.post(
-            "/remove_session",
-            json={"session_id": "__hitl__"},
-            headers=admin_headers(),
-        )
-        assert resp.status_code == 200
-        assert resp.json()["removed"] is False
-        assert resp.json()["persistent"] is True
-
-        route_resp = await client.post(
-            "/route",
-            json={
-                "api_key": ADMIN_KEY,
-                "path": "/chat/completions",
-            },
             headers=admin_headers(),
         )
         assert route_resp.status_code == 200
