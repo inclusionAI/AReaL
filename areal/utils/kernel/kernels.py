@@ -127,46 +127,16 @@ elif SUPPORT_CUDA_TMA:
     triton.set_allocator(alloc_fn)
 
 
-class EntropyReductionEnum:
-    """
-    Enum for the reduction method of cross entropy.
-    """
-
-    _None = 0
-    _Sum = 1
-    _Mean = 2
+_REDUCTION_NONE = 0
 
 
 def get_entropy_reduction_enum_number(reduction: str) -> int:
     """
-    Get the enum number for the reduction method of cross entropy.
+    Validate the only supported reduction mode and return its kernel code.
     """
-    _enum = EntropyReductionEnum._None
     if reduction == "none":
-        _enum = EntropyReductionEnum._None
-    elif reduction == "sum":
-        _enum = EntropyReductionEnum._Sum
-    elif reduction == "mean":
-        _enum = EntropyReductionEnum._Mean
-    else:
-        raise ValueError(f"Invalid reduction: {reduction}")
-    return _enum
-
-
-def get_entropy_reduction_enum(ce_reduction: int) -> EntropyReductionEnum:
-    """
-    Get the enum for the reduction method of cross entropy.
-    """
-    _enum = EntropyReductionEnum._None
-    if ce_reduction == 0:
-        _enum = EntropyReductionEnum._None
-    elif ce_reduction == 1:
-        _enum = EntropyReductionEnum._Sum
-    elif ce_reduction == 2:
-        _enum = EntropyReductionEnum._Mean
-    else:
-        raise ValueError(f"Invalid ce_reduction: {ce_reduction}")
-    return _enum
+        return _REDUCTION_NONE
+    raise ValueError(f"Only reduction='none' is supported, got {reduction!r}")
 
 
 _USE_TRITON = True
@@ -201,7 +171,6 @@ def efficient_entropy_kernel_general_mainloop(
     stride_entropy_b_n: tl.int64,
     global_logprobs_ptr,
     stride_global_logprobs: tl.int64,
-    global_logprobs_scalar_ptr,
     rcp_temperature: tl.float32,
     # Meta-parameters
     BLOCK_SIZE_M: tl.constexpr,
@@ -218,9 +187,6 @@ def efficient_entropy_kernel_general_mainloop(
     num_pid_n = tl.cdiv(vocab_per_split, BLOCK_SIZE_N)
     pid_m = pid % num_pid_m
     pid_n = pid // num_pid_m
-
-    if pid_m == 0 and pid_n == 0:
-        tl.store(global_logprobs_scalar_ptr, 0.0)
 
     # create pointers for the first blocks of hidden
     start_offs_am = pid_m * BLOCK_SIZE_M
@@ -362,8 +328,6 @@ def efficient_entropy_triton_kernel_epilogue(
     stride_global_entropy: tl.int64,
     global_logprobs_ptr,
     stride_global_logprobs: tl.int64,
-    global_logprobs_scalar_ptr,
-    reduction: int,
     BLOCK_SIZE_M: tl.constexpr,
     BLOCK_SIZE_N: tl.constexpr,
 ):
@@ -420,14 +384,7 @@ def efficient_entropy_triton_kernel_epilogue(
     global_logprobs = global_max + tl.log(global_accu) - global_logprobs
 
     global_logprobs = -1 * global_logprobs
-    if reduction == 0:
-        tl.store(global_logprobs_ptrs, global_logprobs, mask=offs_m < num_tokens)
-    elif reduction == 1:
-        global_logprobs_scalar = tl.sum(global_logprobs, axis=0)
-        tl.atomic_add(global_logprobs_scalar_ptr, global_logprobs_scalar)
-    elif reduction == 2:
-        global_logprobs_scalar = tl.sum(global_logprobs, axis=0) / num_tokens.to(tl.float32)
-        tl.atomic_add(global_logprobs_scalar_ptr, global_logprobs_scalar)
+    tl.store(global_logprobs_ptrs, global_logprobs, mask=offs_m < num_tokens)
 
 
 @triton.autotune(configs=[triton.Config({"BLOCK_SIZE_M": 16, "BLOCK_SIZE_N": 64})], key=["num_tokens", "num_splits"])
@@ -520,8 +477,7 @@ def efficient_entropy_triton_epilogue_tp_update(
     stride_entropy_b: tl.int64,
     entropy_ptr,
     stride_entropy: tl.int64,
-    logprobs_scalar_ptr,
-    reduction: int,
+    logprobs_out_ptr,
     BLOCK_SIZE_M: tl.constexpr,
 ):
     pid_m = tl.program_id(axis=0)
@@ -542,14 +498,7 @@ def efficient_entropy_triton_epilogue_tp_update(
     logprobs = maximum + tl.log(accumulate) - logprobs
 
     logprobs = -1 * logprobs
-    if reduction == 0:
-        tl.store(logprobs_ptr + offs_m * stride_logprobs, logprobs, mask=offs_m < num_tokens)
-    elif reduction == 1:
-        logprobs_scalar = tl.sum(logprobs, axis=0)
-        tl.atomic_add(logprobs_scalar_ptr, logprobs_scalar)
-    elif reduction == 2:
-        logprobs_scalar = tl.sum(logprobs, axis=0) / num_tokens.to(tl.float32)
-        tl.atomic_add(logprobs_scalar_ptr, logprobs_scalar)
+    tl.store(logprobs_out_ptr + offs_m * stride_logprobs, logprobs, mask=offs_m < num_tokens)
 
 
 _dedicated_stream, _dedicated_events = None, None
@@ -559,7 +508,7 @@ def efficient_entropy_forward(
     hidden: torch.Tensor,
     weight: torch.Tensor,
     labels: torch.Tensor,
-    reduction: int | None = 2,
+    reduction: int | None = _REDUCTION_NONE,
     temperature: float | None = 1.0,
     dist_process_group: dist.ProcessGroup | None = None,
 ) -> list[torch.Tensor]:
@@ -587,17 +536,12 @@ def efficient_entropy_forward(
     vocab_size, hidden_size = weight.shape
     assert hidden_size % 128 == 0
 
-    REDUCTION = get_entropy_reduction_enum(reduction)
-
-    if REDUCTION == EntropyReductionEnum._None:
-        if dist_process_group is None:
-            logprobs = torch.empty((num_tokens,), device=hidden.device, dtype=torch.float32)
-        else:
-            logprobs = torch.zeros((num_tokens,), device=hidden.device, dtype=torch.float32)
-    elif REDUCTION in (EntropyReductionEnum._Sum, EntropyReductionEnum._Mean):
-        logprobs = torch.empty((), device=hidden.device, dtype=torch.float32)
-    else:
+    if reduction != _REDUCTION_NONE:
         raise ValueError(f"Invalid reduction: {reduction}")
+    if dist_process_group is None:
+        logprobs = torch.empty((num_tokens,), device=hidden.device, dtype=torch.float32)
+    else:
+        logprobs = torch.zeros((num_tokens,), device=hidden.device, dtype=torch.float32)
 
     entropy = torch.empty((num_tokens,), device=hidden.device, dtype=torch.float32)
     assert logprobs.is_contiguous() and entropy.is_contiguous()
@@ -617,10 +561,7 @@ def efficient_entropy_forward(
     _accu = torch.empty((num_tokens, num_splits), device=hidden.device, dtype=torch.float32)
     _entropy_b = torch.empty((num_tokens, num_splits), device=hidden.device, dtype=torch.float32)
 
-    if REDUCTION == EntropyReductionEnum._None:
-        _logprobs = logprobs
-    else:
-        _logprobs = torch.empty((num_tokens,), device=hidden.device, dtype=torch.float32)
+    _logprobs = logprobs
 
     assert _accu.is_contiguous() and _entropy_b.is_contiguous() and _max.is_contiguous()
     assert _accu.is_cuda and _entropy_b.is_cuda and _max.is_cuda
@@ -654,7 +595,6 @@ def efficient_entropy_forward(
             _entropy_b.stride(1),
             _logprobs,
             _logprobs.stride(0),
-            logprobs,
             1.0 / temperature,
             USE_TMA=SUPPORT_CUDA_TMA and hidden.stride(1) == 1 and weight.stride(1) == 1,
         )
@@ -688,8 +628,6 @@ def efficient_entropy_forward(
             entropy.stride(0),
             _logprobs,
             _logprobs.stride(0),
-            logprobs,
-            REDUCTION,
         )
     else:
         # tensor-parallel
@@ -742,7 +680,6 @@ def efficient_entropy_forward(
             entropy,
             entropy.stride(0),
             logprobs,
-            REDUCTION,
         )
 
     return (logprobs, entropy, maximum, accumulate, entropy_b)
@@ -782,7 +719,6 @@ def efficient_entropy_backward_kernel_general_d_logits_split_N(
     stride_d_entropy: tl.int64,
     d_logprobs_ptr,
     stride_d_logprobs: tl.int64,
-    reduction: int,
     entropy_b_ptr,
     stride_entropy_b: tl.int64,
     d_logits_ptr,
@@ -815,14 +751,7 @@ def efficient_entropy_backward_kernel_general_d_logits_split_N(
     accu = tl.load(accu_ptr + offs_am * stride_accu, mask=offs_am < num_tokens, other=1e-6)
     accu_rcp = tl.fdiv(1.0, accu)
     d_entropy = tl.load(d_entropy_ptr + offs_am * stride_d_entropy, mask=offs_am < num_tokens, other=0.0)
-    if reduction == 0:
-        d_logprobs = tl.load(d_logprobs_ptr + offs_am * stride_d_logprobs, mask=offs_am < num_tokens, other=0.0)
-    elif reduction == 1:
-        d_logprobs = tl.load(d_logprobs_ptr)
-        d_logprobs = tl.broadcast_to(d_logprobs, (BLOCK_SIZE_M,))
-    else:
-        d_logprobs = tl.fdiv(tl.load(d_logprobs_ptr), num_tokens.to(tl.float32))
-        d_logprobs = tl.broadcast_to(d_logprobs, (BLOCK_SIZE_M,))
+    d_logprobs = tl.load(d_logprobs_ptr + offs_am * stride_d_logprobs, mask=offs_am < num_tokens, other=0.0)
     d_logprobs = -1 * d_logprobs
     entropy_b = tl.load(entropy_b_ptr + offs_am * stride_entropy_b, mask=offs_am < num_tokens, other=0.0)
     labels = tl.load(labels_ptr + offs_am * stride_labels, mask=offs_am < num_tokens, other=0)
@@ -895,7 +824,7 @@ def efficient_entropy_backward(
     maximum: torch.Tensor,
     acc: torch.Tensor,
     entropy_b: torch.Tensor,
-    reduction: int | None = 2,
+    reduction: int | None = _REDUCTION_NONE,
     should_return_fp32_grad: bool = False,
     temperature: float | None = 1.0,
     dist_process_group: dist.ProcessGroup | None = None,
@@ -917,12 +846,9 @@ def efficient_entropy_backward(
     vocab_size, hidden_size = weight.shape
     assert hidden_size % 128 == 0
 
-    REDUCTION = get_entropy_reduction_enum(reduction)
-
-    if REDUCTION == EntropyReductionEnum._None:
-        assert dlogprobs.shape == (num_tokens,)
-    else:
-        assert dlogprobs.dim() == 0
+    if reduction != _REDUCTION_NONE:
+        raise ValueError(f"Invalid reduction: {reduction}")
+    assert dlogprobs.shape == (num_tokens,)
 
     assert dlogprobs.is_contiguous() and dentropy.is_contiguous()
     assert dlogprobs.is_cuda and dentropy.is_cuda
@@ -974,8 +900,7 @@ def efficient_entropy_backward(
             dentropy,
             dentropy.stride(0),
             dlogprobs,
-            dlogprobs.stride(0) if REDUCTION == EntropyReductionEnum._None else 0,
-            REDUCTION,
+            dlogprobs.stride(0),
             entropy_b,
             entropy_b.stride(0),
             _d_logits,

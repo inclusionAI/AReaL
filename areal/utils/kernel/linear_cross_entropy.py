@@ -13,7 +13,6 @@ materialized.
 from __future__ import annotations
 
 import os
-import typing
 
 import torch
 import torch.distributed as dist
@@ -76,16 +75,15 @@ class LinearCrossEntropy(torch.autograd.Function):
         labels: integer label ids; either ``(num_tokens,)`` or
             ``(batch_size, seq_len)``.
         temperature: softmax temperature; defaults to ``1.0``.
-        reduction: ``"none"`` returns per-token negative log-likelihood;
-            ``"sum"`` and ``"mean"`` return scalars.
+        reduction: only ``"none"`` is supported and returns per-token
+            negative log-likelihood.
         dist_process_group: optional tensor-parallel group for vocab-sharded
             ``weight``. ``labels`` must contain *global* vocab ids on every
             rank; the kernel handles the per-rank slice internally.
 
     Returns:
-        ``(logprobs, entropy)`` where ``entropy`` has shape ``(num_tokens,)``
-        and ``logprobs`` has shape ``(num_tokens,)`` for ``reduction="none"``
-        or ``()`` otherwise.
+        ``(logprobs, entropy)`` where both tensors have shape
+        ``(num_tokens,)``.
     """
 
     @staticmethod
@@ -94,9 +92,9 @@ class LinearCrossEntropy(torch.autograd.Function):
         hidden: torch.Tensor,
         weight: torch.Tensor,
         labels: torch.Tensor,
-        temperature: typing.Optional[float] = 1.0,
-        reduction: typing.Optional[str] = "none",
-        dist_process_group: typing.Optional[dist.ProcessGroup] = None,
+        temperature: float | None = 1.0,
+        reduction: str | None = "none",
+        dist_process_group: dist.ProcessGroup | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if not isinstance(temperature, float):
             temperature = float(temperature)
@@ -265,12 +263,11 @@ def linear_cross_entropy(
     labels: torch.Tensor,
     temperature: float = 1.0,
     reduction: str = "none",
-    dist_process_group: typing.Optional[dist.ProcessGroup] = None,
+    dist_process_group: dist.ProcessGroup | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Functional wrapper around :class:`LinearCrossEntropy`.
 
-    Returns ``(logprobs, entropy)`` with shapes following ``reduction``
-    semantics. See the class docstring for full argument descriptions.
+    Returns per-token ``(logprobs, entropy)``.
     """
     return LinearCrossEntropy.apply(
         hidden, weight, labels, temperature, reduction, dist_process_group
