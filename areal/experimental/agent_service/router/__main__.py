@@ -19,7 +19,7 @@ def main() -> None:
     parser.add_argument("--poll-interval", type=float, default=5.0)
     parser.add_argument("--worker-health-timeout", type=float, default=2.0)
     parser.add_argument(
-        "--log-level", choices=["debug", "info", "warning", "error"], default="info"
+        "--log-level", choices=["debug", "info", "warning", "error"], default="warning"
     )
     args = parser.parse_args()
 
@@ -36,6 +36,7 @@ def main() -> None:
         host=config.host,
         port=config.port,
         log_level=config.log_level,
+        access_log=False,
     )
 
 

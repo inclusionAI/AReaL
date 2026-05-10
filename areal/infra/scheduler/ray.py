@@ -61,12 +61,15 @@ class RayScheduler(Scheduler):
         startup_timeout: float = 30.0,
         *,
         exp_config: BaseExperimentConfig | None = None,
+        n_gpus_per_node: int = 8,
     ):
         self.exp_config = exp_config
+        self._n_gpus_per_node = n_gpus_per_node
         self.startup_timeout = startup_timeout
         self.enable_tms_offload = False
         if exp_config is not None:
             self.enable_tms_offload = exp_config.enable_offload
+            self._n_gpus_per_node = exp_config.cluster.n_gpus_per_node
 
         self._workers: dict[str, list[RayWorkerInfo]] = defaultdict(list)
         self._worker_info_by_id: dict[str, RayWorkerInfo] = {}
@@ -74,6 +77,10 @@ class RayScheduler(Scheduler):
 
         # Colocation tracking: colocated roles reuse workers from target role
         self._colocated_roles: dict[str, str] = {}  # colocated_role -> target_role
+
+    @property
+    def n_gpus_per_node(self) -> int:
+        return self._n_gpus_per_node
 
     def _prepare_worker_specs(
         self, role: str, num_workers: int, schedulings: list[SchedulingSpec] | None

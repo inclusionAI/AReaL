@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import traceback
 from contextlib import asynccontextmanager
 
 import httpx
@@ -29,7 +30,6 @@ from areal.experimental.inference_service.gateway.streaming import (
     broadcast_to_workers,
     forward_request,
     forward_sse_stream,
-    grant_capacity_in_router,
     list_models_from_router,
     query_router,
     register_model_in_router,
@@ -38,6 +38,7 @@ from areal.experimental.inference_service.gateway.streaming import (
     resolve_worker_addr,
     revoke_session_in_router,
 )
+from areal.infra.utils.http import create_httpx_client
 from areal.utils import logging
 
 logger = logging.getLogger("InferenceGateway")
@@ -83,7 +84,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        app.state.http_client = httpx.AsyncClient(timeout=config.router_timeout)
+        app.state.http_client = create_httpx_client(timeout=config.router_timeout)
         try:
             yield
         finally:
@@ -106,7 +107,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
             return app.state.http_client
         except AttributeError:
             if _fallback_client is None:
-                _fallback_client = httpx.AsyncClient(timeout=config.router_timeout)
+                _fallback_client = create_httpx_client(timeout=config.router_timeout)
             return _fallback_client
 
     # =========================================================================
@@ -315,6 +316,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
                     )
             except Exception as exc:
                 logger.error("Failed to register session in router: %s", exc)
+                traceback.print_exc()
                 return JSONResponse(
                     {
                         "error": f"Session created on worker but router registration failed: {exc}"
@@ -418,6 +420,58 @@ def create_app(config: GatewayConfig) -> FastAPI:
         headers = _forwarding_headers(dict(request.headers))
         results = await broadcast_to_workers(
             [worker_addr], "/continue_generation", body, headers, client=_client()
+        )
+        return BroadcastResponse(results=[BroadcastResultItem(**r) for r in results])
+
+    # =========================================================================
+    # POST /release_memory_occupation/{worker_id} — admin key ONLY
+    # =========================================================================
+
+    @app.post(
+        "/release_memory_occupation/{worker_id}", response_model=BroadcastResponse
+    )
+    async def release_memory_occupation(worker_id: str, request: Request):
+        require_admin_key(request, config.admin_api_key)
+        try:
+            worker_addr = await resolve_worker_addr(
+                config.router_addr,
+                config.admin_api_key,
+                worker_id,
+                config.router_timeout,
+                client=_client(),
+            )
+        except (RouterUnreachableError, RouterKeyRejectedError) as exc:
+            return _router_error_response(exc)
+
+        body = await request.body()
+        headers = _forwarding_headers(dict(request.headers))
+        results = await broadcast_to_workers(
+            [worker_addr], "/release_memory_occupation", body, headers, client=_client()
+        )
+        return BroadcastResponse(results=[BroadcastResultItem(**r) for r in results])
+
+    # =========================================================================
+    # POST /resume_memory_occupation/{worker_id} — admin key ONLY
+    # =========================================================================
+
+    @app.post("/resume_memory_occupation/{worker_id}", response_model=BroadcastResponse)
+    async def resume_memory_occupation(worker_id: str, request: Request):
+        require_admin_key(request, config.admin_api_key)
+        try:
+            worker_addr = await resolve_worker_addr(
+                config.router_addr,
+                config.admin_api_key,
+                worker_id,
+                config.router_timeout,
+                client=_client(),
+            )
+        except (RouterUnreachableError, RouterKeyRejectedError) as exc:
+            return _router_error_response(exc)
+
+        body = await request.body()
+        headers = _forwarding_headers(dict(request.headers))
+        results = await broadcast_to_workers(
+            [worker_addr], "/resume_memory_occupation", body, headers, client=_client()
         )
         return BroadcastResponse(results=[BroadcastResultItem(**r) for r in results])
 
@@ -546,25 +600,6 @@ def create_app(config: GatewayConfig) -> FastAPI:
             )
         except Exception as exc:
             return JSONResponse({"error": str(exc)}, status_code=502)
-
-    @app.post("/grant_capacity")
-    async def grant_capacity(request: Request):
-        """Forward capacity grant to the Router (not data proxies).
-
-        Staleness control lives at the router level — data proxies do not
-        track capacity.
-        """
-        require_admin_key(request, config.admin_api_key)
-        try:
-            result = await grant_capacity_in_router(
-                config.router_addr,
-                config.admin_api_key,
-                config.router_timeout,
-                client=_client(),
-            )
-        except RouterUnreachableError as exc:
-            return _router_error_response(exc)
-        return result
 
     # =========================================================================
     # Compatibility aliases for RolloutCallback — map /callback/* to endpoints

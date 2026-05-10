@@ -21,6 +21,7 @@ from areal.experimental.weight_update.gateway.config import (
 )
 from areal.experimental.weight_update.gateway.kv_store import WeightMetaStore
 from areal.experimental.weight_update.gateway.pair_registry import PairRegistry
+from areal.infra.utils.http import async_http_retry
 from areal.utils import logging
 
 logger = logging.getLogger("WeightUpdateGateway")
@@ -30,6 +31,8 @@ class ConnectRequest(BaseModel):
     pair_name: str
     train_worker_urls: list[str]
     inference_worker_urls: list[str]
+    nccl_master_addr: str = ""
+    nccl_master_port: int = 0
     mode: str = "awex"  # "awex" or "disk"
     save_path: str = ""
     use_lora: bool = False
@@ -83,6 +86,7 @@ class KVSetSizeResponse(BaseModel):
     size: int
 
 
+@async_http_retry
 async def _get_json(session: aiohttp.ClientSession, url: str, timeout_s: float) -> Any:
     timeout = aiohttp.ClientTimeout(total=timeout_s)
     async with session.get(url, timeout=timeout) as resp:
@@ -90,6 +94,7 @@ async def _get_json(session: aiohttp.ClientSession, url: str, timeout_s: float) 
         return await resp.json()
 
 
+@async_http_retry
 async def _post_json(
     session: aiohttp.ClientSession,
     url: str,
@@ -102,6 +107,7 @@ async def _post_json(
         return await resp.json()
 
 
+@async_http_retry
 async def _post(
     session: aiohttp.ClientSession,
     url: str,
@@ -171,7 +177,6 @@ def create_app(config: WeightUpdateConfig | None = None) -> FastAPI:
 
     kv_store = WeightMetaStore()
     registry = PairRegistry()
-    next_port = [29500]
 
     app.state.kv_store = kv_store
     app.state.registry = registry
@@ -179,11 +184,6 @@ def create_app(config: WeightUpdateConfig | None = None) -> FastAPI:
 
     def _auth(request: Request) -> None:
         require_admin_key(request, config.admin_api_key)
-
-    def _allocate_port() -> int:
-        port = next_port[0]
-        next_port[0] += 1
-        return port
 
     @app.get("/health")
     async def health() -> HealthResponse:
@@ -294,8 +294,8 @@ def create_app(config: WeightUpdateConfig | None = None) -> FastAPI:
         kv_store.put(pair_name, "training_params_meta", training_params_meta)
         kv_store.put(pair_name, "infer_params_meta", infer_params_meta)
 
-        master_addr = _get_own_ip()
-        master_port = _allocate_port()
+        master_addr = body.nccl_master_addr
+        master_port = body.nccl_master_port
 
         # Use the bound host for kv_store_url so workers can reach the
         # gateway.  When bound to 0.0.0.0 any interface works, so fall

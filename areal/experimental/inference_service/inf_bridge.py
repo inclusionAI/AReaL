@@ -105,6 +105,18 @@ class InfBridge:
         await self.pause_state.set_paused(False)
         logger.info("Resume request sent to %s", self.backend_addr)
 
+    async def offload(self) -> None:
+        """Offload model memory on the backend inference server."""
+        http_req = self.backend.get_offload_request()
+        await self._send_request(http_req, timeout=30.0)
+        logger.info("Offload request sent to %s", self.backend_addr)
+
+    async def onload(self, tags: list[str] | None = None) -> None:
+        """Reload model memory on the backend inference server."""
+        http_req = self.backend.get_onload_request(tags=tags)
+        await self._send_request(http_req, timeout=30.0)
+        logger.info("Onload request sent to %s", self.backend_addr)
+
     # -- HTTP transport (shared across all backends) -------------------------
 
     async def _send_request(
@@ -139,6 +151,9 @@ class InfBridge:
             resp = await self._client.get(url, timeout=_timeout)
         else:
             resp = await self._client.post(url, json=http_req.payload, timeout=_timeout)
+        if resp.status_code >= 400:
+            body = resp.text[:500]
+            logger.error("Backend returned %d for %s: %s", resp.status_code, url, body)
         resp.raise_for_status()
         return resp.json()
 

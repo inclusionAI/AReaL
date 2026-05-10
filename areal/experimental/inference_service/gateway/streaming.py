@@ -11,6 +11,7 @@ from typing import Any
 
 import httpx
 
+from areal.infra.utils.http import async_httpx_retry, create_httpx_client
 from areal.utils import logging
 
 logger = logging.getLogger("InferenceGateway")
@@ -39,10 +40,11 @@ async def _use_client(
     if client is not None:
         yield client
     else:
-        async with httpx.AsyncClient(timeout=timeout) as c:
+        async with create_httpx_client(timeout=timeout) as c:
             yield c
 
 
+@async_httpx_retry
 async def query_router(
     router_addr: str,
     api_key: str | None = None,
@@ -116,12 +118,15 @@ async def query_router(
         raise RouterUnreachableError(f"Router unreachable: {exc}") from exc
     except httpx.TimeoutException as exc:
         raise RouterUnreachableError(f"Router timed out: {exc}") from exc
+    except httpx.TransportError as exc:
+        raise RouterUnreachableError(f"Router transport error: {exc}") from exc
     except httpx.HTTPStatusError as exc:
         raise RouterUnreachableError(
             f"Router returned HTTP {exc.response.status_code}: {exc}"
         ) from exc
 
 
+@async_httpx_retry
 async def register_session_in_router(
     router_addr: str,
     session_api_key: str,
@@ -155,6 +160,9 @@ async def register_session_in_router(
             )
 
         resp.raise_for_status()
+    except httpx.TransportError as exc:
+        logger.error("Failed to register session in router: %s", exc)
+        raise RouterUnreachableError(f"Failed to register session: {exc}") from exc
     except Exception as exc:
         logger.error("Failed to register session in router: %s", exc)
         raise RouterUnreachableError(f"Failed to register session: {exc}") from exc
@@ -191,65 +199,7 @@ async def revoke_session_in_router(
         logger.warning("Failed to remove session %s in router: %s", session_id, exc)
 
 
-async def grant_capacity_in_router(
-    router_addr: str,
-    admin_api_key: str,
-    timeout: float,
-    *,
-    client: httpx.AsyncClient | None = None,
-) -> dict:
-    """Forward a grant_capacity request to the Router.
-
-    POST ``{router_addr}/grant_capacity`` with admin key auth.
-    Returns the JSON response body from the router.
-    """
-    try:
-        async with _use_client(client, timeout) as c:
-            resp = await c.post(
-                f"{router_addr}/grant_capacity",
-                headers={"Authorization": f"Bearer {admin_api_key}"},
-                timeout=timeout,
-            )
-        resp.raise_for_status()
-        return resp.json()
-    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
-        raise RouterUnreachableError(
-            f"Router unreachable for grant_capacity: {exc}"
-        ) from exc
-    except Exception as exc:
-        raise RouterUnreachableError(
-            f"Failed to grant capacity in router: {exc}"
-        ) from exc
-
-
-async def release_capacity_in_router(
-    router_addr: str,
-    admin_api_key: str,
-    timeout: float,
-    *,
-    client: httpx.AsyncClient | None = None,
-) -> None:
-    """Return one capacity permit to the Router.
-
-    POST ``{router_addr}/release_capacity`` with admin key auth.
-    Best-effort: logs errors but never raises, since the caller is
-    already handling a failure path.
-    """
-    try:
-        async with _use_client(client, timeout) as c:
-            resp = await c.post(
-                f"{router_addr}/release_capacity",
-                headers={"Authorization": f"Bearer {admin_api_key}"},
-                timeout=timeout,
-            )
-        if resp.status_code != 200:
-            logger.warning(
-                "release_capacity returned %d: %s", resp.status_code, resp.text
-            )
-    except Exception as exc:
-        logger.warning("Failed to release capacity in router: %s", exc)
-
-
+@async_httpx_retry
 async def get_all_worker_addrs(
     router_addr: str,
     admin_api_key: str,
@@ -275,6 +225,7 @@ async def get_all_worker_addrs(
         raise RouterUnreachableError(f"Failed to get workers: {exc}") from exc
 
 
+@async_httpx_retry
 async def register_model_in_router(
     router_addr: str,
     model: str,
@@ -307,6 +258,7 @@ async def register_model_in_router(
         raise RouterUnreachableError(f"Router unreachable: {exc}") from exc
 
 
+@async_httpx_retry
 async def route_external_model(
     router_addr: str,
     name: str,
@@ -335,6 +287,7 @@ async def route_external_model(
         raise RouterUnreachableError(f"Router unreachable: {exc}") from exc
 
 
+@async_httpx_retry
 async def list_models_from_router(
     router_addr: str,
     admin_api_key: str,
@@ -355,6 +308,7 @@ async def list_models_from_router(
         raise RouterUnreachableError(f"Router unreachable: {exc}") from exc
 
 
+@async_httpx_retry
 async def remove_model_from_router(
     router_addr: str,
     name: str,
@@ -377,6 +331,7 @@ async def remove_model_from_router(
         pass  # Best-effort rollback; swallow errors
 
 
+@async_httpx_retry
 async def resolve_worker_addr(
     router_addr: str,
     admin_api_key: str,
@@ -415,6 +370,10 @@ async def resolve_worker_addr(
     except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
         raise RouterUnreachableError(
             f"Router unreachable for resolve_worker: {exc}"
+        ) from exc
+    except httpx.TransportError as exc:
+        raise RouterUnreachableError(
+            f"Router transport error for resolve_worker: {exc}"
         ) from exc
     except Exception as exc:
         raise RouterUnreachableError(
@@ -457,7 +416,7 @@ async def forward_sse_stream(
 
     fwd_headers = _forwarding_headers(headers)
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout)) as c:
+        async with create_httpx_client(timeout=httpx.Timeout(timeout)) as c:
             async with c.stream(
                 "POST", upstream_url, content=body, headers=fwd_headers
             ) as resp:
@@ -474,12 +433,17 @@ async def forward_sse_stream(
                     return
                 async for chunk in resp.aiter_bytes():
                     yield chunk
+    except httpx.TransportError as exc:
+        logger.error("SSE transport error from %s: %s", upstream_url, exc)
+        error_event = _json.dumps({"error": str(exc)})
+        yield f"data: {error_event}\n\n".encode()
     except Exception as exc:
         logger.error("SSE stream error from %s: %s", upstream_url, exc)
         error_event = _json.dumps({"error": str(exc)})
         yield f"data: {error_event}\n\n".encode()
 
 
+@async_httpx_retry
 async def forward_request(
     upstream_url: str,
     body: bytes,

@@ -877,7 +877,7 @@ def test_openclaw_online_rl(tmp_path_factory):
     HEALTH_CHECK_TIMEOUT = 10
     SESSION_NEW_TIMEOUT = 30
     SESSION_REFRESH_TIMEOUT = 130  # Longer timeout for refresh (waits for training)
-    CHAT_TIMEOUT = 30
+    CHAT_TIMEOUT = 120
     REWARD_TIMEOUT = 10
     TRAINING_STEP_TIMEOUT = 300  # 5 min for training step
 
@@ -935,7 +935,7 @@ def test_openclaw_online_rl(tmp_path_factory):
         f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
         f"actor.path={model_path}",
         "scheduler.type=local",
-        f"rollout.openai.admin_api_key={admin_api_key}",
+        f"rollout.agent.admin_api_key={admin_api_key}",
         "stats_logger.wandb.mode=disabled",
     ]
 

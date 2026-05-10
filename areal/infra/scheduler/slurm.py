@@ -89,9 +89,9 @@ class SlurmScheduler(Scheduler):
         exp_config: BaseExperimentConfig | None = None,
     ):
         # Get n_gpus_per_node from parameter or config
-        self.n_gpus_per_node = n_gpus_per_node
+        self._n_gpus_per_node = n_gpus_per_node
         if exp_config is not None:
-            self.n_gpus_per_node = exp_config.cluster.n_gpus_per_node
+            self._n_gpus_per_node = exp_config.cluster.n_gpus_per_node
 
         # Get other params from config if provided
         self.experiment_name = experiment_name
@@ -156,6 +156,10 @@ class SlurmScheduler(Scheduler):
             f"trial={self.trial_name}, fileroot={self.fileroot}, "
             f"n_gpus_per_node={self.n_gpus_per_node}"
         )
+
+    @property
+    def n_gpus_per_node(self) -> int:
+        return self._n_gpus_per_node
 
     def _slurm_name(self, job_name: str) -> str:
         return f"{self.experiment_name}_{self.trial_name}:{job_name}"

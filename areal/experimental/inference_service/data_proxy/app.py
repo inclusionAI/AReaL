@@ -39,6 +39,7 @@ from areal.experimental.openai.proxy.server import serialize_interactions
 from areal.infra.rpc.guard.data_blueprint import (
     data_bp,
 )
+from areal.infra.utils.http import create_httpx_client
 from areal.utils import logging
 
 logger = logging.getLogger("InferenceDataProxy")
@@ -230,7 +231,7 @@ async def _post_online_ready_callback(
         if client is not None:
             resp = await _do(client)
         else:
-            async with httpx.AsyncClient(timeout=timeout) as c:
+            async with create_httpx_client(timeout=timeout) as c:
                 resp = await _do(c)
 
         if resp.status_code >= 400:
@@ -323,7 +324,7 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         )
         app.state.session_store.set_admin_key(config.admin_api_key)
         app.state.version = 0
-        app.state.http_client = httpx.AsyncClient(timeout=config.request_timeout)
+        app.state.http_client = create_httpx_client(timeout=config.request_timeout)
 
         if not config.backend_addr:
             app.state.tokenizer = None
@@ -399,6 +400,30 @@ def create_app(config: DataProxyConfig) -> FastAPI:
             )
         await inf_bridge.resume()
         return PauseGenerationResponse(status="ok", paused=False)
+
+    @app.post("/release_memory_occupation")
+    async def release_memory_occupation():
+        inf_bridge: InfBridge | None = app.state.inf_bridge
+        if inf_bridge is None:
+            raise HTTPException(
+                status_code=503,
+                detail="No inference backend configured (external model mode).",
+            )
+        await inf_bridge.offload()
+        return {"status": "ok"}
+
+    @app.post("/resume_memory_occupation")
+    async def resume_memory_occupation(request: Request):
+        inf_bridge: InfBridge | None = app.state.inf_bridge
+        if inf_bridge is None:
+            raise HTTPException(
+                status_code=503,
+                detail="No inference backend configured (external model mode).",
+            )
+        body = await request.json() if await request.body() else {}
+        tags = body.get("tags")
+        await inf_bridge.onload(tags=tags)
+        return {"status": "ok"}
 
     # =========================================================================
     # Version management — internal control plane (no auth at data proxy level)
@@ -517,7 +542,7 @@ def create_app(config: DataProxyConfig) -> FastAPI:
                 async def _stream_and_cache():
                     success = False
                     try:
-                        async with httpx.AsyncClient(
+                        async with create_httpx_client(
                             timeout=httpx.Timeout(config.request_timeout)
                         ) as stream_client:
                             async with stream_client.stream(
@@ -704,11 +729,6 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         # serialize RTensors
         serialized = serialize_interactions(interactions)
         return ExportTrajectoriesResponse(interactions=serialized)
-
-    # NOTE: /grant_capacity has been removed from data proxy. Capacity-based
-    # staleness control is now managed at the router level — see
-    # areal.experimental.inference_service.router.app for the /grant_capacity
-    # endpoint.
 
     # =========================================================================
     # Runtime backend reconfiguration (for fork-based deployment)

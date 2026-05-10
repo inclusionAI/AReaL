@@ -21,7 +21,7 @@ def main() -> None:
     parser.add_argument("--router-timeout", type=float, default=2.0)
     parser.add_argument("--forward-timeout", type=float, default=120.0)
     parser.add_argument(
-        "--log-level", choices=["debug", "info", "warning", "error"], default="info"
+        "--log-level", choices=["debug", "info", "warning", "error"], default="warning"
     )
     args = parser.parse_args()
 
@@ -42,7 +42,13 @@ def main() -> None:
         ),
         admin_api_key=config.admin_api_key,
     )
-    uvicorn.run(app, host=config.host, port=config.port, log_level=config.log_level)
+    uvicorn.run(
+        app,
+        host=config.host,
+        port=config.port,
+        log_level=config.log_level,
+        access_log=False,
+    )
 
 
 if __name__ == "__main__":
