@@ -24,6 +24,8 @@ from areal.api.alloc_mode import ModelAllocation
 from areal.infra.platforms import current_platform
 from areal.utils.network import find_free_ports
 
+MODEL_PATH = "/workspace/models/Qwen3-0.6B"
+
 
 def _run_torchrun_test(alloc_mode: str, output: str, n_gpus: int | None = None):
     """Launch the torchrun helper script and check the result.
@@ -51,6 +53,7 @@ def _run_torchrun_test(alloc_mode: str, output: str, n_gpus: int | None = None):
         "tests/torchrun/run_lora_disk_sync.py",
         f"--backend={alloc_mode}",
         f"--output={output}",
+        f"--model-path={MODEL_PATH}",
     ]
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"

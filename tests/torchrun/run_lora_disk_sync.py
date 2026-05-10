@@ -51,7 +51,7 @@ from areal.api.cli_args import (
 from areal.engine import FSDPEngine
 from areal.infra.platforms import current_platform
 
-MODEL_PATH = get_model_path(
+DEFAULT_MODEL_PATH = get_model_path(
     "/storage/openpsi/models/Qwen__Qwen3-0.6B/", "Qwen/Qwen3-0.6B"
 )
 
@@ -64,14 +64,14 @@ def write_result(path: str, success: bool) -> None:
         f.write("Passed" if success else "Failed")
 
 
-def make_fsdp_engine_with_lora(backend: str) -> FSDPEngine:
+def make_fsdp_engine_with_lora(backend: str, model_path: str) -> FSDPEngine:
     """Create an FSDPEngine with LoRA + disk-mode weight update."""
     config = TrainEngineConfig(
         backend=backend,
         experiment_name="test_lora_disk_sync",
         trial_name="test",
         mb_spec=MicroBatchSpec(max_tokens_per_mb=256),
-        path=MODEL_PATH,
+        path=model_path,
         optimizer=OptimizerConfig(),
         fsdp=FSDPEngineConfig(memory_efficient_load=True),
         # LoRA config
@@ -218,7 +218,9 @@ def verify_adapter_artifacts(adapter_dir: str, *, lora_rank: int, lora_alpha: in
     return True
 
 
-def test_lora_disk_sync(backend: str, output: str | None = None) -> None:
+def test_lora_disk_sync(
+    backend: str, output: str | None = None, model_path: str = DEFAULT_MODEL_PATH
+) -> None:
     """Main test logic for LoRA disk sync."""
     rank = int(os.environ.get("RANK", "0"))
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
@@ -240,7 +242,7 @@ def test_lora_disk_sync(backend: str, output: str | None = None) -> None:
         f"use_lora=True weight_update_mode=disk",
         flush=True,
     )
-    engine = make_fsdp_engine_with_lora(backend)
+    engine = make_fsdp_engine_with_lora(backend, model_path)
 
     # Step 2: Verify LoRA parameters exist on the in-memory model.
     lora_count, base_count = count_lora_and_base_params(engine)
@@ -329,8 +331,16 @@ def main():
         default="fsdp:d1t1",
         help="Backend allocation string (e.g., 'fsdp:d1t1')",
     )
+    parser.add_argument(
+        "--model-path",
+        type=str,
+        default=DEFAULT_MODEL_PATH,
+        help="Local model path used to initialize the FSDP engine.",
+    )
     args = parser.parse_args()
-    test_lora_disk_sync(backend=args.backend, output=args.output)
+    test_lora_disk_sync(
+        backend=args.backend, output=args.output, model_path=args.model_path
+    )
 
 
 if __name__ == "__main__":
