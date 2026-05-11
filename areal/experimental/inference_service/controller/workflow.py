@@ -147,7 +147,8 @@ class InferenceServiceWorkflow(RolloutWorkflow):
         assert self.agent is not None
         http_client = await workflow_context.get_httpx_client()
 
-        async def _run_one(session_id: str, session_api_key: str) -> float:
+        async def _run_one(session_id: str, session_api_key: str) -> float | None:
+            """Run one agent session. Returns reward on success, ``None`` on failure."""
             try:
                 rewards = await self.agent.run(
                     data,
@@ -191,13 +192,16 @@ class InferenceServiceWorkflow(RolloutWorkflow):
                         session_id,
                         group_id,
                     )
-                return 0.0
+                return None
 
-        rewards = await asyncio.gather(
+        results = await asyncio.gather(
             *[_run_one(sid, api_key) for sid, api_key in sessions]
         )
 
         session_ids = [sid for sid, _ in sessions]
+
+        # Always export to trigger session cleanup on the data proxy,
+        # even when we intend to discard the trajectories.
         traj = await self._export_interactions(
             http_session,
             session_ids,
@@ -206,8 +210,18 @@ class InferenceServiceWorkflow(RolloutWorkflow):
         if not traj:
             return None
 
+        n_failed = sum(r is None for r in results)
+        if n_failed > 0:
+            logger.warning(
+                "Abandoning group %s: %d/%d sessions failed",
+                group_id,
+                n_failed,
+                len(sessions),
+            )
+            return None
+
         tracker = stats_tracker.get(workflow_context.stat_scope())
-        for r in rewards:
+        for r in results:
             tracker.scalar(reward=r)
 
         return traj
