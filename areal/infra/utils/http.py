@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import os
 from http import HTTPStatus
 from typing import Any
 
@@ -14,10 +15,13 @@ from tenacity import (
 )
 
 from areal.utils import logging
-from areal.utils.network import format_hostport, split_hostport
+from areal.utils.network import format_hostport, gethostip, split_hostport
 
 DEFAULT_RETRIES = 1
 DEFAULT_REQUEST_TIMEOUT = 3600
+
+DEFAULT_ADMIN_API_KEY = "areal-admin-key"
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 # ---------------------------------------------------------------------------
 # Shared capacity defaults for httpx clients and uvicorn servers
@@ -55,6 +59,47 @@ def get_default_uvicorn_kwargs() -> dict[str, Any]:
         "backlog": UVICORN_BACKLOG,
         "limit_concurrency": UVICORN_LIMIT_CONCURRENCY,
     }
+
+
+def validate_admin_api_key(
+    host: str,
+    admin_api_key: str,
+    default_key: str = DEFAULT_ADMIN_API_KEY,
+    config_field: str = "admin_api_key",
+) -> None:
+    """Refuse to start an HTTP service on a non-loopback bind with the default admin key.
+
+    The default admin API key is publicly documented in the source tree, so
+    a server that listens on a routable interface with the default key
+    effectively has no admin authentication. Operators must either set a
+    unique ``admin_api_key`` or opt in via ``AREAL_ALLOW_DEFAULT_ADMIN_KEY=1``
+    when they knowingly accept the risk on a trusted network.
+
+    A non-default key, or a loopback-only bind, is always accepted.
+    """
+    if admin_api_key != default_key:
+        return
+
+    resolved_host = host
+    if host in ("0.0.0.0", "::"):
+        resolved_host = gethostip()
+
+    allow_override = os.environ.get("AREAL_ALLOW_DEFAULT_ADMIN_KEY", "0") == "1"
+    if resolved_host in _LOOPBACK_HOSTS or allow_override:
+        logger.warning(
+            "Using default admin API key. Change '%s' before exposing this "
+            "server on a network.",
+            config_field,
+        )
+        return
+
+    raise RuntimeError(
+        f"Refusing to start server on non-loopback host {resolved_host!r} "
+        f"with the default admin API key ({default_key!r}). Set "
+        f"'{config_field}' to a unique secret, or set "
+        "AREAL_ALLOW_DEFAULT_ADMIN_KEY=1 to acknowledge the risk in a "
+        "trusted environment."
+    )
 
 
 async_http_retry = retry(
