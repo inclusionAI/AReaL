@@ -10,8 +10,8 @@ import httpx
 import openai
 
 from areal.api.workflow_api import RolloutWorkflow
-from areal.experimental.openai.proxy.server import deserialize_interactions
 from areal.infra import workflow_context
+from areal.infra.rpc.serialization import deserialize_value
 from areal.infra.utils.http import async_http_retry
 from areal.utils import logging, stats_tracker
 
@@ -105,7 +105,7 @@ class InferenceServiceWorkflow(RolloutWorkflow):
         session_ids: list[str],
         group_id: str | None = None,
         trajectory_id: int | None = None,
-    ) -> dict[str, InteractionWithTokenLogpReward]:
+    ) -> dict[str, Any]:
         url = f"{self.gateway_addr}/{_EXPORT_TRAJECTORIES_PATHNAME}"
         headers = {"Authorization": f"Bearer {self._admin_api_key}"}
         payload: dict[str, Any] = {
@@ -120,7 +120,7 @@ class InferenceServiceWorkflow(RolloutWorkflow):
             resp.raise_for_status()
             data = await resp.json()
 
-        return deserialize_interactions(data["interactions"])
+        return deserialize_value(data["traj"])
 
     async def arun_episode(
         self,
@@ -198,23 +198,19 @@ class InferenceServiceWorkflow(RolloutWorkflow):
         )
 
         session_ids = [sid for sid, _ in sessions]
-        interactions = await self._export_interactions(
+        traj = await self._export_interactions(
             http_session,
             session_ids,
             group_id=group_id,
         )
-        if not interactions:
-            logger.warning(
-                "Group %s has no interactions, all trajectories rejected.",
-                group_id,
-            )
+        if not traj:
             return None
 
         tracker = stats_tracker.get(workflow_context.stat_scope())
         for r in rewards:
             tracker.scalar(reward=r)
 
-        return interactions
+        return traj
 
     async def _run_online(
         self,
@@ -227,15 +223,20 @@ class InferenceServiceWorkflow(RolloutWorkflow):
         if not export_request:
             return None
 
-        interactions = await self._export_interactions(
+        traj = await self._export_interactions(
             http_session,
             [export_request["session_id"]],
             trajectory_id=export_request["trajectory_id"],
         )
-        if not interactions:
+        if not traj:
             return None
 
-        last_id = next(reversed(interactions))
-        last_reward = interactions[last_id].reward
+        if "rewards" not in traj or not traj["rewards"]:
+            logger.warning(
+                "Exported trajectory is missing rewards. This trajectory will be rejected."
+            )
+            return None
+
+        last_reward = float(traj["rewards"][-1])
         stats_tracker.get(workflow_context.stat_scope()).scalar(reward=last_reward)
-        return interactions
+        return traj
