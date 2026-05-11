@@ -9,6 +9,20 @@
 
 有关分配模式语法、并行维度 和 GPU 计算的完整指南，请参阅[分配模式参考](../reference/alloc_mode.md)。
 
+## Bridge 后端选择
+
+`MegatronEngine` 支持通过 `actor.megatron.bridge_type` 选择两种 bridge 后端：
+
+```yaml
+actor:
+    megatron:
+        bridge_type: mbridge  # 默认（向后兼容）
+```
+
+设置 `bridge_type: megatron-bridge` 可启用新后端。
+
+关于取舍与迁移建议，请参阅 [Megatron Bridge 后端参考](../reference/bridge_backend.md)。
+
 ## MoE 并行策略
 
 对于 MoE 模型，Megatron 使用混合语法支持注意力模块和 FFN 模块的独立并行。例如：

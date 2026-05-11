@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 import os
 import subprocess
 import sys
@@ -26,7 +28,7 @@ from areal.infra.utils.launcher import (
 )
 from areal.infra.utils.proc import kill_process_tree
 from areal.utils import logging, name_resolve, names
-from areal.utils.network import find_free_ports, gethostip
+from areal.utils.network import find_free_ports, format_hostport, gethostip
 
 logger = logging.getLogger("SGLangWrapper")
 
@@ -150,8 +152,8 @@ class SGLangServerWrapper:
             server_idx_offset = 0
 
         # Separate ports used by each server in the same node
-        # ports range (10000, 50000)
-        ports_per_server = 40000 // n_servers_per_node
+        # ports range (10000, 32767)
+        ports_per_server = 22767 // n_servers_per_node
         launch_server_args = []
         server_addresses = []
         base_random_seed = self.config.random_seed
@@ -185,9 +187,10 @@ class SGLangServerWrapper:
                 dist_init_addr=dist_init_addr,
                 n_nodes=n_nodes,
                 node_rank=node_rank,
+                pp_size=self.allocation_mode.gen.pp_size,
             )
             launch_server_args.append((cmd, host_ip, server_port, node_rank))
-            server_addresses.append(f"http://{host_ip}:{server_port}")
+            server_addresses.append(f"http://{format_hostport(host_ip, server_port)}")
 
         with ThreadPoolExecutor(max_workers=n_servers_per_proc) as executor:
             server_iterator = executor.map(
@@ -201,11 +204,13 @@ class SGLangServerWrapper:
 
     def launch_one_server(self, cmd, host_ip, server_port, node_rank):
         server_process = launch_server_cmd(cmd)
-        wait_for_server(f"http://{host_ip}:{server_port}")
+        wait_for_server(f"http://{format_hostport(host_ip, server_port)}")
         if node_rank == 0:
             name = names.gen_servers(self.experiment_name, self.trial_name)
             name_resolve.add_subentry(name, f"{host_ip}:{server_port}")
-        logger.info(f"SGLang server launched at: http://{host_ip}:{server_port}")
+        logger.info(
+            f"SGLang server launched at: http://{format_hostport(host_ip, server_port)}"
+        )
         return server_process
 
 

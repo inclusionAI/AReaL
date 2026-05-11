@@ -231,6 +231,90 @@ def test_train(
     print(f"Test: test_train(model_type={model_type}, alloc_mode={alloc_mode}) Done.")
 
 
+def test_grad_norm_mb_invariance(
+    model_type: str, alloc_mode: str, output: str | None = None, vpp_size: int = 1
+):
+    """Regression guard for the `loss_multiplier` fix in `train_batch`.
+
+    Megatron Core's pipeline schedule applies `loss /= num_microbatches` on the
+    2-tuple loss-func return path. Since AReaL already normalizes the per-mb
+    loss globally via `w_i / W_total`, that extra division must be compensated
+    in `loss_multiplier`. If the compensation is missing (or wrong), the
+    resulting gradient — and therefore the grad_norm reported by the optimizer
+    — scales inversely with `num_microbatches`.
+
+    This test runs `train_batch` on the SAME input and seeded-identical weights
+    with two different `max_tokens_per_mb` values that yield a different number
+    of micro-batches. The reported grad_norm must match within a tight
+    tolerance. Pre-fix the values differ by exactly the ratio of mb counts.
+    """
+    print(
+        f"running grad_norm_mb_invariance: model_type={model_type} "
+        f"alloc_mode={alloc_mode}"
+    )
+    rank = int(os.environ["RANK"])
+    batch_size = 16
+    max_seqlen = 128
+
+    grad_norms: list[float] = []
+    engines = []
+    # Two configs that yield different `num_microbatches` for the same total
+    # batch. Values chosen to keep at least one mb for the smallest PP chunk
+    # while still producing distinct mb counts between the two runs.
+    for max_tokens_per_mb in (4096, 256):
+        mb_spec = MicroBatchSpec(max_tokens_per_mb=max_tokens_per_mb)
+        # Reset seed before creating each engine so parameter init is identical.
+        seeding.set_random_seed(0, key=f"engine{rank}")
+        engine = make_engine(
+            model_type, alloc_mode, mb_spec, init_optimizer=True, vpp_size=vpp_size
+        )
+        # Reset seed again before building the batch so input is identical.
+        seeding.set_random_seed(0, key=f"data{rank}")
+        input_ = mock_input(
+            batch_size=batch_size, max_seqlen=max_seqlen, device=engine.device
+        )
+        bcasted_input = broadcast_tensor_container(
+            input_,
+            src_rank=engine.current_data_parallel_head(),
+            group=engine.context_and_model_parallel_group,
+        )
+
+        result = engine.train_batch(
+            input_=bcasted_input,
+            loss_fn=mock_loss_fn,
+            loss_weight_fn=lambda x: x["cu_seqlens"][-1],
+        )
+        print(
+            f"rank {rank} max_tokens_per_mb={max_tokens_per_mb} train_result={result}"
+        )
+        grad_norms.append(float(result["grad_norm"]))
+
+        current_platform.synchronize()
+        dist.barrier()
+        engines.append(engine)
+
+    for engine in engines:
+        engine.destroy()
+    # grad_norm is reported only on the DP head; other ranks may see NaN/0 but
+    # they all agree by virtue of the Megatron optimizer's internal all-reduce.
+    # Tolerance: 1e-3 relative — small enough to catch the num_microbatches
+    # ratio (>=2x) while permitting benign non-associativity of fp16/bf16 sums
+    # across a different mb grouping.
+    g0, g1 = grad_norms
+    ok = abs(g0 - g1) <= 1e-3 * max(abs(g0), abs(g1), 1e-12)
+    if not ok:
+        print(
+            f"FAIL rank {rank}: grad_norm differs across num_microbatches: {g0} vs {g1}"
+        )
+
+    if rank == 0 and output is not None:
+        write_result(output, ok)
+    print(
+        f"Test: test_grad_norm_mb_invariance(model_type={model_type}, "
+        f"alloc_mode={alloc_mode}) Done."
+    )
+
+
 def test_train_dcp_save_load(
     model_type: str, alloc_mode: str, output: str | None = None, vpp_size: int = 1
 ):
@@ -431,7 +515,13 @@ def main():
     parser.add_argument(
         "--test_type",
         type=str,
-        choices=["forward", "train", "simple_dcp_save_load", "train_dcp_save_load"],
+        choices=[
+            "forward",
+            "train",
+            "grad_norm_mb_invariance",
+            "simple_dcp_save_load",
+            "train_dcp_save_load",
+        ],
         default="forward",
         help="Type of test to run: 'forward' or 'train'",
     )
@@ -447,6 +537,13 @@ def main():
         )
     elif args.test_type == "forward":
         test_forward(
+            args.model_type,
+            args.backend,
+            output=args.output,
+            vpp_size=args.vpp_size,
+        )
+    elif args.test_type == "grad_norm_mb_invariance":
+        test_grad_norm_mb_invariance(
             args.model_type,
             args.backend,
             output=args.output,

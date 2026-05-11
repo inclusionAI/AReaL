@@ -178,8 +178,8 @@ class TestAdminEndpoints:
         """Admin key → /rl/start_session → forwarded, response intercepted, session registered."""
         mock_query_router.return_value = WORKER_ADDR
         session_resp_data = {
-            "session_id": "task-1-0",
-            "api_key": "sess-key-xyz",
+            "group_id": "grp-test-1",
+            "sessions": [{"session_id": "task-1-0", "session_api_key": "sess-key-xyz"}],
         }
         mock_forward.return_value = httpx.Response(201, json=session_resp_data)
 
@@ -190,15 +190,19 @@ class TestAdminEndpoints:
         )
         assert resp.status_code == 201
         data = resp.json()
-        assert data["session_id"] == "task-1-0"
-        assert data["api_key"] == "sess-key-xyz"
+        assert data["group_id"] == "grp-test-1"
+        assert data["sessions"] == [
+            {"session_id": "task-1-0", "session_api_key": "sess-key-xyz"}
+        ]
 
         # Verify router registration
         mock_register.assert_called_once()
         reg_args = mock_register.call_args
-        assert reg_args.args[1] == "sess-key-xyz"  # session_api_key
-        assert reg_args.args[2] == "task-1-0"  # session_id
-        assert reg_args.args[3] == WORKER_ADDR  # worker_addr
+        assert reg_args.args[0] == "http://mock-router:8081"  # router_addr
+        assert reg_args.args[1] == [
+            {"session_api_key": "sess-key-xyz", "session_id": "task-1-0"}
+        ]  # sessions_list
+        assert reg_args.args[2] == WORKER_ADDR  # worker_addr
 
     @pytest.mark.asyncio
     @patch(f"{MODULE}.register_session_in_router", new_callable=AsyncMock)
@@ -210,7 +214,11 @@ class TestAdminEndpoints:
         """If router registration fails after session creation → 502."""
         mock_query_router.return_value = WORKER_ADDR
         mock_forward.return_value = httpx.Response(
-            201, json={"session_id": "t-0", "api_key": "k"}
+            201,
+            json={
+                "group_id": "grp-test-2",
+                "sessions": [{"session_id": "t-0", "session_api_key": "k"}],
+            },
         )
         mock_register.side_effect = RouterUnreachableError("Router down")
 
@@ -229,20 +237,46 @@ class TestAdminEndpoints:
     async def test_admin_export_trajectories(
         self, mock_forward, mock_query_router, mock_revoke, client
     ):
-        """Admin key → /export_trajectories → routed by session_id, session revoked."""
         mock_query_router.return_value = WORKER_ADDR
         mock_forward.return_value = httpx.Response(200, json={"interactions": []})
 
         resp = await client.post(
             "/export_trajectories",
-            json={"session_id": "task-1-0", "discount": 1.0, "style": "sft"},
+            json={
+                "session_ids": ["task-1-0"],
+                "group_id": "grp-test",
+                "discount": 1.0,
+                "style": "sft",
+            },
             headers=admin_headers(),
         )
         assert resp.status_code == 200
         mock_query_router.assert_called_once()
         assert mock_query_router.call_args.kwargs["session_id"] == "task-1-0"
-        # Session should be revoked from router after successful export
         mock_revoke.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch(f"{MODULE}.revoke_session_in_router", new_callable=AsyncMock)
+    @patch(f"{MODULE}.query_router", new_callable=AsyncMock)
+    @patch(f"{MODULE}.forward_request", new_callable=AsyncMock)
+    async def test_online_export_without_group_id_skips_revoke(
+        self, mock_forward, mock_query_router, mock_revoke, client
+    ):
+        mock_query_router.return_value = WORKER_ADDR
+        mock_forward.return_value = httpx.Response(200, json={"interactions": []})
+
+        resp = await client.post(
+            "/export_trajectories",
+            json={
+                "session_ids": ["__hitl__"],
+                "trajectory_id": 0,
+                "discount": 1.0,
+                "style": "individual",
+            },
+            headers=admin_headers(),
+        )
+        assert resp.status_code == 200
+        mock_revoke.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_export_trajectories_missing_session_id(self, client):
@@ -253,7 +287,7 @@ class TestAdminEndpoints:
             headers=admin_headers(),
         )
         assert resp.status_code == 400
-        assert "session_id" in resp.json()["error"]
+        assert "session_ids" in resp.json()["error"]
 
 
 # =============================================================================
@@ -289,19 +323,23 @@ class TestSessionEndpoints:
     @pytest.mark.asyncio
     @patch(f"{MODULE}.forward_request", new_callable=AsyncMock)
     @patch(f"{MODULE}.query_router", new_callable=AsyncMock)
-    async def test_session_end_session(self, mock_query_router, mock_forward, client):
-        """Session key → /rl/end_session → forwarded to pinned worker."""
+    async def test_session_set_reward_finish(
+        self, mock_query_router, mock_forward, client
+    ):
+        """Session key → /rl/set_reward (finish=True) → forwarded to pinned worker."""
         mock_query_router.return_value = WORKER_ADDR
         mock_forward.return_value = httpx.Response(
-            200, json={"message": "success", "interaction_count": 5}
+            200,
+            json={"message": "success", "interaction_count": 5, "finished": True},
         )
 
         resp = await client.post(
-            "/rl/end_session",
-            content=b"",
+            "/rl/set_reward",
+            json={"reward": 0.0, "finish": True},
             headers=session_headers(),
         )
         assert resp.status_code == 200
+        mock_forward.assert_called_once()
 
     @pytest.mark.asyncio
     @patch(f"{MODULE}.forward_request", new_callable=AsyncMock)
@@ -317,6 +355,59 @@ class TestSessionEndpoints:
             headers=session_headers(),
         )
         assert resp.status_code == 200
+        mock_forward.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch(f"{MODULE}.forward_request", new_callable=AsyncMock)
+    @patch(f"{MODULE}.query_router", new_callable=AsyncMock)
+    async def test_set_reward_returns_ready_transition_without_router_notification(
+        self, mock_query_router, mock_forward, client
+    ):
+        mock_query_router.return_value = WORKER_ADDR
+        mock_forward.return_value = httpx.Response(
+            200,
+            json={
+                "message": "success",
+                "session_id": "__hitl__",
+                "trajectory_id": 0,
+                "trajectory_ready": True,
+                "ready_transition": True,
+            },
+        )
+
+        resp = await client.post(
+            "/rl/set_reward",
+            json={"reward": 1.0},
+            headers=admin_headers(),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["ready_transition"] is True
+
+    @pytest.mark.asyncio
+    @patch(f"{MODULE}.forward_request", new_callable=AsyncMock)
+    @patch(f"{MODULE}.query_router", new_callable=AsyncMock)
+    async def test_set_reward_duplicate_ready_transition_is_forwarded_as_is(
+        self, mock_query_router, mock_forward, client
+    ):
+        mock_query_router.return_value = WORKER_ADDR
+        mock_forward.return_value = httpx.Response(
+            200,
+            json={
+                "message": "success",
+                "session_id": "__hitl__",
+                "trajectory_id": 0,
+                "trajectory_ready": True,
+                "ready_transition": False,
+            },
+        )
+
+        resp = await client.post(
+            "/rl/set_reward",
+            json={"reward": 1.0},
+            headers=admin_headers(),
+        )
+        assert resp.status_code == 200
+        assert resp.json()["ready_transition"] is False
 
 
 # =============================================================================
@@ -462,61 +553,11 @@ class TestRouterErrors:
 
         resp = await client.post(
             "/export_trajectories",
-            json={"session_id": "nonexistent", "discount": 1.0, "style": "sft"},
+            json={"session_ids": ["nonexistent"], "discount": 1.0, "style": "sft"},
             headers=admin_headers(),
         )
         assert resp.status_code == 401
         assert "Session not found" in resp.json()["error"]
-
-
-# =============================================================================
-# Capacity management — /grant_capacity
-# =============================================================================
-
-
-class TestGrantCapacity:
-    @pytest.mark.asyncio
-    @patch(f"{MODULE}.grant_capacity_in_router", new_callable=AsyncMock)
-    async def test_grant_capacity_forwards_to_router(self, mock_grant, client):
-        """Admin key → /grant_capacity → forwarded to router, returns router response."""
-        mock_grant.return_value = {"status": "ok", "capacity": 1}
-
-        resp = await client.post(
-            "/grant_capacity", content=b"", headers=admin_headers()
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["status"] == "ok"
-        assert data["capacity"] == 1
-        mock_grant.assert_called_once()
-
-    @pytest.mark.asyncio
-    @patch(f"{MODULE}.grant_capacity_in_router", new_callable=AsyncMock)
-    async def test_grant_capacity_router_unreachable(self, mock_grant, client):
-        """Router unreachable on /grant_capacity → 502."""
-        mock_grant.side_effect = RouterUnreachableError("Router down")
-
-        resp = await client.post(
-            "/grant_capacity", content=b"", headers=admin_headers()
-        )
-        assert resp.status_code == 502
-        assert "Router down" in resp.json()["error"]
-
-    @pytest.mark.asyncio
-    async def test_grant_capacity_no_auth_401(self, client):
-        """/grant_capacity without auth → 401."""
-        resp = await client.post("/grant_capacity", content=b"")
-        assert resp.status_code == 401
-
-    @pytest.mark.asyncio
-    async def test_grant_capacity_wrong_key_403(self, client):
-        """/grant_capacity with wrong key → 403."""
-        resp = await client.post(
-            "/grant_capacity",
-            content=b"",
-            headers={"Authorization": "Bearer wrong-key"},
-        )
-        assert resp.status_code == 403
 
 
 # =============================================================================
@@ -539,7 +580,11 @@ class TestStartSessionCapacity:
         """
         mock_query_router.return_value = WORKER_ADDR
         mock_forward.return_value = httpx.Response(
-            201, json={"session_id": "t-0", "api_key": "k"}
+            201,
+            json={
+                "group_id": "grp-test-3",
+                "sessions": [{"session_id": "t-0", "session_api_key": "k"}],
+            },
         )
 
         resp = await client.post(

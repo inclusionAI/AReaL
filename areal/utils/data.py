@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 # Pad/unpad operations are modified from flash-attention under BSD-3 license.
 # Copyright (c) 2023, Tri Dao.
 
@@ -11,13 +13,13 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 from einops import rearrange
-from torch.utils.data import DistributedSampler
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from areal.api.cli_args import MicroBatchSpec, NormConfig
 from areal.infra.platforms import current_platform
 from areal.utils import logging, seqpack
 from areal.utils.math import align
+from areal.utils.seqpack import get_allocate_fn
 
 logger = logging.getLogger("DataUtils")
 
@@ -444,8 +446,23 @@ def unpack_sequence(
 
 
 def allocate_balanced_mbs(mb_spec: MicroBatchSpec, lens: list[int]) -> list[list[int]]:
+    """Allocate sequences into balanced micro-batches using the configured algorithm.
+
+    The packing algorithm is determined by ``mb_spec.packing_algorithm``:
+      - ``"ffd"`` (default): First Fit Decreasing — fast greedy heuristic.
+      - ``"kk"``: Karmarkar-Karp — produces more balanced partitions at a
+        slight computational cost.
+
+    Args:
+        mb_spec: MicroBatchSpec containing packing configuration.
+        lens: List of sequence lengths to allocate.
+
+    Returns:
+        List of lists of indices, one per micro-batch.
+    """
     assert mb_spec.max_tokens_per_mb is not None
-    group_indices = seqpack.ffd_allocate(
+    allocate_fn = get_allocate_fn(getattr(mb_spec, "packing_algorithm", "ffd"))
+    group_indices = allocate_fn(
         lens,
         mb_spec.max_tokens_per_mb,
         min_groups=mb_spec.n_mbs,
@@ -917,6 +934,13 @@ def pad_packed_tensor_dict(
         raise ValueError(
             f"pad_to_length {pad_to_length} is smaller than total length {total_length}."
         )
+    elif pad_length == 0:
+        return (
+            data,
+            pad_length,
+            old_cu_seqlens,
+            align_to_length,
+        )
     new_cu_seqlens = F.pad(cu_seqlens, (0, 1), value=pad_to_length)
     new_max_seqlen = max(max_seqlen, pad_length)
     padded_data = {}
@@ -1343,9 +1367,7 @@ def cycle_dataloader(dataloader: StatefulDataLoader, num_cycles: int = -1):
     """Cycle through a dataloader indefinitely."""
     epoch = 0
     while True:
-        if hasattr(dataloader, "sampler") and isinstance(
-            dataloader.sampler, DistributedSampler
-        ):
+        if hasattr(dataloader, "sampler") and hasattr(dataloader.sampler, "set_epoch"):
             dataloader.sampler.set_epoch(epoch)
         yield from dataloader
         epoch += 1
@@ -1632,3 +1654,36 @@ class KLEstimator:
         if apply_clamp:
             log_ratio = log_ratio.clamp(min=-10, max=10)
         return log_ratio
+
+
+def make_dummy_eval_item(template: dict[str, Any]) -> dict[str, Any]:
+    """Create a zero-contribution dummy item matching *template*'s schema.
+
+    Every tensor field is replaced with a minimal all-zeros tensor that
+    preserves dtype and device.  ``attention_mask`` and ``loss_mask`` are
+    set to zero so that downstream loss/metric code treats the item as
+    contributing nothing.
+    """
+
+    def _zero_tensor_like(tensor: torch.Tensor) -> torch.Tensor:
+        return torch.zeros((1, 1), dtype=tensor.dtype, device=tensor.device)
+
+    dummy: dict[str, Any] = {}
+    for key, value in template.items():
+        if key in {"attention_mask", "loss_mask"}:
+            if isinstance(value, torch.Tensor):
+                dummy[key] = _zero_tensor_like(value)
+            else:
+                dummy[key] = torch.zeros((1, 1), dtype=torch.bool)
+            continue
+
+        if key.startswith("multi_modal_input"):
+            dummy[key] = [{}]
+            continue
+
+        if isinstance(value, torch.Tensor):
+            dummy[key] = _zero_tensor_like(value)
+        else:
+            dummy[key] = copy.deepcopy(value)
+
+    return dummy

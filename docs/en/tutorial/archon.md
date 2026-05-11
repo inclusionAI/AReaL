@@ -18,18 +18,18 @@ excellent work in making distributed training accessible through pure PyTorch AP
 
 ## Engine Comparison
 
-| Feature           | FSDPEngine          | MegatronEngine  | ArchonEngine                |
-| ----------------- | ------------------- | --------------- | --------------------------- |
-| Backend           | HuggingFace + FSDP2 | Megatron-Core   | PyTorch-native              |
-| Model Source      | Any HF model        | Megatron models | Custom Archon models        |
-| torch.compile     | Limited             | No              | Yes (default)               |
-| Data Parallel     | FSDP2               | Megatron DP     | FSDP2                       |
-| Tensor Parallel   | PyTorch DTensor     | Megatron TP     | PyTorch DTensor             |
-| Pipeline Parallel | No                  | Yes (VPP)       | Yes (1F1B, I1F1B, IZB, ZBV) |
-| Expert Parallel   | No                  | Full EP/ETP     | Full EP/ETP                 |
-| Context Parallel  | Ulysses SP          | Megatron CP     | Ulysses SP                  |
-| Supported Models  | Any HF              | Via mbridge     | Built-in + User-defined     |
-| Status            | Production          | Production      | Experimental                |
+| Feature           | FSDPEngine          | MegatronEngine           | ArchonEngine                |
+| ----------------- | ------------------- | ------------------------ | --------------------------- |
+| Backend           | HuggingFace + FSDP2 | Megatron-Core            | PyTorch-native              |
+| Model Source      | Any HF model        | Megatron models          | Custom Archon models        |
+| torch.compile     | Limited             | No                       | Yes (default)               |
+| Data Parallel     | FSDP2               | Megatron DP              | FSDP2                       |
+| Tensor Parallel   | PyTorch DTensor     | Megatron TP              | PyTorch DTensor             |
+| Pipeline Parallel | No                  | Yes (VPP)                | Yes (1F1B, I1F1B, IZB, ZBV) |
+| Expert Parallel   | No                  | Full EP/ETP              | Full EP/ETP                 |
+| Context Parallel  | Ulysses SP          | Megatron CP              | Ulysses SP                  |
+| Supported Models  | Any HF              | mbridge/ megatron-bridge | Built-in + User-defined     |
+| Status            | Production          | Production               | Experimental                |
 
 ## Key Features
 

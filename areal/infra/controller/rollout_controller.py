@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 from __future__ import annotations
 
 import asyncio
@@ -38,7 +40,7 @@ from areal.infra.utils.concurrent import run_async_task
 from areal.utils import logging, perf_tracer
 from areal.utils.data import cycle_dataloader
 from areal.utils.dynamic_import import import_from_string
-from areal.utils.network import find_free_ports, gethostip
+from areal.utils.network import find_free_ports, format_hostport, gethostip
 from areal.utils.perf_tracer import trace_perf
 
 from ..staleness_manager import StalenessManager
@@ -402,7 +404,9 @@ class RolloutController:
                     addr=f"{server_info.host}:{server_info.port}",
                 )
             )
-            self.proxy_addrs.append(f"http://{worker.ip}:{worker.worker_ports[0]}")
+            self.proxy_addrs.append(
+                f"http://{format_hostport(worker.ip, int(worker.worker_ports[0]))}"
+            )
         await asyncio.gather(*init_tasks)
 
         logger.info(f"Proxy servers initialized. Addresses: {self.proxy_addrs}")
@@ -444,16 +448,17 @@ class RolloutController:
             logger.warning("Proxy gateway already running")
             return
 
-        from areal.api.cli_args import OpenAIProxyConfig
         from areal.experimental.openai.proxy.proxy_gateway import (
             create_proxy_gateway_app,
         )
 
-        openai_cfg = self.config.openai or OpenAIProxyConfig()
+        agent_cfg = self.config.agent
 
         app = create_proxy_gateway_app(
             proxy_addrs=self.proxy_addrs,
-            admin_api_key=openai_cfg.admin_api_key,
+            admin_api_key=agent_cfg.admin_api_key
+            if agent_cfg is not None
+            else "areal-admin-key",
         )
 
         self._proxy_gateway_port = find_free_ports(1)[0]
@@ -515,7 +520,7 @@ class RolloutController:
         """Single URL for external users."""
         if self._proxy_gateway_host is None:
             raise RuntimeError("Proxy gateway not started")
-        return f"http://{self._proxy_gateway_host}:{self._proxy_gateway_port}"
+        return f"http://{format_hostport(self._proxy_gateway_host, self._proxy_gateway_port)}"
 
     def _stop_proxy_gateway(self) -> None:
         """Stop the proxy gateway server if running."""
@@ -621,7 +626,7 @@ class RolloutController:
             # Signal that the loop is ready
             self._callback_loop_ready.set()
             logger.info(
-                f"Callback server started on {self._callback_host}:{self._callback_port}"
+                f"Callback server started on {format_hostport(self._callback_host, self._callback_port)}"
             )
             self._callback_server.serve_forever()
 
@@ -652,7 +657,7 @@ class RolloutController:
         """Return callback server address as 'host:port'."""
         if self._callback_host is None or self._callback_port is None:
             raise RuntimeError("Callback server not started")
-        return f"{self._callback_host}:{self._callback_port}"
+        return format_hostport(self._callback_host, self._callback_port)
 
     def _resolve_task_future(self, task_id: int):
         """Resolve a pending future with the task result."""
@@ -1034,6 +1039,14 @@ class RolloutController:
 
     async def continue_generation(self):
         await self._collective_rpc_async("continue_generation")
+
+    def offload(self) -> None:
+        """Offload rollout model memory on all inference workers."""
+        self._collective_rpc("offload")
+
+    def onload(self, tags: list[str] | None = None) -> None:
+        """Onload rollout model memory on all inference workers."""
+        self._collective_rpc("onload", tags=tags)
 
     def set_version(self, version: int) -> None:
         with self._version_lock:

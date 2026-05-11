@@ -28,7 +28,6 @@ from areal.utils import network
 # Configuration
 # ---------------------------------------------------------------------------
 
-pytestmark = pytest.mark.sglang
 LOCAL_MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
 HF_MODEL_ID = "Qwen/Qwen3-0.6B"
 SERVER_STARTUP_TIMEOUT = 180  # seconds
@@ -99,6 +98,23 @@ def sglang_server():
 
 
 @pytest.fixture(scope="module")
+def vllm_server():
+    """Launch a vLLM server and yield its ``(host, port, base_url)``."""
+    if not _has_gpu():
+        pytest.skip("GPU required for vLLM server")
+
+    from tests.experimental.inference_service.integration_utils import (
+        launch_vllm_server,
+    )
+
+    from areal.infra.utils.proc import kill_process_tree
+
+    process, info = launch_vllm_server(_get_test_model_path())
+    yield info
+    kill_process_tree(process.pid, graceful=True)
+
+
+@pytest.fixture(scope="module")
 def model_path() -> str:
     return _get_test_model_path()
 
@@ -111,16 +127,14 @@ def model_path() -> str:
 def _create_data_proxy_app_with_sessions(sglang_server, model_path):
     """Create a fully-wired data proxy app with session support."""
     from areal.experimental.inference_service.data_proxy.app import create_app
-    from areal.experimental.inference_service.data_proxy.backend import (
-        SGLangBridgeBackend,
-    )
     from areal.experimental.inference_service.data_proxy.config import DataProxyConfig
-    from areal.experimental.inference_service.data_proxy.inf_bridge import InfBridge
     from areal.experimental.inference_service.data_proxy.pause import PauseState
     from areal.experimental.inference_service.data_proxy.session import SessionStore
     from areal.experimental.inference_service.data_proxy.tokenizer_proxy import (
         TokenizerProxy,
     )
+    from areal.experimental.inference_service.inf_bridge import InfBridge
+    from areal.experimental.inference_service.sglang.bridge import SGLangBridgeBackend
     from areal.experimental.openai.client import ArealOpenAI
 
     config = DataProxyConfig(
@@ -155,16 +169,61 @@ def _create_data_proxy_app_with_sessions(sglang_server, model_path):
     return app, store
 
 
+def _create_data_proxy_app_vllm(vllm_server, model_path):
+    """Create a data proxy app backed by vLLM with session support."""
+    from areal.experimental.inference_service.data_proxy.app import create_app
+    from areal.experimental.inference_service.data_proxy.config import DataProxyConfig
+    from areal.experimental.inference_service.data_proxy.pause import PauseState
+    from areal.experimental.inference_service.data_proxy.session import SessionStore
+    from areal.experimental.inference_service.data_proxy.tokenizer_proxy import (
+        TokenizerProxy,
+    )
+    from areal.experimental.inference_service.inf_bridge import InfBridge
+    from areal.experimental.inference_service.vllm.bridge import VLLMBridgeBackend
+    from areal.experimental.openai.client import ArealOpenAI
+
+    config = DataProxyConfig(
+        host="127.0.0.1",
+        port=0,
+        backend_addr=vllm_server["base_url"],
+        backend_type="vllm",
+        tokenizer_path=model_path,
+        request_timeout=60.0,
+    )
+    app = create_app(config)
+
+    tok = TokenizerProxy(model_path)
+    pause_state = PauseState()
+    backend = InfBridge(
+        backend=VLLMBridgeBackend(),
+        backend_addr=vllm_server["base_url"],
+        pause_state=pause_state,
+        request_timeout=60.0,
+    )
+    store = SessionStore()
+
+    app.state.tokenizer = tok
+    app.state.inf_bridge = backend
+    app.state.areal_client = ArealOpenAI(engine=backend, tokenizer=tok._tok)
+    app.state.pause_state = pause_state
+    app.state.config = config
+    app.state.session_store = store
+    app.state.version = 0
+
+    return app, store
+
+
 ADMIN_KEY = "areal-admin-key"
 
 
+@pytest.mark.sglang
 @pytest.mark.skipif(not _has_gpu(), reason="GPU required")
 class TestChatCompletionsIntegration:
     """Test the full /chat/completions endpoint with a real SGLang backend."""
 
     @pytest.mark.asyncio
     async def test_non_streaming_chat_completion(self, sglang_server, model_path):
-        """Full lifecycle: start_session → POST /chat/completions → end_session."""
+        """Full lifecycle: start_session → POST /chat/completions → set_reward(finish=True)."""
         app, store = _create_data_proxy_app_with_sessions(sglang_server, model_path)
 
         transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
@@ -180,7 +239,7 @@ class TestChatCompletionsIntegration:
             )
             assert resp.status_code == 201, resp.text
             session = resp.json()
-            session_api_key = session["api_key"]
+            session_api_key = session["sessions"][0]["session_api_key"]
 
             # --- non-streaming chat completion ---
             resp = await client.post(
@@ -220,15 +279,19 @@ class TestChatCompletionsIntegration:
                 usage["prompt_tokens"] + usage["completion_tokens"]
             )
 
-            # --- end session ---
+            # --- finish session via set_reward ---
             resp = await client.post(
-                "/rl/end_session",
+                "/rl/set_reward",
+                json={
+                    "reward": 0.0,
+                },
                 headers={"Authorization": f"Bearer {session_api_key}"},
                 timeout=10.0,
             )
             assert resp.status_code == 200, resp.text
             end_data = resp.json()
             assert end_data["interaction_count"] == 1
+            assert end_data["ready_transition"] is True
 
     @pytest.mark.asyncio
     async def test_streaming_chat_completion(self, sglang_server, model_path):
@@ -247,7 +310,7 @@ class TestChatCompletionsIntegration:
                 timeout=10.0,
             )
             assert resp.status_code == 201, resp.text
-            session_api_key = resp.json()["api_key"]
+            session_api_key = resp.json()["sessions"][0]["session_api_key"]
 
             # --- streaming chat completion ---
             resp = await client.post(
@@ -296,9 +359,12 @@ class TestChatCompletionsIntegration:
             ids = {c["id"] for c in chunks}
             assert len(ids) == 1
 
-            # --- end session ---
+            # --- finish session via set_reward ---
             resp = await client.post(
-                "/rl/end_session",
+                "/rl/set_reward",
+                json={
+                    "reward": 0.0,
+                },
                 headers={"Authorization": f"Bearer {session_api_key}"},
                 timeout=10.0,
             )
@@ -321,7 +387,7 @@ class TestChatCompletionsIntegration:
                 timeout=10.0,
             )
             assert resp.status_code == 201, resp.text
-            session_api_key = resp.json()["api_key"]
+            session_api_key = resp.json()["sessions"][0]["session_api_key"]
 
             # --- first turn ---
             resp1 = await client.post(
@@ -365,18 +431,22 @@ class TestChatCompletionsIntegration:
             # Both completions should have different IDs
             assert turn1["id"] != turn2["id"]
 
-            # --- end session ---
+            # --- finish session via set_reward ---
             resp = await client.post(
-                "/rl/end_session",
+                "/rl/set_reward",
+                json={
+                    "reward": 0.0,
+                },
                 headers={"Authorization": f"Bearer {session_api_key}"},
                 timeout=10.0,
             )
             assert resp.status_code == 200, resp.text
             assert resp.json()["interaction_count"] == 2
+            assert resp.json()["ready_transition"] is True
 
     @pytest.mark.asyncio
     async def test_set_reward_and_export(self, sglang_server, model_path):
-        """Full lifecycle: start → chat → set_reward → end → export_trajectories."""
+        """Full lifecycle: start → chat → set_reward(finish=True) → export_trajectories."""
         app, store = _create_data_proxy_app_with_sessions(sglang_server, model_path)
 
         transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
@@ -392,8 +462,8 @@ class TestChatCompletionsIntegration:
             )
             assert resp.status_code == 201, resp.text
             session = resp.json()
-            session_api_key = session["api_key"]
-            session_id = session["session_id"]
+            session_api_key = session["sessions"][0]["session_api_key"]
+            session_id = session["sessions"][0]["session_id"]
 
             # --- chat completion ---
             resp = await client.post(
@@ -409,29 +479,24 @@ class TestChatCompletionsIntegration:
             )
             assert resp.status_code == 200, resp.text
 
-            # --- set reward ---
+            # --- set reward and finish session ---
             resp = await client.post(
                 "/rl/set_reward",
-                json={"reward": 1.0},
+                json={
+                    "reward": 1.0,
+                },
                 headers={"Authorization": f"Bearer {session_api_key}"},
                 timeout=10.0,
             )
             assert resp.status_code == 200, resp.text
             assert resp.json()["message"] == "success"
-
-            # --- end session ---
-            resp = await client.post(
-                "/rl/end_session",
-                headers={"Authorization": f"Bearer {session_api_key}"},
-                timeout=10.0,
-            )
-            assert resp.status_code == 200, resp.text
             assert resp.json()["interaction_count"] == 1
+            assert resp.json()["ready_transition"] is True
 
             # --- export trajectories ---
             resp = await client.post(
                 "/export_trajectories",
-                json={"session_id": session_id},
+                json={"session_ids": [session_id]},
                 headers={"Authorization": f"Bearer {ADMIN_KEY}"},
                 timeout=10.0,
             )
@@ -494,6 +559,7 @@ class TestChatCompletionsIntegration:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.sglang
 @pytest.mark.skipif(not _has_gpu(), reason="GPU required")
 class TestPauseResumeIntegration:
     """Test /pause_generation and /continue_generation with real SGLang backend.
@@ -562,7 +628,7 @@ class TestPauseResumeIntegration:
                 timeout=10.0,
             )
             assert resp.status_code == 201
-            session_api_key = resp.json()["api_key"]
+            session_api_key = resp.json()["sessions"][0]["session_api_key"]
 
             # Set paused
             await pause_state.set_paused(True)
@@ -618,7 +684,7 @@ class TestPauseResumeIntegration:
                 timeout=10.0,
             )
             assert resp.status_code == 201
-            session_api_key = resp.json()["api_key"]
+            session_api_key = resp.json()["sessions"][0]["session_api_key"]
 
             # Pause then immediately continue
             resp = await client.post("/pause_generation")
@@ -665,7 +731,7 @@ class TestPauseResumeIntegration:
                 timeout=10.0,
             )
             assert resp.status_code == 201
-            session_api_key = resp.json()["api_key"]
+            session_api_key = resp.json()["sessions"][0]["session_api_key"]
 
             # Set paused
             await pause_state.set_paused(True)
@@ -718,6 +784,7 @@ class TestPauseResumeIntegration:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.sglang
 @pytest.mark.skipif(not _has_gpu(), reason="GPU required")
 class TestConcurrentPauseDuringGeneration:
     """Test the real abort/resubmit cycle by pausing SGLang mid-generation.
@@ -757,7 +824,7 @@ class TestConcurrentPauseDuringGeneration:
                 timeout=10.0,
             )
             assert resp.status_code == 201
-            session_api_key = resp.json()["api_key"]
+            session_api_key = resp.json()["sessions"][0]["session_api_key"]
 
             async def do_chat():
                 return await client.post(
@@ -828,7 +895,7 @@ class TestConcurrentPauseDuringGeneration:
                 timeout=10.0,
             )
             assert resp.status_code == 201
-            session_api_key = resp.json()["api_key"]
+            session_api_key = resp.json()["sessions"][0]["session_api_key"]
 
             async def do_stream_chat():
                 return await client.post(
@@ -889,3 +956,164 @@ class TestConcurrentPauseDuringGeneration:
                 c for c in chunks if c["choices"][0]["delta"].get("content")
             ]
             assert len(content_chunks) >= 1
+
+
+# ---------------------------------------------------------------------------
+# vLLM backend variants
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.vllm
+@pytest.mark.skipif(not _has_gpu(), reason="GPU required")
+class TestChatCompletionsVLLM:
+    @pytest.mark.asyncio
+    async def test_non_streaming_chat_completion_vllm(self, vllm_server, model_path):
+        """Full lifecycle: start → chat → set_reward → end → export via vLLM."""
+        app, _store = _create_data_proxy_app_vllm(vllm_server, model_path)
+
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/rl/start_session",
+                json={"task_id": "vllm-ns"},
+                headers={"Authorization": f"Bearer {ADMIN_KEY}"},
+                timeout=10.0,
+            )
+            assert resp.status_code == 201, resp.text
+            session = resp.json()
+            session_api_key = session["sessions"][0]["session_api_key"]
+            session_id = session["sessions"][0]["session_id"]
+
+            resp = await client.post(
+                "/chat/completions",
+                json={
+                    "model": "vllm",
+                    "messages": [{"role": "user", "content": "What is 2+2?"}],
+                    "max_completion_tokens": 64,
+                    "temperature": 0.0,
+                    "stream": False,
+                },
+                headers={"Authorization": f"Bearer {session_api_key}"},
+                timeout=60.0,
+            )
+            assert resp.status_code == 200, resp.text
+            completion = resp.json()
+            assert completion["object"] == "chat.completion"
+            assert len(completion["choices"]) == 1
+            choice = completion["choices"][0]
+            assert choice["message"]["role"] == "assistant"
+            assert len(choice["message"]["content"]) > 0
+            assert choice["finish_reason"] in ("stop", "length")
+            assert completion["usage"]["prompt_tokens"] > 0
+            assert completion["usage"]["completion_tokens"] > 0
+
+            resp = await client.post(
+                "/rl/set_reward",
+                json={"reward": 1.0},
+                headers={"Authorization": f"Bearer {session_api_key}"},
+                timeout=10.0,
+            )
+            assert resp.status_code == 200, resp.text
+            assert resp.json()["interaction_count"] == 1
+            assert resp.json()["ready_transition"] is True
+
+            resp = await client.post(
+                "/export_trajectories",
+                json={"session_ids": [session_id]},
+                headers={"Authorization": f"Bearer {ADMIN_KEY}"},
+                timeout=10.0,
+            )
+            assert resp.status_code == 200, resp.text
+            interactions = resp.json()["interactions"]
+            assert len(interactions) == 1
+            for _key, item in interactions.items():
+                assert item["reward"] == 1.0
+
+    @pytest.mark.asyncio
+    async def test_streaming_chat_completion_vllm(self, vllm_server, model_path):
+        """Streaming /chat/completions through vLLM backend."""
+        app, _store = _create_data_proxy_app_vllm(vllm_server, model_path)
+
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/rl/start_session",
+                json={"task_id": "vllm-stream"},
+                headers={"Authorization": f"Bearer {ADMIN_KEY}"},
+                timeout=10.0,
+            )
+            assert resp.status_code == 201, resp.text
+            session_api_key = resp.json()["sessions"][0]["session_api_key"]
+
+            resp = await client.post(
+                "/chat/completions",
+                json={
+                    "model": "vllm",
+                    "messages": [{"role": "user", "content": "Say hello"}],
+                    "max_completion_tokens": 32,
+                    "temperature": 0.0,
+                    "stream": True,
+                },
+                headers={"Authorization": f"Bearer {session_api_key}"},
+                timeout=60.0,
+            )
+            assert resp.status_code == 200, resp.text
+            assert "text/event-stream" in resp.headers.get("content-type", "")
+
+            chunks = []
+            for line in resp.content.decode().strip().split("\n"):
+                line = line.strip()
+                if line.startswith("data: "):
+                    payload = line[6:]
+                    if payload == "[DONE]":
+                        break
+                    chunks.append(json.loads(payload))
+
+            assert len(chunks) >= 2
+            assert chunks[0]["choices"][0]["delta"].get("role") == "assistant"
+            assert chunks[-1]["choices"][0]["finish_reason"] in ("stop", "length")
+
+            # Finish session via set_reward
+            resp = await client.post(
+                "/rl/set_reward",
+                json={"reward": 0.0},
+                headers={"Authorization": f"Bearer {session_api_key}"},
+                timeout=10.0,
+            )
+            assert resp.status_code == 200, resp.text
+            assert resp.json()["ready_transition"] is True
+
+
+@pytest.mark.vllm
+@pytest.mark.skipif(not _has_gpu(), reason="GPU required")
+class TestPauseResumeVLLM:
+    @pytest.mark.asyncio
+    async def test_pause_continue_endpoints_respond_vllm(self, vllm_server, model_path):
+        """Verify /pause_generation and /continue_generation work with vLLM."""
+        app, _store = _create_data_proxy_app_vllm(vllm_server, model_path)
+
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            resp = await client.get("/health")
+            assert resp.status_code == 200
+            assert resp.json()["paused"] is False
+
+            resp = await client.post("/pause_generation")
+            assert resp.status_code == 200
+            assert resp.json()["paused"] is True
+
+            resp = await client.get("/health")
+            assert resp.json()["paused"] is True
+
+            resp = await client.post("/continue_generation")
+            assert resp.status_code == 200
+            assert resp.json()["paused"] is False
+
+            resp = await client.get("/health")
+            assert resp.json()["paused"] is False

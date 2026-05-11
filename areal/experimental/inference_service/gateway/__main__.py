@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """CLI entrypoint for the inference gateway: ``python -m areal.experimental.inference_service.gateway``."""
 
 from __future__ import annotations
@@ -33,7 +35,7 @@ def main():
     )
     parser.add_argument(
         "--log-level",
-        default="info",
+        default="warning",
         choices=["debug", "info", "warning", "error"],
         help="Log level",
     )
@@ -41,6 +43,8 @@ def main():
 
     from areal.experimental.inference_service.gateway.app import create_app
     from areal.experimental.inference_service.gateway.config import GatewayConfig
+    from areal.infra.utils.http import get_default_uvicorn_kwargs
+    from areal.utils.logging import suppress_http_loggers
 
     config = GatewayConfig(
         host=args.host,
@@ -54,8 +58,16 @@ def main():
 
     import uvicorn
 
+    suppress_http_loggers()
     app = create_app(config)
-    uvicorn.run(app, host=config.host, port=config.port)
+    uvicorn.run(
+        app,
+        host=config.host,
+        port=config.port,
+        log_level=config.log_level,
+        access_log=False,
+        **get_default_uvicorn_kwargs(),
+    )
 
 
 if __name__ == "__main__":

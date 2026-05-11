@@ -37,7 +37,7 @@ def sglang_server():
         ),
         tp_size=1,
         base_gpu_id=1,
-        dist_init_addr=f"{host}:{dist_port}",
+        dist_init_addr=network.format_hostport(host, dist_port),
     )
 
     # Create engine instance for server management
@@ -91,7 +91,9 @@ def test_fsdpengine_nccl_weight_update_to_remote(tmp_path_factory, sglang_server
             backend="sglang:d1", experiment_name=EXPR_NAME, trial_name=TRIAL_NAME
         )
         remote_engine = RemoteSGLangEngine(config)
-        remote_engine.initialize(addr=f"{sglang_server.host}:{sglang_server.port}")
+        remote_engine.initialize(
+            addr=network.format_hostport(sglang_server.host, sglang_server.port)
+        )
 
         # Get WeightUpdateMeta
         meta = WeightUpdateMeta.from_fsdp_xccl(

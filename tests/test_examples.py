@@ -267,10 +267,16 @@ def test_gsm8k_eval(tmp_path_factory):
     assert success, "GSM8K Eval example failed"
 
 
-@pytest.mark.sglang
-@pytest.mark.skip("Currently VLM dataloading is too slow. Needs to be fixed.")
+@pytest.mark.ci
 @pytest.mark.multi_gpu
-def test_vlm_grpo(tmp_path_factory):
+@pytest.mark.parametrize(
+    "rollout_backend,actor_backend",
+    [
+        pytest.param("sglang:d1", "fsdp:d1", marks=pytest.mark.sglang),
+        pytest.param("vllm:d1", "fsdp:d1", marks=pytest.mark.vllm),
+    ],
+)
+def test_vlm_grpo(tmp_path_factory, rollout_backend, actor_backend):
     experiments_path = tmp_path_factory.mktemp("experiments")
     name_resolve_path = tmp_path_factory.mktemp("name_resolve")
     model_path = get_model_path(
@@ -278,23 +284,23 @@ def test_vlm_grpo(tmp_path_factory):
         "Qwen/Qwen2.5-VL-3B-Instruct",
     )
     dataset_path = get_dataset_path(
-        "/storage/openpsi/data/BUAADreamer__clevr_count_70k",
-        "BUAADreamer/clevr_count_70k",
+        "/storage/openpsi/data/hiyouga__geometry3k/",
+        "hiyouga/geometry3k",
     )
 
-    example_file = "examples/vlm/clevr_count_70k_grpo.py"
-    config_name = "examples/vlm/clevr_count_70k_grpo.yaml"
+    example_file = "examples/vlm/geometry3k_grpo.py"
+    config_name = "examples/vlm/geometry3k_grpo.yaml"
     success = run_async_task(
         run_example,
         example_file,
         config_name,
-        "rollout.backend=sglang:d1",
-        "actor.backend=fsdp:d1",
+        f"rollout.backend={rollout_backend}",
+        f"actor.backend={actor_backend}",
         "gconfig.n_samples=2",
         "gconfig.max_new_tokens=256",
         "actor.mb_spec.max_tokens_per_mb=1024",
-        "train_dataset.batch_size=16",
-        "valid_dataset.batch_size=16",
+        "train_dataset.batch_size=2",
+        "valid_dataset.batch_size=2",
         f"train_dataset.path={dataset_path}",
         f"valid_dataset.path={dataset_path}",
         "cluster.n_gpus_per_node=2",
@@ -377,6 +383,52 @@ def test_gsm8k_ppo(tmp_path_factory):
         "scheduler.type=local",
     )
     assert success, "GSM8K PPO example failed"
+
+
+@pytest.mark.sglang
+@pytest.mark.gpu
+def test_gsm8k_ppo_colocate(tmp_path_factory):
+    experiments_path = tmp_path_factory.mktemp("experiments")
+    name_resolve_path = tmp_path_factory.mktemp("name_resolve")
+    model_path = get_model_path(
+        "/storage/openpsi/models/Qwen__Qwen3-0.6B", "Qwen/Qwen3-0.6B"
+    )
+    dataset_path = get_dataset_path("/storage/openpsi/data/gsm8k", "openai/gsm8k")
+
+    example_file = "examples/math/gsm8k_rl.py"
+    config_name = "examples/math/gsm8k_ppo.yaml"
+    success = run_async_task(
+        run_example,
+        example_file,
+        config_name,
+        "rollout.backend=sglang:d2",
+        "actor.backend=fsdp:d2",
+        "+actor.weight_update_mode=disk",
+        "+rollout.scheduling_strategy.type=colocation",
+        "+rollout.scheduling_strategy.target=actor",
+        "critic.scheduling_strategy.type=colocation",
+        "critic.scheduling_strategy.target=actor",
+        "ref.scheduling_strategy.type=colocation",
+        "ref.scheduling_strategy.target=actor",
+        "enable_offload=True",
+        "gconfig.n_samples=2",
+        "gconfig.max_new_tokens=256",
+        "sglang.mem_fraction_static=0.3",
+        "vllm.gpu_memory_utilization=0.3",
+        "actor.mb_spec.max_tokens_per_mb=1024",
+        "critic.mb_spec.max_tokens_per_mb=1024",
+        "train_dataset.batch_size=16",
+        "valid_dataset.batch_size=16",
+        f"train_dataset.path={dataset_path}",
+        f"valid_dataset.path={dataset_path}",
+        "cluster.n_gpus_per_node=1",
+        f"cluster.fileroot={str(experiments_path)}",
+        f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
+        f"actor.path={model_path}",
+        f"critic.path={model_path}",
+        "scheduler.type=local",
+    )
+    assert success, "GSM8K PPO colocated example failed"
 
 
 @pytest.mark.ci
@@ -744,7 +796,7 @@ def test_tau2(tmp_path_factory):
         [
             "python3",
             "-m",
-            "sglang.launch_server",
+            "areal.experimental.inference_service.sglang.launch_server",
             "--model-path",
             model_path,
             "--host",
@@ -825,7 +877,7 @@ def test_openclaw_online_rl(tmp_path_factory):
     HEALTH_CHECK_TIMEOUT = 10
     SESSION_NEW_TIMEOUT = 30
     SESSION_REFRESH_TIMEOUT = 130  # Longer timeout for refresh (waits for training)
-    CHAT_TIMEOUT = 30
+    CHAT_TIMEOUT = 120
     REWARD_TIMEOUT = 10
     TRAINING_STEP_TIMEOUT = 300  # 5 min for training step
 
@@ -883,7 +935,7 @@ def test_openclaw_online_rl(tmp_path_factory):
         f"cluster.name_resolve.nfs_record_root={str(name_resolve_path)}",
         f"actor.path={model_path}",
         "scheduler.type=local",
-        f"rollout.openai.admin_api_key={admin_api_key}",
+        f"rollout.agent.admin_api_key={admin_api_key}",
         "stats_logger.wandb.mode=disabled",
     ]
 

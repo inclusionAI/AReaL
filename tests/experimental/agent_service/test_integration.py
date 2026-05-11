@@ -10,11 +10,14 @@ from unittest.mock import patch
 
 import pytest
 
-from areal.experimental.agent_service.auth import DEFAULT_ADMIN_KEY, admin_headers
+from areal.experimental.agent_service.auth import DEFAULT_ADMIN_API_KEY, admin_headers
 from areal.experimental.agent_service.data_proxy.app import create_data_proxy_app
+from areal.experimental.agent_service.data_proxy.config import DataProxyConfig
 from areal.experimental.agent_service.gateway.app import create_gateway_app
 from areal.experimental.agent_service.gateway.bridge import OpenResponsesBridge
+from areal.experimental.agent_service.gateway.config import GatewayConfig
 from areal.experimental.agent_service.router.app import create_router_app
+from areal.experimental.agent_service.router.config import RouterConfig
 from areal.experimental.agent_service.types import (
     AgentRequest,
     AgentResponse,
@@ -24,7 +27,7 @@ from areal.experimental.agent_service.worker.app import create_worker_app
 
 httpx = pytest.importorskip("httpx")
 
-_AUTH = admin_headers(DEFAULT_ADMIN_KEY)
+_AUTH = admin_headers(DEFAULT_ADMIN_API_KEY)
 
 
 class _EchoAgent:
@@ -88,7 +91,7 @@ class TestWorkerDataProxyIntegration:
         worker_transport = httpx.ASGITransport(app=worker_app)
 
         # Create DataProxy pointing to worker
-        proxy_app = create_data_proxy_app(worker_addr="http://worker")
+        proxy_app = create_data_proxy_app(DataProxyConfig(worker_addr="http://worker"))
 
         # Patch DataProxy's httpx client to use worker's ASGITransport
         original_post = httpx.AsyncClient.post
@@ -132,7 +135,7 @@ class TestWorkerDataProxyIntegration:
     async def test_close_session_clears_history(self):
         worker_app = _make_worker_app(_EchoAgent)
         worker_transport = httpx.ASGITransport(app=worker_app)
-        proxy_app = create_data_proxy_app(worker_addr="http://worker")
+        proxy_app = create_data_proxy_app(DataProxyConfig(worker_addr="http://worker"))
 
         original_post = httpx.AsyncClient.post
 
@@ -163,7 +166,9 @@ class TestWorkerDataProxyIntegration:
 class TestRouterIntegration:
     @pytest.mark.asyncio
     async def test_register_and_route(self):
-        router_app = create_router_app(admin_key=DEFAULT_ADMIN_KEY)
+        router_app = create_router_app(
+            RouterConfig(admin_api_key=DEFAULT_ADMIN_API_KEY)
+        )
         transport = httpx.ASGITransport(app=router_app)
 
         async with httpx.AsyncClient(
@@ -190,7 +195,7 @@ class TestToolCallFlow:
     async def test_tool_events_through_proxy(self):
         worker_app = _make_worker_app(_ToolAgent)
         worker_transport = httpx.ASGITransport(app=worker_app)
-        proxy_app = create_data_proxy_app(worker_addr="http://worker")
+        proxy_app = create_data_proxy_app(DataProxyConfig(worker_addr="http://worker"))
 
         original_post = httpx.AsyncClient.post
 
@@ -231,7 +236,7 @@ class TestToolCallFlow:
 class TestGatewayHealth:
     @pytest.mark.asyncio
     async def test_health(self):
-        app = create_gateway_app(router_addr="http://fake-router")
+        app = create_gateway_app(GatewayConfig(router_addr="http://fake-router"))
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(
             transport=transport, base_url="http://gw"

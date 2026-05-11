@@ -13,18 +13,18 @@ Archon 的设计和核心实现灵感来自 [torchtitan](https://github.com/pyto
 
 ## 引擎对比
 
-| 特性          | FSDPEngine          | MegatronEngine | ArchonEngine                |
-| ------------- | ------------------- | -------------- | --------------------------- |
-| 后端          | HuggingFace + FSDP2 | Megatron-Core  | PyTorch 原生                |
-| 模型来源      | 任意 HF 模型        | Megatron 模型  | 自定义 Archon 模型          |
-| torch.compile | 有限                | 否             | 是（默认）                  |
-| 数据并行      | FSDP2               | Megatron DP    | FSDP2                       |
-| 张量并行      | PyTorch DTensor     | Megatron TP    | PyTorch DTensor             |
-| 流水线并行    | 否                  | 是（VPP）      | 是（1F1B、I1F1B、IZB、ZBV） |
-| 专家并行      | 否                  | 完整 EP/ETP    | 完整 EP/ETP                 |
-| 上下文并行    | Ulysses SP          | Megatron CP    | Ulysses SP                  |
-| 支持的模型    | 任意 HF             | 通过 mbridge   | 内置 + 用户自定义           |
-| 状态          | 生产就绪            | 生产就绪       | 实验性                      |
+| 特性          | FSDPEngine          | MegatronEngine                     | ArchonEngine                |
+| ------------- | ------------------- | ---------------------------------- | --------------------------- |
+| 后端          | HuggingFace + FSDP2 | Megatron-Core                      | PyTorch 原生                |
+| 模型来源      | 任意 HF 模型        | Megatron 模型                      | 自定义 Archon 模型          |
+| torch.compile | 有限                | 否                                 | 是（默认）                  |
+| 数据并行      | FSDP2               | Megatron DP                        | FSDP2                       |
+| 张量并行      | PyTorch DTensor     | Megatron TP                        | PyTorch DTensor             |
+| 流水线并行    | 否                  | 是（VPP）                          | 是（1F1B、I1F1B、IZB、ZBV） |
+| 专家并行      | 否                  | 完整 EP/ETP                        | 完整 EP/ETP                 |
+| 上下文并行    | Ulysses SP          | Megatron CP                        | Ulysses SP                  |
+| 支持的模型    | 任意 HF             | 通过 bridge 后端（默认 `mbridge`） | 内置 + 用户自定义           |
+| 状态          | 生产就绪            | 生产就绪                           | 实验性                      |
 
 ## 关键特性
 

@@ -259,7 +259,6 @@ class TestProximalApproximationIntegration:
             eps_clip=0.2,
             eps_clip_higher=None,
             c_clip=None,
-            behave_imp_weight_cap=None,
             current_version=5,
             prox_logp_method="recompute",  # Not metrics
         )
@@ -451,7 +450,6 @@ class TestGrpoLossFnNoneHandling:
                 eps_clip=0.2,
                 eps_clip_higher=None,
                 c_clip=None,
-                behave_imp_weight_cap=None,
                 current_version=5,
                 prox_logp_method="recompute",
             )
@@ -485,7 +483,6 @@ class TestGrpoLossFnNoneHandling:
                 eps_clip=0.2,
                 eps_clip_higher=None,
                 c_clip=None,
-                behave_imp_weight_cap=None,
                 current_version=5,
                 prox_logp_method="loglinear",
             )
@@ -515,7 +512,6 @@ class TestGrpoLossFnNoneHandling:
             eps_clip=0.2,
             eps_clip_higher=None,
             c_clip=None,
-            behave_imp_weight_cap=None,
             current_version=5,
             prox_logp_method="loglinear",
         )
@@ -549,7 +545,6 @@ class TestGrpoLossFnNoneHandling:
             eps_clip=0.2,
             eps_clip_higher=None,
             c_clip=None,
-            behave_imp_weight_cap=None,
             current_version=5,
             prox_logp_method="loglinear",
         )
@@ -582,7 +577,6 @@ class TestGrpoLossFnNoneHandling:
             eps_clip=0.2,
             eps_clip_higher=None,
             c_clip=None,
-            behave_imp_weight_cap=None,
             current_version=5,
             prox_logp_method="loglinear",
         )
@@ -807,7 +801,6 @@ class TestComputeLogpMetricsLogging:
                 eps_clip=0.2,
                 eps_clip_higher=None,
                 c_clip=None,
-                behave_imp_weight_cap=None,
                 current_version=5,
                 prox_logp_method="loglinear",
             )
@@ -860,7 +853,6 @@ class TestComputeLogpMetricsLogging:
                 eps_clip=0.2,
                 eps_clip_higher=None,
                 c_clip=None,
-                behave_imp_weight_cap=None,
                 current_version=5,
                 prox_logp_method="recompute",
             )
@@ -911,7 +903,6 @@ class TestComputeLogpMetricsLogging:
                 eps_clip=0.2,
                 eps_clip_higher=None,
                 c_clip=None,
-                behave_imp_weight_cap=None,
                 current_version=5,
                 prox_logp_method="metrics",
             )
@@ -976,7 +967,6 @@ class TestComputeLogpMetricsLogging:
                 eps_clip=0.2,
                 eps_clip_higher=None,
                 c_clip=None,
-                behave_imp_weight_cap=None,
                 current_version=5,
                 prox_logp_method="metrics",
             )

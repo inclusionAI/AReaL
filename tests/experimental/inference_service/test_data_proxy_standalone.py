@@ -85,11 +85,9 @@ def mock_areal_client():
 @pytest_asyncio.fixture
 async def client(config, mock_tokenizer, mock_areal_client):
     """Create app with mocked deps and yield an httpx async client (no auth header)."""
-    from areal.experimental.inference_service.data_proxy.backend import (
-        SGLangBridgeBackend,
-    )
-    from areal.experimental.inference_service.data_proxy.inf_bridge import InfBridge
     from areal.experimental.inference_service.data_proxy.pause import PauseState
+    from areal.experimental.inference_service.inf_bridge import InfBridge
+    from areal.experimental.inference_service.sglang.bridge import SGLangBridgeBackend
 
     app = create_app(config)
     pause_state = PauseState()
@@ -123,6 +121,26 @@ def admin_headers():
 
 
 class TestStandaloneChat:
+    def test_config_can_select_vllm_backend(self):
+        """backend_type=vllm creates a vLLM-backed InfBridge."""
+        from areal.experimental.inference_service.data_proxy.app import (
+            _create_inf_bridge,
+        )
+        from areal.experimental.inference_service.data_proxy.pause import PauseState
+        from areal.experimental.inference_service.vllm.bridge import VLLMBridgeBackend
+
+        config = DataProxyConfig(
+            host="127.0.0.1",
+            port=18082,
+            backend_addr="http://mock-vllm:30000",
+            backend_type="vllm",
+            tokenizer_path="mock-tokenizer",
+        )
+
+        bridge = _create_inf_bridge(config.backend_addr, PauseState(), config)
+
+        assert isinstance(bridge.backend, VLLMBridgeBackend)
+
     @pytest.mark.asyncio
     async def test_no_auth_chat_completions_returns_valid_response(self, client):
         """No auth header → standalone mode, returns valid response."""
@@ -218,7 +236,7 @@ class TestSessionKeyUnchanged:
             headers=admin_headers(),
         )
         assert resp.status_code == 201
-        session_api_key = resp.json()["api_key"]
+        session_api_key = resp.json()["sessions"][0]["session_api_key"]
 
         # Now use session key for chat completions
         resp = await client.post(

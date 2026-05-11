@@ -35,7 +35,6 @@ from areal.utils import network
 # Configuration
 # ---------------------------------------------------------------------------
 
-pytestmark = pytest.mark.sglang
 LOCAL_MODEL_PATH = "/storage/openpsi/models/Qwen__Qwen3-0.6B/"
 HF_MODEL_ID = "Qwen/Qwen3-0.6B"
 SERVER_STARTUP_TIMEOUT = 180  # seconds
@@ -128,6 +127,23 @@ def sglang_server():
 
     yield {"host": host, "port": port, "base_url": base_url}
 
+    kill_process_tree(process.pid, graceful=True)
+
+
+@pytest.fixture(scope="module")
+def vllm_server():
+    """Launch a vLLM server and yield its ``(host, port, base_url)``."""
+    if not _has_gpu():
+        pytest.skip("GPU required for vLLM server")
+
+    from tests.experimental.inference_service.integration_utils import (
+        launch_vllm_server,
+    )
+
+    from areal.infra.utils.proc import kill_process_tree
+
+    process, info = launch_vllm_server(_get_test_model_path())
+    yield info
     kill_process_tree(process.pid, graceful=True)
 
 
@@ -233,16 +249,6 @@ def gateway_stack(sglang_server, model_path):
     # Wait briefly for router health poller to mark worker healthy
     time.sleep(3)
 
-    # Grant capacity permits so /rl/start_session requests are not rejected
-    # with 429 by the CapacityManager (which starts at 0).
-    for _ in range(10):
-        resp = httpx.post(
-            f"{router_addr}/grant_capacity",
-            headers={"Authorization": f"Bearer {ADMIN_KEY}"},
-            timeout=5.0,
-        )
-        assert resp.status_code == 200, f"Failed to grant capacity: {resp.text}"
-
     yield {
         "gateway_addr": gateway_addr,
         "router_addr": router_addr,
@@ -259,6 +265,7 @@ def gateway_stack(sglang_server, model_path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.sglang
 @pytest.mark.skipif(not _has_gpu(), reason="GPU required")
 class TestGatewayStackHealth:
     """Verify all services are healthy after stack launch."""
@@ -285,6 +292,7 @@ class TestGatewayStackHealth:
             assert resp.json()["status"] == "ok"
 
 
+@pytest.mark.sglang
 @pytest.mark.skipif(not _has_gpu(), reason="GPU required")
 class TestGatewayChatCompletions:
     """Test /chat/completions endpoint through the full stack."""
@@ -325,7 +333,7 @@ class TestGatewayChatCompletions:
                 headers={"Authorization": f"Bearer {ADMIN_KEY}"},
             )
             assert resp.status_code == 201
-            session_api_key = resp.json()["api_key"]
+            session_api_key = resp.json()["sessions"][0]["session_api_key"]
 
             # Chat completion with session key
             resp = await client.post(
@@ -348,13 +356,17 @@ class TestGatewayChatCompletions:
             assert completion["usage"]["prompt_tokens"] > 0
             assert completion["usage"]["completion_tokens"] > 0
 
-            # End session
+            # Finish session via set_reward
             resp = await client.post(
-                f"{gw}/rl/end_session",
+                f"{gw}/rl/set_reward",
+                json={
+                    "reward": 0.0,
+                },
                 headers={"Authorization": f"Bearer {session_api_key}"},
             )
             assert resp.status_code == 200
             assert resp.json()["interaction_count"] == 1
+            assert resp.json()["ready_transition"] is True
 
     @pytest.mark.asyncio
     async def test_session_streaming_chat(self, gateway_stack):
@@ -368,7 +380,7 @@ class TestGatewayChatCompletions:
                 headers={"Authorization": f"Bearer {ADMIN_KEY}"},
             )
             assert resp.status_code == 201
-            session_api_key = resp.json()["api_key"]
+            session_api_key = resp.json()["sessions"][0]["session_api_key"]
 
             # Streaming chat completion
             resp = await client.post(
@@ -416,12 +428,16 @@ class TestGatewayChatCompletions:
             ids = {c["id"] for c in chunks}
             assert len(ids) == 1
 
-            # End session
+            # Finish session via set_reward
             resp = await client.post(
-                f"{gw}/rl/end_session",
+                f"{gw}/rl/set_reward",
+                json={
+                    "reward": 0.0,
+                },
                 headers={"Authorization": f"Bearer {session_api_key}"},
             )
             assert resp.status_code == 200
+            assert resp.json()["ready_transition"] is True
 
     @pytest.mark.asyncio
     async def test_multi_turn_session_chat(self, gateway_stack):
@@ -435,7 +451,7 @@ class TestGatewayChatCompletions:
                 headers={"Authorization": f"Bearer {ADMIN_KEY}"},
             )
             assert resp.status_code == 201
-            session_api_key = resp.json()["api_key"]
+            session_api_key = resp.json()["sessions"][0]["session_api_key"]
 
             # Turn 1
             resp1 = await client.post(
@@ -473,22 +489,27 @@ class TestGatewayChatCompletions:
             # Different completion IDs
             assert resp1.json()["id"] != resp2.json()["id"]
 
-            # End session — should report 2 interactions
+            # Finish session via set_reward — should report 2 interactions
             resp = await client.post(
-                f"{gw}/rl/end_session",
+                f"{gw}/rl/set_reward",
+                json={
+                    "reward": 0.0,
+                },
                 headers={"Authorization": f"Bearer {session_api_key}"},
             )
             assert resp.status_code == 200
             assert resp.json()["interaction_count"] == 2
+            assert resp.json()["ready_transition"] is True
 
 
+@pytest.mark.sglang
 @pytest.mark.skipif(not _has_gpu(), reason="GPU required")
 class TestGatewaySessionLifecycle:
     """Test full RL session lifecycle through the gateway stack."""
 
     @pytest.mark.asyncio
     async def test_full_lifecycle(self, gateway_stack):
-        """start_session → chat → set_reward → end_session → export_trajectories."""
+        """start_session → chat → set_reward(finish=True) → export_trajectories."""
         gw = gateway_stack["gateway_addr"]
         async with httpx.AsyncClient(timeout=60.0) as client:
             # --- start session ---
@@ -499,8 +520,8 @@ class TestGatewaySessionLifecycle:
             )
             assert resp.status_code == 201, resp.text
             session = resp.json()
-            session_api_key = session["api_key"]
-            session_id = session["session_id"]
+            session_api_key = session["sessions"][0]["session_api_key"]
+            session_id = session["sessions"][0]["session_id"]
 
             # --- chat completions (with session key) ---
             resp = await client.post(
@@ -515,27 +536,23 @@ class TestGatewaySessionLifecycle:
             )
             assert resp.status_code == 200, resp.text
 
-            # --- set reward ---
+            # --- set reward and finish session ---
             resp = await client.post(
                 f"{gw}/rl/set_reward",
-                json={"reward": 1.0},
+                json={
+                    "reward": 1.0,
+                },
                 headers={"Authorization": f"Bearer {session_api_key}"},
             )
             assert resp.status_code == 200, resp.text
             assert resp.json()["message"] == "success"
-
-            # --- end session ---
-            resp = await client.post(
-                f"{gw}/rl/end_session",
-                headers={"Authorization": f"Bearer {session_api_key}"},
-            )
-            assert resp.status_code == 200, resp.text
             assert resp.json()["interaction_count"] == 1
+            assert resp.json()["ready_transition"] is True
 
             # --- export trajectories ---
             resp = await client.post(
                 f"{gw}/export_trajectories",
-                json={"session_id": session_id},
+                json={"session_ids": [session_id]},
                 headers={"Authorization": f"Bearer {ADMIN_KEY}"},
             )
             assert resp.status_code == 200, resp.text
@@ -564,8 +581,8 @@ class TestGatewaySessionLifecycle:
             )
             assert resp.status_code == 201
             session = resp.json()
-            session_api_key = session["api_key"]
-            session_id = session["session_id"]
+            session_api_key = session["sessions"][0]["session_api_key"]
+            session_id = session["sessions"][0]["session_id"]
 
             # Query router directly for session pinning
             resp = await client.post(
@@ -586,14 +603,31 @@ class TestGatewaySessionLifecycle:
             assert resp.status_code == 200
             assert resp.json()["worker_addr"] == pinned_worker
 
-            # End session
             resp = await client.post(
-                f"{gw}/rl/end_session",
+                f"{gw}/chat/completions",
+                json={
+                    "model": "sglang",
+                    "messages": [{"role": "user", "content": "hello"}],
+                    "max_completion_tokens": 8,
+                    "temperature": 0.0,
+                },
                 headers={"Authorization": f"Bearer {session_api_key}"},
             )
             assert resp.status_code == 200
 
+            # Finish session via set_reward
+            resp = await client.post(
+                f"{gw}/rl/set_reward",
+                json={
+                    "reward": 0.0,
+                },
+                headers={"Authorization": f"Bearer {session_api_key}"},
+            )
+            assert resp.status_code == 200
+            assert resp.json()["ready_transition"] is True
 
+
+@pytest.mark.sglang
 @pytest.mark.skipif(not _has_gpu(), reason="GPU required")
 class TestGatewayAuth:
     """Test authentication enforcement through the gateway."""
@@ -635,6 +669,7 @@ class TestGatewayAuth:
             assert resp.status_code == 403
 
 
+@pytest.mark.sglang
 @pytest.mark.skipif(not _has_gpu(), reason="GPU required")
 class TestGatewayPauseContinue:
     """Test pause/continue generation through the gateway (targets worker by ID)."""
@@ -707,7 +742,7 @@ class TestGatewayPauseContinue:
                 headers={"Authorization": f"Bearer {ADMIN_KEY}"},
             )
             assert resp.status_code == 201
-            session_api_key = resp.json()["api_key"]
+            session_api_key = resp.json()["sessions"][0]["session_api_key"]
 
             async def do_chat():
                 return await client.post(
@@ -752,3 +787,176 @@ class TestGatewayPauseContinue:
             assert completion["choices"][0]["message"]["role"] == "assistant"
             assert len(completion["choices"][0]["message"]["content"]) > 0
             assert completion["choices"][0]["finish_reason"] in ("stop", "length")
+
+
+# ---------------------------------------------------------------------------
+# vLLM backend variants
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def gateway_stack_vllm(vllm_server, model_path):
+    """Launch the full gateway stack backed by vLLM on free ports."""
+    from areal.experimental.inference_service.data_proxy.app import (
+        create_app as create_dp_app,
+    )
+    from areal.experimental.inference_service.data_proxy.config import DataProxyConfig
+    from areal.experimental.inference_service.gateway.app import (
+        create_app as create_gw_app,
+    )
+    from areal.experimental.inference_service.gateway.config import GatewayConfig
+    from areal.experimental.inference_service.router.app import (
+        create_app as create_router_app,
+    )
+    from areal.experimental.inference_service.router.config import RouterConfig
+
+    bind_host = "127.0.0.1"
+    data_proxy_port = _find_free_port()
+    router_port = _find_free_port()
+    gateway_port = _find_free_port()
+
+    data_proxy_addr = f"http://{bind_host}:{data_proxy_port}"
+    router_addr = f"http://{bind_host}:{router_port}"
+    gateway_addr = f"http://{bind_host}:{gateway_port}"
+
+    dp_config = DataProxyConfig(
+        host=bind_host,
+        port=data_proxy_port,
+        backend_addr=vllm_server["base_url"],
+        backend_type="vllm",
+        tokenizer_path=model_path,
+        request_timeout=60.0,
+        admin_api_key=ADMIN_KEY,
+    )
+    dp_app = create_dp_app(dp_config)
+
+    router_config = RouterConfig(
+        host=bind_host,
+        port=router_port,
+        admin_api_key=ADMIN_KEY,
+        poll_interval=2.0,
+        worker_health_timeout=2.0,
+        routing_strategy="round_robin",
+    )
+    router_app = create_router_app(router_config)
+
+    gw_config = GatewayConfig(
+        host=bind_host,
+        port=gateway_port,
+        admin_api_key=ADMIN_KEY,
+        router_addr=router_addr,
+        router_timeout=5.0,
+        forward_timeout=60.0,
+    )
+    gw_app = create_gw_app(gw_config)
+
+    threads = []
+    for app, port in [
+        (dp_app, data_proxy_port),
+        (router_app, router_port),
+        (gw_app, gateway_port),
+    ]:
+        t = threading.Thread(
+            target=_run_uvicorn,
+            args=(app, bind_host, port),
+            daemon=True,
+        )
+        t.start()
+        threads.append(t)
+
+    _wait_for_health(data_proxy_addr, SERVICE_STARTUP_TIMEOUT, "Data Proxy (vLLM)")
+    _wait_for_health(router_addr, SERVICE_STARTUP_TIMEOUT, "Router (vLLM)")
+    _wait_for_health(gateway_addr, SERVICE_STARTUP_TIMEOUT, "Gateway (vLLM)")
+
+    resp = httpx.post(
+        f"{router_addr}/register",
+        json={"worker_addr": data_proxy_addr},
+        headers={"Authorization": f"Bearer {ADMIN_KEY}"},
+        timeout=5.0,
+    )
+    assert resp.status_code == 200, f"Failed to register worker: {resp.text}"
+    worker_id = resp.json()["worker_id"]
+
+    time.sleep(3)
+
+    yield {
+        "gateway_addr": gateway_addr,
+        "router_addr": router_addr,
+        "data_proxy_addr": data_proxy_addr,
+        "admin_key": ADMIN_KEY,
+        "worker_id": worker_id,
+    }
+
+
+@pytest.mark.vllm
+@pytest.mark.skipif(not _has_gpu(), reason="GPU required")
+class TestGatewayVLLM:
+    @pytest.mark.asyncio
+    async def test_admin_non_streaming_chat_vllm(self, gateway_stack_vllm):
+        """Admin key non-streaming /chat/completions through full vLLM stack."""
+        gw = gateway_stack_vllm["gateway_addr"]
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                f"{gw}/chat/completions",
+                json={
+                    "model": "vllm",
+                    "messages": [{"role": "user", "content": "What is 2+2?"}],
+                    "max_completion_tokens": 32,
+                    "temperature": 0.0,
+                },
+                headers={"Authorization": f"Bearer {ADMIN_KEY}"},
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["object"] == "chat.completion"
+            assert len(data["choices"]) == 1
+            assert data["choices"][0]["message"]["role"] == "assistant"
+            assert len(data["choices"][0]["message"]["content"]) > 0
+            assert data["choices"][0]["finish_reason"] in ("stop", "length")
+
+    @pytest.mark.asyncio
+    async def test_full_lifecycle_vllm(self, gateway_stack_vllm):
+        """Full RL lifecycle through vLLM gateway stack."""
+        gw = gateway_stack_vllm["gateway_addr"]
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                f"{gw}/rl/start_session",
+                json={"task_id": "vllm-gw-lifecycle"},
+                headers={"Authorization": f"Bearer {ADMIN_KEY}"},
+            )
+            assert resp.status_code == 201, resp.text
+            session = resp.json()
+            session_api_key = session["sessions"][0]["session_api_key"]
+            session_id = session["sessions"][0]["session_id"]
+
+            resp = await client.post(
+                f"{gw}/chat/completions",
+                json={
+                    "model": "vllm",
+                    "messages": [{"role": "user", "content": "What is 10-3?"}],
+                    "max_completion_tokens": 64,
+                    "temperature": 0.0,
+                },
+                headers={"Authorization": f"Bearer {session_api_key}"},
+            )
+            assert resp.status_code == 200, resp.text
+
+            resp = await client.post(
+                f"{gw}/rl/set_reward",
+                json={"reward": 1.0},
+                headers={"Authorization": f"Bearer {session_api_key}"},
+            )
+            assert resp.status_code == 200, resp.text
+            assert resp.json()["interaction_count"] == 1
+            assert resp.json()["ready_transition"] is True
+
+            resp = await client.post(
+                f"{gw}/export_trajectories",
+                json={"session_ids": [session_id]},
+                headers={"Authorization": f"Bearer {ADMIN_KEY}"},
+            )
+            assert resp.status_code == 200, resp.text
+            interactions = resp.json()["interactions"]
+            assert len(interactions) == 1
+            for _iid, item in interactions.items():
+                assert item["reward"] == 1.0

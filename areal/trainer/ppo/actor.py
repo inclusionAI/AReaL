@@ -1,11 +1,17 @@
+# SPDX-License-Identifier: Apache-2.0
+
 import functools
 from typing import Any
 
 import torch
 
 from areal.api import TrainEngine
-from areal.api.cli_args import MicroBatchSpec, PPOActorConfig
+from areal.api.cli_args import MicroBatchSpec, PPOActorConfig, RejectionSamplingConfig
+from areal.experimental.training_service.controller.controller import (
+    GatewayTrainController,
+)
 from areal.infra import TrainController
+from areal.infra.rpc.serialization import serialize_value
 from areal.trainer.ppo.stats import infer_token_denominator
 from areal.utils import logging, stats_tracker
 from areal.utils.constants import (
@@ -96,10 +102,13 @@ class PPOActor:
 
             logger.info("  log_p_theta (π_θ): TRAINING FORWARD PASS (current policy)")
 
-            if config.behave_imp_weight_cap:
+            if config.rejection_sampling is not None:
+                rs = config.rejection_sampling
                 logger.info(
-                    f"  Importance weight cap: {config.behave_imp_weight_cap:.1f} "
-                    "(filters out tokens with extreme weights)"
+                    f"  Rejection sampling: level={rs.level}, metric={rs.metric}, "
+                    f"action={rs.action}, upper={rs.upper}"
+                    + (f", lower={rs.lower}" if rs.lower is not None else "")
+                    + (f", agg={rs.agg}" if rs.level == "sequence" else "")
                 )
 
         # Log other critical config
@@ -304,8 +313,11 @@ class PPOActor:
             scalars["use_dual_clip"] = 1
         else:
             scalars["use_dual_clip"] = 0
-        if self.config.behave_imp_weight_cap is not None:
-            scalars["behave_imp_weight_cap"] = self.config.behave_imp_weight_cap
+        if self.config.rejection_sampling is not None:
+            rs = self.config.rejection_sampling
+            scalars["rs_upper"] = rs.upper
+            if rs.lower is not None:
+                scalars["rs_lower"] = rs.lower
         stats_tracker.scalar(**scalars)
 
         if self.config.log_agent_stats:
@@ -338,7 +350,7 @@ class PPOActor:
                         eps_clip=self.config.eps_clip,
                         eps_clip_higher=self.config.eps_clip_higher,
                         c_clip=self.config.c_clip,
-                        behave_imp_weight_cap=self.config.behave_imp_weight_cap,
+                        rejection_sampling=self.config.rejection_sampling,
                         m2_threshold=self.m2_threshold,
                         importance_sampling_level=self.config.importance_sampling_level,
                         current_version=current_version,
@@ -347,7 +359,6 @@ class PPOActor:
                         sapo_tau_pos=self.config.sapo_tau_pos,
                         sapo_tau_neg=self.config.sapo_tau_neg,
                         use_decoupled_loss=self.config.use_decoupled_loss,
-                        behave_imp_weight_mode=self.config.behave_imp_weight_mode,
                     ),
                     loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
                 )
@@ -356,13 +367,42 @@ class PPOActor:
 
 class PPOActorController(TrainController):
     def compute_logp(self, *args, **kwargs):
-        return self._custom_function_call("compute_logp", *args, **kwargs)
+        return self._custom_function_call(
+            "compute_logp", *args, rpc_meta={"broadcast": True}, **kwargs
+        )
 
     def compute_advantages(self, *args, **kwargs):
-        return self._custom_function_call("compute_advantages", *args, **kwargs)
+        return self._custom_function_call(
+            "compute_advantages", *args, rpc_meta={"broadcast": True}, **kwargs
+        )
 
     def ppo_update(self, *args, **kwargs) -> None:
-        self._custom_function_call("ppo_update", *args, **kwargs)
+        self._custom_function_call(
+            "ppo_update", *args, rpc_meta={"broadcast": True}, **kwargs
+        )
+
+
+class PPOActorControllerV2(GatewayTrainController):
+    def compute_logp(self, *args, **kwargs):
+        payload = {
+            "args": serialize_value(list(args)),
+            "kwargs": serialize_value(kwargs),
+        }
+        return self._gateway_post_result("/ppo/actor/compute_logp", payload)
+
+    def compute_advantages(self, *args, **kwargs):
+        payload = {
+            "args": serialize_value(list(args)),
+            "kwargs": serialize_value(kwargs),
+        }
+        return self._gateway_post_result("/ppo/actor/compute_advantages", payload)
+
+    def ppo_update(self, *args, **kwargs) -> None:
+        payload = {
+            "args": serialize_value(list(args)),
+            "kwargs": serialize_value(kwargs),
+        }
+        self._gateway_post("/ppo/actor/update", payload)
 
 
 def grpo_loss_fn(
@@ -372,7 +412,7 @@ def grpo_loss_fn(
     eps_clip: float,
     eps_clip_higher: float | None,
     c_clip: float | None,
-    behave_imp_weight_cap: float | None,
+    rejection_sampling: RejectionSamplingConfig | None = None,
     m2_threshold: float | None = None,
     importance_sampling_level: str = "token",
     current_version: int | None = None,
@@ -381,7 +421,6 @@ def grpo_loss_fn(
     sapo_tau_pos: float = 1.0,
     sapo_tau_neg: float = 1.05,
     use_decoupled_loss: bool = False,
-    behave_imp_weight_mode: str = "token_mask",
     vocab_min_logits: torch.Tensor | None = None,
     vocab_max_logits: torch.Tensor | None = None,
 ):
@@ -435,10 +474,9 @@ def grpo_loss_fn(
             loss_mask=loss_mask,
             c_clip=c_clip,
             proximal_logprobs=prox_logp,
-            behave_imp_weight_cap=behave_imp_weight_cap,
+            rejection_sampling=rejection_sampling,
             importance_sampling_level=importance_sampling_level,
             cu_seqlens=input_data.get("cu_seqlens"),
-            behave_imp_weight_mode=behave_imp_weight_mode,
         )
 
     # Joint Distillation KL Loss
@@ -505,6 +543,8 @@ def grpo_loss_fn(
             behave_approx_kl=stat["behave_approx_kl"],
             denominator="unclipped_behave_tokens",
         )
+    if "filtered_fraction" in stat:
+        stats_tracker.scalar(rs_filtered_fraction=stat["filtered_fraction"])
 
     if vocab_min_logits is not None and vocab_max_logits is not None:
         stats_tracker.stat(

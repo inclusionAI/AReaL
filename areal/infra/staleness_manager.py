@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """Staleness-aware capacity manager for rollout generation.
 
 This module provides the StalenessManager class which manages capacity

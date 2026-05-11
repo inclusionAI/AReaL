@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import pytest
 
-from areal.experimental.agent_service.auth import DEFAULT_ADMIN_KEY, admin_headers
+from areal.experimental.agent_service.auth import DEFAULT_ADMIN_API_KEY, admin_headers
 from areal.experimental.agent_service.router.app import create_router_app
+from areal.experimental.agent_service.router.config import RouterConfig
 
 httpx = pytest.importorskip("httpx")
 
-_AUTH = admin_headers(DEFAULT_ADMIN_KEY)
+_AUTH = admin_headers(DEFAULT_ADMIN_API_KEY)
 
 
 def _make_client():
-    app = create_router_app(admin_key=DEFAULT_ADMIN_KEY)
+    config = RouterConfig(admin_api_key=DEFAULT_ADMIN_API_KEY)
+    app = create_router_app(config)
     transport = httpx.ASGITransport(app=app)
     return httpx.AsyncClient(transport=transport, base_url="http://router")
 

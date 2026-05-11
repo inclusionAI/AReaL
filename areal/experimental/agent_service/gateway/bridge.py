@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 """OpenResponses HTTP bridge — translates POST /v1/responses to DataProxy turns."""
 
 from __future__ import annotations
@@ -12,7 +14,7 @@ from fastapi.responses import JSONResponse
 
 from areal.utils import logging
 
-from ..auth import DEFAULT_ADMIN_KEY, admin_headers, make_admin_dependency
+from ..auth import DEFAULT_ADMIN_API_KEY, admin_headers, make_admin_dependency
 from ..protocol import generate_run_id
 
 logger = logging.getLogger("AgentBridge")
@@ -24,9 +26,11 @@ class AgentBridge(ABC):
 
 
 class OpenResponsesBridge(AgentBridge):
-    def __init__(self, router_addr: str, admin_key: str = DEFAULT_ADMIN_KEY) -> None:
+    def __init__(
+        self, router_addr: str, admin_api_key: str = DEFAULT_ADMIN_API_KEY
+    ) -> None:
         self._router_addr = router_addr
-        self._auth_headers = admin_headers(admin_key)
+        self._auth_headers = admin_headers(admin_api_key)
         self._http = httpx.AsyncClient(timeout=600.0)
 
     async def close(self) -> None:
@@ -155,9 +159,9 @@ class OpenResponsesBridge(AgentBridge):
 def mount_bridge(
     app: FastAPI,
     bridge: OpenResponsesBridge,
-    admin_key: str = DEFAULT_ADMIN_KEY,
+    admin_api_key: str = DEFAULT_ADMIN_API_KEY,
 ) -> None:
-    auth = make_admin_dependency(admin_key)
+    auth = make_admin_dependency(admin_api_key)
 
     @app.post("/v1/responses", dependencies=[Depends(auth)])
     async def responses_endpoint(request: Request):
