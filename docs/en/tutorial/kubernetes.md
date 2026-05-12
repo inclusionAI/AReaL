@@ -40,6 +40,47 @@ schedulers:
 - Provide a service account with permission to create, patch, list, and delete
   `Services`, `StatefulSets`, `Pods`, pod logs, and pod events in the target namespace.
 
+## RBAC Permissions
+
+If you are running the AReaL controller with a service account other than a cluster admin, you must provide a `Role` (or `ClusterRole`) with sufficient permissions.
+
+Below is a minimal `Role` and `RoleBinding` example for a namespace named `areal`:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: areal
+  name: areal-scheduler
+rules:
+- apiGroups: [""]
+  resources: ["services", "pods"]
+  verbs: ["get", "list", "watch", "create", "patch", "delete"]
+- apiGroups: ["apps"]
+  resources: ["statefulsets"]
+  verbs: ["get", "list", "watch", "create", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  namespace: areal
+  name: areal-scheduler-binding
+subjects:
+- kind: ServiceAccount
+  name: default
+  namespace: areal
+roleRef:
+  kind: Role
+  name: areal-scheduler
+  apiGroup: rbac.authorization.k8s.io
+```
+
 ## Minimal Launch
 
 Use the normal training entrypoint and override the scheduler type:

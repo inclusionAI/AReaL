@@ -585,14 +585,7 @@ class KubernetesScheduler(Scheduler):
                         -1,
                         f"Pod {name} {waiting_reason}\n{self._pod_diagnostics(role)}",
                     )
-                exit_code = int(
-                    _obj_get(
-                        terminated,
-                        "exit_code",
-                        _obj_get(terminated, "exitCode", 0),
-                    )
-                )
-                if terminated and exit_code != 0:
+                if terminated:
                     exit_code = int(
                         _obj_get(
                             terminated,
@@ -600,11 +593,12 @@ class KubernetesScheduler(Scheduler):
                             _obj_get(terminated, "exitCode", -1),
                         )
                     )
-                    raise WorkerFailedError(
-                        f"{role}/*",
-                        exit_code,
-                        f"Pod {name} exited\n{self._pod_diagnostics(role)}",
-                    )
+                    if exit_code != 0:
+                        raise WorkerFailedError(
+                            f"{role}/*",
+                            exit_code,
+                            f"Pod {name} exited\n{self._pod_diagnostics(role)}",
+                        )
             if phase == "Failed":
                 raise WorkerFailedError(
                     f"{role}/*",
@@ -1116,6 +1110,7 @@ class KubernetesScheduler(Scheduler):
         port = int(wi.worker.worker_ports[0])
         url = f"http://{format_hostport(wi.worker.ip, port)}/create_engine"
 
+        self._check_pods_health(health_role)
         try:
             timeout = aiohttp.ClientTimeout(total=300.0)
             async with aiohttp.ClientSession(

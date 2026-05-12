@@ -37,6 +37,47 @@ worker 的发现与 RPC 流程和 local / Slurm scheduler 保持一致：
 - service account 需要有创建、更新、列出和删除 `Services`、`StatefulSets`、
   `Pods`，以及读取 pod logs/events 的权限。
 
+## RBAC 权限
+
+如果你在一个没有集群管理员权限的 service account 下运行 AReaL controller，你需要为其配置一个具有足够权限的 `Role`（或 `ClusterRole`）。
+
+以下是在名为 `areal` 的 namespace 下配置 `Role` 和 `RoleBinding` 的示例：
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: areal
+  name: areal-scheduler
+rules:
+- apiGroups: [""]
+  resources: ["services", "pods"]
+  verbs: ["get", "list", "watch", "create", "patch", "delete"]
+- apiGroups: ["apps"]
+  resources: ["statefulsets"]
+  verbs: ["get", "list", "watch", "create", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  namespace: areal
+  name: areal-scheduler-binding
+subjects:
+- kind: ServiceAccount
+  name: default
+  namespace: areal
+roleRef:
+  kind: Role
+  name: areal-scheduler
+  apiGroup: rbac.authorization.k8s.io
+```
+
 ## 最小启动命令
 
 使用正常的训练入口，并覆盖 scheduler 类型：
