@@ -8,9 +8,8 @@ from dataclasses import asdict
 import swanlab
 import torch.distributed as dist
 import trackio
-from tensorboardX import SummaryWriter
-
 import wandb
+from tensorboardX import SummaryWriter
 
 from areal.api import FinetuneSpec
 from areal.api.cli_args import BaseExperimentConfig, StatsLoggerConfig
