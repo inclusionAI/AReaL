@@ -8,7 +8,10 @@ import uvicorn
 
 from areal.experimental.training_service.data_proxy.app import create_app
 from areal.experimental.training_service.data_proxy.config import TrainDataProxyConfig
-from areal.infra.utils.http import get_default_uvicorn_kwargs
+from areal.infra.utils.http import (
+    get_default_uvicorn_kwargs,
+    validate_admin_api_key,
+)
 from areal.utils.logging import suppress_http_loggers
 
 
@@ -27,6 +30,8 @@ def main():
         choices=["debug", "info", "warning", "error"],
     )
     args, _ = parser.parse_known_args()
+
+    validate_admin_api_key(args.host, args.admin_api_key)
 
     worker_addrs = [
         addr.strip() for addr in args.worker_addrs.split(",") if addr.strip()

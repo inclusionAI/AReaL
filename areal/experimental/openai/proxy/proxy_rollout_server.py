@@ -31,6 +31,7 @@ from pydantic import BaseModel
 from areal.api.cli_args import NameResolveConfig
 from areal.experimental.openai.client import ArealOpenAI
 from areal.infra.rpc.serialization import deserialize_value, serialize_value
+from areal.infra.utils.http import validate_admin_api_key
 from areal.utils import name_resolve, names, seeding
 from areal.utils.dynamic_import import import_from_string
 from areal.utils.hf_utils import load_hf_tokenizer
@@ -276,31 +277,19 @@ def _setup_openai_client():
     _session_timeout_seconds = agent_cfg.session_timeout_seconds
     # Validate admin API key BEFORE assigning it to the global, so a
     # failed validation cannot leave the default key live on the server.
-    requested_admin_key = agent_cfg.admin_api_key
-    if requested_admin_key == DEFAULT_ADMIN_API_KEY:
-        # The default admin key is publicly known. Refuse to use it when
-        # the server is reachable from outside the local host, otherwise
-        # any attacker who can reach this port can call admin endpoints
-        # (grant_capacity, start_session, export_trajectories, ...).
-        loopback_hosts = {"127.0.0.1", "::1", "localhost"}
-        allow_override = os.environ.get("AREAL_ALLOW_DEFAULT_ADMIN_KEY", "0") == "1"
-        if _server_host in loopback_hosts or allow_override:
-            logger.warning(
-                "Using default admin API key. Change 'admin_api_key' in "
-                "AgentConfig before exposing this server on a network."
-            )
-        else:
-            raise RuntimeError(
-                "Refusing to start proxy rollout server on non-loopback "
-                f"host {_server_host!r} with the default admin API key "
-                f"({DEFAULT_ADMIN_API_KEY!r}). Set 'admin_api_key' in "
-                "OpenAIProxyConfig to a unique secret, or set "
-                "AREAL_ALLOW_DEFAULT_ADMIN_KEY=1 to acknowledge the risk "
-                "in a trusted environment."
-            )
+    # The default admin key is publicly known; refuse to use it when the
+    # server is reachable from outside the local host (otherwise anyone
+    # who can reach this port can call admin endpoints such as
+    # grant_capacity, start_session, export_trajectories, ...).
+    validate_admin_api_key(
+        _server_host,
+        agent_cfg.admin_api_key,
+        default_key=DEFAULT_ADMIN_API_KEY,
+        config_field="AgentConfig.admin_api_key",
+    )
     # Only commit the key to the global after validation has passed.
     with _lock:
-        _admin_api_key = requested_admin_key
+        _admin_api_key = agent_cfg.admin_api_key
 
 
 @app.post("/configure")

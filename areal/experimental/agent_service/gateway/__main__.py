@@ -6,6 +6,8 @@ import argparse
 
 import uvicorn
 
+from areal.infra.utils.http import validate_admin_api_key
+
 from ..auth import DEFAULT_ADMIN_API_KEY
 from .app import create_gateway_app
 from .bridge import OpenResponsesBridge, mount_bridge
@@ -24,6 +26,10 @@ def main() -> None:
         "--log-level", choices=["debug", "info", "warning", "error"], default="warning"
     )
     args = parser.parse_args()
+
+    validate_admin_api_key(
+        args.host, args.admin_api_key, default_key=DEFAULT_ADMIN_API_KEY
+    )
 
     config = GatewayConfig(
         host=args.host,
