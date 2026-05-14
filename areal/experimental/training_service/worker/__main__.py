@@ -26,6 +26,9 @@ def main():
 
     from areal.experimental.training_service.worker.app import create_app
     from areal.experimental.training_service.worker.config import TrainWorkerConfig
+    from areal.infra.utils.http import validate_admin_api_key
+
+    validate_admin_api_key(args.host, args.admin_api_key)
 
     config = TrainWorkerConfig(
         host=args.host,

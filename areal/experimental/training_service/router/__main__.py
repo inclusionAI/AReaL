@@ -37,8 +37,13 @@ def main():
 
     from areal.experimental.training_service.router.app import create_app
     from areal.experimental.training_service.router.config import RouterConfig
-    from areal.infra.utils.http import get_default_uvicorn_kwargs
+    from areal.infra.utils.http import (
+        get_default_uvicorn_kwargs,
+        validate_admin_api_key,
+    )
     from areal.utils.logging import suppress_http_loggers
+
+    validate_admin_api_key(args.host, args.admin_api_key)
 
     config = RouterConfig(
         host=args.host,

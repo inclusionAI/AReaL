@@ -10,7 +10,10 @@ import uvicorn
 
 from areal.experimental.inference_service.data_proxy.app import create_app
 from areal.experimental.inference_service.data_proxy.config import DataProxyConfig
-from areal.infra.utils.http import get_default_uvicorn_kwargs
+from areal.infra.utils.http import (
+    get_default_uvicorn_kwargs,
+    validate_admin_api_key,
+)
 from areal.utils.logging import suppress_http_loggers
 from areal.utils.network import format_hostport
 
@@ -73,6 +76,8 @@ def main():
         choices=("hf", "concat"),
     )
     args, _ = parser.parse_known_args()
+
+    validate_admin_api_key(args.host, args.admin_api_key)
 
     # Resolve the actual serving host (replace 0.0.0.0 with real IP)
     from areal.utils.network import gethostip

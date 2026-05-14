@@ -786,7 +786,7 @@ class PPOTrainer:
                 # process-local ``_fetch_buffer``; one HTTP DELETE to the
                 # storage owner clears ``_storage`` but not per-consumer
                 # caches. Fan out ``clear_batches`` to every role that
-                # localized the batch — see inclusionAI/AReaL#1209.
+                # localized the batch — see areal-project/AReaL#1209.
                 # SPMD mode never populates ``_fetch_buffer`` (no RTensor
                 # round-trip), so the fan-out is single-controller only.
                 if is_single_controller():
