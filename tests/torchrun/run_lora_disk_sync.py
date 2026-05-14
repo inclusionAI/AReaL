@@ -93,7 +93,9 @@ def verify_forward_pass(engine: FSDPEngine) -> bool:
         return False
 
 
-def verify_adapter_artifacts(adapter_dir: str, *, lora_rank: int, lora_alpha: int) -> bool:
+def verify_adapter_artifacts(
+    adapter_dir: str, *, lora_rank: int, lora_alpha: int
+) -> bool:
     """Validate the PEFT-format files written by ``_save_model_to_hf``."""
     safetensors_path = os.path.join(adapter_dir, "adapter_model.safetensors")
     config_path = os.path.join(adapter_dir, "adapter_config.json")
@@ -237,9 +239,7 @@ def test_lora_disk_sync(
     with tempfile.TemporaryDirectory() as tmpdir:
         adapter_dir = os.path.join(tmpdir, "weight_update_v0")
         os.makedirs(adapter_dir, exist_ok=True)
-        print(
-            f"[Rank {rank}] Calling _save_model_to_hf -> {adapter_dir}", flush=True
-        )
+        print(f"[Rank {rank}] Calling _save_model_to_hf -> {adapter_dir}", flush=True)
         engine._save_model_to_hf(
             adapter_dir,
             tokenizer=None,
@@ -256,9 +256,7 @@ def test_lora_disk_sync(
             if not ok:
                 success = False
             else:
-                print(
-                    f"[Rank {rank}] PEFT adapter artefacts validated", flush=True
-                )
+                print(f"[Rank {rank}] PEFT adapter artefacts validated", flush=True)
 
     # Step 5: Verify forward pass still works after the save.
     print(f"[Rank {rank}] Verifying forward pass", flush=True)

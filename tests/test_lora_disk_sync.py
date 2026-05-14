@@ -12,7 +12,6 @@ from areal.api import ParamSpec, WeightUpdateMeta
 from areal.api.cli_args import TrainEngineConfig
 from areal.api.io_struct import get_versioned_lora_name
 
-
 # Keep this in sync with ``FSDPEngine._save_lora_adapter_to_hf``.
 _LORA_KEYWORDS = ("lora_A", "lora_B", "lora_embedding_A", "lora_embedding_B")
 
@@ -352,9 +351,7 @@ class TestSGLangBackendDispatch:
         backend = SGLangBackend()
         gconfig = GenerationHyperparameters(max_new_tokens=8)
         req = ModelRequest(input_ids=[1, 2, 3], gconfig=gconfig)
-        http_req = backend.build_generation_request(
-            req, with_lora=False, version=0
-        )
+        http_req = backend.build_generation_request(req, with_lora=False, version=0)
         assert "lora_path" not in http_req.payload
 
 

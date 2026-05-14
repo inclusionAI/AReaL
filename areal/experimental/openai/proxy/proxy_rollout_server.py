@@ -283,9 +283,7 @@ def _setup_openai_client():
         # any attacker who can reach this port can call admin endpoints
         # (grant_capacity, start_session, export_trajectories, ...).
         loopback_hosts = {"127.0.0.1", "::1", "localhost"}
-        allow_override = (
-            os.environ.get("AREAL_ALLOW_DEFAULT_ADMIN_KEY", "0") == "1"
-        )
+        allow_override = os.environ.get("AREAL_ALLOW_DEFAULT_ADMIN_KEY", "0") == "1"
         if _server_host in loopback_hosts or allow_override:
             logger.warning(
                 "Using default admin API key. Change 'admin_api_key' in "

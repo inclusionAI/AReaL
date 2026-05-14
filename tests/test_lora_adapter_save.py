@@ -117,9 +117,7 @@ class TestAdapterSafetensors:
         _invoke(engine, str(d), sd)
 
         loaded = safetensors_load_file(str(d / "adapter_model.safetensors"))
-        sample_key = (
-            "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight"
-        )
+        sample_key = "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight"
         assert sample_key in loaded
         torch.testing.assert_close(
             loaded[sample_key], torch.ones(8, 4), check_dtype=False
