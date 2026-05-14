@@ -8,7 +8,7 @@ peak memory for the materialised reference path and the fused Triton path.
 Usage::
 
     # Qwen3 single-GPU full-vocab benchmark
-    uv run python -m benchmark.bench_linear_cross_entropy \\
+    uv run python -m benchmark.kernels.bench_linear_cross_entropy \\
         --mode both --tokens 2048 --hidden 4096 --vocab 152064 \\
         --dtype bfloat16 --warmup 5 --iters 15 --check-correctness
 
@@ -16,14 +16,14 @@ Usage::
     # [tokens, vocab/tp] logits and uses vocab-parallel reductions.
     uv run torchrun --nproc_per_node=2 --nnodes=1 \\
         --master-addr=localhost --master_port=29501 \\
-        -m benchmark.bench_linear_cross_entropy \\
+        -m benchmark.kernels.bench_linear_cross_entropy \\
         --mode both --tp-size 2 --tokens 2048 --hidden 4096 --vocab 152064 \\
         --dtype bfloat16 --warmup 5 --iters 15 --check-correctness
 
     # Qwen3 TP=4 benchmark
     uv run torchrun --nproc_per_node=4 --nnodes=1 \\
         --master-addr=localhost --master_port=29501 \\
-        -m benchmark.bench_linear_cross_entropy \\
+        -m benchmark.kernels.bench_linear_cross_entropy \\
         --mode both --tp-size 4 --tokens 2048 --hidden 4096 --vocab 152064 \\
         --dtype bfloat16 --warmup 5 --iters 15 --check-correctness
 """
@@ -124,7 +124,7 @@ def _ref_step(hidden, weight, labels, temperature=1.0, tp_group=None):
 
 
 def _fused_step(hidden, weight, labels, temperature=1.0, tp_group=None):
-    from areal.utils.kernel import linear_cross_entropy
+    from areal.models.kernel import linear_cross_entropy
 
     h = hidden.detach().clone().requires_grad_(True)
     w = weight.detach().clone().requires_grad_(True)

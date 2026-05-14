@@ -52,7 +52,7 @@ class LinearCrossEntropy(torch.autograd.Function):
         if not isinstance(reduction, str):
             raise TypeError(f"reduction must be str, got {type(reduction)}")
 
-        from areal.utils.kernel import kernels
+        from areal.models.kernel import kernels
 
         REDUCTION = kernels.get_entropy_reduction_enum_number(reduction.lower())
 
@@ -111,7 +111,7 @@ class LinearCrossEntropy(torch.autograd.Function):
         dentropy: torch.Tensor,
         dmax_logits: torch.Tensor | None = None,
     ) -> tuple:
-        from areal.utils.kernel import kernels
+        from areal.models.kernel import kernels
 
         (
             hidden,

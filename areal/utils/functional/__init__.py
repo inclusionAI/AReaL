@@ -11,10 +11,6 @@ from areal.utils.functional.functional import (
     reward_overlong_penalty,
     sapo_loss_fn,
 )
-from areal.utils.functional.linear_cross_entropy import (
-    linear_cross_entropy_logprobs,
-    linear_cross_entropy_logprobs_entropy,
-)
 from areal.utils.functional.vocab_parallel import (
     gather_logprobs,
     gather_logprobs_entropy,
@@ -34,7 +30,4 @@ __all__ = [
     # vocab_parallel.py
     "gather_logprobs",
     "gather_logprobs_entropy",
-    # linear_cross_entropy.py (fused linear + CE/entropy via Triton)
-    "linear_cross_entropy_logprobs",
-    "linear_cross_entropy_logprobs_entropy",
 ]

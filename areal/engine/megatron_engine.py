@@ -88,6 +88,10 @@ from areal.engine.megatron_utils.pipeline_parallel import (
 )
 from areal.infra.dist_rollout import DistRolloutCoordinator
 from areal.infra.platforms import current_platform
+from areal.models.kernel import (
+    linear_cross_entropy_logprobs,
+    linear_cross_entropy_logprobs_entropy,
+)
 from areal.models.mcore.hf_load import load_weights_from_hf_with_mbridge_fast
 from areal.models.mcore.hf_save import (
     save_critic_value_head,
@@ -125,8 +129,6 @@ from areal.utils.data import (
 from areal.utils.functional import (
     gather_logprobs,
     gather_logprobs_entropy,
-    linear_cross_entropy_logprobs,
-    linear_cross_entropy_logprobs_entropy,
 )
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer, load_hf_tokenizer
 from areal.utils.lock import DistributedLock
@@ -816,7 +818,7 @@ class MegatronEngine(TrainEngine):
         self._ensure_ready()
 
         use_fused_lce = (
-            getattr(self.config, "use_fused_linear_ce", False)
+            getattr(self.config.megatron, "use_fused_linear_ce", False)
             and not self.config.is_critic
             and not self.enable_tree_training
         )
@@ -2107,90 +2109,9 @@ class MegatronEngine(TrainEngine):
                     else None,
                 )
             else:
-                cp_local_labels = inputs.get("_cp_local_labels")
-                cp_padded_cu_seqlens = inputs.get("_cp_padded_cu_seqlens")
-                if cp_local_labels is not None:
-                    labels = cp_local_labels
-                else:
-                    labels = torch.roll(inputs["input_ids"], shifts=-1, dims=-1)
-                fused_active = inputs.get("_fused_lce_active", False)
-                fused_hidden = inputs.get(FUSED_LCE_HIDDEN_KEY)
-                fused_weight = inputs.get(FUSED_LCE_WEIGHT_KEY)
-                if (
-                    fused_active
-                    and fused_hidden is not None
-                    and fused_weight is not None
-                ):
-                    logprobs, entropy, vocab_max_logits = (
-                        linear_cross_entropy_logprobs_entropy(
-                            fused_hidden,
-                            fused_weight,
-                            labels,
-                            temperature=self.config.temperature,
-                            tp_group=mpu.get_tensor_model_parallel_group()
-                            if mpu.get_tensor_model_parallel_world_size() > 1
-                            else None,
-                            return_max_logits=True,
-                        )
-                    )
-                    # Fused kernel does not track per-token vocab min logits;
-                    # skip the min telemetry rather than report a misleading
-                    # proxy. Consumers must guard ``vocab_min_logits`` and
-                    # ``vocab_max_logits`` independently.
-                    vocab_min_logits = None
-                else:
-                    logprobs, entropy = gather_logprobs_entropy(
-                        output,
-                        labels,
-                        temperature=self.config.temperature,
-                        tp_group=mpu.get_tensor_model_parallel_group()
-                        if mpu.get_tensor_model_parallel_world_size() > 1
-                        else None,
-                    )
-                    vocab_min_logits = output.detach().min(-1).values.float()
-                    vocab_max_logits = output.detach().max(-1).values.float()
-                    if cp_padded_cu_seqlens is not None:
-                        logprobs = reassemble_cp_packed_logprobs(
-                            logprobs, cp_padded_cu_seqlens
-                        )
-                        entropy = reassemble_cp_packed_logprobs(
-                            entropy, cp_padded_cu_seqlens
-                        )
-                        vocab_min_logits = reassemble_cp_packed_logprobs(
-                            vocab_min_logits, cp_padded_cu_seqlens
-                        )
-                        vocab_max_logits = reassemble_cp_packed_logprobs(
-                            vocab_max_logits, cp_padded_cu_seqlens
-                        )
-                        cp_padding_length = inputs.get("_cp_padding_length", 0)
-                        cp_old_cu_seqlens = inputs.get("_cp_old_cu_seqlens")
-                        logprobs = unpad_logits(
-                            logprobs,
-                            cp_padding_length,
-                            cp_padded_cu_seqlens,
-                            cp_old_cu_seqlens,
-                        )
-                        entropy = unpad_logits(
-                            entropy,
-                            cp_padding_length,
-                            cp_padded_cu_seqlens,
-                            cp_old_cu_seqlens,
-                        )
-                        vocab_min_logits = unpad_logits(
-                            vocab_min_logits,
-                            cp_padding_length,
-                            cp_padded_cu_seqlens,
-                            cp_old_cu_seqlens,
-                        )
-                        vocab_max_logits = unpad_logits(
-                            vocab_max_logits,
-                            cp_padding_length,
-                            cp_padded_cu_seqlens,
-                            cp_old_cu_seqlens,
-                        )
-                        inputs = {
-                            k: v for k, v in inputs.items() if not k.startswith("_cp_")
-                        }
+                logprobs, entropy, vocab_min_logits, vocab_max_logits, inputs = (
+                    self._compute_packed_logprobs_entropy(output, inputs)
+                )
             loss = loss_fn(
                 logprobs,
                 entropy,
@@ -2204,6 +2125,99 @@ class MegatronEngine(TrainEngine):
 
         loss_scale = local_weight / total_loss_weight * loss_multiplier
         return loss * loss_scale
+
+    def _compute_packed_logprobs_entropy(
+        self,
+        output: torch.Tensor,
+        inputs: dict[str, Any],
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor | None,
+        torch.Tensor | None,
+        dict[str, Any],
+    ]:
+        """Compute per-token logprobs/entropy for the non-tree packed path.
+
+        Returns ``(logprobs, entropy, vocab_min_logits, vocab_max_logits, inputs)``.
+        ``inputs`` is returned because the materialised CP branch strips the
+        ``_cp_*`` keys before the loss is invoked.
+        """
+        cp_local_labels = inputs.get("_cp_local_labels")
+        cp_padded_cu_seqlens = inputs.get("_cp_padded_cu_seqlens")
+        if cp_local_labels is not None:
+            labels = cp_local_labels
+        else:
+            labels = torch.roll(inputs["input_ids"], shifts=-1, dims=-1)
+
+        tp_group = (
+            mpu.get_tensor_model_parallel_group()
+            if mpu.get_tensor_model_parallel_world_size() > 1
+            else None
+        )
+
+        # Fused LCE fast path: logits are never materialised, so we skip the
+        # min telemetry rather than report a misleading proxy.
+        fused_active = inputs.get("_fused_lce_active", False)
+        fused_hidden = inputs.get(FUSED_LCE_HIDDEN_KEY)
+        fused_weight = inputs.get(FUSED_LCE_WEIGHT_KEY)
+        if fused_active and fused_hidden is not None and fused_weight is not None:
+            logprobs, entropy, vocab_max_logits = linear_cross_entropy_logprobs_entropy(
+                fused_hidden,
+                fused_weight,
+                labels,
+                temperature=self.config.temperature,
+                tp_group=tp_group,
+                return_max_logits=True,
+            )
+            return logprobs, entropy, None, vocab_max_logits, inputs
+
+        # Materialised path.
+        logprobs, entropy = gather_logprobs_entropy(
+            output,
+            labels,
+            temperature=self.config.temperature,
+            tp_group=tp_group,
+        )
+        vocab_min_logits = output.detach().min(-1).values.float()
+        vocab_max_logits = output.detach().max(-1).values.float()
+        if cp_padded_cu_seqlens is not None:
+            logprobs = reassemble_cp_packed_logprobs(logprobs, cp_padded_cu_seqlens)
+            entropy = reassemble_cp_packed_logprobs(entropy, cp_padded_cu_seqlens)
+            vocab_min_logits = reassemble_cp_packed_logprobs(
+                vocab_min_logits, cp_padded_cu_seqlens
+            )
+            vocab_max_logits = reassemble_cp_packed_logprobs(
+                vocab_max_logits, cp_padded_cu_seqlens
+            )
+            cp_padding_length = inputs.get("_cp_padding_length", 0)
+            cp_old_cu_seqlens = inputs.get("_cp_old_cu_seqlens")
+            logprobs = unpad_logits(
+                logprobs,
+                cp_padding_length,
+                cp_padded_cu_seqlens,
+                cp_old_cu_seqlens,
+            )
+            entropy = unpad_logits(
+                entropy,
+                cp_padding_length,
+                cp_padded_cu_seqlens,
+                cp_old_cu_seqlens,
+            )
+            vocab_min_logits = unpad_logits(
+                vocab_min_logits,
+                cp_padding_length,
+                cp_padded_cu_seqlens,
+                cp_old_cu_seqlens,
+            )
+            vocab_max_logits = unpad_logits(
+                vocab_max_logits,
+                cp_padding_length,
+                cp_padded_cu_seqlens,
+                cp_old_cu_seqlens,
+            )
+            inputs = {k: v for k, v in inputs.items() if not k.startswith("_cp_")}
+        return logprobs, entropy, vocab_min_logits, vocab_max_logits, inputs
 
     def _compute_forward_result(
         self,
