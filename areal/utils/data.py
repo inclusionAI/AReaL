@@ -1518,8 +1518,7 @@ class Normalization:
             x_sum = x.sum(dim=dim, keepdim=True)
         else:
             mask = mask.to(dtype)
-            x_safe = torch.where(mask.bool(), x, 0.0)
-            x_masked = x_safe
+            x_masked = torch.where(mask.bool(), x, 0.0)
             factor = mask.sum(dim, keepdim=True)
             x_sum = x_masked.sum(dim=dim, keepdim=True)
 
