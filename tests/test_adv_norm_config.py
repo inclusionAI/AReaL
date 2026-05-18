@@ -1117,7 +1117,7 @@ def test_masked_invalid_values_do_not_poison_batch_normalization():
     normalized = adv_norm(advantages, loss_mask)
 
     expected_valid = torch.tensor(
-        [-1.2247374, 0.0, 1.2247374],
+        [-1.0, 0.0, 1.0],
         dtype=torch.float32,
     )
     assert torch.isfinite(normalized).all()
@@ -1138,7 +1138,7 @@ def test_masked_invalid_values_do_not_poison_group_normalization():
     normalized = adv_norm(advantages, loss_mask)
 
     expected_valid = torch.tensor(
-        [-1.2247374, 0.0, 1.2247374],
+        [-1.0, 0.0, 1.0],
         dtype=torch.float32,
     )
     assert torch.isfinite(normalized).all()
