@@ -1579,8 +1579,7 @@ class Normalization:
         else:
             mask = mask.to(dtype)
             factor = mask.sum(dim, keepdim=True)
-            x_safe = torch.where(mask.bool(), x, 0.0)
-            x_centered = (x_safe - mean) * mask
+            x_centered = torch.where(mask.bool(), x - mean, 0.0)
             x_sum_sq = (x_centered**2).sum(dim=dim, keepdim=True)
 
         if dist.is_initialized() and all_reduce:
