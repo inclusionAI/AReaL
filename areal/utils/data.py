@@ -1447,8 +1447,7 @@ class Normalization:
 
         # Subtract mean
         if loss_mask is not None:
-            x_safe = torch.where(loss_mask.bool(), x, 0.0)
-            x_centered = (x_safe - mean) * loss_mask
+            x_centered = torch.where(loss_mask.bool(), x - mean, 0.0)
         else:
             x_centered = x - mean
 
