@@ -150,7 +150,7 @@ class PPOActor:
         )
         attn_mask = data["attention_mask"]
         seqlens = attn_mask.sum(-1).long()
-        seq_no_eos_mask = seqlens == attn_mask.shape[1]
+        seq_no_eos_mask = seqlens == max_seqlen
 
         # Reward Penalty on length
         if self.config.overlong_reward_penalty:
