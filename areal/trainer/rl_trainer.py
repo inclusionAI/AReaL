@@ -373,9 +373,9 @@ class PPOTrainer:
         if self.recover_info is not None:
             recovery_version = self.recover_info.last_step_info.global_step + 1
             if is_single_controller():
-                sm = self.rollout._staleness_manager
+                sm = self.rollout.staleness_manager
             else:
-                sm = self.rollout.workflow_executor._staleness_manager
+                sm = self.rollout.workflow_executor.staleness_manager
             if sm is not None:
                 sm.on_version_recovered(recovery_version)
 

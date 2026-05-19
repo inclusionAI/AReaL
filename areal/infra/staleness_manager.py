@@ -120,6 +120,11 @@ class StalenessManager:
         yields (max_staleness + version + 1) * batch_size instead of the
         intended (max_staleness + 1) * batch_size, causing a burst of
         submissions and unbounded staleness growth.
+
+        Expected to be called during trainer init, before any rollouts are
+        submitted, so running == 0. If running > 0 (unlikely in practice),
+        accepted is still set correctly and the capacity formula remains
+        bounded — (max_staleness + 1) * consumer_bs - running.
         """
         with self.lock:
             consumer_bs = max(1, self.consumer_batch_size)
