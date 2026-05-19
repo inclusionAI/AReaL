@@ -1,0 +1,306 @@
+**Task 1: Main‐Step Extraction**
+Analyze the given long reasoning chain for a math problem and extract every *main* step of it. Ignore substeps—only list the top‑level thinking processes or actions.
+
+**Use the following output format:**
+```
+S1: [Description of step 1] (Lxx-Lyy)
+S2: [Description of step 2] (Lxx-Lyy)
+...
+SX: [Description of step X] (Lxx-Lyy)
+...
+```
+
+**Guidelines:**
+- Label each top‑level step consecutively (`S1`, `S2`, ...).
+  - Do *not* include any sub‑numbering (no `S2.1`, etc.).
+- Please capture the entire thought process presented in the reasoning chain, and do not skip any step that includes, but not limited to, the following:
+  - Initial problem understanding and analysis
+  - All exploration paths (both successful and unsuccessful)
+  - Case studies, checks, or tests performed
+  - Any “aha” or correction (re-evaluation or re-thinking) moments
+  - The final reasoning that yields the solution
+- Split multiple cases or scenarios into different steps. Each case should be allocated an independent step.
+- If a reasoning path is started but later abandoned because it cannot reach a conclusion, still capture it as a distinct step.
+- Please indicate the line numbers corresponding to where each main step starts and ends in the original reasoning chain (`Lxx-Lyy`). 
+  - Use the format `Lxx-Lyy` to specify the range of lines for each step.
+  - S1 starts at the first line and ends at the line you list in the parentheses (`S1: [Description of step 1] (L1-Lyy)`).
+  - S(k+1) starts on the next line after Sk ends. The delta between the starting line number of S(k+1) and the ending line number of S(k) is always 1.
+  - Ensure there is no gap between the end of one step and the start of the next.
+  - The last step must end at the final line of the original reasoning chain.
+- Provide a brief summary of the content in each step that is one or two sentences long (e.g. `SX: [Description of step X]`).
+- Keep the description for each step concise yet descriptive.
+- A reasoning chain may contain any number of main steps. There is no limit to the total number of steps you can identify.
+
+---
+
+**Task 2: Substep Extraction**
+Given the previous output containing all main steps of a reasoning chain, break down each main step into substeps **only if** its content from the original reasoning chain can be meaningfully divided into smaller thought units. You can use the line ranges to reference the original reasoning chain and better capture the content of each main step.
+
+**Output format:**
+```
+S1: [Description of step 1] (Lxx-Lyy)
+  S1.1 [Description of substep 1.1] (Lxx-Lyy)
+  S1.2 [Description of substep 1.2] (Lxx-Lyy)
+  ...
+  S1.X [Description of substep 1.X] (Lxx-Lyy)
+S2: [Description of step 2] (Lxx-Lyy)
+S3: [Description of step 3] (Lxx-Lyy)
+S4: [Description of step 4] (Lxx-Lyy)
+  S4.1 [Description of substep 4.1] (Lxx-Lyy)
+  ...
+...
+SX: [Description of step X] (Lxx-Lyy)
+...
+```
+
+**Guidelines:**
+- A substep always uses the same parent index (`X`) as its main step (e.g. if breaking down `S2`, label `S2.1`, `S2.2`, ...).
+- For each main step, capture the entire thought process presented in it, and do not skip any substep that includes, but not limited to, the following:
+  - Initial problem understanding and analysis
+  - All exploration paths (both successful and unsuccessful)
+  - Case studies, checks, or tests performed
+  - Any “aha” or correction (re-evaluation or re-thinking) moments
+  - The final reasoning that yields the solution
+- Split multiple cases or scenarios into different substeps. Each case should be allocated an independent substep.
+- Provide a brief summary of the content in each substep (e.g., `S1.2 [Description of step 1.2]`) that is one or two sentences long.
+- Keep each substep description concise and focused.
+- Provide the line range for each substep (`Lxx-Lyy`). 
+  - The format Lxx-Lyy indicates the range of lines where the substep appears.
+  - SX.1 starts at the first line of SX.
+  - SX.(k+1) starts on the next line after SX.k ends.
+  - Ensure there is no gap between the end of one substep and the start of the next.
+  - The last substep must end at the final line of the parent main step.
+- Keep the main step description and line ranges (`Lxx-Lyy`) as marked in Task 1.
+- A main step may contain any number of substeps. There is no limit to the total number of substeps you can identify for a main step.
+- If a main step does not contain substeps, copy over its step number, description and line range exactly as they appear in Task 1.
+- Do *not* introduce nesting deeper than 2 levels. For example, `S2.1.1` is not allowed.
+
+---
+
+**Task 3: Parallelizing Main Steps**  
+Using only the **main steps** (`S1`, `S2`, ...) extracted in Task 1, first identify all steps or contiguous step groups that can be executed in parallel without violating logical dependencies; then rewrite them as a structured outline for parallel execution.
+
+**Output format:**
+```
+Parallel groups:
+P1: Parallel(S2, S3)
+P2: Parallel(Sequential(S5, S6), S7)
+...
+PX: Parallel(Si, Sj, Sk...)
+
+Outline for parallel execution:
+S1: [Description of step 1] (Lxx-Lyy)
+P1: Parallel[Parallel reason: ...](
+  S2: [Description of step 2] (Lxx-Lyy),
+  S3: [Description of step 3] (Lxx-Lyy)
+)
+S4: [Description of step 4] (Lxx-Lyy)
+P2: Parallel[Parallel reason: ...](
+  Sequential(
+    S5: [Description of step 5] (Lxx-Lyy),
+    S6: [Description of step 6] (Lxx-Lyy)
+  ),
+  S7: [Description of step 7] (Lxx-Lyy)
+)
+...
+PX: Parallel[Parallel reason: ...](
+  Si: [Description of step i] (Lxx-Lyy),
+  ...
+)
+```
+
+**Guidelines:**
+1. **Identify Parallel Groups**
+  - Find groups of adjacent main steps with **no dependencies** among them. 
+  - Label the groups as `P1`, `P2`, ... and represent the structure of steps within the group using the syntax pattern as shown above.
+  - Group steps Si, Sj, ... in `Parallel(Si, Sj, ...)` **if and only if** Sj does NOT depend on any part of Si.   
+  - In a parallel block, you can combine adjacent steps that depend on each other into a `Sequential(Sx, Sy)` block. A sequential block can be executed in parallel to other main steps and sequential blocks.
+  - Do not create `Sequential` blocks that are not nested in any parallel block. Simply list the steps in order in those cases.
+  - Groups must cover contiguous step ranges in the original order.
+  - Interpretation of the problem should not be parallelized with the process of problem-solving.
+  - Different ways of self-reflection are often independent of each other and thus parallelizable.
+  - Self-reflection on an intermediate step is often parallelizable with the subsequent steps.
+  - In conditional logic, treat the **if** branch and **else** branch as independent tasks and parallelize them even though their outputs cannot both occur at runtime.
+  - Only include steps that can be executed in parallel with others in a parallel group; the parallel groups do not need to cover every step.
+  - A parallel group should not consist of only one single step or one `Sequential(...)` block. If this is the case, do not include those steps into any parallel groups.
+
+2. **Write the Structured Outline for Parallel Execution**
+  - Annotate the main steps with the parallel grouping structures.
+  - Keep each main step’s description and line range the same as those annotated in Task 1 (preserve as much as you can).
+  - Include **every** step exactly once, either alone, inside a sequential block, or inside a parallel group.
+  - If a main step does not belong to any sequential block or parallel group, copy over its step number, description and line range exactly as they appear in Task 1. Include it in the outline in its original position.
+  - For a sequential block, list each step in order.
+  - If a parallel group contains multiple units, briefly state why its units are independent in the `parallel reason` bracket (e.g. `PX: Parallel[Parallel reason: ...]`).
+
+- **Contiguous Blocks:** You may combine multiple adjacent steps (e.g. `Sequential(S1, S2, ...)`) and treat them as a single unit in the parallel group alongside another step or block (e.g. `S3`), but do **not** combine non‐adjacent steps into a block.
+- **Contiguous grouping:** Each parallel group must cover a continuous sequence of steps or blocks. In other words, you may only parallelize adjacent steps. The occurrence of steps in parallel groups must follow their original order. For example, P1: Parallel(S5, S8) is not allowed.
+- **Strict Parallelism Only:** Build an explicit dependency graph in your analysis: draw an edge from step A to step B if B uses A’s output or insight. A group `Pi` may include steps (or contiguous blocks) **only** if there are **no** dependency edges between any two units.
+
+---
+
+**Task 4: Parallelizing Substeps**  
+Examining the outline you extracted in Task 3, for any main steps that are not in a `Parallel` block, refer to its **substeps** you extracted in Task 2 if there is any (e.g. `S1.1`, `S1.2`, ...). Among these substeps, identify all substeps or contiguous substep groups that can be executed in parallel without violating logical dependencies. Then rewrite the structured parallel execution outline to include both the parallel structures of the main steps and those of the substeps you just identified.
+
+**Output format:**
+```
+Parallel groups of substeps:
+* Parallel(Sequential(S1.1, S1.2), S1.3)
+* Parallel(S4.2, S4.3)
+* ...
+* Parallel(...)
+
+Outline for parallel execution:
+S1: [Description of step 1] (Lxx-Lyy)
+  P-sub: Parallel[Parallel reason: ...](
+    Sequential(
+      S1.1: [Description of substep 1.1] (Lxx-Lyy),
+      S1.2: [Description of substep 1.2] (Lxx-Lyy)
+    ),
+    S1.3: [Description of substep 1.3] (Lxx-Lyy)
+  )
+P1: Parallel[Parallel reason: ...](
+  S2: [Description of step 2] (Lxx-Lyy),
+  S3: [Description of step 3] (Lxx-Lyy)
+)
+S4: [Description of step 4] (Lxx-Lyy)
+  S4.1: [Description of substep 4.1] (Lxx-Lyy)
+  P-sub: Parallel[Parallel reason: ...](
+    S4.2: [Description of substep 4.2] (Lxx-Lyy),
+    S4.3: [Description of substep 4.3] (Lxx-Lyy)
+  )
+P2: Parallel[Parallel reason: ...](
+  Sequential(
+    S5: [Description of step 5] (Lxx-Lyy),
+    S6: [Description of step 6] (Lxx-Lyy)
+  ),
+  S7: [Description of step 7] (Lxx-Lyy)
+)
+...
+PX: Parallel[Parallel reason: ...](
+  Si: [Description of step i] (Lxx-Lyy),
+  ...
+)
+```
+
+**Guidelines:**
+1. **Identify Parallel Groups**  
+  - Only parallelize the substeps whose main steps are not in a parallel block.
+  - Find sets of adjacent substeps with no dependencies among them.  
+  - Label the groups of substeps `P-sub`, and list their substep members (e.g. `Parallel(Sequential(S1.1, S1.2), S1.3)`, `Parallel(S4.2, S4.3)`). 
+
+2. **Write the Structured Outline for Parallel Execution**   
+  - Annotate the main steps and substeps with the parallel group structures.
+  - Keep the parallel group structure, numbering, description and line ranges of the main steps the same as those annotated in Task 3 (preserve as much as you can).
+  - Keep each substep’s numbering, description and line range the same as those annotated in Task 2 (preserve as much as you can).
+  - For a sequential block, list the description of each substep in order.
+  - If a parallel group contains multiple units, briefly state why its units are independent in the `parallel reason` bracket (e.g. `PX: Parallel[parallel reason: ...]`)
+  - If a substep does not belong to any parallel or sequential group, copy over its step number, description and line range exactly as they appear in Task 2. Include it in the outline in its original position.
+
+- **Coverage:** For each main step you choose to annotate, include **every** substep exactly once, either alone or inside a parallel group. 
+- **Contiguous Blocks:** In a parallel block, you may combine adjacent substeps that depend on each other into a contiguous block (e.g. `Sequential(S2.1, S2.2)`) and treat them as a single unit in the parallel group alongside another substep or block (e.g. `S2.3`). Do **not** combine non‐adjacent substeps into a block.
+- Do not create `Sequential` blocks that are not nested in any parallel block. Simply list the substeps in order in those cases.
+- Only group substeps corresponding to the same main step in a single-level parallel or sequential block (e.g. Parallel(S2.2, S3.1) or Sequential(S2.1, S2.2, S3.1) is not allowed).  
+- **Strict Parallelism Only:** Build an explicit dependency graph in your analysis: draw an edge from substep A to substep B if B uses A’s output or insight. A group `Pi` may include steps (or contiguous blocks) **only** if there are **no** dependency edges between any two units. 
+- In conditional logic, treat the **if** branch and **else** branch as independent tasks and parallelize them even though their outputs cannot both occur at runtime.
+- Contiguous grouping only: Each parallel group must cover a continuous sequence of steps or blocks. In other words, you may only parallelize adjacent steps or substeps. The occurrence of steps or substeps in parallel groups must follow their original order. For example, P1: Parallel(S2.2, S3.1) is not allowed.
+
+---
+
+**Task 5: Annotate the Overall Structured Outline with Line Range for Each Parallel Block**  
+According to the conversation above, output the overall parallel execution structure of the long reasoning chain with the main steps, substeps and the parallel structures clearly defined in a simple XML format.
+
+In addition, include the line ranges for each parallel block and its threads.
+
+**Output format:**
+```
+S1: [Description of step 1]
+  <parallel>[Parallel reason: ...]
+  <thread>
+  S1.1: [Description of substep 1.1]
+  S1.2: [Description of substep 1.2]
+  </thread> (range: Lxx-Lyy)
+  <thread>
+  S1.3: [Description of substep 1.3]
+  </thread> (range: Lxx-Lyy)
+  </parallel> (range: Lxx-Lyy)
+<parallel>[Parallel reason: ...]
+<thread>
+S2: [Description of step 2]
+</thread> (range: Lxx-Lyy)
+<thread>
+S3: [Description of step 3]
+</thread> (range: Lxx-Lyy)
+</parallel> (range: Lxx-Lyy)
+S4: [Description of step 4]
+  S4.1: [Description of substep S4.1]
+  <parallel> [Parallel reason: ...]
+  ...
+  </parallel> (range: Lxx-Lyy)
+<parallel> [Parallel reason: ...]
+<thread>
+S5: [Description of step 5]
+S6: [Description of step 6]
+</thread> (range: Lxx-Lyy)
+...
+</parallel> (range: Lxx-Lyy)
+..
+```
+
+**Guidelines:**
+- Format the output **strictly** according to the output format specified above. **The only XML tags allowed are <parallel> and <thread>.** A <parallel> </parallel> block should consist of multiple <thread>’s. <thread> can only exist inside <parallel>.
+- A <parallel> block may form at either the main step level, or the substep level.
+- Ensure **there are no `<parallel>` tags nested inside one another.** Do not create structures like <parallel> ... <parallel> ... </parallel> ... </parallel>.
+- **Max depth of substep nesting is 2.** Ensure there is no step number beyond Sx and Sx.y. For example, `Sx.y.z` is not allowed.
+- **Do not add additional tags for sequential structures.** If an XML node’s children are purely sequential, list them in order.
+- **Tag parallel blocks.** Wrap parallelizable units in `<parallel>`...`</parallel>`. Wrap each parallelizable unit (including sequential blocks and (sub)steps) in `<thread>`...`</thread>`. List the sequential steps and substeps in order inside each `<thread>` block.
+- Provide the line range for each <thread> block after the closing tag (`</thread> (range: Lxx-Lyy)`). 
+- Provide the line range for each <parallel> block after the closing tag (`</parallel> (range: Lxx-Lyy)`).
+- Keep the description for every step and substep as annotated in Task 1 and 2 (preserve as much as you can).
+- **Do not create significantly imbalanced parallel blocks.** If most of an XML node’s children are sequential and only a small number of them can run in parallel, you may leave the group untagged or only create a parallel block using the children that are genuinely parallel.
+- Do not start your output with "```xml". Indentation (i.e., spaces before Sx.y) indicates substeps, not XML structures; do not add tags other than <parallel> and <thread> around them.
+- **Group parallelizable sets.** You may bundle several independent units into a single `<parallel>` block when they share no dependencies.
+
+---
+
+**Task 6: Double-check Every Parallel Block and Refine the Structured Outline**  
+Please check and revise the structured outline for parallel execution you generated in Task 5 by ensuring the following:
+- **Coverage & Contiguity**: Make sure the line range (Lxx-Lyy) of each thread exactly spans from the first included (sub)step to the last. Make sure the line range (Lxx-Lyy) of each parallelizable block exactly spans from the first included thread to the last.
+- **Parallelism Validity**: Verify that there are no direct or indirect dependencies among the children of each parallel block. Specifically, confirm that each thread in the block do not depend on *any* of the threads before it in the same block. Add a note after the closing tag of each thread (`</thread>`) indicating the result of this check. 
+  - If the check passes, add the note `check passed` and confirm the reason (`</thread> [range: Lxx-Lyy, check passed: reason]`).
+  - If the check fails (i.e. dependency is detected within the parallel block), refactor the problematic block into Sequential(...) or separate groups, and update the line ranges accordingly. If you cannot determine how to refactor, leave a note stating`check failed` along with the reason (`</thread> [range: Lxx-Lyy, check failed: reason]`). 
+- **Output Format**: Keep the outline format as specified in Task 5. Only the tags `<parallel>` and `<thread>` are allowed, and `<thread>` tags can only appear inside `<parallel>` blocks.
+
+**Output format:**
+```
+S1: [Description of step 1]
+  <parallel>[Parallel reason: ...]
+  <thread>
+  S1.1: [Description of substep 1.1]
+  S1.2: [Description of substep 1.2]
+  </thread> (range: Lxx-Lyy, check passed: first thread)
+  <thread>
+  S1.3: [Description of substep 1.3]
+  </thread> (range: Lxx-Lyy, check passed: S1.3 has no dependencies on S1.1 and S1.2)
+  </parallel> (range: Lxx-Lyy)
+<parallel>[Parallel reason: ...]
+<thread>
+S2: [Description of step 2]
+</thread> (range: Lxx-Lyy, check passed: first thread)
+<thread>
+S3: [Description of step 3]
+</thread> (range: Lxx-Lyy, check failed: S3 depends on S2)
+</parallel> (range: Lxx-Lyy)
+S4: [Description of step 4]
+  S4.1: [Description of substep S4.1]
+  <parallel> [Parallel reason: ...]
+  ...
+  </parallel> (range: Lxx-Lyy)
+<parallel> [Parallel reason: ...]
+<thread>
+S5: [Description of step 5]
+S6: [Description of step 6]
+</thread> (range: Lxx-Lyy, check passed: first thread)
+...
+</parallel> (range: Lxx-Lyy)
+..
+```
