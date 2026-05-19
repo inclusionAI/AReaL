@@ -161,7 +161,7 @@ class MegatronCheckpointManager:
         self.use_dist_checkpointing = use_dist_checkpointing
         self.async_save = async_save
         if async_save:
-            raise NotImplementedError("Async save not implenmented yet!")
+            raise NotImplementedError("Async save not implemented yet!")
 
     def get_rng_state(
         self, use_dist_ckpt: bool = True, data_parallel_random_init: bool = False
