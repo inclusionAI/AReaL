@@ -1404,6 +1404,38 @@ class Normalization:
         bs = x.size(0)
         eps = self.eps
 
+        non_finite = ~torch.isfinite(x)
+        if non_finite.any().item():
+            if loss_mask is None:
+                logger.warning(
+                    "Normalization input contains non-finite values and no "
+                    "loss_mask was provided. They will propagate through "
+                    "normalization and may indicate an upstream numerical issue."
+                )
+            else:
+                active_non_finite = loss_mask.bool().logical_and(non_finite)
+                masked_non_finite = (~loss_mask.bool()).logical_and(non_finite)
+                if active_non_finite.any().item() and masked_non_finite.any().item():
+                    logger.warning(
+                        "Normalization input contains non-finite values at both "
+                        "active and masked positions. Active non-finite values "
+                        "will propagate through normalization; masked non-finite "
+                        "values will be ignored by loss_mask. This may indicate "
+                        "an upstream numerical issue."
+                    )
+                elif active_non_finite.any().item():
+                    logger.warning(
+                        "Normalization input contains non-finite values at active "
+                        "positions. They will propagate through normalization and "
+                        "may indicate an upstream numerical issue."
+                    )
+                else:
+                    logger.warning(
+                        "Normalization input contains non-finite values at masked "
+                        "positions. They will be ignored by loss_mask, but this "
+                        "may indicate an upstream numerical issue."
+                    )
+
         # Early return if no elements are active (all masked out)
         if loss_mask is not None and loss_mask.sum().item() == 0:
             return x.float()
