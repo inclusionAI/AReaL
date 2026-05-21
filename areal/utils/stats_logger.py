@@ -4,6 +4,7 @@ import getpass
 import os
 import time
 from dataclasses import asdict
+from typing import Any
 
 import swanlab
 import torch.distributed as dist
@@ -157,6 +158,105 @@ class StatsLogger:
                 for key, val in item.items():
                     self.summary_writer.add_scalar(f"{key}", val, log_step + i)
         self._last_commit_step = log_step + len(data) - 1
+
+    def log_rollout_traces(
+        self,
+        trajectories: list[dict[str, Any]],
+        *,
+        split: str,
+        global_step: int,
+        tokenizer,
+    ) -> None:
+        if dist.is_initialized() and dist.get_rank() != 0:
+            return
+        if not getattr(self, "_trackio_enabled", False):
+            return
+
+        max_traces = self.config.trackio.max_rollout_traces_per_step
+        if max_traces <= 0:
+            return
+
+        traces = []
+        for trajectory_index, trajectory in enumerate(trajectories):
+            if len(traces) >= max_traces:
+                break
+            traces.extend(
+                self._trajectory_to_trackio_traces(
+                    trajectory,
+                    split=split,
+                    global_step=global_step,
+                    trajectory_index=trajectory_index,
+                    tokenizer=tokenizer,
+                    remaining=max_traces - len(traces),
+                )
+            )
+
+        if traces:
+            trackio.log({f"{split}/trajectories": traces}, step=global_step)
+
+    def _trajectory_to_trackio_traces(
+        self,
+        trajectory: dict[str, Any],
+        *,
+        split: str,
+        global_step: int,
+        trajectory_index: int,
+        tokenizer,
+        remaining: int,
+    ) -> list[Any]:
+        input_ids = trajectory.get("input_ids")
+        loss_mask = trajectory.get("loss_mask")
+        attention_mask = trajectory.get("attention_mask")
+        rewards = trajectory.get("rewards")
+        versions = trajectory.get("versions")
+
+        if input_ids is None or loss_mask is None or attention_mask is None:
+            return []
+
+        traces = []
+        batch_size = input_ids.shape[0]
+        for sample_index in range(batch_size):
+            if len(traces) >= remaining:
+                break
+            seqlen = int(attention_mask[sample_index].sum().item())
+            if seqlen <= 0:
+                continue
+
+            ids = input_ids[sample_index, :seqlen].detach().cpu().tolist()
+            mask = loss_mask[sample_index, :seqlen].detach().cpu().tolist()
+            if not mask or mask[-1] != 1:
+                continue
+
+            prompt_len = seqlen - sum(mask)
+            prompt = tokenizer.decode(ids[:prompt_len], skip_special_tokens=False)
+            completion = tokenizer.decode(ids[prompt_len:], skip_special_tokens=False)
+            metadata = {
+                "split": split,
+                "global_step": global_step,
+                "trajectory_index": trajectory_index,
+                "sample_index": sample_index,
+                "seqlen": seqlen,
+                "prompt_len": prompt_len,
+            }
+            if rewards is not None:
+                metadata["reward"] = float(rewards[sample_index].item())
+            if versions is not None:
+                sample_versions = (
+                    versions[sample_index, :seqlen].detach().cpu().tolist()
+                )
+                metadata["head_version"] = min(sample_versions)
+                metadata["tail_version"] = max(sample_versions)
+
+            traces.append(
+                trackio.Trace(
+                    messages=[
+                        {"role": "user", "content": prompt},
+                        {"role": "assistant", "content": completion},
+                    ],
+                    metadata=metadata,
+                )
+            )
+        return traces
 
     def print_stats(self, stats: dict[str, float]):
         logger.info("\n" + tabulate_stats(stats))

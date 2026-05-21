@@ -3,6 +3,8 @@
 from dataclasses import fields
 from unittest.mock import MagicMock, patch
 
+import torch
+
 from areal.api.cli_args import (
     StatsLoggerConfig,
     TrackioConfig,
@@ -23,6 +25,7 @@ class TestTrackioConfig:
         assert config.project is None
         assert config.name is None
         assert config.space_id is None
+        assert config.max_rollout_traces_per_step == 32
 
     def test_custom_values(self):
         """TrackioConfig should accept custom values."""
@@ -31,11 +34,13 @@ class TestTrackioConfig:
             project="my-project",
             name="my-run",
             space_id="user/my-space",
+            max_rollout_traces_per_step=8,
         )
         assert config.mode == "online"
         assert config.project == "my-project"
         assert config.name == "my-run"
         assert config.space_id == "user/my-space"
+        assert config.max_rollout_traces_per_step == 8
 
     def test_invalid_mode_raises_error(self):
         """TrackioConfig should reject invalid mode values."""
@@ -193,3 +198,112 @@ class TestStatsLoggerTrackioIntegration:
         data = {"loss/avg": 0.5}
         logger.commit(epoch=0, step=0, global_step=0, data=data)
         mock_trackio.log.assert_not_called()
+
+    @patch("areal.utils.stats_logger.trackio")
+    @patch("areal.utils.stats_logger.wandb")
+    @patch("areal.utils.stats_logger.swanlab")
+    @patch("areal.utils.stats_logger.dist")
+    def test_trackio_trace_logging_from_rollout_tensors(
+        self, mock_dist, mock_swanlab, mock_wandb, mock_trackio
+    ):
+        """Rollout tensors should be decoded and logged as trackio.Trace records."""
+        mock_dist.is_initialized.return_value = False
+        mock_trackio.Trace.side_effect = lambda messages, metadata: {
+            "_type": "trackio.trace",
+            "messages": messages,
+            "metadata": metadata,
+        }
+
+        from areal.utils.stats_logger import StatsLogger
+
+        config = _make_test_config(TrackioConfig(mode="online"))
+        logger = StatsLogger(config, _make_ft_spec())
+        mock_trackio.log.reset_mock()
+
+        tokenizer = MagicMock()
+        tokenizer.decode.side_effect = lambda ids, skip_special_tokens=False: " ".join(
+            str(i) for i in ids
+        )
+        trajectory = {
+            "input_ids": torch.tensor([[1, 2, 3, 4]], dtype=torch.int64),
+            "attention_mask": torch.tensor([[1, 1, 1, 1]], dtype=torch.bool),
+            "loss_mask": torch.tensor([[0, 0, 1, 1]], dtype=torch.int64),
+            "rewards": torch.tensor([0.75], dtype=torch.float32),
+            "versions": torch.tensor([[0, 0, 2, 2]], dtype=torch.int64),
+        }
+
+        logger.log_rollout_traces(
+            [trajectory],
+            split="rollout",
+            global_step=3,
+            tokenizer=tokenizer,
+        )
+
+        mock_trackio.Trace.assert_called_once()
+        trace_kwargs = mock_trackio.Trace.call_args.kwargs
+        assert trace_kwargs["messages"] == [
+            {"role": "user", "content": "1 2"},
+            {"role": "assistant", "content": "3 4"},
+        ]
+        assert trace_kwargs["metadata"] == {
+            "split": "rollout",
+            "global_step": 3,
+            "trajectory_index": 0,
+            "sample_index": 0,
+            "seqlen": 4,
+            "prompt_len": 2,
+            "reward": 0.75,
+            "head_version": 0,
+            "tail_version": 2,
+        }
+        mock_trackio.log.assert_called_once()
+        assert mock_trackio.log.call_args.args[0]["rollout/trajectories"] == [
+            {
+                "_type": "trackio.trace",
+                "messages": trace_kwargs["messages"],
+                "metadata": trace_kwargs["metadata"],
+            }
+        ]
+        assert mock_trackio.log.call_args.kwargs == {"step": 3}
+
+    @patch("areal.utils.stats_logger.trackio")
+    @patch("areal.utils.stats_logger.wandb")
+    @patch("areal.utils.stats_logger.swanlab")
+    @patch("areal.utils.stats_logger.dist")
+    def test_trackio_trace_logging_respects_cap(
+        self, mock_dist, mock_swanlab, mock_wandb, mock_trackio
+    ):
+        """Trace logging should respect max_rollout_traces_per_step."""
+        mock_dist.is_initialized.return_value = False
+        mock_trackio.Trace.side_effect = lambda messages, metadata: {
+            "messages": messages,
+            "metadata": metadata,
+        }
+
+        from areal.utils.stats_logger import StatsLogger
+
+        config = _make_test_config(
+            TrackioConfig(mode="online", max_rollout_traces_per_step=1)
+        )
+        logger = StatsLogger(config, _make_ft_spec())
+        mock_trackio.log.reset_mock()
+
+        tokenizer = MagicMock()
+        tokenizer.decode.side_effect = lambda ids, skip_special_tokens=False: " ".join(
+            str(i) for i in ids
+        )
+        trajectory = {
+            "input_ids": torch.tensor([[1, 2], [3, 4]], dtype=torch.int64),
+            "attention_mask": torch.tensor([[1, 1], [1, 1]], dtype=torch.bool),
+            "loss_mask": torch.tensor([[0, 1], [0, 1]], dtype=torch.int64),
+            "rewards": torch.tensor([1.0, 0.0], dtype=torch.float32),
+        }
+
+        logger.log_rollout_traces(
+            [trajectory],
+            split="rollout",
+            global_step=0,
+            tokenizer=tokenizer,
+        )
+
+        assert mock_trackio.Trace.call_count == 1
