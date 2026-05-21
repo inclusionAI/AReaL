@@ -578,6 +578,12 @@ class PPOTrainer:
                     group_size=config.gconfig.n_samples,
                     dynamic_bs=self.config.dynamic_bs,
                 )
+                self.stats_logger.log_rollout_traces(
+                    rollout_batch,
+                    split="rollout",
+                    global_step=global_step,
+                    tokenizer=self.tokenizer,
+                )
             if self._should_offload_rollout:
                 self._offload_rollout()
 
@@ -1135,6 +1141,7 @@ class PPOTrainer:
         self,
         eval_workflow: WorkflowLike,
         eval_workflow_kwargs,
+        global_step: int,
     ):
         if self.actor.is_data_parallel_head():
             cnt = 0
@@ -1148,7 +1155,13 @@ class PPOTrainer:
                         is_eval=True,
                     )
                     cnt += 1
-            self.eval_rollout.wait(cnt, timeout=None)
+            eval_batch = self.eval_rollout.wait(cnt, timeout=None)
+            self.stats_logger.log_rollout_traces(
+                eval_batch,
+                split="eval-rollout",
+                global_step=global_step,
+                tokenizer=self.tokenizer,
+            )
 
         dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()
@@ -1172,6 +1185,7 @@ class PPOTrainer:
                 self._evaluate_fn,
                 eval_workflow=eval_workflow,
                 eval_workflow_kwargs=eval_workflow_kwargs,
+                global_step=global_step,
             ),
             epoch,
             epoch_step,
