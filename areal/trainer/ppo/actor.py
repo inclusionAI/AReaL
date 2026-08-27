@@ -27,8 +27,12 @@ from areal.utils.constants import (
 from areal.utils.data import (
     KLEstimator,
     Normalization,
+    TrajBatchMeta,
     batched_call,
+    concat_batch,
     is_multi_modal_key,
+    normalize_rollout_rewards,
+    split_batch,
     split_padded_tensor_dict_into_mb_list,
 )
 from areal.utils.functional import (
@@ -141,17 +145,23 @@ class PPOActor:
 
     @trace_perf("ppo_actor.compute_advantages", category="compute")
     def compute_advantages(self, data: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return batched_call(self._compute_advantages, data)
+        batched, meta = concat_batch(data)
+        return split_batch(self._compute_advantages(batched, meta), meta)
 
-    def _compute_advantages(self, data: dict[str, Any]) -> dict[str, Any]:
+    def _compute_advantages(
+        self, data: dict[str, Any], meta: TrajBatchMeta
+    ) -> dict[str, Any]:
         bs = data["input_ids"].shape[0]
         max_seqlen = data["input_ids"].shape[1]
         batch_indices = torch.arange(
             bs, device=data["input_ids"].device, dtype=torch.long
         )
 
+        unpenalized_rewards = None
         # Reward Penalty on length
         if self.config.overlong_reward_penalty:
+            if self.reward_norm and data.get("begin_of_trajectory") is not None:
+                unpenalized_rewards = data["rewards"].clone()
             overlong_tokens = self.config.overlong_tokens
             overlong_penalty_factor = self.config.overlong_penalty_factor
 
@@ -171,7 +181,35 @@ class PPOActor:
             reward_score, max=self.reward_clip, min=-self.reward_clip
         )
         if self.reward_norm:
-            reward_score = self.reward_norm(reward_score)
+            if any(
+                r is not None
+                for group in meta.rollout_rewards
+                if group is not None
+                for r in group
+            ):
+                reward_score = normalize_rollout_rewards(
+                    data["rewards"],
+                    self.reward_norm,
+                    meta,
+                    reward_bias=self.reward_bias,
+                    reward_scaling=self.reward_scaling,
+                    reward_clip=self.reward_clip,
+                    unpenalized_rewards=unpenalized_rewards,
+                    traj_starts=data.get("begin_of_trajectory"),
+                )
+            else:
+                if unpenalized_rewards is not None:
+                    unpenalized_rewards = (
+                        (unpenalized_rewards + self.reward_bias) * self.reward_scaling
+                    ).clamp(min=-self.reward_clip, max=self.reward_clip)
+                # Compute one reference per trajectory, but apply the normalization
+                # to each row so branch-local length penalties remain intact.
+                reward_score = self.reward_norm(
+                    reward_score,
+                    traj_starts=data.get("begin_of_trajectory"),
+                    group_sizes=meta.traj_group_sizes,
+                    unpenalized_rewards=unpenalized_rewards,
+                )
 
         loss_mask = data["loss_mask"].float()
         loss_mask = torch.roll(loss_mask, shifts=-1, dims=-1)
@@ -330,7 +368,7 @@ class PPOActor:
 
         # Pop keys that are no longer needed after advantage computation
         # Note: "versions" is kept if needed for approximation/metrics in loss function
-        for key in ["rewards", "tot_rewards", "kl_rewards"]:
+        for key in ["rewards", "tot_rewards", "kl_rewards", "begin_of_trajectory"]:
             data.pop(key, None)
         # NOTE: calling engine.train() is critical to enabling gradient checkpointing
         self.engine.train()
