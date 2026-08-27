@@ -4,8 +4,9 @@
 # Copyright (c) 2023, Tri Dao.
 
 import copy
+import math
 from collections.abc import Callable, Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 
 import numpy as np
@@ -422,6 +423,7 @@ class TrajBatchMeta:
     n_trajs: int
     traj_group_sizes: list[int]
     traj_seqlens: list[int]
+    rollout_rewards: list[list[float | None] | None] = field(default_factory=list)
 
 
 def concat_batch(
@@ -431,21 +433,26 @@ def concat_batch(
     assert isinstance(data, list) and all(isinstance(d, dict) for d in data), (
         f"Expected list[dict], got {type(data)}"
     )
-    traj_group_sizes = []
-    for d in data:
-        first_tensor = next(
-            (v for v in d.values() if isinstance(v, torch.Tensor)), None
-        )
-        traj_group_sizes.append(
-            first_tensor.shape[0] if first_tensor is not None else 1
-        )
+    traj_group_sizes = [get_batch_size(d) for d in data]
+    rollout_rewards = [d.get("rollout_rewards") for d in data]
+    for rewards, rows in zip(rollout_rewards, traj_group_sizes):
+        if rewards is not None:
+            if not isinstance(rewards, list) or len(rewards) != rows:
+                raise ValueError("rollout_rewards must contain one reference per row")
+            if any(
+                r is not None and (type(r) not in (int, float) or not math.isfinite(r))
+                for r in rewards
+            ):
+                raise ValueError("rollout_reward must be finite")
     traj_seqlens = [d["attention_mask"].shape[-1] for d in data]
     meta = TrajBatchMeta(
         n_trajs=len(data),
         traj_group_sizes=traj_group_sizes,
         traj_seqlens=traj_seqlens,
+        rollout_rewards=rollout_rewards,
     )
-    return concat_padded_tensors(data), meta
+    tensors = [{k: v for k, v in d.items() if k != "rollout_rewards"} for d in data]
+    return concat_padded_tensors(tensors), meta
 
 
 def split_batch(
@@ -453,9 +460,14 @@ def split_batch(
     meta: TrajBatchMeta,
 ) -> list[Any] | None:
     """Inverse of concat_batch: split batched result back into per-trajectory list."""
-    return split_and_unpad_tensor(
+    split = split_and_unpad_tensor(
         result, meta.n_trajs, meta.traj_group_sizes, meta.traj_seqlens
     )
+    if isinstance(result, dict):
+        for item, rewards in zip(split, meta.rollout_rewards):
+            if rewards is not None:
+                item["rollout_rewards"] = rewards
+    return split
 
 
 def batched_call(

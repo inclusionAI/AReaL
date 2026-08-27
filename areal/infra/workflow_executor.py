@@ -1194,6 +1194,20 @@ class WorkflowExecutor:
                 ):
                     traj = interactions_to_trajectory(traj)
 
+                # One episode may export several rows in either tensor format.
+                # Grouped workflows already carry their per-episode boundaries.
+                if isinstance(traj, dict) and "begin_of_trajectory" not in traj:
+                    input_ids = traj.get("input_ids")
+                    if torch.is_tensor(input_ids) and input_ids.shape[0] > 0:
+                        traj = dict(traj)
+                        trajectory_starts = torch.zeros(
+                            input_ids.shape[0],
+                            dtype=torch.int32,
+                            device=input_ids.device,
+                        )
+                        trajectory_starts[0] = 1
+                        traj["begin_of_trajectory"] = trajectory_starts
+
                 assert traj is None or isinstance(traj, dict), traj
 
                 if traj is None:
