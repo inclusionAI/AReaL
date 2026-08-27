@@ -3,7 +3,8 @@
 import pytest
 import torch
 
-from areal.api.cli_args import NormConfig
+from areal.api.cli_args import NormConfig, PPOActorConfig
+from areal.trainer.ppo.actor import PPOActor
 from areal.utils.data import Normalization
 
 
@@ -162,3 +163,57 @@ def test_reward_normalization_trajectory_crossing_group_boundary_raises():
             traj_starts=torch.tensor([1, 0, 0, 1]),
             group_sizes=[2, 2],
         )
+
+
+@pytest.mark.parametrize("group_counts", [[7, 8, 8, 8], [8, 7, 8, 8]])
+@pytest.mark.parametrize("multiple_rows", [False, True])
+@pytest.mark.parametrize("partitions", [1, 2])
+def test_actor_advantages_short_group_preserves_prompt_boundaries(
+    group_counts, multiple_rows, partitions
+):
+    """Each actor shard uses actual prompt groups and returns original row shapes."""
+    config = PPOActorConfig(
+        path="dummy",
+        reward_norm=NormConfig(mean_level="group", std_level="group", group_size=8),
+        recompute_logprob=False,
+        kl_ctl=0.0,
+    )
+    actor = PPOActor(config, engine=None)
+    batch = []
+    for group_index, count in enumerate(group_counts):
+        repeats = (
+            torch.arange(count) % 3 + 1
+            if multiple_rows
+            else torch.ones(count, dtype=torch.long)
+        )
+        n_rows = int(repeats.sum())
+        shape = (n_rows, group_index + 3)
+        item = {
+            "input_ids": torch.ones(shape, dtype=torch.long),
+            "attention_mask": torch.ones(shape, dtype=torch.bool),
+            "loss_mask": torch.ones(shape, dtype=torch.bool),
+            "logprobs": torch.zeros(shape),
+            "rewards": torch.full((n_rows,), float(group_index)),
+        }
+        item["loss_mask"][:, 0] = False
+        if multiple_rows:
+            starts = torch.zeros(n_rows, dtype=torch.int32)
+            starts[repeats.cumsum(0) - repeats] = 1
+            item["begin_of_trajectory"] = starts
+        batch.append(item)
+
+    # Emulate whole-prompt DP dispatch. Group normalization needs no collective.
+    result = []
+    shard_size = len(batch) // partitions
+    for start in range(0, len(batch), shard_size):
+        result.extend(actor.compute_advantages(batch[start : start + shard_size]))
+
+    assert len(result) == len(batch)
+    for original, computed in zip(batch, result):
+        for key in ("advantages", "tot_rewards"):
+            torch.testing.assert_close(
+                computed[key],
+                torch.zeros_like(original["logprobs"]),
+                rtol=0,
+                atol=0,
+            )
