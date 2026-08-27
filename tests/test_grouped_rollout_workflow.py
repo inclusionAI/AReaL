@@ -119,3 +119,97 @@ async def test_grouped_vision_rollouts_share_images_only_within_group(monkeypatc
         is not second["multi_modal_input"][0]["pixel_values"]
     )
     torch.testing.assert_close(first["input_ids"], second["input_ids"], rtol=0, atol=0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("explicit_first_marker", [False, True])
+@pytest.mark.parametrize("empty_sample", [None, "none", "empty_dict", "empty_rows"])
+async def test_grouped_tensor_episodes_preserve_multirow_trajectory_means(
+    explicit_first_marker, empty_sample
+):
+    """Two rows from one episode preserve a single logical trajectory boundary."""
+    episodes = []
+    for n_rows, reward in [(2, 1.0), (1, 10.0)]:
+        shape = (n_rows, 2)
+        episodes.append(
+            {
+                "input_ids": torch.ones(shape, dtype=torch.long),
+                "attention_mask": torch.ones(shape, dtype=torch.bool),
+                "loss_mask": torch.ones(shape, dtype=torch.bool),
+                "rewards": torch.full((n_rows,), reward),
+            }
+        )
+    if explicit_first_marker:
+        episodes[0]["begin_of_trajectory"] = torch.tensor([1, 0], dtype=torch.int32)
+    candidates = list(episodes)
+    if empty_sample is not None:
+        if empty_sample == "none":
+            empty = None
+        elif empty_sample == "empty_dict":
+            empty = {}
+        else:
+            empty = {key: value[:0] for key, value in episodes[0].items()}
+        candidates.insert(0, empty)
+
+    class TensorWorkflow(RolloutWorkflow):
+        async def arun_episode(self, engine, data):
+            return candidates[workflow_context.get().sample_idx]
+
+    workflow = GroupedRolloutWorkflow(TensorWorkflow(), len(candidates), Mock())
+
+    result = await workflow.arun_episode(None, {})
+
+    torch.testing.assert_close(
+        result["begin_of_trajectory"],
+        torch.tensor([1, 0, 1], dtype=torch.int32),
+        rtol=0,
+        atol=0,
+    )
+    assert ("begin_of_trajectory" in episodes[0]) == explicit_first_marker
+    assert "begin_of_trajectory" not in episodes[1]
+
+
+@pytest.mark.asyncio
+async def test_grouped_tensor_episodes_keep_explicit_internal_boundaries():
+    """Existing logical trajectory boundaries take precedence over defaults."""
+    episodes = [
+        {
+            "input_ids": torch.ones(3, 2, dtype=torch.long),
+            "attention_mask": torch.ones(3, 2, dtype=torch.bool),
+            "begin_of_trajectory": torch.tensor([1, 0, 1], dtype=torch.int32),
+        },
+        {
+            "input_ids": torch.ones(1, 2, dtype=torch.long),
+            "attention_mask": torch.ones(1, 2, dtype=torch.bool),
+        },
+    ]
+
+    class TensorWorkflow(RolloutWorkflow):
+        async def arun_episode(self, engine, data):
+            return episodes[workflow_context.get().sample_idx]
+
+    result = await GroupedRolloutWorkflow(TensorWorkflow(), 2, Mock()).arun_episode(
+        None, {}
+    )
+
+    torch.testing.assert_close(
+        result["begin_of_trajectory"],
+        torch.tensor([1, 0, 1, 1], dtype=torch.int32),
+        rtol=0,
+        atol=0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_grouped_tensor_episodes_all_empty_return_none():
+    """Empty tensor episodes cannot supply a trajectory start row."""
+
+    class EmptyWorkflow(RolloutWorkflow):
+        async def arun_episode(self, engine, data):
+            return {"input_ids": torch.empty(0, 2, dtype=torch.long)}
+
+    result = await GroupedRolloutWorkflow(EmptyWorkflow(), 2, Mock()).arun_episode(
+        None, {}
+    )
+
+    assert result is None
