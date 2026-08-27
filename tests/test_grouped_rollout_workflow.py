@@ -14,9 +14,10 @@ from tests.experimental.openai.vision_stubs import (
 )
 
 from areal.api import ModelResponse, RolloutWorkflow
-from areal.api.cli_args import GenerationHyperparameters
+from areal.api.cli_args import GenerationHyperparameters, NormConfig
 from areal.infra import workflow_context
 from areal.infra.remote_inf_engine import GroupedRolloutWorkflow
+from areal.utils.data import Normalization
 from areal.workflow.vision_rlvr import VisionRLVRWorkflow
 
 
@@ -127,7 +128,7 @@ async def test_grouped_vision_rollouts_share_images_only_within_group(monkeypatc
 async def test_grouped_tensor_episodes_preserve_multirow_trajectory_means(
     explicit_first_marker, empty_sample
 ):
-    """Two rows from one episode preserve a single logical trajectory boundary."""
+    """Two rows from one episode count once for the reward baseline."""
     episodes = []
     for n_rows, reward in [(2, 1.0), (1, 10.0)]:
         shape = (n_rows, 2)
@@ -167,6 +168,16 @@ async def test_grouped_tensor_episodes_preserve_multirow_trajectory_means(
     )
     assert ("begin_of_trajectory" in episodes[0]) == explicit_first_marker
     assert "begin_of_trajectory" not in episodes[1]
+    centered = Normalization(
+        NormConfig(mean_level="group", std_level=None, group_size=2)
+    )(
+        result["rewards"],
+        traj_starts=result["begin_of_trajectory"],
+        group_sizes=[3],
+    )
+    torch.testing.assert_close(
+        centered, torch.tensor([-4.5, -4.5, 4.5]), rtol=0, atol=0
+    )
 
 
 @pytest.mark.asyncio
