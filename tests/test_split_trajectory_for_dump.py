@@ -1,5 +1,6 @@
-"""Tests for WorkflowExecutor._split_trajectory_for_dump and _compute_output_versions."""
+"""Tests for WorkflowExecutor trajectory dump helpers."""
 
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -124,6 +125,24 @@ class TestComputeOutputVersions:
         assert rle == [[5, 2], [6, 2]]
 
 
+class TestComputeTrajectoryRowMetadata:
+    def test_computes_grouped_row_indices(self):
+        trajectory_indices, row_indices = (
+            WorkflowExecutor._compute_trajectory_row_metadata([1, 0, 0, 1], 4)
+        )
+
+        assert trajectory_indices == [0, 0, 0, 1]
+        assert row_indices == [0, 1, 2, 0]
+
+    def test_rejects_length_mismatch(self):
+        with pytest.raises(ValueError, match="length 1 != batch size 2"):
+            WorkflowExecutor._compute_trajectory_row_metadata([1], 2)
+
+    def test_rejects_missing_first_row_marker(self):
+        with pytest.raises(ValueError, match="first row must begin"):
+            WorkflowExecutor._compute_trajectory_row_metadata([0, 1], 2)
+
+
 @pytest.mark.asyncio
 async def test_workflow_executor_marks_single_proxy_session_rows():
     interactions = {
@@ -198,3 +217,94 @@ async def test_workflow_executor_tensor_episode_preserves_trajectory_boundaries(
         result.trajectory["begin_of_trajectory"], expected, rtol=0, atol=0
     )
     assert ("begin_of_trajectory" in trajectory) == explicit_markers
+
+
+@pytest.mark.asyncio
+async def test_dump_trajectory_writes_grouped_row_indices(tmp_path):
+    executor = object.__new__(WorkflowExecutor)
+    executor.logger = MagicMock()
+    executor._get_dump_dir = lambda _is_eval: str(tmp_path)
+    executor._get_tokenizer = lambda: _FakeTokenizer()
+
+    trajectory = {
+        "input_ids": torch.tensor(
+            [[1, 11], [2, 12], [3, 13], [4, 14]], dtype=torch.long
+        ),
+        "rewards": torch.tensor([1.0, 1.0, 1.0, 0.0]),
+        "loss_mask": torch.tensor([[0, 1]] * 4, dtype=torch.int32),
+        "attention_mask": torch.ones((4, 2), dtype=torch.bool),
+        "versions": torch.tensor([[-1, 3]] * 4, dtype=torch.int32),
+        "begin_of_trajectory": torch.tensor([1, 0, 0, 1], dtype=torch.int32),
+    }
+
+    success, reason = await executor._dump_trajectory(
+        trajectory, task_id=7, is_eval=False
+    )
+
+    assert success, reason
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "3" / "7.jsonl").read_text().splitlines()
+    ]
+    assert [record["reward"] for record in records] == [1.0, 1.0, 1.0, 0.0]
+    assert [
+        {
+            key: record[key]
+            for key in (
+                "begin_of_trajectory",
+                "trajectory_idx",
+                "row_idx_in_trajectory",
+            )
+        }
+        for record in records
+    ] == [
+        {
+            "begin_of_trajectory": 1,
+            "trajectory_idx": 0,
+            "row_idx_in_trajectory": 0,
+        },
+        {
+            "begin_of_trajectory": 0,
+            "trajectory_idx": 0,
+            "row_idx_in_trajectory": 1,
+        },
+        {
+            "begin_of_trajectory": 0,
+            "trajectory_idx": 0,
+            "row_idx_in_trajectory": 2,
+        },
+        {
+            "begin_of_trajectory": 1,
+            "trajectory_idx": 1,
+            "row_idx_in_trajectory": 0,
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_dump_trajectory_treats_legacy_batch_rows_as_samples(tmp_path):
+    executor = object.__new__(WorkflowExecutor)
+    executor.logger = MagicMock()
+    executor._get_dump_dir = lambda _is_eval: str(tmp_path)
+    executor._get_tokenizer = lambda: _FakeTokenizer()
+
+    trajectory = {
+        "input_ids": torch.tensor([[1, 11], [2, 12]], dtype=torch.long),
+        "rewards": torch.tensor([1.0, 0.0]),
+        "loss_mask": torch.tensor([[0, 1], [0, 1]], dtype=torch.int32),
+        "attention_mask": torch.ones((2, 2), dtype=torch.bool),
+        "versions": torch.tensor([[-1, 3], [-1, 3]], dtype=torch.int32),
+    }
+
+    success, reason = await executor._dump_trajectory(
+        trajectory, task_id=8, is_eval=False
+    )
+
+    assert success, reason
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "3" / "8.jsonl").read_text().splitlines()
+    ]
+    assert [record["begin_of_trajectory"] for record in records] == [1, 1]
+    assert [record["trajectory_idx"] for record in records] == [0, 1]
+    assert [record["row_idx_in_trajectory"] for record in records] == [0, 0]
