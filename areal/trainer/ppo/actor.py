@@ -12,6 +12,7 @@ from areal.experimental.training_service.controller.controller import (
 )
 from areal.infra import TrainController
 from areal.infra.rpc.serialization import serialize_value
+from areal.trainer.ppo.loss_reduction import prepare_policy_gradient_batch
 from areal.trainer.ppo.stats import infer_token_denominator
 from areal.utils import logging, stats_tracker
 from areal.utils.constants import (
@@ -369,6 +370,17 @@ class PPOActor:
 
         # Pop keys that are no longer needed after advantage computation
         # Note: "versions" is kept if needed for approximation/metrics in loss function
+        group_sizes = None
+        if self.config.loss_aggregation == "traj-mean":
+            group_sizes = _trajectory_row_counts(
+                data.get("begin_of_trajectory"), data["loss_mask"].shape[0]
+            )
+        prepared_loss = prepare_policy_gradient_batch(
+            data,
+            mode=self.config.loss_aggregation,
+            divisor=self.config.loss_aggregation_divisor,
+            group_sizes=group_sizes,
+        )
         for key in ["rewards", "tot_rewards", "kl_rewards", "begin_of_trajectory"]:
             data.pop(key, None)
         # NOTE: calling engine.train() is critical to enabling gradient checkpointing
@@ -378,17 +390,16 @@ class PPOActor:
             n_mbs=self.config.ppo_n_minibatches,
             group=self.engine.data_parallel_group,
         )
+        loss_steps = prepared_loss.for_steps(
+            mb_inputs,
+            dp_group=self.engine.data_parallel_group,
+            device=self.engine.device,
+        )
 
         with stats_tracker.scope("update"):
             # Get current version for proximal approximation metrics
             current_version = self.engine.get_version()
-
-            pg_reduction = PolicyGradientReduction(
-                mode=self.config.loss_aggregation,
-                divisor=self.config.loss_aggregation_divisor,
-            )
-
-            for mb in mb_inputs:
+            for mb, loss_step in zip(mb_inputs, loss_steps, strict=True):
                 train_stat = self.engine.train_batch(
                     mb,
                     loss_fn=functools.partial(
@@ -405,9 +416,9 @@ class PPOActor:
                         sapo_tau_pos=self.config.sapo_tau_pos,
                         sapo_tau_neg=self.config.sapo_tau_neg,
                         use_decoupled_loss=self.config.use_decoupled_loss,
-                        pg_reduction=pg_reduction,
+                        pg_reduction=loss_step,
                     ),
-                    loss_weight_fn=pg_reduction.normalizer_fn,
+                    loss_weight_fn=loss_step.normalizer_fn,
                 )
                 stats_tracker.scalar(**train_stat)
 
@@ -496,6 +507,48 @@ class PPOActorControllerV2(GatewayTrainController):
             "kwargs": serialize_value(kwargs),
         }
         self._gateway_post("/ppo/actor/update", payload)
+
+
+def _trajectory_row_counts(
+    begin_of_trajectory: torch.Tensor | None,
+    n_rows: int,
+) -> list[int]:
+    """Return contiguous row counts for logical trajectory metadata."""
+    if begin_of_trajectory is None:
+        return [1] * n_rows
+
+    starts = begin_of_trajectory.reshape(-1)
+    boundaries = torch.nonzero(starts, as_tuple=False).reshape(-1)
+    boundary_rows = boundaries.cpu().tolist()
+    return [
+        end - start for start, end in zip(boundary_rows, [*boundary_rows[1:], n_rows])
+    ]
+
+
+def trajectory_token_weights(
+    loss_mask: torch.Tensor,
+    begin_of_trajectory: torch.Tensor | None,
+    trajectories_per_group: int = 1,
+) -> torch.Tensor:
+    """Return full-unit coefficients through the shared preparation kernel.
+
+    This helper keeps the existing complete-group interface. Actor training
+    uses actual prompt metadata so failed samples never shift group boundaries.
+    """
+    sizes = _trajectory_row_counts(begin_of_trajectory, loss_mask.shape[0])
+    if trajectories_per_group > 1:
+        if len(sizes) % trajectories_per_group:
+            raise ValueError(
+                f"{len(sizes)} trajectories do not divide into groups of "
+                f"{trajectories_per_group}; a rollout group lost members."
+            )
+        sizes = [
+            sum(sizes[i : i + trajectories_per_group])
+            for i in range(0, len(sizes), trajectories_per_group)
+        ]
+    data = {"loss_mask": loss_mask}
+    prepare_policy_gradient_batch(data, mode="traj-mean", group_sizes=sizes)
+    return data["unit_weights"]
 
 
 def grpo_loss_fn(

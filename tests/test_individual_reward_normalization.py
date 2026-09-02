@@ -40,7 +40,7 @@ from areal.utils.data import (
     "device",
     ["cpu", pytest.param("cuda", marks=[pytest.mark.gpu, pytest.mark.cuda])],
 )
-@pytest.mark.parametrize("mode", ["token-mean", "seq-mean"])
+@pytest.mark.parametrize("mode", ["token-mean", "seq-mean", "traj-mean"])
 @pytest.mark.parametrize("export_mode", ["inline", "online"])
 @pytest.mark.parametrize(
     "explicit_reference",
@@ -216,7 +216,7 @@ def _reward_batch():
     }
 
 
-@pytest.mark.parametrize("mode", ["token-mean", "seq-mean"])
+@pytest.mark.parametrize("mode", ["token-mean", "seq-mean", "traj-mean"])
 def test_rollout_references_stay_out_of_model_batches(mode, monkeypatch):
     """Reference metadata survives advantages but never reaches forward/train inputs."""
     calls = []
