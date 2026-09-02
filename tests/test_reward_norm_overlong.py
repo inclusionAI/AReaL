@@ -31,10 +31,11 @@ def _batch(rewards, lengths, starts):
     }
 
 
-def _actor(norm, **kwargs):
+def _actor(norm, mode="token-mean", **kwargs):
     return PPOActor(
         PPOActorConfig(
             path="dummy",
+            loss_aggregation=mode,
             reward_norm=norm,
             recompute_logprob=False,
             kl_ctl=0.0,
@@ -48,13 +49,14 @@ def _actor(norm, **kwargs):
     )
 
 
+@pytest.mark.parametrize("mode", ["token-mean", "seq-mean"])
 @pytest.mark.parametrize("long_row", [0, 1])
 @pytest.mark.parametrize(
     "mean_level,std_level",
     [("group", None), ("group", "group"), ("batch", "group"), ("group", "batch")],
 )
 def test_actor_overlong_penalty_preserves_each_split_row(
-    long_row, mean_level, std_level
+    mode, long_row, mean_level, std_level
 ):
     """The same logical references apply regardless of which branch is long."""
     norm = NormConfig(
@@ -64,7 +66,7 @@ def test_actor_overlong_penalty_preserves_each_split_row(
     lengths[long_row] = 4
     batch = _batch([1.0, 1.0, 0.0], lengths, [1, 0, 1])
 
-    result = _actor(norm).compute_advantages([batch])[0]
+    result = _actor(norm, mode).compute_advantages([batch])[0]
 
     # References are [1, 0], hence mean 0.5 and population std 0.5.
     expected = torch.tensor([0.5, 0.5, -0.5])
@@ -83,7 +85,8 @@ def test_actor_overlong_penalty_preserves_each_split_row(
     )
 
 
-def test_actor_overlong_reference_shares_reward_bias_scaling_and_clipping():
+@pytest.mark.parametrize("mode", ["token-mean", "seq-mean"])
+def test_actor_overlong_reference_shares_reward_bias_scaling_and_clipping(mode):
     """Scores and logical references use identical reward transformations."""
     norm = NormConfig(
         mean_level="group", std_level="group", group_size=2, std_unbiased=False
@@ -91,7 +94,7 @@ def test_actor_overlong_reference_shares_reward_bias_scaling_and_clipping():
     batch = _batch([1.0, 1.0, -1.0], [1, 4, 1], [1, 0, 1])
 
     result = _actor(
-        norm, reward_bias=2.0, reward_scaling=3.0, reward_clip=7.0
+        norm, mode, reward_bias=2.0, reward_scaling=3.0, reward_clip=7.0
     ).compute_advantages([batch])[0]
 
     # Scores [7, 6, 3], references [7, 3]: mean 5, population std 2.
