@@ -31,7 +31,7 @@ def _batch(rewards, lengths, starts):
     }
 
 
-def _actor(norm, mode="token-mean", **kwargs):
+def _actor(norm, mode="traj-mean", **kwargs):
     return PPOActor(
         PPOActorConfig(
             path="dummy",
@@ -49,7 +49,7 @@ def _actor(norm, mode="token-mean", **kwargs):
     )
 
 
-@pytest.mark.parametrize("mode", ["token-mean", "seq-mean"])
+@pytest.mark.parametrize("mode", ["token-mean", "seq-mean", "traj-mean"])
 @pytest.mark.parametrize("long_row", [0, 1])
 @pytest.mark.parametrize(
     "mean_level,std_level",
@@ -85,7 +85,7 @@ def test_actor_overlong_penalty_preserves_each_split_row(
     )
 
 
-@pytest.mark.parametrize("mode", ["token-mean", "seq-mean"])
+@pytest.mark.parametrize("mode", ["token-mean", "seq-mean", "traj-mean"])
 def test_actor_overlong_reference_shares_reward_bias_scaling_and_clipping(mode):
     """Scores and logical references use identical reward transformations."""
     norm = NormConfig(

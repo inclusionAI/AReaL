@@ -17,6 +17,8 @@ from areal.api import ModelResponse, RolloutWorkflow
 from areal.api.cli_args import GenerationHyperparameters, NormConfig
 from areal.infra import workflow_context
 from areal.infra.remote_inf_engine import GroupedRolloutWorkflow
+from areal.trainer.ppo.actor import _trajectory_row_counts
+from areal.trainer.ppo.loss_reduction import prepare_policy_gradient_batch
 from areal.utils.data import Normalization
 from areal.workflow.vision_rlvr import VisionRLVRWorkflow
 
@@ -128,7 +130,7 @@ async def test_grouped_vision_rollouts_share_images_only_within_group(monkeypatc
 async def test_grouped_tensor_episodes_preserve_multirow_trajectory_means(
     explicit_first_marker, empty_sample
 ):
-    """Two rows from one episode count once for the reward baseline."""
+    """Two rows from one episode count once for both loss and reward baseline."""
     episodes = []
     for n_rows, reward in [(2, 1.0), (1, 10.0)]:
         shape = (n_rows, 2)
@@ -168,6 +170,23 @@ async def test_grouped_tensor_episodes_preserve_multirow_trajectory_means(
     )
     assert ("begin_of_trajectory" in episodes[0]) == explicit_first_marker
     assert "begin_of_trajectory" not in episodes[1]
+    sizes = _trajectory_row_counts(result["begin_of_trajectory"], 3)
+    assert sizes == [2, 1]
+    for mode, group_sizes, expected in [
+        ("traj-mean", sizes, 5.5),
+        ("seq-mean", None, 4.0),
+    ]:
+        prepared = prepare_policy_gradient_batch(
+            result, mode=mode, group_sizes=group_sizes
+        )
+        reduction = prepared.for_steps([result])[0]
+        loss = reduction.aggregate(
+            result["rewards"].unsqueeze(-1).expand_as(result["loss_mask"]),
+            result["loss_mask"],
+            unit_weights=result.get("unit_weights"),
+        )
+        torch.testing.assert_close(loss, torch.tensor(expected), rtol=0, atol=0)
+
     centered = Normalization(
         NormConfig(mean_level="group", std_level=None, group_size=2)
     )(

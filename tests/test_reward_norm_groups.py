@@ -168,7 +168,7 @@ def test_reward_normalization_trajectory_crossing_group_boundary_raises():
 @pytest.mark.parametrize("group_counts", [[7, 8, 8, 8], [8, 7, 8, 8]])
 @pytest.mark.parametrize("multiple_rows", [False, True])
 @pytest.mark.parametrize("partitions", [1, 2])
-@pytest.mark.parametrize("loss_aggregation", ["token-mean", "seq-mean"])
+@pytest.mark.parametrize("loss_aggregation", ["token-mean", "seq-mean", "traj-mean"])
 def test_actor_advantages_short_group_preserves_prompt_boundaries(
     group_counts, multiple_rows, partitions, loss_aggregation
 ):

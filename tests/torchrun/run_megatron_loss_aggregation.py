@@ -45,6 +45,7 @@ from tests.test_megatron_loss_aggregation import (
 )
 from tests.test_megatron_loss_normalization import (
     _bind_per_token_loss_methods,
+    _MicroBatches,
 )
 
 from areal.engine.core.train_engine import compute_total_loss_weight
@@ -53,6 +54,8 @@ from areal.engine.megatron_utils.packed_context_parallel import (
     split_packed_seqs_for_context_parallel,
 )
 from areal.infra.platforms import current_platform
+from areal.trainer.ppo.loss_reduction import prepare_policy_gradient_batch
+from areal.utils.data import pack_tensor_dict, split_training_batch_into_microbatches
 from areal.utils.functional.loss_aggregation import PolicyGradientReduction
 
 
@@ -84,7 +87,52 @@ class _TinyModel(MegatronModule):
         return reassemble_cp_packed_logprobs(local_output, cu_seqlens).unsqueeze(-1)
 
 
-def run_case(mode, per_token, split, scenario, check):
+def prepare_optimizer_step(data, mode, optimizer_step, split):
+    """Prepare complete local prompts, then cut them using the actual PPO scheduler."""
+    dp_rank = mpu.get_data_parallel_rank()
+    dp_size = mpu.get_data_parallel_world_size()
+    device = data["loss_mask"].device
+    rows = list(range(dp_rank * (8 // dp_size), (dp_rank + 1) * (8 // dp_size)))
+    local = {key: value[rows] for key, value in data.items()}
+    local["attention_mask"] = torch.ones_like(local["loss_mask"])
+    local["input_ids"] = torch.tensor(rows, device=device)[:, None] * 16 + torch.arange(
+        16, device=device
+    )
+    group_sizes = (
+        ([3, 1, 1, 3] if dp_size == 1 else [3, 1] if dp_rank == 0 else [1, 3])
+        if mode == "traj-mean"
+        else ([4, 4] if dp_size == 1 else [4])
+    )
+    prepared = prepare_policy_gradient_batch(local, mode=mode, group_sizes=group_sizes)
+    optimizer_batches = split_training_batch_into_microbatches(
+        local, 2, group=mpu.get_data_parallel_group()
+    )
+    steps = prepared.for_steps(
+        optimizer_batches,
+        dp_group=mpu.get_data_parallel_group(),
+        device=device,
+    )
+    batch = optimizer_batches[optimizer_step]
+    local_rows = (batch["input_ids"][:, 0] // 16).tolist()
+    gathered = [None] * dp_size
+    dist.all_gather_object(gathered, local_rows, group=mpu.get_data_parallel_group())
+    global_rows = [row for shard in gathered for row in shard]
+    fragments = (
+        [[i] for i in range(len(local_rows))]
+        if split
+        else [list(range(len(local_rows)))]
+    )
+    batches = _MicroBatches()
+    for indices in fragments:
+        fragment = pack_tensor_dict(
+            {key: value[indices] for key, value in batch.items()}
+        )
+        fragment["rows"] = [local_rows[i] for i in indices]
+        batches.append(fragment)
+    return batches, steps[optimizer_step], global_rows, len(steps)
+
+
+def run_case(mode, per_token, split, scenario, check, prepared=False, optimizer_step=0):
     config = TransformerConfig(
         num_layers=1,
         hidden_size=8,
@@ -108,12 +156,17 @@ def run_case(mode, per_token, split, scenario, check):
     config.grad_scale_func = lambda loss: loss
     reduction = PolicyGradientReduction(mode)
     data = make_loss_data(mode, scenario, current_platform.device_type)
-    batches = make_loss_microbatches(
-        data,
-        mpu.get_data_parallel_rank(),
-        mpu.get_data_parallel_world_size(),
-        split,
-    )
+    if prepared:
+        batches, loss_step, global_rows, n_steps = prepare_optimizer_step(
+            data, mode, optimizer_step, split
+        )
+    else:
+        batches = make_loss_microbatches(
+            data,
+            mpu.get_data_parallel_rank(),
+            mpu.get_data_parallel_world_size(),
+            split,
+        )
     namespace = {
         "torch": torch,
         "dist": dist,
@@ -166,13 +219,27 @@ def run_case(mode, per_token, split, scenario, check):
     train(
         engine,
         batches,
-        lambda values, batch: aggregate_test_loss(values, batch, reduction),
-        reduction.normalizer_fn,
+        lambda values, batch: aggregate_test_loss(
+            values, batch, loss_step if prepared else reduction
+        ),
+        (loss_step if prepared else reduction).normalizer_fn,
     )
     if check == "main":
         theta = model.module.theta.detach().clone().reshape(8, 16).requires_grad_()
         oracle_data = data
         multiplier = 1
+        if prepared:
+            selected = torch.zeros(
+                (8, 1), dtype=torch.bool, device=current_platform.device_type
+            )
+            selected[global_rows] = True
+            oracle_data = {
+                "loss_mask": data["loss_mask"]
+                if mode in ("traj-mean", "prompt-mean")
+                else data["loss_mask"] & selected,
+                "numerator_mask": data["numerator_mask"] & selected,
+            }
+            multiplier = n_steps if mode in ("traj-mean", "prompt-mean") else 1
         loss = multiplier * independent_loss_oracle(
             (theta - data["targets"]).square(), oracle_data, mode
         )
@@ -192,6 +259,8 @@ def run_case(mode, per_token, split, scenario, check):
                     "split": split,
                     "scenario": scenario,
                     "check": check,
+                    "prepared": prepared,
+                    "optimizer_step": optimizer_step,
                     "max_error": (actual - expected).abs().max().item(),
                     "actual_norm": actual.norm().item(),
                     "expected_norm": expected.norm().item(),
@@ -203,10 +272,65 @@ def run_case(mode, per_token, split, scenario, check):
     return passed
 
 
+def check_unequal_rank_schedule(mode):
+    """Actual DP collectives cap K and retain unit means on unequal row shards."""
+    rank = mpu.get_data_parallel_rank()
+    size = mpu.get_data_parallel_world_size()
+    n_rows = 1 if rank == 0 else 3
+    device = current_platform.device_type
+    mask = torch.ones(n_rows, 16, device=device, dtype=torch.bool)
+    data = {
+        "input_ids": torch.ones_like(mask, dtype=torch.long),
+        "attention_mask": mask,
+        "loss_mask": mask,
+    }
+    prepared = prepare_policy_gradient_batch(
+        data, mode=mode, group_sizes=[1] * n_rows if mode == "traj-mean" else [n_rows]
+    )
+    batches = split_training_batch_into_microbatches(
+        data, 4, group=mpu.get_data_parallel_group()
+    )
+    assert len(batches) == 1
+    step = prepared.for_steps(
+        batches, dp_group=mpu.get_data_parallel_group(), device=device
+    )[0]
+    theta = torch.tensor(1.0, device=device, requires_grad=True)
+    loss = step.aggregate(
+        theta.square().expand_as(mask) * (1 if rank == 0 else 10),
+        mask,
+        unit_weights=batches[0]["unit_weights"],
+    )
+    contribution = loss * step.normalizer_fn(batches[0])
+    totals = torch.stack(
+        (contribution.detach(), torch.autograd.grad(contribution, theta)[0])
+    )
+    dist.all_reduce(totals, group=mpu.get_data_parallel_group())
+    expected = 1.0 if size == 1 else (31 / 4 if mode == "traj-mean" else 11 / 2)
+    torch.testing.assert_close(
+        totals,
+        torch.tensor([expected, 2 * expected], device=device),
+        rtol=1e-6,
+        atol=1e-6,
+    )
+    if dist.get_rank() == 0:
+        print(
+            json.dumps(
+                {
+                    "schedule": "unequal-rows",
+                    "mode": mode,
+                    "steps": len(batches),
+                    "result": "PASS",
+                }
+            ),
+            flush=True,
+        )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--cp-size", type=int, required=True)
     parser.add_argument("--check", choices=("main", "auxiliary"), required=True)
+    parser.add_argument("--prepared", action="store_true")
     args = parser.parse_args()
     current_platform.set_device(int(os.environ["LOCAL_RANK"]))
     dist.init_process_group(
@@ -218,13 +342,29 @@ def main():
             print(
                 "MCORE", megatron.core.__file__, megatron.core.__version__, flush=True
             )
+        if args.prepared and args.check == "main":
+            for mode in ("traj-mean",):
+                check_unequal_rank_schedule(mode)
         failed = []
-        for mode in MEAN_MODES:
+        for mode in ("seq-mean", "traj-mean") if args.prepared else MEAN_MODES:
             for per_token in (False, True) if args.check == "main" else (True,):
                 for split in (False, True):
-                    for scenario in ("ragged", "filtered"):
-                        if not run_case(mode, per_token, split, scenario, args.check):
-                            failed.append((mode, per_token, split, scenario))
+                    for scenario in (
+                        ("ragged", "empty-unit", "filtered")
+                        if args.prepared
+                        else ("ragged", "filtered")
+                    ):
+                        for step in range(2) if args.prepared else (0,):
+                            if not run_case(
+                                mode,
+                                per_token,
+                                split,
+                                scenario,
+                                args.check,
+                                args.prepared,
+                                step,
+                            ):
+                                failed.append((mode, per_token, split, scenario, step))
         # Every rank finishes the same collectives before reporting any failures.
         dist.barrier()
         assert not failed, f"Loss aggregation gradient mismatches: {failed}"

@@ -1,9 +1,18 @@
 # SPDX-License-Identifier: Apache-2.0
 
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
 import pytest
 import torch
 
-from areal.api.cli_args import MicroBatchSpec
+from areal.api.cli_args import MicroBatchSpec, PPOActorConfig
+from areal.trainer.ppo import actor as actor_module
+from areal.trainer.ppo.actor import (
+    PPOActor,
+    _trajectory_row_counts,
+    trajectory_token_weights,
+)
 from areal.utils.data import (
     split_padded_tensor_dict_into_mb_list,
 )
@@ -166,3 +175,179 @@ class TestMicrobatchGranularity:
                 {"attention_mask": torch.ones(7, 2, dtype=torch.bool)},
                 MicroBatchSpec(granularity=2),
             )
+
+
+# Four padded rows forming two trajectories: the first spans three rows
+# (2 + 3 + 5 = 10 masked tokens), the second is a single 4-token row.
+TRAJ_BEGIN = torch.tensor([1, 0, 0, 1], dtype=torch.int32)
+TRAJ_MASK = torch.tensor(
+    [
+        [1, 1, 0, 0, 0],
+        [1, 1, 1, 0, 0],
+        [1, 1, 1, 1, 1],
+        [1, 1, 1, 1, 0],
+    ],
+    dtype=torch.bool,
+)
+TRAJ_LOSS = torch.tensor(
+    [
+        [1.0, 1.0, 0.0, 0.0, 0.0],
+        [2.0, 2.0, 2.0, 0.0, 0.0],
+        [4.0, 4.0, 4.0, 4.0, 4.0],
+        [8.0, 8.0, 8.0, 8.0, 0.0],
+    ]
+)
+
+
+class TestTrajectoryTokenWeights:
+    def test_weights_sum_to_the_trajectory_count(self):
+        weights = trajectory_token_weights(TRAJ_MASK, TRAJ_BEGIN)
+        assert weights.sum().item() == pytest.approx(2.0)
+
+    def test_rows_of_one_trajectory_share_a_weight(self):
+        weights = trajectory_token_weights(TRAJ_MASK, TRAJ_BEGIN)
+        # First trajectory holds 10 masked tokens, second holds 4.
+        assert weights[0][0].item() == pytest.approx(0.1)
+        assert weights[2][0].item() == pytest.approx(0.1)
+        assert weights[3][0].item() == pytest.approx(0.25)
+
+    def test_masked_tokens_get_no_weight(self):
+        weights = trajectory_token_weights(TRAJ_MASK, TRAJ_BEGIN)
+        assert weights[0][2].item() == 0.0
+
+    def test_missing_marker_falls_back_to_one_trajectory_per_row(self):
+        weights = trajectory_token_weights(TRAJ_MASK, None)
+        assert weights.sum().item() == pytest.approx(4.0)
+
+
+class TestTrajectoryMetadata:
+    def test_row_group_sizes_follow_trajectory_markers(self):
+        assert _trajectory_row_counts(TRAJ_BEGIN, len(TRAJ_BEGIN)) == [3, 1]
+
+    def test_missing_markers_treat_each_row_as_a_trajectory(self):
+        assert _trajectory_row_counts(None, 4) == [1, 1, 1, 1]
+
+    @pytest.mark.parametrize("n_minibatches", [1, 2])
+    def test_actor_prepares_trajectory_weights_before_row_minibatches(
+        self, monkeypatch, n_minibatches
+    ):
+        captured = {}
+        original_split = actor_module.split_training_batch_into_microbatches
+
+        def capture_split(data, n_mbs, group=None):
+            captured["n_mbs"] = n_mbs
+            captured["weights"] = data["unit_weights"].clone()
+            return original_split(data, n_mbs, group)
+
+        monkeypatch.setattr(
+            actor_module, "split_training_batch_into_microbatches", capture_split
+        )
+        monkeypatch.setattr(actor_module, "stats_tracker", MagicMock())
+        actor = object.__new__(PPOActor)
+        actor.m2_threshold = None
+        actor.config = PPOActorConfig(
+            path="dummy",
+            loss_aggregation="traj-mean",
+            ppo_n_minibatches=n_minibatches,
+        )
+        actor.engine = SimpleNamespace(
+            train=lambda: None,
+            get_version=lambda: 0,
+            train_batch=lambda *a, **kw: {},
+            data_parallel_group=None,
+            device="cpu",
+        )
+        actor._ppo_update(
+            {
+                "attention_mask": TRAJ_MASK,
+                "loss_mask": TRAJ_MASK,
+                "begin_of_trajectory": TRAJ_BEGIN,
+                "rewards": torch.tensor([1.0, 1.0, 1.0, 0.0]),
+                "advantages": torch.zeros_like(TRAJ_LOSS),
+                "kl_rewards": torch.zeros_like(TRAJ_LOSS),
+                "tot_rewards": torch.zeros_like(TRAJ_LOSS),
+            }
+        )
+
+        assert captured["n_mbs"] == n_minibatches
+        torch.testing.assert_close(
+            captured["weights"],
+            trajectory_token_weights(TRAJ_MASK, TRAJ_BEGIN),
+            rtol=1e-6,
+            atol=1e-7,
+        )
+
+
+class TestTrajMean:
+    def _weights(self):
+        return trajectory_token_weights(TRAJ_MASK, TRAJ_BEGIN)
+
+    def test_hand_computed_value(self):
+        # Trajectory means are (2*1 + 3*2 + 5*4) / 10 = 2.8 and 8.0.
+        reduction = PolicyGradientReduction("traj-mean")
+        result = reduction.aggregate(TRAJ_LOSS, TRAJ_MASK, unit_weights=self._weights())
+        assert result.item() == pytest.approx(5.4)
+
+    @pytest.mark.parametrize(
+        "partition",
+        [
+            [[0], [1], [2], [3]],
+            [[0, 3], [1, 2]],
+            [[2], [0], [3], [1]],
+            [[0, 1, 2, 3]],
+        ],
+    )
+    def test_partitioning_does_not_change_the_result(self, partition):
+        """A trajectory may be split across forward microbatches in one step."""
+        reduction = PolicyGradientReduction("traj-mean")
+        weights = self._weights()
+        numerator = 0.0
+        denominator = 0.0
+        for rows in partition:
+            index = torch.tensor(rows)
+            mask, loss, unit = TRAJ_MASK[index], TRAJ_LOSS[index], weights[index]
+            local_mean = reduction.aggregate(loss, mask, unit_weights=unit)
+            local_weight = reduction.normalizer_fn(
+                {"loss_mask": mask, "unit_weights": unit}
+            )
+            numerator += local_mean.item() * local_weight.item()
+            denominator += local_weight.item()
+        assert numerator / denominator == pytest.approx(5.4, rel=1e-5)
+
+    def test_matches_seq_mean_when_every_row_is_a_trajectory(self):
+        weights = trajectory_token_weights(TRAJ_MASK, None)
+        packed_loss = TRAJ_LOSS[TRAJ_MASK]
+        packed_mask = TRAJ_MASK[TRAJ_MASK]
+        packed_weights = weights[TRAJ_MASK]
+        cu_seqlens = torch.tensor([0, 2, 5, 10, 14], dtype=torch.int32)
+        traj = PolicyGradientReduction("traj-mean").aggregate(
+            packed_loss, packed_mask, unit_weights=packed_weights
+        )
+        seq = PolicyGradientReduction("seq-mean").aggregate(
+            packed_loss, packed_mask, cu_seqlens=cu_seqlens
+        )
+        assert traj.item() == pytest.approx(seq.item(), rel=1e-6)
+
+    def test_requires_unit_weights(self):
+        reduction = PolicyGradientReduction("traj-mean")
+        with pytest.raises(ValueError, match="unit_weights are required"):
+            reduction.aggregate(TRAJ_LOSS, TRAJ_MASK)
+
+    def test_unit_weights_must_match_the_loss_shape(self):
+        reduction = PolicyGradientReduction("traj-mean")
+        with pytest.raises(ValueError, match="unit_weights shape"):
+            reduction.aggregate(TRAJ_LOSS, TRAJ_MASK, unit_weights=torch.ones(3, 3))
+
+    def test_normalizer_requires_unit_weights(self):
+        reduction = PolicyGradientReduction("traj-mean")
+        with pytest.raises(ValueError, match="unit_weights are required"):
+            reduction.normalizer_fn({"loss_mask": TRAJ_MASK})
+
+    def test_needs_no_sequence_boundaries(self):
+        reduction = PolicyGradientReduction("traj-mean")
+        packed_loss = TRAJ_LOSS[TRAJ_MASK]
+        packed_mask = TRAJ_MASK[TRAJ_MASK]
+        packed_weights = self._weights()[TRAJ_MASK]
+        assert reduction.aggregate(
+            packed_loss, packed_mask, unit_weights=packed_weights
+        ).item() == pytest.approx(5.4)

@@ -19,9 +19,10 @@ from tests.test_megatron_loss_normalization import (
 )
 
 from areal.infra.platforms import current_platform
+from areal.trainer.ppo.actor import trajectory_token_weights
 from areal.utils.functional.loss_aggregation import PolicyGradientReduction
 
-MEAN_MODES = ("token-mean", "seq-mean")
+MEAN_MODES = ("token-mean", "seq-mean", "traj-mean")
 # Two prompts, two trajectories per prompt. Include empty rows inside trajectories.
 TRAJECTORY_IDS = (0, 0, 0, 1, 2, 3, 3, 3)
 PROMPT_IDS = (0, 0, 0, 0, 1, 1, 1, 1)
@@ -42,11 +43,14 @@ def make_loss_data(mode, scenario="ragged", device="cpu"):
     if scenario == "filtered":
         numerator_mask[:4] = False
         numerator_mask[6, 3] = False
+    starts = torch.tensor([1, 0, 0, 1, 1, 1, 0, 0], device=device)
     return {
         "targets": torch.linspace(-0.4, 0.8, 128, device=device).reshape(8, 16),
         "loss_mask": mask,
         "numerator_mask": numerator_mask,
-        "unit_weights": mask.float(),
+        "unit_weights": trajectory_token_weights(
+            mask, starts, 2 if mode == "prompt-mean" else 1
+        ),
     }
 
 
@@ -282,6 +286,50 @@ def test_padded_and_packed_mean_match_independent_oracle(mode, scenario):
         torch.testing.assert_close(gradient, expected_grad, rtol=2e-6, atol=1e-8)
 
 
+@pytest.mark.parametrize("mode", ["traj-mean"])
+@pytest.mark.parametrize("prompt_count", [2, 4])
+def test_eight_rollout_groups_with_fanout_survive_dp_and_forward_splits(
+    mode, prompt_count
+):
+    """Exercise the original batch-size 2/4, group-size 8 examples with multi-row rollouts."""
+    row_owners, starts = [], []
+    for trajectory in range(prompt_count * 8):
+        fanout = 1 + trajectory % 3
+        row_owners.extend([trajectory] * fanout)
+        starts.extend([1] + [0] * (fanout - 1))
+    mask = torch.zeros(len(row_owners), 11, dtype=torch.bool)
+    for row in range(len(row_owners)):
+        mask[row, 1 : 2 + row % 9] = True
+    values = torch.arange(mask.numel(), dtype=torch.float32).reshape_as(mask) / 100
+    weights = trajectory_token_weights(
+        mask, torch.tensor(starts), 8 if mode == "prompt-mean" else 1
+    )
+    reduction = PolicyGradientReduction(mode)
+    owner_ids = [owner // 8 if mode == "prompt-mean" else owner for owner in row_owners]
+    unit_means = []
+    for unit in sorted(set(owner_ids)):
+        rows = [row for row, owner in enumerate(owner_ids) if owner == unit]
+        unit_means.append(values[rows][mask[rows]].mean())
+    expected = torch.stack(unit_means).mean()
+    numerator, denominator = 0.0, 0.0
+    # Round-robin DP assignment and one-row forward batches cut both logical units.
+    for dp_rank in range(2):
+        for row in range(dp_rank, len(row_owners), 2):
+            batch = {
+                "loss_mask": mask[row : row + 1],
+                "unit_weights": weights[row : row + 1],
+            }
+            weight = reduction.normalizer_fn(batch)
+            local_mean = reduction.aggregate(
+                values[row : row + 1],
+                batch["loss_mask"],
+                unit_weights=batch["unit_weights"],
+            )
+            numerator = numerator + local_mean * weight
+            denominator = denominator + weight
+    torch.testing.assert_close(numerator / denominator, expected, rtol=2e-6, atol=1e-7)
+
+
 @pytest.mark.slow
 @pytest.mark.parametrize(
     "dp_size,cp_size",
@@ -293,7 +341,8 @@ def test_padded_and_packed_mean_match_independent_oracle(mode, scenario):
     ],
 )
 @pytest.mark.parametrize("check", ["main", "auxiliary"])
-def test_real_mcore_loss_aggregation_gradients(dp_size, cp_size, check):
+@pytest.mark.parametrize("prepared", [False, True], ids=["legacy", "update-protocol"])
+def test_real_mcore_loss_aggregation_gradients(dp_size, cp_size, check, prepared):
     """Exercise actual dependency DDP/schedule/finalize and differentiable CP gather."""
     if current_platform.device_type not in ("cuda", "npu"):
         pytest.skip("Requires CUDA or Ascend NPU")
@@ -314,6 +363,7 @@ def test_real_mcore_loss_aggregation_gradients(dp_size, cp_size, check):
             "tests/torchrun/run_megatron_loss_aggregation.py",
             f"--cp-size={cp_size}",
             f"--check={check}",
+            *(["--prepared"] if prepared else []),
         ],
         env=env,
         cwd=root,
