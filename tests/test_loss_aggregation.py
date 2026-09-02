@@ -1,9 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
-
 import pytest
 import torch
 
+from areal.api.cli_args import MicroBatchSpec
+from areal.utils.data import (
+    split_padded_tensor_dict_into_mb_list,
+)
 from areal.utils.functional.loss_aggregation import PolicyGradientReduction
 
 # Three packed sequences of length 2, 3 and 5. Per-token losses are constant
@@ -138,3 +141,28 @@ class TestNarrowedNumerator:
             LOSS, narrowed, denominator_mask=MASK, cu_seqlens=CU_SEQLENS
         )
         assert result.item() == pytest.approx((LOSS.sum().item() - 1.0) / 10)
+
+
+class TestMicrobatchGranularity:
+    """The ordinary splitter preserves configured consecutive-row granularity."""
+
+    @pytest.mark.parametrize("bs,granularity", [(6, 1), (8, 2), (12, 3), (130, 1)])
+    def test_matches_legacy_granularity_split(self, bs, granularity):
+        data = {
+            "input_ids": torch.arange(bs).reshape(-1, 1).expand(-1, 2),
+            "attention_mask": torch.ones(bs, 2, dtype=torch.bool),
+        }
+        batches = split_padded_tensor_dict_into_mb_list(
+            data, MicroBatchSpec(n_mbs=bs // granularity, granularity=granularity)
+        ).mbs
+        assert [batch["input_ids"][:, 0].tolist() for batch in batches] == [
+            list(range(i * granularity, (i + 1) * granularity))
+            for i in range(bs // granularity)
+        ]
+
+    def test_indivisible_batch_still_raises(self):
+        with pytest.raises(RuntimeError, match="cannot divide granularity"):
+            split_padded_tensor_dict_into_mb_list(
+                {"attention_mask": torch.ones(7, 2, dtype=torch.bool)},
+                MicroBatchSpec(granularity=2),
+            )

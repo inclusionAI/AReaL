@@ -40,7 +40,7 @@ from areal.utils.data import (
     "device",
     ["cpu", pytest.param("cuda", marks=[pytest.mark.gpu, pytest.mark.cuda])],
 )
-@pytest.mark.parametrize("mode", ["token-mean"])
+@pytest.mark.parametrize("mode", ["token-mean", "seq-mean"])
 @pytest.mark.parametrize("export_mode", ["inline", "online"])
 @pytest.mark.parametrize(
     "explicit_reference",
@@ -170,6 +170,7 @@ async def test_discounted_individual_rows_keep_episode_reference(
     actor = PPOActor(
         PPOActorConfig(
             path="dummy",
+            loss_aggregation=mode,
             reward_norm=norm,
             recompute_logprob=False,
             kl_ctl=0.0,
@@ -215,7 +216,7 @@ def _reward_batch():
     }
 
 
-@pytest.mark.parametrize("mode", ["token-mean"])
+@pytest.mark.parametrize("mode", ["token-mean", "seq-mean"])
 def test_rollout_references_stay_out_of_model_batches(mode, monkeypatch):
     """Reference metadata survives advantages but never reaches forward/train inputs."""
     calls = []
@@ -242,6 +243,7 @@ def test_rollout_references_stay_out_of_model_batches(mode, monkeypatch):
     actor = PPOActor(
         PPOActorConfig(
             path="dummy",
+            loss_aggregation=mode,
             reward_norm=NormConfig(
                 mean_level="group", std_level="group", std_unbiased=False
             ),
