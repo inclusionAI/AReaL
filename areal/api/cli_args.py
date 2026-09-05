@@ -2058,6 +2058,15 @@ class PPOActorConfig(TrainEngineConfig):
         metadata={"help": "KL divergence estimator", "choices": ["k1", "k2", "k3"]},
     )
 
+    # Entropy Regularization
+    entropy_coeff: float = field(
+        default=0.0,
+        metadata={
+            "help": "Entropy bonus coefficient in actor loss. When positive, an entropy regularization "
+            "loss term is added to the objective to encourage exploration and prevent premature policy collapse."
+        },
+    )
+
     # SAPO (Soft Adaptive Policy Optimization) - https://arxiv.org/abs/2511.20347
     use_sapo_loss: bool = field(
         default=False,
@@ -2239,6 +2248,11 @@ class PPOActorConfig(TrainEngineConfig):
                     "no group peers to normalize against. Leave it unset to derive "
                     "the minimum instead."
                 )
+
+        if self.entropy_coeff < 0.0:
+            raise ValueError(
+                f"entropy_coeff must be non-negative, got {self.entropy_coeff}"
+            )
 
         reward_norm = self.reward_norm
         if isinstance(reward_norm, (dict, DictConfig)):
