@@ -535,6 +535,13 @@ def make_mcore_model(
 
         provider.finalize()
 
+        # GLM DSA features need the finalized provider that AReaL constructs
+        # without Bridge's ConfigContainer. Limit reapplication to NPU GLM DSA.
+        if is_npu_available and hf_config.model_type in ("glm_moe_dsa", "glm53_flash"):
+            from mindspeed_bridge.features.adaptor import FeatureAdaptor, bind_config
+
+            FeatureAdaptor.apply_finalized(bind_config(provider), reapply=True)
+
         ddp_config = MCoreDDPConfig(**dataclasses.asdict(mcore_config.ddp))
         if use_lora:
             ddp_config.use_distributed_optimizer = False
