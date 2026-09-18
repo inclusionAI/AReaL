@@ -1724,6 +1724,9 @@ class PPOActorConfig(TrainEngineConfig):
             "'seq-mean': average per-response token means. "
             "'traj-mean': average per-trajectory token means, so an agent "
             "rollout exported as several rows still counts once. "
+            "'prompt-mean': give every rollout group weight one and pool its "
+            "tokens, so a longer rollout weighs more inside its group. "
+            "Prompt boundaries come from rollout batch metadata. "
             "'constant': average each response's masked token sum divided by "
             "loss_aggregation_divisor. Non-token modes require sequence "
             "boundaries; tree-packed actor training currently supports only "
@@ -1732,6 +1735,7 @@ class PPOActorConfig(TrainEngineConfig):
                 "token-mean",
                 "seq-mean",
                 "traj-mean",
+                "prompt-mean",
                 "constant",
             ],
         },
@@ -1777,11 +1781,12 @@ class PPOActorConfig(TrainEngineConfig):
             "token-mean",
             "seq-mean",
             "traj-mean",
+            "prompt-mean",
             "constant",
         ):
             raise ValueError(
                 "loss_aggregation must be 'token-mean', 'seq-mean', "
-                f"'traj-mean', or 'constant', got "
+                f"'traj-mean', 'prompt-mean', or 'constant', got "
                 f"{self.loss_aggregation!r}."
             )
         if self.loss_aggregation == "constant":

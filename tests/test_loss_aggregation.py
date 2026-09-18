@@ -351,3 +351,84 @@ class TestTrajMean:
         assert reduction.aggregate(
             packed_loss, packed_mask, unit_weights=packed_weights
         ).item() == pytest.approx(5.4)
+
+
+class TestPromptMean:
+    """One rollout group carries weight one, pooling its tokens.
+
+    The fixture's two trajectories stand in for a group of two rollouts: 10
+    masked tokens summing to 28, and 4 summing to 32.
+    """
+
+    def _weights(self):
+        return trajectory_token_weights(TRAJ_MASK, TRAJ_BEGIN, 2)
+
+    def test_weights_sum_to_the_group_count(self):
+        assert self._weights().sum().item() == pytest.approx(1.0)
+
+    def test_hand_computed_value(self):
+        # Tokens pool across the group: (28 + 32) / (10 + 4).
+        reduction = PolicyGradientReduction("prompt-mean")
+        result = reduction.aggregate(TRAJ_LOSS, TRAJ_MASK, unit_weights=self._weights())
+        assert result.item() == pytest.approx(60.0 / 14.0)
+
+    def test_pooling_differs_from_averaging_rollouts(self):
+        """The longer rollout pulls the group mean; traj-mean gives 5.4."""
+        prompt = PolicyGradientReduction("prompt-mean").aggregate(
+            TRAJ_LOSS, TRAJ_MASK, unit_weights=self._weights()
+        )
+        traj = PolicyGradientReduction("traj-mean").aggregate(
+            TRAJ_LOSS,
+            TRAJ_MASK,
+            unit_weights=trajectory_token_weights(TRAJ_MASK, TRAJ_BEGIN),
+        )
+        assert prompt.item() == pytest.approx(60.0 / 14.0)
+        assert traj.item() == pytest.approx(5.4)
+
+    def test_a_group_of_one_is_traj_mean(self):
+        assert torch.allclose(
+            trajectory_token_weights(TRAJ_MASK, TRAJ_BEGIN, 1),
+            trajectory_token_weights(TRAJ_MASK, TRAJ_BEGIN),
+        )
+
+    @pytest.mark.parametrize(
+        "partition",
+        [
+            [[0], [1], [2], [3]],
+            [[0, 3], [1, 2]],
+            [[2], [0], [3], [1]],
+            [[0, 1, 2, 3]],
+        ],
+    )
+    def test_partitioning_does_not_change_the_result(self, partition):
+        """A group may be split across forward microbatches in one step."""
+        reduction = PolicyGradientReduction("prompt-mean")
+        weights = self._weights()
+        numerator = 0.0
+        denominator = 0.0
+        for rows in partition:
+            index = torch.tensor(rows)
+            mask, loss, unit = TRAJ_MASK[index], TRAJ_LOSS[index], weights[index]
+            local_mean = reduction.aggregate(loss, mask, unit_weights=unit)
+            local_weight = reduction.normalizer_fn(
+                {"loss_mask": mask, "unit_weights": unit}
+            )
+            numerator += local_mean.item() * local_weight.item()
+            denominator += local_weight.item()
+        assert numerator / denominator == pytest.approx(60.0 / 14.0, rel=1e-5)
+
+    def test_incomplete_group_is_rejected_not_silently_shifted(self):
+        begin = torch.tensor([1, 0, 0, 1, 1], dtype=torch.int32)
+        mask = torch.ones(5, 4, dtype=torch.bool)
+        with pytest.raises(ValueError, match="do not divide into groups"):
+            trajectory_token_weights(mask, begin, 2)
+
+    def test_requires_unit_weights(self):
+        reduction = PolicyGradientReduction("prompt-mean")
+        with pytest.raises(ValueError, match="unit_weights are required"):
+            reduction.aggregate(TRAJ_LOSS, TRAJ_MASK)
+
+    def test_normalizer_requires_unit_weights(self):
+        reduction = PolicyGradientReduction("prompt-mean")
+        with pytest.raises(ValueError, match="unit_weights are required"):
+            reduction.normalizer_fn({"loss_mask": TRAJ_MASK})

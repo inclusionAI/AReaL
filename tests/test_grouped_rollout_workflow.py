@@ -175,6 +175,7 @@ async def test_grouped_tensor_episodes_preserve_multirow_trajectory_means(
     for mode, group_sizes, expected in [
         ("traj-mean", sizes, 5.5),
         ("seq-mean", None, 4.0),
+        ("prompt-mean", [3], 4.0),
     ]:
         prepared = prepare_policy_gradient_batch(
             result, mode=mode, group_sizes=group_sizes
