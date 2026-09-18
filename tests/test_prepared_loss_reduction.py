@@ -15,7 +15,8 @@ from tests.test_megatron_loss_aggregation import (
     make_loss_data,
 )
 
-from areal.trainer.ppo.actor import grpo_loss_fn
+from areal.api.cli_args import PPOActorConfig
+from areal.trainer.ppo.actor import PPOActor, grpo_loss_fn
 from areal.trainer.ppo.loss_reduction import prepare_policy_gradient_batch
 from areal.utils.data import pack_tensor_dict, split_training_batch_into_microbatches
 from areal.utils.functional.loss_aggregation import PolicyGradientReduction
@@ -62,7 +63,7 @@ def test_prepared_whole_step_matches_independent_mean(mode, packed, scenario):
     )
 
 
-@pytest.mark.parametrize("mode", ["traj-mean"])
+@pytest.mark.parametrize("mode", ["traj-mean", "prompt-mean"])
 @pytest.mark.parametrize("packed", [False, True])
 @pytest.mark.parametrize(
     "scenario", ["ragged", "empty-unit", "filtered", "empty-prompt"]
@@ -114,7 +115,7 @@ def test_unit_mean_across_optimizer_and_forward_splits_matches_update(
     )
 
 
-@pytest.mark.parametrize("mode", ["traj-mean"])
+@pytest.mark.parametrize("mode", ["traj-mean", "prompt-mean"])
 def test_split_unit_retains_full_update_weight_across_optimizer_steps(mode):
     data = {
         "input_ids": torch.arange(3).reshape(3, 1),
@@ -167,7 +168,7 @@ def test_sequence_mean_keeps_ref_per_step_row_normalization():
     )
 
 
-@pytest.mark.parametrize("mode", ["traj-mean"])
+@pytest.mark.parametrize("mode", ["traj-mean", "prompt-mean"])
 def test_real_all_masked_step_keeps_positive_weight_and_zero_gradient(mode):
     data = make_loss_data(mode)
     prepared = _prepare(data, mode)
@@ -190,7 +191,7 @@ def test_real_all_masked_step_keeps_positive_weight_and_zero_gradient(mode):
     )
 
 
-@pytest.mark.parametrize("mode", ["traj-mean"])
+@pytest.mark.parametrize("mode", ["traj-mean", "prompt-mean"])
 def test_prepared_unit_mean_rejects_globally_empty_update(mode):
     data = {"loss_mask": torch.zeros(3, 2, dtype=torch.bool)}
     prepared = prepare_policy_gradient_batch(data, mode=mode, group_sizes=[2, 1])
@@ -203,6 +204,60 @@ def test_optimizer_steps_are_capped_by_available_rows():
     batches = split_training_batch_into_microbatches(data, 8)
     assert len(batches) == 2
     assert all(batch["attention_mask"].shape[0] == 1 for batch in batches)
+
+
+def test_actor_prompt_mean_uses_actual_group_rows_and_allows_variable_rollouts():
+    groups = []
+    for trajectories in (8, 7):
+        sizes = [1 + i % 2 for i in range(trajectories)]
+        n_rows = sum(sizes)
+        mask = torch.ones(n_rows, 3, dtype=torch.bool)
+        groups.append(
+            {
+                "input_ids": torch.ones(n_rows, 3, dtype=torch.long),
+                "attention_mask": mask,
+                "loss_mask": mask,
+                "begin_of_trajectory": torch.tensor(
+                    [v for size in sizes for v in [1] + [0] * (size - 1)]
+                ),
+                "rewards": torch.ones(n_rows),
+                "advantages": torch.zeros(n_rows, 3),
+                "kl_rewards": torch.zeros(n_rows, 3),
+                "tot_rewards": torch.zeros(n_rows, 3),
+            }
+        )
+    actor = object.__new__(PPOActor)
+    actor.config = PPOActorConfig(
+        path="dummy",
+        loss_aggregation="prompt-mean",
+        ppo_n_minibatches=2,
+    )
+    actor.m2_threshold = None
+    contributions = []
+
+    def train_batch(batch, loss_fn, loss_weight_fn):
+        step = loss_fn.keywords["pg_reduction"]
+        # Constant per-token loss makes every nonempty prompt's mean exactly one.
+        contributions.append(
+            _aggregate(
+                step, torch.ones_like(batch["loss_mask"], dtype=torch.float32), batch
+            )
+        )
+        return {}
+
+    actor.engine = SimpleNamespace(
+        train=lambda: None,
+        get_version=lambda: 0,
+        data_parallel_group=None,
+        device="cpu",
+        train_batch=train_batch,
+    )
+    with patch("areal.trainer.ppo.actor.stats_tracker"):
+        actor.ppo_update(groups)
+    assert len(contributions) == 2
+    torch.testing.assert_close(
+        torch.stack(contributions).mean(), torch.tensor(1.0), rtol=1e-6, atol=1e-6
+    )
 
 
 @pytest.mark.parametrize("backend", ["fsdp", "archon"])

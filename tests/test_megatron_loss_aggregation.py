@@ -22,7 +22,7 @@ from areal.infra.platforms import current_platform
 from areal.trainer.ppo.actor import trajectory_token_weights
 from areal.utils.functional.loss_aggregation import PolicyGradientReduction
 
-MEAN_MODES = ("token-mean", "seq-mean", "traj-mean")
+MEAN_MODES = ("token-mean", "seq-mean", "traj-mean", "prompt-mean")
 # Two prompts, two trajectories per prompt. Include empty rows inside trajectories.
 TRAJECTORY_IDS = (0, 0, 0, 1, 2, 3, 3, 3)
 PROMPT_IDS = (0, 0, 0, 0, 1, 1, 1, 1)
@@ -286,7 +286,7 @@ def test_padded_and_packed_mean_match_independent_oracle(mode, scenario):
         torch.testing.assert_close(gradient, expected_grad, rtol=2e-6, atol=1e-8)
 
 
-@pytest.mark.parametrize("mode", ["traj-mean"])
+@pytest.mark.parametrize("mode", ["traj-mean", "prompt-mean"])
 @pytest.mark.parametrize("prompt_count", [2, 4])
 def test_eight_rollout_groups_with_fanout_survive_dp_and_forward_splits(
     mode, prompt_count
@@ -328,6 +328,18 @@ def test_eight_rollout_groups_with_fanout_survive_dp_and_forward_splits(
             numerator = numerator + local_mean * weight
             denominator = denominator + weight
     torch.testing.assert_close(numerator / denominator, expected, rtol=2e-6, atol=1e-7)
+
+
+def test_missing_rollout_in_eight_sample_groups_is_not_silently_regrouped():
+    """An absent {} rollout leaves 15 trajectories: traj-mean works, prompt-mean rejects."""
+    starts = torch.tensor(
+        [flag for trajectory in range(15) for flag in [1, 0][: 1 + trajectory % 2]]
+    )
+    mask = torch.ones(starts.numel(), 3, dtype=torch.bool)
+    weights = trajectory_token_weights(mask, starts)
+    torch.testing.assert_close(weights.sum(), torch.tensor(15.0), rtol=1e-6, atol=1e-6)
+    with pytest.raises(ValueError, match="do not divide into groups"):
+        trajectory_token_weights(mask, starts, 8)
 
 
 @pytest.mark.slow

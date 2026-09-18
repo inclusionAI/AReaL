@@ -292,9 +292,12 @@ class PPOActor:
     @trace_perf("ppo_actor.ppo_update", category="compute")
     @stats_tracker.scope_func_wrapper("ppo_actor")
     def ppo_update(self, data: list[dict[str, Any]]) -> None:
-        batched_call(self._ppo_update, data, unpack=False)
+        batched, meta = concat_batch(data)
+        self._ppo_update(batched, meta)
 
-    def _ppo_update(self, data: dict[str, Any]) -> None:
+    def _ppo_update(
+        self, data: dict[str, Any], meta: TrajBatchMeta | None = None
+    ) -> None:
         attn_mask = data["attention_mask"]
         loss_mask = data["loss_mask"]
         reward_score = data["rewards"]
@@ -375,6 +378,8 @@ class PPOActor:
             group_sizes = _trajectory_row_counts(
                 data.get("begin_of_trajectory"), data["loss_mask"].shape[0]
             )
+        elif self.config.loss_aggregation == "prompt-mean":
+            group_sizes = meta.traj_group_sizes if meta is not None else None
         prepared_loss = prepare_policy_gradient_batch(
             data,
             mode=self.config.loss_aggregation,

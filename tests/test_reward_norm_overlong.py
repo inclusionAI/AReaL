@@ -49,7 +49,7 @@ def _actor(norm, mode="traj-mean", **kwargs):
     )
 
 
-@pytest.mark.parametrize("mode", ["token-mean", "seq-mean", "traj-mean"])
+@pytest.mark.parametrize("mode", ["token-mean", "seq-mean", "traj-mean", "prompt-mean"])
 @pytest.mark.parametrize("long_row", [0, 1])
 @pytest.mark.parametrize(
     "mean_level,std_level",
@@ -85,7 +85,7 @@ def test_actor_overlong_penalty_preserves_each_split_row(
     )
 
 
-@pytest.mark.parametrize("mode", ["token-mean", "seq-mean", "traj-mean"])
+@pytest.mark.parametrize("mode", ["token-mean", "seq-mean", "traj-mean", "prompt-mean"])
 def test_actor_overlong_reference_shares_reward_bias_scaling_and_clipping(mode):
     """Scores and logical references use identical reward transformations."""
     norm = NormConfig(
@@ -210,7 +210,7 @@ def test_actor_overlong_with_short_prompt_groups_preserves_real_boundaries(parti
                 references.repeat_interleave(2).tolist(), [1, 4] * count, [1, 0] * count
             )
         )
-    actor = _actor(norm)
+    actor = _actor(norm, "prompt-mean")
 
     result = []
     shard_size = len(batches) // partitions

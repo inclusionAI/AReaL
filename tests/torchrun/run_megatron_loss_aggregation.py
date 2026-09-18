@@ -343,10 +343,12 @@ def main():
                 "MCORE", megatron.core.__file__, megatron.core.__version__, flush=True
             )
         if args.prepared and args.check == "main":
-            for mode in ("traj-mean",):
+            for mode in ("traj-mean", "prompt-mean"):
                 check_unequal_rank_schedule(mode)
         failed = []
-        for mode in ("seq-mean", "traj-mean") if args.prepared else MEAN_MODES:
+        for mode in (
+            ("seq-mean", "traj-mean", "prompt-mean") if args.prepared else MEAN_MODES
+        ):
             for per_token in (False, True) if args.check == "main" else (True,):
                 for split in (False, True):
                     for scenario in (
