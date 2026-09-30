@@ -924,6 +924,15 @@ class MegatronEngineConfig:
 
     # FP8 Training Configuration
     fp8_config: FP8EngineConfig | None = None
+    # OmegaConf cannot represent a union of scalar and container types.
+    pipeline_model_parallel_layout: Any = field(
+        default=None,
+        metadata={
+            "help": "Optional Megatron pipeline layout string or list of stage lists. "
+            "Must match PP * VPP and cannot be combined with first/last layer counts "
+            "or embedding/loss split options. None preserves existing splitting."
+        },
+    )
     num_layers_in_first_pipeline_stage: int | None = field(
         default=None, metadata={"help": "Number of layers in the first pipeline stage"}
     )

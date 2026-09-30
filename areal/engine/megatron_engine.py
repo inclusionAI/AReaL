@@ -48,6 +48,7 @@ from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.transformer import TransformerConfig
 from megatron.core.utils import get_model_config
+from omegaconf import OmegaConf
 from torch import nn
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers import PretrainedConfig
@@ -109,6 +110,7 @@ from areal.engine.megatron_utils.packed_context_parallel import (
     split_packed_seqs_for_context_parallel,
 )
 from areal.engine.megatron_utils.pipeline_parallel import (
+    PipelineParallelLayerLayout,
     configure_pipeline_layer_splits,
 )
 from areal.infra.dist_rollout import DistRolloutCoordinator
@@ -434,6 +436,83 @@ class MegatronEngine(TrainEngine):
             100.0 * trainable_params / max(total_params, 1),
         )
 
+    def _configure_pipeline_layer_splits(self) -> None:
+        """Select an explicit layout, automatic splitting, or legacy split options."""
+        if self.mcore_config.pipeline_model_parallel_layout is not None:
+            self._apply_explicit_pipeline_layout()
+            return
+
+        split_fields = (
+            "num_layers_in_first_pipeline_stage",
+            "num_layers_in_last_pipeline_stage",
+            "account_for_embedding_in_pipeline_split",
+            "account_for_loss_in_pipeline_split",
+        )
+        if not any(getattr(self.mcore_config, name, None) for name in split_fields):
+            self.tf_config = configure_pipeline_layer_splits(
+                self.parallel_strategy, self.hf_config, self.tf_config
+            )
+            return
+
+        if self.bridge_cls == "mbridge":
+            target_config = self.bridge.config
+        elif self.bridge_cls == "megatron-bridge":
+            target_config = self.tf_config
+        else:
+            raise ValueError(f"Unsupported bridge_cls: {self.bridge_cls}")
+
+        for name in split_fields:
+            setattr(target_config, name, getattr(self.mcore_config, name))
+
+    def _apply_explicit_pipeline_layout(self) -> None:
+        """Validate the requested native layout before changing the model config."""
+        config = self.mcore_config
+        if (
+            config.num_layers_in_first_pipeline_stage is not None
+            or config.num_layers_in_last_pipeline_stage is not None
+            or config.account_for_embedding_in_pipeline_split
+            or config.account_for_loss_in_pipeline_split
+        ):
+            raise ValueError(
+                "pipeline_model_parallel_layout cannot be combined with "
+                "first/last pipeline layer counts or embedding/loss split options."
+            )
+
+        layout = config.pipeline_model_parallel_layout
+        if OmegaConf.is_config(layout):
+            layout = OmegaConf.to_container(layout, resolve=True)
+        mtp_num_layers = (
+            (getattr(self.tf_config, "mtp_num_layers", 0) or 0)
+            if config.enable_mtp
+            else 0
+        )
+        vpp_size = self.parallel_strategy.virtual_pipeline_parallel_size or 1
+        try:
+            layout = PipelineParallelLayerLayout(
+                layout, self.parallel_strategy.pipeline_parallel_size
+            )
+            if layout.virtual_pipeline_model_parallel_size != vpp_size:
+                raise ValueError(
+                    "pipeline_model_parallel_layout stage count must match "
+                    "PP * VPP; set virtual_pipeline_parallel_size explicitly."
+                )
+            mtp_standalone = layout.validate_layer_layout(
+                num_layers=self.tf_config.num_layers, mtp_num_layers=mtp_num_layers
+            )
+        except (
+            AssertionError,
+            IndexError,
+            KeyError,
+            TypeError,
+            NotImplementedError,
+        ) as exc:
+            raise ValueError(f"Invalid pipeline_model_parallel_layout: {exc}") from exc
+
+        # mbridge shares this config; megatron-bridge receives the layout through
+        # the existing registry path and derives mtp_standalone at finalize().
+        self.tf_config.pipeline_model_parallel_layout = layout
+        self.tf_config.mtp_standalone = mtp_standalone
+
     def initialize(self, addr: str | None, ft_spec: FinetuneSpec, *args, **kwargs):
         try:
             self.seed = get_seed()
@@ -492,34 +571,7 @@ class MegatronEngine(TrainEngine):
                 bridge_type=self.bridge_cls,
             )
 
-            PIPELINE_SPLIT_FIELDS = (
-                "num_layers_in_first_pipeline_stage",
-                "num_layers_in_last_pipeline_stage",
-                "account_for_embedding_in_pipeline_split",
-                "account_for_loss_in_pipeline_split",
-            )
-
-            has_pipeline_split_override = any(
-                getattr(self.mcore_config, field, None)
-                for field in PIPELINE_SPLIT_FIELDS
-            )
-
-            if not has_pipeline_split_override:
-                self.tf_config = configure_pipeline_layer_splits(
-                    self.parallel_strategy,
-                    self.hf_config,
-                    self.tf_config,
-                )
-            else:
-                if self.bridge_cls == "mbridge":
-                    target_config = self.bridge.config
-                elif self.bridge_cls == "megatron-bridge":
-                    target_config = self.tf_config
-                else:
-                    raise ValueError(f"Unsupported bridge_cls: {self.bridge_cls}")
-
-                for field in PIPELINE_SPLIT_FIELDS:
-                    setattr(target_config, field, getattr(self.mcore_config, field))
+            self._configure_pipeline_layer_splits()
 
             self.is_vision_model = is_valid_vision_model(self.hf_config.model_type)
             # Model-packed THD forward: the megatron-bridge Qwen3VLModel family

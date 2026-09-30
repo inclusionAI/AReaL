@@ -16,6 +16,30 @@ actor:
 - Use `bridge_type=megatron-bridge` to enable the new path.
 - `mbridge` is the default choice if this argument is not present
 
+## Custom pipeline layout
+
+Set `actor.megatron.pipeline_model_parallel_layout` to use a native Megatron layout with
+either bridge backend. For example, a model with 14 transformer layers can use this
+layout with PP=2 and VPP=1:
+
+```yaml
+actor:
+  megatron:
+    pipeline_model_parallel_layout: "Et*10|t*4L"
+```
+
+`E` denotes embedding, `t` a transformer layer, `m` an MTP layer, `L` loss, and `|`
+separates stages. A list of stage lists using native names such as `embedding`,
+`decoder`, `mtp`, and `loss` is also accepted. The layout must match the model's layer
+counts and enabled MTP head. For VPP, set `virtual_pipeline_parallel_size` explicitly;
+the layout must contain PP times VPP stages in virtual-rank-first, physical-rank-second
+order. This option does not change the allocation's PP size.
+
+The default is `None`, which preserves the existing automatic split or configured
+endpoint counts/accounting options. An explicit layout cannot be combined with
+`num_layers_in_first_pipeline_stage`, `num_layers_in_last_pipeline_stage`,
+`account_for_embedding_in_pipeline_split`, or `account_for_loss_in_pipeline_split`.
+
 ## Why this feature exists
 
 - `mbridge` is being deprecated and does not provide PEFT/LoRA support.
