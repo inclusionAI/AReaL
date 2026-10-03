@@ -3,6 +3,7 @@
 import gc
 import sys
 import types
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 import ray
@@ -478,6 +479,264 @@ async def test_prepare_launch_server_forwards_rollout_env(monkeypatch):
     ]
     forwarded_env = secondary_launcher.start_backend_worker.calls[0][3]
     assert forwarded_env is not rollout_env
+
+
+@pytest.fixture
+def build_multi_node_args(monkeypatch):
+    response = AsyncMock()
+    response.raise_for_status = Mock()
+    response.json = AsyncMock(return_value={"host": "10.0.0.1", "ports": [12345]})
+    response.__aenter__.return_value = response
+    response.__aexit__.return_value = None
+
+    session = AsyncMock()
+    session.post = Mock(return_value=response)
+    session.__aenter__.return_value = session
+    session.__aexit__.return_value = None
+    monkeypatch.setattr(
+        ray_scheduler.aiohttp, "ClientSession", Mock(return_value=session)
+    )
+    monkeypatch.setattr(ray_scheduler, "get_default_connector", lambda: None)
+
+    coordinator = object.__new__(ray_scheduler.RayMultiNodeRolloutCoordinator)
+    coordinator.startup_timeout = 1.0
+
+    async def build(backend, n_nodes, allocated_devices, **overrides):
+        worker_info = _worker_info("rollout/0", role="rollout")
+        worker_info.launchers = [object() for _ in range(n_nodes)]
+        worker_info.gpu_devices = [str(i) for i in range(allocated_devices)]
+        server_args = {
+            "model": "test-model",
+            "host": "127.0.0.1",
+            "port": 8000,
+            **overrides,
+        }
+        original_args = server_args.copy()
+        head_args, worker_args = await coordinator._build_multi_node_server_args(
+            worker_info, backend, server_args
+        )
+        assert server_args == original_args
+        response.json.assert_awaited_once()
+        return original_args, head_args, worker_args
+
+    return build
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("n_nodes", "dp_size", "tp_size", "pp_size", "devices"),
+    [(4, 32, 2, 1, 64), (2, 4, 2, 2, 16), (2, 2, 8, 1, 16)],
+    ids=["multiple-dp-per-node", "node-local-tp-pp", "one-dp-per-node"],
+)
+async def test_build_vllm_multi_node_args_assigns_node_local_dp(
+    build_multi_node_args, n_nodes, dp_size, tp_size, pp_size, devices
+):
+    """Each node owns disjoint DP ranks and only the head serves HTTP."""
+    original, head, workers = await build_multi_node_args(
+        "vllm",
+        n_nodes,
+        devices,
+        data_parallel_size=dp_size,
+        tensor_parallel_size=tp_size,
+        pipeline_parallel_size=pp_size,
+    )
+    local_dp = dp_size // n_nodes
+    assert len(workers) == n_nodes - 1
+    for node_rank, args in enumerate([head, *workers]):
+        expected = {
+            **original,
+            "data_parallel_size_local": local_dp,
+            "data_parallel_start_rank": node_rank * local_dp,
+            "data_parallel_address": "10.0.0.1",
+            "data_parallel_rpc_port": 12345,
+        }
+        if node_rank:
+            expected.pop("host")
+            expected.pop("port")
+            expected["headless"] = True
+        assert args == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("n_nodes", "dp_size", "tp_size", "pp_size", "devices"),
+    [(2, 1, 16, 1, 16), (4, 2, 16, 1, 32), (4, 2, 1, 16, 32), (2, 4, 2, 1, 16)],
+    ids=["single-dp", "cross-node-tp", "cross-node-pp", "allocation-mismatch"],
+)
+async def test_build_vllm_multi_node_args_preserves_cross_node_launch(
+    build_multi_node_args, n_nodes, dp_size, tp_size, pp_size, devices
+):
+    """Do not use node-local DP unless replicas fit the allocated node layout."""
+    original, head, workers = await build_multi_node_args(
+        "vllm",
+        n_nodes,
+        devices,
+        data_parallel_size=dp_size,
+        tensor_parallel_size=tp_size,
+        pipeline_parallel_size=pp_size,
+    )
+    assert len(workers) == n_nodes - 1
+    for node_rank, args in enumerate([head, *workers]):
+        expected = {
+            **original,
+            "nnodes": n_nodes,
+            "node_rank": node_rank,
+            "master_addr": "10.0.0.1",
+            "master_port": "12345",
+        }
+        if node_rank:
+            expected.pop("host")
+            expected.pop("port")
+            expected["headless"] = True
+        assert args == expected
+
+
+@pytest.mark.asyncio
+async def test_build_sglang_multi_node_args_preserves_rendezvous(build_multi_node_args):
+    """The vLLM-specific DP change must not alter SGLang's launch arguments."""
+    original, head, workers = await build_multi_node_args("sglang", 2, 16, tp_size=16)
+    common = {"nnodes": 2, "dist_init_addr": "10.0.0.1:12345"}
+    assert head == {**original, **common, "node_rank": 0}
+    original.pop("host")
+    original.pop("port")
+    assert workers == [{**original, **common, "node_rank": 1}]
+
+
+@pytest.mark.asyncio
+async def test_prepare_single_node_server_bypasses_multi_node_coordinator(monkeypatch):
+    """Single-node launches must retain their original arguments."""
+    worker_info = _worker_info("rollout/0", role="rollout")
+    worker_info.launchers = [object()]
+    coordinator = object.__new__(ray_scheduler.RayMultiNodeRolloutCoordinator)
+    build = AsyncMock()
+    monkeypatch.setattr(coordinator, "_build_multi_node_server_args", build)
+    kwargs = {"server_args": {"model": "test-model"}}
+    assert (
+        await coordinator.prepare_launch_server(worker_info, "rollout/0", kwargs)
+        is kwargs
+    )
+    build.assert_not_awaited()
+
+
+@pytest.fixture
+def vllm_engine_config():
+    pytest.importorskip("vllm")
+    from vllm.engine.arg_utils import EngineArgs
+
+    def create(args):
+        engine_args = {
+            k: v for k, v in args.items() if k not in {"host", "port", "headless"}
+        }
+        return EngineArgs(
+            **engine_args,
+            skip_tokenizer_init=True,
+            dtype="float16",
+            enforce_eager=True,
+            max_model_len=32,
+            max_num_batched_tokens=32,
+            max_num_seqs=1,
+            distributed_executor_backend="mp",
+        ).create_engine_config(headless=args.get("headless", False))
+
+    return create
+
+
+@pytest.mark.vllm
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("dp_size", "tp_size", "pp_size", "n_nodes"), [(32, 2, 1, 4), (4, 2, 2, 2)]
+)
+async def test_node_local_dp_remains_single_node_after_dense_engine_reset(
+    build_multi_node_args,
+    vllm_engine_config,
+    tmp_path,
+    dp_size,
+    tp_size,
+    pp_size,
+    n_nodes,
+):
+    """Dense EngineCores must not reinterpret global nodes as TP/PP nodes."""
+    from transformers import LlamaConfig
+
+    LlamaConfig(
+        architectures=["LlamaForCausalLM"],
+        hidden_size=128,
+        intermediate_size=256,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        num_hidden_layers=2,
+        vocab_size=32,
+        max_position_embeddings=32,
+    ).save_pretrained(tmp_path)
+    _, head, workers = await build_multi_node_args(
+        "vllm",
+        n_nodes,
+        dp_size * tp_size * pp_size,
+        model=str(tmp_path),
+        data_parallel_size=dp_size,
+        tensor_parallel_size=tp_size,
+        pipeline_parallel_size=pp_size,
+    )
+    for args in (head, workers[0]):
+        parallel = vllm_engine_config(args).parallel_config
+        assert parallel.data_parallel_rank == args["data_parallel_start_rank"]
+        assert parallel.data_parallel_size_local == dp_size // n_nodes
+        assert parallel.data_parallel_hybrid_lb is False
+
+        # Match the three assignments in vLLM's dense EngineCore startup.
+        parallel.data_parallel_size = 1
+        parallel.data_parallel_size_local = 1
+        parallel.data_parallel_rank = 0
+        assert parallel.nnodes_within_dp == 1
+        assert parallel.local_world_size == tp_size * pp_size
+
+
+@pytest.mark.vllm
+@pytest.mark.asyncio
+async def test_node_local_moe_ep_preserves_attention_dp(
+    build_multi_node_args, vllm_engine_config, tmp_path
+):
+    """Wide EP retains attention DP and internal load balancing on every node."""
+    from transformers import MixtralConfig
+
+    MixtralConfig(
+        architectures=["MixtralForCausalLM"],
+        hidden_size=128,
+        intermediate_size=256,
+        num_attention_heads=2,
+        num_key_value_heads=2,
+        num_hidden_layers=2,
+        num_local_experts=64,
+        num_experts_per_tok=2,
+        vocab_size=32,
+        max_position_embeddings=32,
+    ).save_pretrained(tmp_path)
+    _, head, workers = await build_multi_node_args(
+        "vllm",
+        4,
+        64,
+        model=str(tmp_path),
+        data_parallel_size=32,
+        tensor_parallel_size=2,
+        pipeline_parallel_size=1,
+        enable_expert_parallel=True,
+    )
+    for node_rank, args in enumerate([head, *workers]):
+        config = vllm_engine_config(args)
+        assert config.model_config.is_moe
+        assert config.model_config.get_num_experts() == 64
+        parallel = config.parallel_config
+        assert parallel.enable_expert_parallel is True
+        assert parallel.data_parallel_size == 32
+        assert parallel.data_parallel_size_local == 8
+        assert parallel.data_parallel_rank == node_rank * 8
+        assert parallel.data_parallel_index == node_rank * 8
+        assert parallel.tensor_parallel_size == 2
+        assert parallel.pipeline_parallel_size == 1
+        assert parallel.nnodes_within_dp == 1
+        assert parallel.local_world_size == 2
+        assert parallel.data_parallel_hybrid_lb is False
+        assert parallel.data_parallel_external_lb is False
 
 
 def test_create_workers_uses_real_ray_launchers_and_tracks_state(
