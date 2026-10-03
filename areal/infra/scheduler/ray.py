@@ -464,23 +464,43 @@ class RayMultiNodeRolloutCoordinator:
                 )
                 worker_args.append(args)
         elif backend == "vllm":
-            head_args.update(
-                nnodes=n_nodes,
-                node_rank=0,
-                master_addr=master_host,
-                master_port=str(master_port),
+            dp_size = int(server_args.get("data_parallel_size", 1))
+            tp_size = int(server_args.get("tensor_parallel_size", 1))
+            pp_size = int(server_args.get("pipeline_parallel_size", 1))
+            allocated_devices = len(worker_info.gpu_devices)
+            model_parallel_size = tp_size * pp_size
+            use_node_local_dp = (
+                dp_size > 1
+                and dp_size % n_nodes == 0
+                and allocated_devices == dp_size * model_parallel_size
             )
+
+            if use_node_local_dp:
+                rank_arg = "data_parallel_start_rank"
+                rank_stride = dp_size // n_nodes
+                common_args = dict(
+                    data_parallel_size_local=rank_stride,
+                    data_parallel_address=master_host,
+                    data_parallel_rpc_port=master_port,
+                )
+            else:
+                rank_arg = "node_rank"
+                rank_stride = 1
+                common_args = dict(
+                    nnodes=n_nodes,
+                    master_addr=master_host,
+                    master_port=str(master_port),
+                )
+
+            head_args.update(common_args)
+            head_args[rank_arg] = 0
             for node_rank in range(1, n_nodes):
                 args = copy.deepcopy(server_args)
                 args.pop("host", None)
                 args.pop("port", None)
-                args.update(
-                    nnodes=n_nodes,
-                    node_rank=node_rank,
-                    master_addr=master_host,
-                    master_port=str(master_port),
-                    headless=True,
-                )
+                args.update(common_args)
+                args[rank_arg] = node_rank * rank_stride
+                args["headless"] = True
                 worker_args.append(args)
         else:
             raise EngineCallError(
