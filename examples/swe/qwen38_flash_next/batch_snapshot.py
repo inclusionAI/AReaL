@@ -89,12 +89,26 @@ def load_batch_snapshot(path: Path, *, mmap: bool = False) -> dict[str, Any]:
 
 
 @contextmanager
-def capture_training_batches(actor, directory: Path, metadata: dict[str, Any]):
+def capture_training_batches(
+    actor,
+    directory: Path,
+    metadata: dict[str, Any],
+    *,
+    max_batches: int | None = None,
+):
     """Capture preparation and advantage calls; indices are calls, not global steps.
 
     This preserves inputs for replay experiments, not optimizer/RNG state. It does
     not enable training replay or make repeated off-policy updates safe.
+    ``max_batches`` limits calls captured per method, not optimizer steps. Zero
+    disables capture; None keeps the historical unlimited diagnostic behavior.
     """
+    if max_batches is not None and (type(max_batches) is not int or max_batches < 0):
+        raise ValueError("Snapshot max_batches must be a nonnegative integer or None")
+    if max_batches == 0:
+        yield
+        return
+
     originals = {
         name: getattr(actor, name) for name in ("prepare_batch", "compute_advantages")
     }
@@ -104,6 +118,9 @@ def capture_training_batches(actor, directory: Path, metadata: dict[str, Any]):
     def wrap(name):
         def call(*args, **kwargs):
             index = counts[name]
+            counts[name] += 1
+            if max_batches is not None and index >= max_batches:
+                return originals[name](*args, **kwargs)
             prefix = directory / f"{name}-{index:04d}"
             info = {**metadata, "method": name, "call_index": index}
             if name == "compute_advantages":
@@ -111,7 +128,6 @@ def capture_training_batches(actor, directory: Path, metadata: dict[str, Any]):
                 save_batch_snapshot(prefix.with_suffix(".input.pt"), batch, info)
             result = originals[name](*args, **kwargs)
             save_batch_snapshot(prefix.with_suffix(".output.pt"), result, info)
-            counts[name] += 1
             return result
 
         return call

@@ -297,6 +297,9 @@ def main(profile, args):
                         "allocation_mode": config.allocation_mode,
                         "n_samples": config.gconfig.n_samples,
                     },
+                    max_batches=int(
+                        os.environ.get("QWEN_BATCH_SNAPSHOT_MAX_BATCHES", "1")
+                    ),
                 )
             replay = nullcontext()
             if replay_paths:

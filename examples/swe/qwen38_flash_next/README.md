@@ -188,6 +188,16 @@ supplied snapshot. Metadata must match the model, allocation and sample count. T
 image aliases for the historical host-cache comparison. Replay does not restore RNG or
 optimizer state and is not an on-policy RL experiment.
 
+Snapshot capture is disabled unless `QWEN_BATCH_SNAPSHOT_DIR` is set. The launcher
+captures only the first call of each preparation/advantage method by default;
+`QWEN_BATCH_SNAPSHOT_MAX_BATCHES` sets a nonnegative per-method call limit (zero
+disables capture). Calls are not global training steps. Each captured batch includes all
+rows and can be large; use a private directory outside the repository with enough space.
+Capture is synchronous and incurs copies and I/O, so use it in a dedicated diagnostic
+run. It does not provide a paired Megatron forward logp when the normal training path
+does not return that tensor, or independently verify checkpoint/version alignment. Do
+not deploy it by restarting an otherwise healthy training job.
+
 For garbled-output analysis, preserve the original token IDs and image data. Count
 tokens whose original bytes decode with U+FFFD separately from all tokens in a response
 containing such bytes. Excluding those tokens changes only the statistics mask; keep the
