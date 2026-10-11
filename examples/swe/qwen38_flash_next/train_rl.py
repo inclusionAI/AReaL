@@ -4,6 +4,7 @@
 import json
 import os
 import sys
+from contextlib import nullcontext
 from dataclasses import asdict
 from pathlib import Path
 
@@ -123,6 +124,17 @@ def validate_required_recovery(recover_info: object | None) -> None:
         )
 
 
+def replay_only_workflow():
+    """Return a workflow that fails closed if replay ever attempts generation."""
+    from areal.api.workflow_api import RolloutWorkflow
+
+    class ReplayOnlyWorkflow(RolloutWorkflow):
+        async def arun_episode(self, engine, data):
+            raise RuntimeError("Diagnostic replay must not generate rollouts")
+
+    return ReplayOnlyWorkflow
+
+
 def select_arena_dataset(dataset, selected: list[str]):
     """Use explicit Env versions for both training and evaluation selections."""
     from datasets import Dataset
@@ -201,10 +213,31 @@ def main(profile, args):
         config.econfig.arena_task_envs.setdefault(
             "DSH_LLM_REQUEST_TIMEOUT_SECONDS", "7200"
         )
-    dataset, streams = get_arena_mixture_dataset(
-        config.econfig, size_multiple=config.train_dataset.batch_size
+    from examples.swe.qwen38_flash_next.batch_snapshot import (
+        resolve_replay_paths,
+        validate_diagnostic_replay,
     )
-    if selection_file:
+
+    replay_paths = resolve_replay_paths(
+        os.environ.get("QWEN_BATCH_REPLAY_PATH"),
+        os.environ.get("QWEN_BATCH_REPLAY_PATHS"),
+    )
+    if replay_paths:
+        if evaluation_only:
+            raise ValueError("Batch replay is not an evaluation mode")
+        validate_diagnostic_replay(config, len(replay_paths))
+    if replay_paths:
+        from datasets import Dataset
+
+        dataset = Dataset.from_list(
+            [{"prompt": ""} for _ in range(config.train_dataset.batch_size)]
+        )
+        streams = []
+    else:
+        dataset, streams = get_arena_mixture_dataset(
+            config.econfig, size_multiple=config.train_dataset.batch_size
+        )
+    if selection_file and not replay_paths:
         if len(streams) != 1:
             raise ValueError("Task selection requires exactly one Arena stream")
         dataset = select_arena_dataset(dataset, selected)
@@ -230,6 +263,9 @@ def main(profile, args):
         timeout=config.econfig.timeout,
         reject_terminal_task_failures=not evaluation_only,
     )
+    if replay_paths:
+        workflow = replay_only_workflow()
+        kwargs = {}
 
     class RecipeTrainer(PPOTrainer):
         def _init_scheduler(self):
@@ -255,13 +291,52 @@ def main(profile, args):
         ) as trainer:
             if not evaluation_only:
                 validate_required_recovery(trainer.recover_info)
-            trainer.train(
-                workflow=workflow,
-                workflow_kwargs=kwargs,
-                dynamic_filter_fn=config.should_accept_fn,
-                eval_workflow=workflow if evaluation_only else None,
-                eval_workflow_kwargs=kwargs if evaluation_only else None,
-            )
+            snapshot_dir = os.environ.get("QWEN_BATCH_SNAPSHOT_DIR")
+            capture = nullcontext()
+            if snapshot_dir and not evaluation_only:
+                from examples.swe.qwen38_flash_next.batch_snapshot import (
+                    capture_training_batches,
+                )
+
+                capture = capture_training_batches(
+                    trainer.actor,
+                    Path(snapshot_dir),
+                    {
+                        "experiment": config.experiment_name,
+                        "trial": config.trial_name,
+                        "model_path": config.tokenizer_path,
+                        "allocation_mode": config.allocation_mode,
+                        "n_samples": config.gconfig.n_samples,
+                    },
+                    max_batches=int(
+                        os.environ.get("QWEN_BATCH_SNAPSHOT_MAX_BATCHES", "1")
+                    ),
+                )
+            replay = nullcontext()
+            if replay_paths:
+                from examples.swe.qwen38_flash_next.batch_snapshot import (
+                    replay_training_batches,
+                )
+
+                replay = replay_training_batches(
+                    trainer.actor,
+                    replay_paths,
+                    {
+                        "model_path": config.tokenizer_path,
+                        "allocation_mode": config.allocation_mode,
+                        "n_samples": config.gconfig.n_samples,
+                    },
+                    worker_profile=os.environ["QWEN_AB_ARM"],
+                )
+            # Capture wraps replay, so its artifacts describe the supplied batch.
+            with replay, capture:
+                trainer.train(
+                    workflow=workflow,
+                    workflow_kwargs=kwargs,
+                    dynamic_filter_fn=config.should_accept_fn,
+                    eval_workflow=workflow if evaluation_only else None,
+                    eval_workflow_kwargs=kwargs if evaluation_only else None,
+                )
     finally:
         RemoteSGLangEngine.as_controller = staticmethod(factory)
 

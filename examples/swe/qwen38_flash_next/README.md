@@ -127,12 +127,12 @@ RL output defaults to `/storage/openpsi/experiments/qwen38-flash-next/<profile>`
 `QWEN_OUTPUT_ROOT` for a specific experiment directory, or `QWEN_EXPERIMENTS_ROOT` to
 change the shared experiments root.
 
-Normal RL uses SGLang's native QSA top-k and prefix cache. The recipe does not install
-stable top-k or random cache-salt wrappers, replay saved batches, or capture batch
-snapshots. Full trajectory/result persistence and verbose rollout tracing are disabled
-by default. Health metrics, checkpoint recovery and model compatibility patches remain
-enabled. NCCL selects its algorithm and protocol unless explicitly overridden in the
-launch environment.
+The default recipe uses SGLang's native QSA top-k and prefix cache. Stable top-k, random
+cache salt, saved-batch replay and snapshots are opt-in on this debug branch. Full
+trajectory/result persistence and verbose rollout tracing remain disabled by default.
+Health metrics, checkpoint recovery and model compatibility patches remain enabled. NCCL
+selects its algorithm and protocol unless explicitly overridden in the launch
+environment.
 
 ## Production fixes retained in this recipe
 
@@ -166,3 +166,41 @@ failures from infrastructure failures and preserve usable training samples. NUMA
 placement, asynchronous checkpoint saving and existing runtime reliability fixes are
 also retained. The cleanup removes diagnostic helpers and diagnostic defaults only; it
 does not split production fixes by whether they are model-specific.
+
+## Debug branch: garbled output and logp differences
+
+`chucai.dzq/debug-qwen38-flash-logp` preserves the diagnostic tools on top of the
+production fixes in PR #1774. Normal training changes belong on
+`chucai.dzq/fix-qwen38-flash-rl`; snapshots, replay and diagnostic comparisons belong
+here. Both branches keep the same default RL configuration and runtime dependency pins.
+
+| Tool                                                                  | Purpose                                                                                                               | Activation                                                                                                                                                             |
+| --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `batch_snapshot.py` and `train_rl.py` capture hooks                   | Save CPU copies of original token IDs, masks, logp and image tensors without changing the live batch.                 | Set `QWEN_BATCH_SNAPSHOT_DIR` in the controller environment.                                                                                                           |
+| `batch_snapshot.py`, `train_rl.py` and `actor_worker.py` replay hooks | Replay saved batches once through actor workers without generating new Arena rollouts.                                | Set `QWEN_BATCH_REPLAY_PATH` or JSON-array `QWEN_BATCH_REPLAY_PATHS`; propagate replay variables to actor workers and set controller `QWEN_AB_ARM=fixed` or `unfixed`. |
+| `patch_sglang_qsa_topk.py`                                            | Compare stable QSA selection with native top-k; this is a diagnostic option, not a proven RL correctness requirement. | Apply the patch to a fresh compatible SGLang worker layer and set that worker's `QWEN_QSA_STABLE_TOPK=1`. The default startup does not apply this patch.               |
+| `proxy.py` cache-salt wrapper                                         | Compare requests with prefix-cache isolation.                                                                         | Set `QWEN_ISOLATE_REQUEST_CACHE=1` in the proxy worker environment; disabled by default.                                                                               |
+| `grad_norm_guard.py`                                                  | Include per-parameter gradient summaries when a nonfinite norm rejects an update.                                     | Runs on the nonfinite-gradient failure path on this branch.                                                                                                            |
+
+Replay requires recovery disabled, `eval_before_train=false`, and one training step per
+supplied snapshot. Metadata must match the model, allocation and sample count. The
+`fixed` replay profile preserves shared image storage; `unfixed` deliberately splits
+image aliases for the historical host-cache comparison. Replay does not restore RNG or
+optimizer state and is not an on-policy RL experiment.
+
+Snapshot capture is disabled unless `QWEN_BATCH_SNAPSHOT_DIR` is set. The launcher
+captures only the first call of each preparation/advantage method by default;
+`QWEN_BATCH_SNAPSHOT_MAX_BATCHES` sets a nonnegative per-method call limit (zero
+disables capture). Calls are not global training steps. Each captured batch includes all
+rows and can be large; use a private directory outside the repository with enough space.
+Capture is synchronous and incurs copies and I/O, so use it in a dedicated diagnostic
+run. It does not provide a paired Megatron forward logp when the normal training path
+does not return that tensor, or independently verify checkpoint/version alignment. Do
+not deploy it by restarting an otherwise healthy training job.
+
+For garbled-output analysis, preserve the original token IDs and image data. Count
+tokens whose original bytes decode with U+FFFD separately from all tokens in a response
+containing such bytes. Excluding those tokens changes only the statistics mask; keep the
+original forward context. Compare the same weights and masks before attributing logp
+differences to text corruption or MoE routing. These helpers do not implement R3 routing
+replay; its integration remains a separate change.

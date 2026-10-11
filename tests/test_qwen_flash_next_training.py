@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import subprocess
 import sys
 import time
 from datetime import timedelta
@@ -27,6 +28,121 @@ from areal.models.mcore.mcore_bridge_checkpoint import (
 )
 
 LAYERS_PREFIX = "model.language_model.layers"
+
+
+@pytest.mark.parametrize("topk", [1, 3, 7])
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_stable_qsa_topk_preserves_ties_empty_rows_and_padding(topk, device):
+    from examples.swe.qwen38_flash_next.patch_sglang_qsa_topk import stable_qsa_topk
+
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("Requires CUDA")
+    logits = torch.tensor(
+        [[float("nan"), 4, 4, 2, float("inf")], [1, 2, 3, 4, 5], [0, 7, 2, 9, 1]],
+        dtype=torch.float32,
+    )
+    starts, ends = [1, 2, 0], [4, 2, 5]
+    expected = []
+    for row, start, end in zip(logits.tolist(), starts, ends):
+        selected = sorted(range(start, end), key=lambda i: (-row[i], i))[:topk]
+        relative = sorted(i - start for i in selected)
+        expected.append(relative + [-1] * (topk - len(relative)))
+
+    actual = stable_qsa_topk(
+        logits.to(device),
+        torch.tensor(starts, device=device),
+        torch.tensor(ends, device=device),
+        topk,
+    ).cpu()
+
+    torch.testing.assert_close(
+        actual, torch.tensor(expected, dtype=torch.int32), rtol=0, atol=0
+    )
+
+
+def test_stable_qsa_topk_avoids_scalar_extraction_and_nonzero():
+    from examples.swe.qwen38_flash_next.patch_sglang_qsa_topk import stable_qsa_topk
+
+    if not torch.cuda.is_available():
+        pytest.skip("Requires CUDA to profile asynchronous assertions")
+    logits = torch.tensor([[3.0, 3.0, 1.0]], device="cuda")
+    starts, ends = torch.tensor([0], device="cuda"), torch.tensor([3], device="cuda")
+    stable_qsa_topk(logits, starts, ends, 2)
+    torch.cuda.synchronize()
+    with torch.profiler.profile(
+        activities=[torch.profiler.ProfilerActivity.CPU]
+    ) as prof:
+        result = stable_qsa_topk(logits, starts, ends, 2)
+    operations = {event.key for event in prof.key_averages()}
+    assert not operations.intersection(
+        {"aten::item", "aten::_local_scalar_dense", "aten::nonzero", "aten::is_nonzero"}
+    )
+    torch.testing.assert_close(
+        result.cpu(), torch.tensor([[0, 1]], dtype=torch.int32), rtol=0, atol=0
+    )
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda", "cuda_graph"])
+@pytest.mark.parametrize(
+    "start,end,score,error",
+    [
+        (-1, 1, 0.0, "Invalid row bounds"),
+        (1, 0, 0.0, "Invalid row bounds"),
+        (0, 2, 0.0, "Invalid row bounds"),
+        (0, 1, float("nan"), "Nonfinite valid scores"),
+        (0, 1, float("inf"), "Nonfinite valid scores"),
+        (0, 1, -float("inf"), "Nonfinite valid scores"),
+    ],
+)
+def test_stable_qsa_topk_rejects_invalid_inputs(device, start, end, score, error):
+    from examples.swe.qwen38_flash_next.patch_sglang_qsa_topk import stable_qsa_topk
+
+    if device == "cpu":
+        with pytest.raises(ValueError, match=error):
+            stable_qsa_topk(
+                torch.tensor([[score]]), torch.tensor([start]), torch.tensor([end]), 1
+            )
+        return
+    if not torch.cuda.is_available():
+        pytest.skip("Requires CUDA")
+    # A device assertion poisons its CUDA context: isolate each failure.
+    code = f"""
+import torch
+from examples.swe.qwen38_flash_next.patch_sglang_qsa_topk import stable_qsa_topk
+logits = torch.zeros((1, 1), device="cuda")
+starts = torch.tensor([0], device="cuda")
+ends = torch.tensor([1], device="cuda")
+if {device == "cuda_graph"}:
+    stream = torch.cuda.Stream()
+    stream.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(stream):
+        stable_qsa_topk(logits, starts, ends, 1)
+    torch.cuda.current_stream().wait_stream(stream)
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        result = stable_qsa_topk(logits, starts, ends, 1)
+    graph.replay()
+    torch.cuda.synchronize()
+    assert result.cpu().tolist() == [[0]]
+logits.fill_(float({str(score)!r}))
+starts.fill_({start})
+ends.fill_({end})
+if {device == "cuda_graph"}:
+    graph.replay()
+else:
+    stable_qsa_topk(logits, starts, ends, 1)
+torch.cuda.synchronize()
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        cwd=Path(__file__).resolve().parents[1],
+        timeout=60,
+    )
+    assert result.returncode != 0
+    assert "device-side assert" in result.stderr, result.stderr
+    assert error in result.stderr, result.stderr
 
 
 PLE_PREFIX = f"{LAYERS_PREFIX}.1.ple.ple_embedding."
@@ -56,7 +172,14 @@ def test_arena_training_preserves_rows_and_cycles_tail(batch_size, monkeypatch):
     monkeypatch.setattr(
         train_swe_rl, "get_arena_mixture_dataset", lambda *_, **__: (source, [])
     )
-    monkeypatch.delenv("QWEN_ARENA_TASK_IDS_FILE", raising=False)
+    for name in (
+        "QWEN_ARENA_TASK_IDS_FILE",
+        "QWEN_BATCH_REPLAY_PATH",
+        "QWEN_BATCH_REPLAY_PATHS",
+        "QWEN_BATCH_SNAPSHOT_DIR",
+        "QWEN_REQUIRE_RECOVER",
+    ):
+        monkeypatch.delenv(name, raising=False)
 
     class TrainerBoundaryReached(Exception):
         pass
@@ -64,6 +187,7 @@ def test_arena_training_preserves_rows_and_cycles_tail(batch_size, monkeypatch):
     class CaptureTrainer:
         def __init__(self, config, train_dataset, valid_dataset):
             self.dataset = train_dataset
+            self.recover_info = None
             captured.append(self.dataset)
 
         def __enter__(self):
@@ -124,6 +248,8 @@ def test_recipe_task_timeout_preserves_eval_defaults_and_explicit_overrides(
     selection = tmp_path / "tasks.json"
     selection.write_text(json.dumps(["env:example@1"]))
     monkeypatch.setenv("QWEN_ARENA_TASK_IDS_FILE", str(selection))
+    monkeypatch.delenv("QWEN_BATCH_REPLAY_PATH", raising=False)
+    monkeypatch.delenv("QWEN_BATCH_REPLAY_PATHS", raising=False)
     monkeypatch.setattr(cli_args, "load_expr_config", lambda *_: (config, None))
 
     class DatasetBoundaryReached(Exception):
