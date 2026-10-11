@@ -171,8 +171,19 @@ def _init_engine_thread() -> None:
                     try:
                         result = func(*args, **kwargs)
                         future.set_result(result)
-                    except Exception as e:
-                        future.set_exception(e)
+                    except BaseException as e:
+                        # CheckpointException inherits BaseException in PyTorch.
+                        # Complete the Future with an Exception that HTTP handlers
+                        # can report instead of terminating this worker thread.
+                        if isinstance(e, Exception):
+                            future.set_exception(e)
+                        else:
+                            error = RuntimeError(
+                                f"Engine task '{func_name}' raised "
+                                f"{type(e).__name__}: {e}"
+                            )
+                            error.__cause__ = e
+                            future.set_exception(error)
                     finally:
                         _engine_work_queue.task_done()
                 except Exception as e:
