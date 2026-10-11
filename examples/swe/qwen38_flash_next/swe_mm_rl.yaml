@@ -101,6 +101,7 @@ rollout:
     - cd ${oc.env:QWEN_REPO}
     - python3 -m examples.swe.qwen38_flash_next.patch_sglang_qsa_compress_gather
     - python3 -m examples.swe.qwen38_flash_next.patch_sglang_qwen4_vl
+    - python3 -m examples.swe.qwen38_flash_next.patch_sglang_mm_executor
     image: ${oc.env:QWEN_ROLLOUT_IMAGE}
   scheduling_strategy:
     type: colocation

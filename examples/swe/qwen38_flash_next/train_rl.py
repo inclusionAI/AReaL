@@ -114,6 +114,15 @@ def configure_training_rpc(scheduler):
     return scheduler
 
 
+def validate_required_recovery(recover_info: object | None) -> None:
+    """Refuse fresh training when the launcher explicitly requires recovery."""
+    if os.environ.get("QWEN_REQUIRE_RECOVER") == "1" and recover_info is None:
+        raise RuntimeError(
+            "QWEN_REQUIRE_RECOVER=1 but no checkpoint was loaded; "
+            "refusing to start from step 0"
+        )
+
+
 def select_arena_dataset(dataset, selected: list[str]):
     """Use explicit Env versions for both training and evaluation selections."""
     from datasets import Dataset
@@ -244,6 +253,8 @@ def main(profile, args):
             train_dataset=dataset,
             valid_dataset=dataset if evaluation_only else None,
         ) as trainer:
+            if not evaluation_only:
+                validate_required_recovery(trainer.recover_info)
             trainer.train(
                 workflow=workflow,
                 workflow_kwargs=kwargs,

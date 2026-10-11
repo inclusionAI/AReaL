@@ -778,7 +778,30 @@ class ArenaStreamAgentWorkflow:
         return True
 
     @staticmethod
+    def _is_abbreviated_runner_failure(raw: Any) -> bool:
+        """Recognize Arena's error-only wrapper, including adopted Harness tasks."""
+        if not isinstance(raw, dict) or set(raw) != {"error"}:
+            return False
+        detail = raw["error"]
+        return (
+            isinstance(detail, str)
+            and re.match(
+                r"harness: (?:adopted harness: )?"
+                r"harness agent phase exited with code 1: ",
+                detail,
+            )
+            is not None
+            and re.search(
+                r"harness: running task lifecycle(?: for [^\n]*)? "
+                r"\(runner=[^\n)]+/runner\)",
+                detail,
+            )
+            is not None
+        )
+
+    @classmethod
     def _harness_result_format(
+        cls,
         raw: Any,
     ) -> Literal["native", "native-runner", "gameagent", "legacy-claude"] | None:
         """Identify the envelope before validation, including broken receipts.
@@ -809,7 +832,10 @@ class ArenaStreamAgentWorkflow:
             or "(claude=" in detail
         )
         runner = "implementation" in raw or (
-            isinstance(raw.get("harness"), dict)
+            (
+                isinstance(raw.get("harness"), dict)
+                or cls._is_abbreviated_runner_failure(raw)
+            )
             and not any((native, gameagent, claude))
         )
         if sum((native, runner, gameagent, claude)) != 1:
@@ -894,8 +920,30 @@ class ArenaStreamAgentWorkflow:
     def _is_runner_model_failure(cls, raw: dict[str, Any], receipt: Any) -> bool:
         """Accept explicit native model failures with a healthy runner envelope."""
 
-        if not cls._is_runner_context_failure(raw) or not isinstance(receipt, dict):
+        abbreviated = cls._is_abbreviated_runner_failure(raw)
+        if not isinstance(receipt, dict) or not (
+            cls._is_runner_context_failure(raw) or abbreviated
+        ):
             return False
+        if abbreviated:
+            detail = re.sub(
+                r"running (?:setup|collect) hook \(timeout=[0-9.hms]+\)",
+                "running hook",
+                raw["error"],
+            )
+            collection = receipt.get("collection")
+            if (
+                _HARNESS_SYSTEM_ERROR_PATTERN.search(detail)
+                or "delivery" not in receipt
+                or cls._harness_result_format(receipt) != "native-runner"
+                or receipt.get("failure") is not None
+                or receipt.get("raw") is not None
+                or not isinstance(collection, dict)
+                or collection.get("status") != "OK"
+                or type(collection.get("file_count")) is not int
+                or collection["file_count"] < 0
+            ):
+                return False
         if (
             receipt.get("implementation") != "rust-core-runtime"
             or receipt.get("status") != "ERROR"
@@ -912,6 +960,8 @@ class ArenaStreamAgentWorkflow:
             or not isinstance(errors[0], dict)
             or not isinstance(errors[0].get("message"), str)
         ):
+            return False
+        if abbreviated and "outcome" in errors[0]:
             return False
         message = errors[0]["message"]
         return (
@@ -1016,6 +1066,8 @@ class ArenaStreamAgentWorkflow:
         if "status" in raw and raw["status"] != "ERROR":
             return False
         if result_format == "native-runner":
+            if cls._is_abbreviated_runner_failure(raw) and result.score != 0.0:
+                return False
             return (
                 context_overflow and cls._is_runner_context_failure(raw)
             ) or cls._is_runner_model_failure(raw, error.harness_result)
