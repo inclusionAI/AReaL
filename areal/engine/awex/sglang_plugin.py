@@ -168,13 +168,14 @@ def _resolve_transfer_rank(
     node_id: int,
     nnodes: int,
     instance_world_size: int,
+    server_base_gpu_id: int = 0,
 ) -> int:
     """Resolve the inference rank in AWEX's global transfer world.
 
     A one-GPU SGLang server can use the colocated actor's inherited global
     rank when CUDA device isolation remaps its only GPU to device zero. For a
-    multi-GPU server, every TP/PP scheduler inherits the same environment, so
-    its scheduler-local physical GPU identity must be used instead.
+    multi-GPU server, every TP/PP scheduler inherits the same environment.
+    Subtract the server's logical base GPU before adding the dense transfer base.
     """
     explicit_rank = os.environ.get("AWEX_TRANSFER_RANK")
     if explicit_rank is not None:
@@ -192,7 +193,10 @@ def _resolve_transfer_rank(
             transfer_rank = int(env_rank)
         elif explicit_base is not None:
             n_gpus_per_node = max(1, infer_world_size // nnodes)
-            transfer_rank = node_id * n_gpus_per_node + int(explicit_base) + gpu_id
+            local_gpu_rank = gpu_id - server_base_gpu_id
+            transfer_rank = (
+                node_id * n_gpus_per_node + int(explicit_base) + local_gpu_rank
+            )
         else:
             n_gpus_per_node = max(1, infer_world_size // nnodes)
             transfer_rank = node_id * n_gpus_per_node + gpu_id
@@ -1014,6 +1018,9 @@ class AwexSchedulerPlugin:
             node_id=node_id,
             nnodes=nnodes,
             instance_world_size=self._instance_world_size(),
+            server_base_gpu_id=self._int_attr(
+                self._scheduler.server_args, "base_gpu_id", 0
+            ),
         )
 
         logger.info(
