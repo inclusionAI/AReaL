@@ -937,9 +937,7 @@ class WorkflowExecutor:
         if not config.fileroot or not config.experiment_name or not config.trial_name:
             return None
 
-        from areal.utils.stats_logger import StatsLogger
-
-        log_path = StatsLogger.get_log_path(
+        log_path = logging.get_experiment_log_path(
             experiment_name=self.config.experiment_name,
             trial_name=self.config.trial_name,
             fileroot=self.config.fileroot,
