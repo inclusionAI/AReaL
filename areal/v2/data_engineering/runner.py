@@ -12,14 +12,15 @@ import math
 import time
 from collections import Counter
 from dataclasses import asdict, replace
+from functools import partial
 from pathlib import Path
 from typing import Any
 
 from areal.utils import logging
+from areal.utils.fs import atomic_write_json
 
 from .snapshot import (
     DatasetSnapshot,
-    atomic_write_json,
     digest,
     json_bytes,
     publish_snapshot,
@@ -143,6 +144,14 @@ async def run_data_job(config: DataJobConfig, output: str | Path) -> DatasetSnap
     selection across batches. Completed snapshots are immutable by convention
     and content-verified when opened. Restarting requires a new output directory.
     """
+    write_state = partial(
+        atomic_write_json,
+        indent=None,
+        default=None,
+        allow_nan=False,
+        sort_keys=True,
+        ensure_ascii=False,
+    )
     config = DataJobConfig.from_dict(asdict(config))
     config_bytes = json_bytes(asdict(config))
     output = Path(output).resolve()
@@ -156,7 +165,7 @@ async def run_data_job(config: DataJobConfig, output: str | Path) -> DatasetSnap
         "started_at": started,
         "config_digest": digest(config_bytes),
     }
-    atomic_write_json(output / "job.json", state)
+    write_state(output / "job.json", state)
     try:
         recipe, recipe_identity = _load_factory(config.recipe, config.params)
         for method in ("generate", "clean", "score", "select", "training_row"):
@@ -278,7 +287,7 @@ async def run_data_job(config: DataJobConfig, output: str | Path) -> DatasetSnap
             samples.extend(fresh)
             counts["batches"] += 1
             counts["clean_candidates"] = len(samples)
-            atomic_write_json(output / "progress.json", dict(counts))
+            write_state(output / "progress.json", dict(counts))
             try:
                 selection = recipe.select(
                     copy.deepcopy(samples), copy.deepcopy(scores), context
@@ -329,6 +338,9 @@ async def run_data_job(config: DataJobConfig, output: str | Path) -> DatasetSnap
             name: digest((Path(__file__).parent / name).read_bytes())
             for name in ("runner.py", "snapshot.py", "types.py")
         }
+        core_sources["areal/utils/fs.py"] = digest(
+            Path(inspect.getfile(atomic_write_json)).read_bytes()
+        )
         snapshot = publish_snapshot(
             output / "dataset",
             public=[asdict(sample.task) for sample in chosen],
@@ -365,4 +377,4 @@ async def run_data_job(config: DataJobConfig, output: str | Path) -> DatasetSnap
         raise
     finally:
         state["finished_at"] = time.time()
-        atomic_write_json(output / "job.json", state)
+        write_state(output / "job.json", state)

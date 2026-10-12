@@ -17,6 +17,7 @@ FORMAT = "areal.data.snapshot.v1"
 
 
 def json_bytes(value: Any) -> bytes:
+    """Fixed snapshot encoding; these bytes determine content identities."""
     return (
         json.dumps(value, sort_keys=True, ensure_ascii=False, allow_nan=False) + "\n"
     ).encode()
@@ -43,25 +44,6 @@ def write_file(path: Path, data: bytes) -> None:
         stream.write(data)
         stream.flush()
         os.fsync(stream.fileno())
-
-
-def atomic_write_json(path: Path, value: Any) -> None:
-    """Replace mutable job state without exposing a partially written JSON file."""
-    data = json_bytes(value)
-    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as stream:
-        temporary = Path(stream.name)
-        try:
-            stream.write(data)
-            stream.flush()
-            os.fsync(stream.fileno())
-        except BaseException:
-            temporary.unlink(missing_ok=True)
-            raise
-    try:
-        temporary.replace(path)
-    except BaseException:
-        temporary.unlink(missing_ok=True)
-        raise
 
 
 @dataclass(frozen=True)
