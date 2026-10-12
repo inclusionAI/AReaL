@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Align Qwen4 image preprocessing in the pinned SGLang installation."""
 
-import argparse
-import hashlib
-import importlib.util
 from pathlib import Path
+
+from areal.engine._sglang_source_patch import patch_installed_module, patch_source
 
 EXPECTED_SHA256 = "a78b01a05c387d04a185c631aa5037904c5e668d8f8217976b9b167aa1dd6666"
 LEGACY_PATCHED_SHA256 = (
@@ -41,42 +40,20 @@ def patched_source(source: bytes) -> bytes:
     A separate PIL resize or the CUDA resize kernel can preserve token counts
     while changing the pixel tensor.
     """
-    before = hashlib.sha256(source).hexdigest()
-    if before == PATCHED_SHA256:
-        return source
-    if before not in (EXPECTED_SHA256, LEGACY_PATCHED_SHA256):
-        raise RuntimeError("Unknown SGLang image processor; refusing to modify")
-    text = source.decode()
-    if before == EXPECTED_SHA256:
-        if text.count(OLD) != 1:
-            raise RuntimeError("Expected exactly one processor image-size branch")
-        text = text.replace(OLD, NEW)
-    if text.count(RESIZE_OLD) != 1:
-        raise RuntimeError("Expected exactly one processor image-resize branch")
-    text = text.replace(RESIZE_OLD, RESIZE_NEW)
-    if text.count(DEVICE_OLD) != 1:
-        raise RuntimeError("Expected exactly one multimodal processing method")
-    patched = text.replace(DEVICE_OLD, DEVICE_NEW).encode()
-    if hashlib.sha256(patched).hexdigest() != PATCHED_SHA256:
-        raise RuntimeError("Patched image processor does not match validated source")
-    compile(patched, str(TARGET_RELATIVE), "exec")
-    return patched
+    preprocessing = [(RESIZE_OLD, RESIZE_NEW), (DEVICE_OLD, DEVICE_NEW)]
+    return patch_source(
+        source,
+        target_relative=TARGET_RELATIVE,
+        replacements_by_sha256={
+            EXPECTED_SHA256: [(OLD, NEW), *preprocessing],
+            LEGACY_PATCHED_SHA256: preprocessing,
+        },
+        patched_sha256=PATCHED_SHA256,
+    )
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", type=Path, help="Disposable qwen_vl.py copy")
-    args = parser.parse_args()
-    target = args.target
-    if target is None:
-        spec = importlib.util.find_spec("sglang")
-        if spec is None or spec.origin is None:
-            raise RuntimeError("SGLang is not installed; pass --target")
-        target = Path(spec.origin).parent / TARGET_RELATIVE
-    source = target.read_bytes()
-    patched = patched_source(source)
-    if patched != source:
-        target.write_bytes(patched)
+    patch_installed_module(__doc__, TARGET_RELATIVE, patched_source)
 
 
 if __name__ == "__main__":

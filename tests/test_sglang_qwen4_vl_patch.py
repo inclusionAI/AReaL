@@ -4,7 +4,23 @@ import hashlib
 
 import pytest
 
+from examples.swe.qwen38_flash_next import patch_sglang_qsa_compress_gather as qsa_patch
 from examples.swe.qwen38_flash_next import patch_sglang_qwen4_vl as patch
+
+
+def test_qsa_patch_preserves_rejection_of_already_patched_sources(monkeypatch):
+    source = ("def gather():\n    if True:\n" + qsa_patch.OLD).encode()
+    expected = source.replace(qsa_patch.OLD.encode(), qsa_patch.NEW.encode())
+    monkeypatch.setattr(
+        qsa_patch, "EXPECTED_SHA256", hashlib.sha256(source).hexdigest()
+    )
+    monkeypatch.setattr(
+        qsa_patch, "PATCHED_SHA256", hashlib.sha256(expected).hexdigest()
+    )
+    patched = qsa_patch.patched_source(source)
+    assert patched == expected
+    with pytest.raises(RuntimeError, match="Unknown SGLang"):
+        qsa_patch.patched_source(patched)
 
 
 def test_unknown_processor_version_is_not_modified(tmp_path, monkeypatch):
