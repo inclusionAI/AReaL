@@ -67,10 +67,6 @@ from areal.engine.core.model import (
     resolve_sequence_packing_mode,
     validate_model_packed_seq_dependencies,
 )
-from areal.engine.megatron_utils.activation_storage import (
-    install_activation_storage_tracking,
-    track_activation_storage,
-)
 from areal.engine.megatron_utils.bailing_v3 import (
     BailingV3MlaWeightPairs,
     is_bailing_v3,
@@ -368,7 +364,6 @@ class MegatronEngine(TrainEngine):
     )
 
     def __init__(self, config: TrainEngineConfig):
-        install_activation_storage_tracking()
         self.config = config
         self.hf_config: PretrainedConfig
         self.tf_config: TransformerConfig
@@ -1783,35 +1778,11 @@ class MegatronEngine(TrainEngine):
                     per_token_loss=per_token_loss,
                 )
 
-            model_chunks = (
-                self.model if isinstance(self.model, (list, tuple)) else [self.model]
+            self.forward_backward_batch(
+                mb_list,
+                process_output,
+                forward_only=False,
             )
-            protected_tensors = [
-                tensor
-                for model_chunk in model_chunks
-                # Megatron DDP stores gradient-buffer objects in an instance attribute
-                # named ``buffers``, shadowing ``torch.nn.Module.buffers``. Call the
-                # base implementation explicitly so registered model buffers are
-                # protected without touching Megatron's gradient-buffer list.
-                for tensor in (
-                    *model_chunk.parameters(),
-                    *torch.nn.Module.buffers(model_chunk),
-                )
-            ]
-            with track_activation_storage(protected_tensors) as activation_tracker:
-                self.forward_backward_batch(
-                    mb_list,
-                    process_output,
-                    forward_only=False,
-                )
-
-            released_storages, released_bytes = activation_tracker.release()
-            if released_storages:
-                self.logger.debug(
-                    "Released %d retained Megatron/TE activation storages (%.3f GiB)",
-                    released_storages,
-                    released_bytes / 1024**3,
-                )
 
             # Step 4: Optimizer step
             stats = self.optimizer_step()
