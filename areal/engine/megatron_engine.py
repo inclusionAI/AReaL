@@ -1335,7 +1335,12 @@ class MegatronEngine(TrainEngine):
                     raise ValueError(
                         "HF format does not support optimizer state loading, please use DCP format instead."
                     )
-                self._load_model_from_hf(meta.path)
+                if self.checkpointer is None:
+                    self._load_model_from_hf(meta.path)
+                else:
+                    self.checkpointer.load_model_weights_only(
+                        functools.partial(self._load_model_from_hf, meta.path)
+                    )
             elif meta.weight_format == "dcp":
                 if self.checkpointer is None:
                     raise NotImplementedError(
