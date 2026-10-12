@@ -70,14 +70,33 @@ python3 -m areal.engine.sglang_mm_executor
 This fixes exception propagation from multimodal preprocessing threads for all models
 and workflows using the supported executor revision. It is independent of SWE and Qwen;
 other multimodal recipes can use the same command in their existing startup commands.
-The MM recipe already applies it. Unknown source revisions are rejected, and the old
-example command remains a forwarding entry point.
+The MM recipe already applies it. Installing the `areal` package or importing an engine
+does not modify SGLang; the command must run explicitly against a disposable
+installation. It accepts only the validated source revision and is safe to repeat. The
+source patch installer is shared with the recipe's other patches; there is no second
+executor entry point under this example.
+
+The QSA gather patch backports upstream
+[#38346](https://github.com/sgl-project/sglang/pull/38346), relanded in
+[#39446](https://github.com/sgl-project/sglang/pull/39446). It prevents padded
+compression groups from gathering beyond a short prefill chunk. The underlying bug is in
+SGLang's QSA implementation; the patch lives in this recipe because its pinned build
+needs the backport. The executor fix remains in a common module because the same failure
+can affect any model using the supported multimodal executor. Both commands validate the
+installed source revision before making any change.
 
 The Qwen4 image patch delegates resizing of original images to the HF processor on CPU,
 matching training preprocessing. A separate PIL resize or a CUDA resize can leave token
 counts unchanged while altering the pixels. It preserves other models' preprocessing
 policies and accepts both the original validated source and the previous Qwen4 size-only
 patch.
+
+All three commands accept their validated patched output without rewriting it and reject
+unknown source revisions before writing. The executor fix should be contributed to
+SGLang; QSA already has an upstream fix, while the Qwen4 CPU preprocessing policy needs
+separate evaluation for upstream use. When upgrading the runtime, validate preprocessing
+and exception propagation, then remove startup commands whose fixes are included in the
+new build. Changing the accepted hash alone is insufficient validation.
 
 With a local model in the validated rollout runtime, run the real-image roundtrip check
 with:

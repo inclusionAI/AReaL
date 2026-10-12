@@ -14,10 +14,9 @@ def patch_source(
     target_relative: Path,
     replacements_by_sha256: Mapping[str, Sequence[tuple[str, str]]],
     patched_sha256: str,
-    idempotent: bool = True,
 ) -> bytes:
     before = hashlib.sha256(source).hexdigest()
-    if idempotent and before == patched_sha256:
+    if before == patched_sha256:
         return source
     if before not in replacements_by_sha256:
         raise RuntimeError(

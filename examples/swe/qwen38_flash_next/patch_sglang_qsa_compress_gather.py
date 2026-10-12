@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Apply the validated upstream #38346 fix to a disposable SGLang installation."""
+"""Backport upstream QSA #38346/#39446 into the recipe's pinned SGLang build."""
 
 from pathlib import Path
 
@@ -17,13 +17,12 @@ NEW = (
 
 
 def patched_source(source: bytes) -> bytes:
-    """Reject unknown or already-patched sources before any write."""
+    """Clamp padded gathers, allowing repeat startup on the validated output."""
     return patch_source(
         source,
         target_relative=TARGET_RELATIVE,
         replacements_by_sha256={EXPECTED_SHA256: [(OLD, NEW)]},
         patched_sha256=PATCHED_SHA256,
-        idempotent=False,
     )
 
 

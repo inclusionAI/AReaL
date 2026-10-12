@@ -8,7 +8,7 @@ from examples.swe.qwen38_flash_next import patch_sglang_qsa_compress_gather as q
 from examples.swe.qwen38_flash_next import patch_sglang_qwen4_vl as patch
 
 
-def test_qsa_patch_preserves_rejection_of_already_patched_sources(monkeypatch):
+def test_qsa_patch_allows_repeated_startup(tmp_path, monkeypatch):
     source = ("def gather():\n    if True:\n" + qsa_patch.OLD).encode()
     expected = source.replace(qsa_patch.OLD.encode(), qsa_patch.NEW.encode())
     monkeypatch.setattr(
@@ -19,8 +19,23 @@ def test_qsa_patch_preserves_rejection_of_already_patched_sources(monkeypatch):
     )
     patched = qsa_patch.patched_source(source)
     assert patched == expected
+    assert qsa_patch.patched_source(patched) == patched
+    target = tmp_path / "qsa_indexer.py"
+    target.write_bytes(source)
+    monkeypatch.setattr("sys.argv", ["patch", "--target", str(target)])
+    qsa_patch.main()
+    qsa_patch.main()
+    assert target.read_bytes() == patched
+
+
+def test_unknown_qsa_version_is_not_modified(tmp_path, monkeypatch):
+    target = tmp_path / "qsa_indexer.py"
+    target.write_bytes(b"# unsupported QSA indexer\n")
+    before = target.read_bytes()
+    monkeypatch.setattr("sys.argv", ["patch", "--target", str(target)])
     with pytest.raises(RuntimeError, match="Unknown SGLang"):
-        qsa_patch.patched_source(patched)
+        qsa_patch.main()
+    assert target.read_bytes() == before
 
 
 def test_unknown_processor_version_is_not_modified(tmp_path, monkeypatch):
