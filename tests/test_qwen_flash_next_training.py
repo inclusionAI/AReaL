@@ -57,6 +57,7 @@ def test_arena_training_preserves_rows_and_cycles_tail(batch_size, monkeypatch):
         train_swe_rl, "get_arena_mixture_dataset", lambda *_, **__: (source, [])
     )
     monkeypatch.delenv("QWEN_ARENA_TASK_IDS_FILE", raising=False)
+    monkeypatch.delenv("QWEN_REQUIRE_RECOVER", raising=False)
 
     class TrainerBoundaryReached(Exception):
         pass
@@ -64,6 +65,7 @@ def test_arena_training_preserves_rows_and_cycles_tail(batch_size, monkeypatch):
     class CaptureTrainer:
         def __init__(self, config, train_dataset, valid_dataset):
             self.dataset = train_dataset
+            self.recover_info = None
             captured.append(self.dataset)
 
         def __enter__(self):
