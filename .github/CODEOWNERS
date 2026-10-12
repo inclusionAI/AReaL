@@ -4,16 +4,16 @@
 *                               @garrett4wade @sitabulaixizawaluduo @fishcrap
 
 # Core package
-/areal/api/                     @garrett4wade @sitabulaixizawaluduo @yulangz
+/areal/api/                     @garrett4wade @sitabulaixizawaluduo @yulangz @daihaowz
 /areal/engine/                  @Le8r0nJames @garrett4wade @geshi001 @sitabulaixizawaluduo @yulangz
 /areal/v2/inference_service/    @Le8r0nJames @guozhihao-224 @TaoZex @sitabulaixizawaluduo @yulangz
 /areal/v2/agent_service/        @CormickKneey @Le8r0nJames @sitabulaixizawaluduo @yulangz
 /areal/v2/training_service/     @sitabulaixizawaluduo @garrett4wade @sitabulaixizawaluduo @yulangz
 /areal/v2/weight_update/        @TaoZex @garrett4wade @sitabulaixizawaluduo @yulangz
-/areal/infra/                   @HwVanICI @garrett4wade @guozhihao-224 @sitabulaixizawaluduo @yulangz
+/areal/infra/                   @HwVanICI @garrett4wade @guozhihao-224 @sitabulaixizawaluduo @yulangz @daihaowz
 /areal/models/                  @Le8r0nJames @geshi001 @PrometheusComing @sitabulaixizawaluduo @yulangz
 /areal/reward/prm/              @garrett4wade @sitabulaixizawaluduo @fishcrap @dingzhiqiang
-/areal/trainer/                 @garrett4wade @fishcrap @sitabulaixizawaluduo @yulangz
+/areal/trainer/                 @garrett4wade @fishcrap @sitabulaixizawaluduo @yulangz @daihaowz
 
 # Tests & Examples
 /tests/                         @garrett4wade @sitabulaixizawaluduo
