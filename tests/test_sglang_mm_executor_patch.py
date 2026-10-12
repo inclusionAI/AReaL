@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from examples.swe.qwen38_flash_next import patch_sglang_mm_executor as patch
+from areal.engine import sglang_mm_executor as patch
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sglang_mm_executor_119b5ffe.txt"
 
@@ -105,9 +105,9 @@ def test_rl_recipe_applies_executor_patch_before_server_start():
     import yaml
 
     config = yaml.safe_load(
-        Path(patch.__file__).with_name("swe_mm_rl.yaml").read_text()
+        (
+            Path(__file__).parents[1] / "examples/swe/qwen38_flash_next/swe_mm_rl.yaml"
+        ).read_text()
     )
     commands = config["rollout"]["scheduling_spec"][0]["additional_bash_cmds"]
-    assert (
-        "python3 -m examples.swe.qwen38_flash_next.patch_sglang_mm_executor" in commands
-    )
+    assert "python3 -m areal.engine.sglang_mm_executor" in commands

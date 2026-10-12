@@ -7,7 +7,10 @@ import importlib.util
 from pathlib import Path
 
 EXPECTED_SHA256 = "a78b01a05c387d04a185c631aa5037904c5e668d8f8217976b9b167aa1dd6666"
-PATCHED_SHA256 = "7c5c20550fed1a385daa07ce4c9b5a0b74151cea22d7762299fae47a8169e189"
+LEGACY_PATCHED_SHA256 = (
+    "7c5c20550fed1a385daa07ce4c9b5a0b74151cea22d7762299fae47a8169e189"
+)
+PATCHED_SHA256 = "3a9d693446185f30d3fd21efc4c68ef6b27c7da757ccf0b0e29d6c32ee1e2e52"
 TARGET_RELATIVE = Path("srt/multimodal/processors/qwen_vl.py")
 OLD = '        if self.model_type in ("qwen3_vl", "qwen3_vl_moe", "qwen3_5", "qwen3_5_moe"):\n'
 NEW = (
@@ -19,25 +22,41 @@ NEW = (
     '            "qwen4_exp",\n'
     "        ):\n"
 )
+RESIZE_OLD = '            self.model_type != "paddleocr_vl"\n'
+RESIZE_NEW = '            self.model_type not in ("paddleocr_vl", "qwen4_exp")\n'
+DEVICE_OLD = "    async def process_mm_data_async(\n"
+DEVICE_NEW = (
+    "    def _fast_image_processor_device(self, processor):\n"
+    '        if self.model_type == "qwen4_exp":\n'
+    '            return "cpu"\n'
+    "        return super()._fast_image_processor_device(processor)\n\n" + DEVICE_OLD
+)
 
 
 def patched_source(source: bytes) -> bytes:
     """Use the model's image factor and pixel bounds, refusing unknown sources.
 
-    Qwen4 uses patch_size=16 and merge_size=2. The legacy factor=28 followed
-    by the HF processor's factor=32 changes image token counts. Preserve the
-    model's pixel bounds as well; applying a separate Qwen3 pixel cap here
-    would disagree with the training processor on larger images.
+    Qwen4 uses patch_size=16 and merge_size=2. Preserve the model's pixel bounds
+    and let HF resize the original image on CPU, as it does during training.
+    A separate PIL resize or the CUDA resize kernel can preserve token counts
+    while changing the pixel tensor.
     """
     before = hashlib.sha256(source).hexdigest()
     if before == PATCHED_SHA256:
         return source
-    if before != EXPECTED_SHA256:
+    if before not in (EXPECTED_SHA256, LEGACY_PATCHED_SHA256):
         raise RuntimeError("Unknown SGLang image processor; refusing to modify")
     text = source.decode()
-    if text.count(OLD) != 1:
-        raise RuntimeError("Expected exactly one processor image-size branch")
-    patched = text.replace(OLD, NEW).encode()
+    if before == EXPECTED_SHA256:
+        if text.count(OLD) != 1:
+            raise RuntimeError("Expected exactly one processor image-size branch")
+        text = text.replace(OLD, NEW)
+    if text.count(RESIZE_OLD) != 1:
+        raise RuntimeError("Expected exactly one processor image-resize branch")
+    text = text.replace(RESIZE_OLD, RESIZE_NEW)
+    if text.count(DEVICE_OLD) != 1:
+        raise RuntimeError("Expected exactly one multimodal processing method")
+    patched = text.replace(DEVICE_OLD, DEVICE_NEW).encode()
     if hashlib.sha256(patched).hexdigest() != PATCHED_SHA256:
         raise RuntimeError("Patched image processor does not match validated source")
     compile(patched, str(TARGET_RELATIVE), "exec")

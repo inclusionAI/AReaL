@@ -20,17 +20,33 @@ def test_unknown_processor_version_is_not_modified(tmp_path, monkeypatch):
 def test_processor_patch_is_idempotent_and_keeps_other_model_policies(monkeypatch):
     # Isolate the source transformer from imports of the optional GPU runtime.
     source = (
-        "class Processor:\n    def configure(self):\n"
+        "class Base:\n"
+        "    def _fast_image_processor_device(self, processor):\n"
+        '        return "cuda:0"\n'
+        "class Processor(Base):\n    def configure(self):\n"
         + patch.OLD
         + "            self.factor = 32\n"
         + '        if self.model_type == "qwen3_vl":\n'
         + "            self.max_pixels //= 16\n"
+        + "    def should_resize(self, images):\n"
+        + "        return (\n"
+        + patch.RESIZE_OLD
+        + "            and bool(images)\n"
+        + "        )\n"
+        + patch.DEVICE_OLD
+        + "        self, *args, **kwargs\n    ):\n        pass\n"
     ).encode()
-    expected = source.replace(patch.OLD.encode(), patch.NEW.encode())
+    legacy = source.replace(patch.OLD.encode(), patch.NEW.encode())
+    expected = legacy.replace(patch.RESIZE_OLD.encode(), patch.RESIZE_NEW.encode())
+    expected = expected.replace(patch.DEVICE_OLD.encode(), patch.DEVICE_NEW.encode())
     monkeypatch.setattr(patch, "EXPECTED_SHA256", hashlib.sha256(source).hexdigest())
+    monkeypatch.setattr(
+        patch, "LEGACY_PATCHED_SHA256", hashlib.sha256(legacy).hexdigest()
+    )
     monkeypatch.setattr(patch, "PATCHED_SHA256", hashlib.sha256(expected).hexdigest())
     patched = patch.patched_source(source)
     assert patch.patched_source(patched) == patched
+    assert patch.patched_source(legacy) == patched
     namespace = {}
     exec(compile(patched, "qwen_vl.py", "exec"), namespace)
     for model, factor, pixels in [
@@ -44,6 +60,12 @@ def test_processor_patch_is_idempotent_and_keeps_other_model_policies(monkeypatc
         processor.max_pixels = 16777216
         processor.configure()
         assert (processor.factor, processor.max_pixels) == (factor, pixels)
+        assert processor.should_resize([object()]) == (model != "qwen4_exp")
+        assert not processor.should_resize([])
+        expected_device = "cpu" if model == "qwen4_exp" else "cuda:0"
+        assert processor._fast_image_processor_device(None) == expected_device
+    processor.model_type = "paddleocr_vl"
+    assert not processor.should_resize([object()])
 
 
 def test_recipe_enables_processor_patch_and_group_filter():

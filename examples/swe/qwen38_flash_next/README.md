@@ -60,6 +60,39 @@ pauses. Evaluation leaves this unset, using stream/server defaults. Explicit
 
 ## Required runtime support
 
+The pinned SGLang build needs the common multimodal executor compatibility patch before
+server startup:
+
+```bash
+python3 -m areal.engine.sglang_mm_executor
+```
+
+This fixes exception propagation from multimodal preprocessing threads for all models
+and workflows using the supported executor revision. It is independent of SWE and Qwen;
+other multimodal recipes can use the same command in their existing startup commands.
+The MM recipe already applies it. Unknown source revisions are rejected, and the old
+example command remains a forwarding entry point.
+
+The Qwen4 image patch delegates resizing of original images to the HF processor on CPU,
+matching training preprocessing. A separate PIL resize or a CUDA resize can leave token
+counts unchanged while altering the pixels. It preserves other models' preprocessing
+policies and accepts both the original validated source and the previous Qwen4 size-only
+patch.
+
+With a local model in the validated rollout runtime, run the real-image roundtrip check
+with:
+
+```bash
+AREAL_TEST_QWEN_MODEL_PATH=/path/to/local/model CUDA_VISIBLE_DEVICES= \
+  python -m pytest tests/test_sglang_multimodal_roundtrip.py -o addopts= -q
+```
+
+This checks exact expanded token IDs, image grids, pixels and unchanged text IDs after
+cache padding, including multi-image prompts and generated text tails. Image spans use
+hash/pad IDs internally for the inference cache; compare their placeholder IDs before
+that substitution. The test skips without an explicitly supplied local model and does
+not establish full-model logprob parity.
+
 Qwen4Exp vision uses Transformers 5.16.1, including `Qwen4ExpModel.get_rope_index` and
 `get_vision_position_ids`. Supply the compatible runtime through `PYTHONPATH`; the
 project dependency declarations retain main's Transformers constraints. Initialization
