@@ -422,8 +422,8 @@ class AwexWeightPublisher:
           4. Signal all_training_offloaded_weights (reader waits for this)
           5. share_memory_() + cuda_ipc_serialize → put to MetaServer
           6. Wait for weights_update_finished (reader done copying)
-          7. Signal write_finished while retaining the exported tensors
-          8. Wait for all infer engines, then release the exported tensors
+          7. Release exported tensors, then signal write_finished
+          8. Wait for all infer engines to finish the update lifecycle
         """
         from awex.util.tensor_util import (
             cuda_ipc_serialize,
@@ -432,7 +432,7 @@ class AwexWeightPublisher:
 
         if self._pending_ipc_export is not None:
             raise RuntimeError(
-                "Previous CUDA IPC export is still pending final reader completion"
+                "Previous CUDA IPC export is still awaiting reader acknowledgement"
             )
 
         # Reclaim any legacy IPC-exported blocks from a previous version.
@@ -524,10 +524,8 @@ class AwexWeightPublisher:
         )
 
         group_shared = [t.share_memory_() for t in group_tensors]
-        # Keep the producer storage alive until *all* readers complete their
-        # full update lifecycle.  Releasing it after the early per-GPU ack puts
-        # the storage into CudaIPCSentDataLimbo while readers can still hold a
-        # mapping, which is exactly the actor residue this path must avoid.
+        # Retain producer storage until the reader acknowledges completion.
+        # On failure or timeout the reader may still hold an IPC mapping.
         self._pending_ipc_export = (group_tensors, group_shared)
         serialized_weights = cuda_ipc_serialize((group_shared, metadata, names))
         torch.cuda.synchronize()
@@ -578,6 +576,27 @@ class AwexWeightPublisher:
         finally:
             torch.cuda.synchronize()
 
+        # AWEX drops imported tensor references and synchronizes before ACK.
+        # Release both retained and local references before write_finished,
+        # freeing packed-weight memory before the reader's remaining lifecycle.
+        allocated_before = torch.cuda.memory_allocated()
+        reserved_before = torch.cuda.memory_reserved()
+        self._pending_ipc_export = None
+        del group_tensors, group_shared
+        gc.collect()
+        torch.cuda.ipc_collect()
+        torch.cuda.empty_cache()
+        logger.info(
+            "CUDA IPC cleanup after reader acknowledgement: rank=%d device=%d "
+            "allocated=%.3f->%.3f GiB reserved=%.3f->%.3f GiB",
+            dist.get_rank(self._engine.cpu_group),
+            torch.cuda.current_device(),
+            allocated_before / 1024**3,
+            torch.cuda.memory_allocated() / 1024**3,
+            reserved_before / 1024**3,
+            torch.cuda.memory_reserved() / 1024**3,
+        )
+
         write_finished_key = f"write_finished{key_suffix}"
         self._meta_server_client.put_object(write_finished_key, True)
         logger.info("Signaled write_finished: %s", write_finished_key)
@@ -603,33 +622,6 @@ class AwexWeightPublisher:
         logger.info("All inference engines finished weights update")
 
         dist.barrier(group=self._engine.cpu_group)
-
-        # ``weights_update_finished`` is only an early acknowledgement.  The
-        # final engine set is the first point at which every reader has returned
-        # from its full lifecycle.  Drop the still-live producer tensors here,
-        # after peer mappings are closed, so they bypass CudaIPCSentDataLimbo.
-        allocated_before = torch.cuda.memory_allocated()
-        reserved_before = torch.cuda.memory_reserved()
-        if self._pending_ipc_export is None:
-            raise RuntimeError("CUDA IPC export disappeared before final completion")
-        self._pending_ipc_export = None
-        torch.cuda.synchronize()
-        gc.collect()
-        torch.cuda.synchronize()
-        torch.cuda.ipc_collect()
-        torch.cuda.empty_cache()
-        allocated_after = torch.cuda.memory_allocated()
-        reserved_after = torch.cuda.memory_reserved()
-        logger.info(
-            "Final CUDA IPC cleanup: rank=%d device=%d "
-            "allocated=%.3f->%.3f GiB reserved=%.3f->%.3f GiB",
-            dist.get_rank(self._engine.cpu_group),
-            torch.cuda.current_device(),
-            allocated_before / 1024**3,
-            allocated_after / 1024**3,
-            reserved_before / 1024**3,
-            reserved_after / 1024**3,
-        )
 
         if dist.get_rank() == 0:
             self._meta_server_client.delete_if_exists("finished_weights_update_engines")
