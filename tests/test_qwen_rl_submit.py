@@ -142,8 +142,5 @@ def test_rollout_startup_uses_image_python_for_patches_and_rpc(
     )
     assert result.returncode == 0, result.stderr
     assert Path(env["TEST_LOG"]).read_text().splitlines() == [
-        "-m examples.swe.qwen38_flash_next.patch_sglang_qsa_compress_gather",
-        "-m examples.swe.qwen38_flash_next.patch_sglang_qwen4_vl",
-        "-m areal.engine.sglang_mm_executor",
         "-m areal.infra.rpc.rpc_server",
     ]

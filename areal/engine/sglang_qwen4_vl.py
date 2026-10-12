@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Align Qwen4 image preprocessing in the pinned SGLang installation."""
+"""Align Qwen4 image preprocessing in the supported SGLang installation."""
 
 from pathlib import Path
 

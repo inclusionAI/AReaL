@@ -4,8 +4,8 @@ import hashlib
 
 import pytest
 
-from examples.swe.qwen38_flash_next import patch_sglang_qsa_compress_gather as qsa_patch
-from examples.swe.qwen38_flash_next import patch_sglang_qwen4_vl as patch
+from areal.engine import sglang_qsa_compress_gather as qsa_patch
+from areal.engine import sglang_qwen4_vl as patch
 
 
 def test_qsa_patch_allows_repeated_startup(tmp_path, monkeypatch):
@@ -97,16 +97,3 @@ def test_processor_patch_is_idempotent_and_keeps_other_model_policies(monkeypatc
         assert processor._fast_image_processor_device(None) == expected_device
     processor.model_type = "paddleocr_vl"
     assert not processor.should_resize([object()])
-
-
-def test_recipe_enables_processor_patch_and_group_filter():
-    from pathlib import Path
-
-    import yaml
-
-    config = yaml.safe_load(
-        Path(patch.__file__).with_name("swe_mm_rl.yaml").read_text()
-    )
-    assert config["should_accept_fn"] == "examples.swe.filter_function.filter_function"
-    commands = config["rollout"]["scheduling_spec"][0]["additional_bash_cmds"]
-    assert "python3 -m examples.swe.qwen38_flash_next.patch_sglang_qwen4_vl" in commands

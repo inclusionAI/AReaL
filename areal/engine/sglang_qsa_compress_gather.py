@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Backport upstream QSA #38346/#39446 into the recipe's pinned SGLang build."""
+"""Backport upstream QSA #38346/#39446 into the supported SGLang build."""
 
 from pathlib import Path
 

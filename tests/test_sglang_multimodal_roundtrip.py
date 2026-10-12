@@ -32,11 +32,11 @@ def qwen_roundtrip_runtime():
     from sglang.srt.runtime_context import get_context
     from transformers import AutoConfig, AutoProcessor
 
-    from examples.swe.qwen38_flash_next import patch_sglang_qwen4_vl
+    from areal.engine import sglang_qwen4_vl
 
     # Isolate the patched class without changing the installed module or file.
     source = Path(qwen_vl.__file__).read_bytes()
-    patched = patch_sglang_qwen4_vl.patched_source(source)
+    patched = sglang_qwen4_vl.patched_source(source)
     namespace = qwen_vl.__dict__.copy()
     exec(compile(patched, qwen_vl.__file__, "exec"), namespace)
     assert envs.SGLANG_MM_AVOID_RETOKENIZE.get()

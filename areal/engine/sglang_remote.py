@@ -569,8 +569,10 @@ class SGLangBackend:
             ]
             logger.info("Theta mode: using native SGLang entry, cmd=%s", cmd[:4])
 
+        from areal.engine.sglang_model_patches import wrap_server_command
+
         return subprocess.Popen(
-            cmd,
+            wrap_server_command(cmd),
             env=_env,
             stdout=sys.stdout,
             stderr=sys.stdout,

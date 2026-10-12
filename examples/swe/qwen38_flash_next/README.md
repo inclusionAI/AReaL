@@ -60,43 +60,38 @@ pauses. Evaluation leaves this unset, using stream/server defaults. Explicit
 
 ## Required runtime support
 
-The pinned SGLang build needs the common multimodal executor compatibility patch before
-server startup:
+AReaL-managed SGLang launches automatically apply the three compatibility patches when
+`config.json` declares `model_type: qwen4_exp` (Qwen3.8 Flash Next). Model directory
+names and SWE workflows do not control selection. Detection reads local HF configuration
+or raw Hub configuration; other formats and unresolved configs delegate to SGLang. The
+common startup module `areal.engine.sglang_model_patches` runs in the inference
+interpreter before importing SGLang, then executes the existing v2, AWEX, or native
+entry point with its original arguments and environment. Other model types skip patch
+installation. The recipe needs no manual patch commands.
 
-```bash
-python3 -m areal.engine.sglang_mm_executor
-```
+The implementations live under `areal/engine/`:
 
-This fixes exception propagation from multimodal preprocessing threads for all models
-and workflows using the supported executor revision. It is independent of SWE and Qwen;
-other multimodal recipes can use the same command in their existing startup commands.
-The MM recipe already applies it. Installing the `areal` package or importing an engine
-does not modify SGLang; the command must run explicitly against a disposable
-installation. It accepts only the validated source revision and is safe to repeat. The
-source patch installer is shared with the recipe's other patches; there is no second
-executor entry point under this example.
+- `sglang_mm_executor.py` converts a preprocessing thread's exhausted-iterator exception
+  into a request error, so asyncio can propagate it and release the multimodal lock.
+  This SGLang issue can affect other multimodal models. They can explicitly use
+  `python3 -m areal.engine.sglang_mm_executor` against the supported installation.
+- `sglang_qsa_compress_gather.py` backports upstream
+  [#38346](https://github.com/sgl-project/sglang/pull/38346), relanded in
+  [#39446](https://github.com/sgl-project/sglang/pull/39446), preventing padded QSA
+  compression groups from gathering beyond a short prefill chunk.
+- `sglang_qwen4_vl.py` delegates original-image resizing to the HF processor on CPU,
+  matching training pixels as well as token counts. It preserves other models'
+  preprocessing policies and accepts the previously validated Qwen4 size-only patch.
 
-The QSA gather patch backports upstream
-[#38346](https://github.com/sgl-project/sglang/pull/38346), relanded in
-[#39446](https://github.com/sgl-project/sglang/pull/39446). It prevents padded
-compression groups from gathering beyond a short prefill chunk. The underlying bug is in
-SGLang's QSA implementation; the patch lives in this recipe because its pinned build
-needs the backport. The executor fix remains in a common module because the same failure
-can affect any model using the supported multimodal executor. Both commands validate the
-installed source revision before making any change.
-
-The Qwen4 image patch delegates resizing of original images to the HF processor on CPU,
-matching training preprocessing. A separate PIL resize or a CUDA resize can leave token
-counts unchanged while altering the pixels. It preserves other models' preprocessing
-policies and accepts both the original validated source and the previous Qwen4 size-only
-patch.
-
-All three commands accept their validated patched output without rewriting it and reject
-unknown source revisions before writing. The executor fix should be contributed to
-SGLang; QSA already has an upstream fix, while the Qwen4 CPU preprocessing policy needs
-separate evaluation for upstream use. When upgrading the runtime, validate preprocessing
-and exception propagation, then remove startup commands whose fixes are included in the
-new build. Changing the accepted hash alone is insufficient validation.
+All three sources are validated before any modification. Concurrent starts share a lock,
+each file is replaced atomically, and already patched files require no writes. Unpatched
+runtimes need a writable SGLang installation; fully prepatched runtimes may be
+read-only. Installing or importing AReaL does not apply patches. Unknown source
+revisions fail startup explicitly. When upgrading SGLang, verify preprocessing and
+exception propagation, then retire fixes already included upstream; changing a source
+hash alone is insufficient validation. The executor fix is an upstream candidate; QSA
+already has an upstream fix, while the CPU preprocessing policy needs separate upstream
+evaluation.
 
 With a local model in the validated rollout runtime, run the real-image roundtrip check
 with:
@@ -153,10 +148,8 @@ The small Python helpers in this directory are runtime support, not additional e
 - `actor_worker.py`, `gdn_cp_compat.py`, `ple_chunked.py` and `grad_norm_guard.py`
   preserve the GDN CP path, causal PLE history/gradients, and rejection of nonfinite
   optimizer updates. Chunked LM-head loss uses 1024-token chunks; PLE uses 8192.
-- The SGLang patch helpers validate their source revision before applying the QSA
-  compress-gather bounds and image-preprocessing compatibility fixes. `proxy.py` and
-  `template_defaults.py` provide model request defaults. Shell helpers launch the
-  controller and workers.
+- `proxy.py` and `template_defaults.py` provide model request defaults. Shell helpers
+  launch the controller and workers.
 
 Vision requires `language_model_only: false`, multimodal SGLang, and processor-produced
 modality IDs. AWEX derives frozen-weight exclusions from the model configuration and
@@ -193,10 +186,10 @@ launch environment.
 | `areal/models/mcore/mcore_bridge_adapter.py`, `registry.py`, `mcore_bridge_checkpoint.py`                    | The standard bridge does not register or export Qwen4Exp's full multimodal model.                             | Register the model, configure frozen PLE/visual parameters, and load/export the matching HF layout.                 |
 | `areal/engine/megatron_utils/qwen4_exp_cp.py`                                                                | A non-autograd PLE gather loses gradients from remote CP consumers.                                           | Gather with a backward collective while preserving packed zigzag ordering.                                          |
 | `areal/engine/megatron_utils/qwen4_exp_mrope.py`, `packed_context_parallel.py`, `areal/trainer/ppo/actor.py` | Generated special token IDs can be mistaken for image placeholders.                                           | Use the original input loss mask to identify visual prompt tokens and construct three-axis positions.               |
-| `areal/engine/sglang_remote.py`, `patch_sglang_qwen4_vl.py`                                                  | Expanded image tokens can trigger whole-prompt retokenization; processor merging must match the model.        | Compact image placeholders only for inference transport, preserve training IDs, and align image preprocessing.      |
+| `areal/engine/sglang_remote.py`, `areal/engine/sglang_qwen4_vl.py`                                           | Expanded image tokens can trigger whole-prompt retokenization; processor merging must match the model.        | Compact image placeholders only for inference transport, preserve training IDs, and align image preprocessing.      |
 | `areal/models/mcore/qwen4_exp_awex_*.py`, `qwen4_exp_frozen_state.py`                                        | Frozen PLE/visual weights are excluded from live transfer and can be lost during inference offload.           | Verify checkpoint contents, preserve visual parameters across offload, and release PLE caches in the correct order. |
 | `areal/models/mcore/vision_checkpoint.py`                                                                    | Visual encoder activations increase training memory use.                                                      | Checkpoint visual blocks when gradient checkpointing is enabled.                                                    |
-| `gdn_cp_compat.py`, `ple_chunked.py`, `patch_sglang_qsa_compress_gather.py`, `actor_worker.py`               | The 256K recipe needs compatible GDN CP, bounded PLE/LM-head work, QSA bounds, and optimizer memory.          | Install those compatibility helpers and CPU optimizer offload.                                                      |
+| `gdn_cp_compat.py`, `ple_chunked.py`, `areal/engine/sglang_qsa_compress_gather.py`, `actor_worker.py`        | The 256K recipe needs compatible GDN CP, bounded PLE/LM-head work, QSA bounds, and optimizer memory.          | Install those compatibility helpers and CPU optimizer offload.                                                      |
 | `areal/engine/megatron_utils/transport.py`, `areal/engine/megatron_engine.py`                                | Filtered RL groups can leave empty microbatches; the first gradient collective competes with allocator cache. | Choose a real microbatch schedule when possible and reclaim cached memory before the first gradient finalization.   |
 | `grad_norm_guard.py`                                                                                         | A nonfinite gradient norm would contaminate optimizer state.                                                  | Reject the update before clipping and stepping, without scanning or dumping full gradients.                         |
 

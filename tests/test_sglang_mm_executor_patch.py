@@ -3,7 +3,6 @@
 import asyncio
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
 import pytest
 
@@ -135,15 +134,3 @@ def test_executor_rejects_unvalidated_patch_output(executor_source, monkeypatch)
     monkeypatch.setattr(patch, "PATCHED_SHA256", "incorrect")
     with pytest.raises(RuntimeError, match="does not match validated source"):
         patch.patched_source(executor_source)
-
-
-def test_rl_recipe_applies_executor_patch_before_server_start():
-    import yaml
-
-    config = yaml.safe_load(
-        (
-            Path(__file__).parents[1] / "examples/swe/qwen38_flash_next/swe_mm_rl.yaml"
-        ).read_text()
-    )
-    commands = config["rollout"]["scheduling_spec"][0]["additional_bash_cmds"]
-    assert "python3 -m areal.engine.sglang_mm_executor" in commands
