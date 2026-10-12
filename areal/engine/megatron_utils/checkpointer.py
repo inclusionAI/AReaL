@@ -504,6 +504,26 @@ class MegatronCheckpointManager:
         with_rng: bool = True,
     ):
         """Load synchronously; any failure requires process-level recovery."""
+        self._run_managed_load(
+            partial(
+                self._load_checkpoint,
+                local_path,
+                with_model=with_model,
+                with_optimizer=with_optimizer,
+                with_rng=with_rng,
+            )
+        )
+
+    def load_model_weights_only(self, load_fn: Callable[[], None]) -> None:
+        """Load model weights and rebuild any managed optimizer's CPU state."""
+        if not self._managed_optimizers():
+            load_fn()
+            return
+        self._run_managed_load(load_fn, reset_from_model=True)
+
+    def _run_managed_load(
+        self, load_fn: Callable[[], None], *, reset_from_model: bool = False
+    ) -> None:
         if self.load_failed:
             raise RuntimeError(
                 "checkpoint manager is fail-stopped after a load error; restart "
@@ -513,12 +533,10 @@ class MegatronCheckpointManager:
         try:
             for optimizer in managed:
                 optimizer.begin_checkpoint_load()
-            self._load_checkpoint(
-                local_path,
-                with_model=with_model,
-                with_optimizer=with_optimizer,
-                with_rng=with_rng,
-            )
+            load_fn()
+            if reset_from_model:
+                for optimizer in managed:
+                    optimizer.reset_from_model_params()
             for optimizer in managed:
                 optimizer.complete_checkpoint_load()
         except BaseException as error:

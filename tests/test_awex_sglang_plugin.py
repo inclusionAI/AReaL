@@ -325,8 +325,9 @@ def test_physical_gpu_id_uses_noncontiguous_visible_device(monkeypatch):
 
 
 @pytest.mark.parametrize("node_id", [0, 1])
-def test_receiver_init_isolated_tp_servers_register_unique_ranks(monkeypatch, node_id):
-    """Each colocated GPU gets one transfer rank across isolated TP servers."""
+@pytest.mark.parametrize("isolated", [False, True])
+def test_receiver_init_tp_servers_register_unique_ranks(monkeypatch, node_id, isolated):
+    """Transfer ranks stay dense with both isolated and fully visible GPUs."""
     import awex.meta.meta_server as meta_server
 
     monkeypatch.delenv("AWEX_TRANSFER_RANK", raising=False)
@@ -342,11 +343,17 @@ def test_receiver_init_isolated_tp_servers_register_unique_ranks(monkeypatch, no
 
     for first_gpu in range(0, 8, 2):
         monkeypatch.setenv("AWEX_TRANSFER_RANK_BASE", str(first_gpu))
-        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", f"{first_gpu},{first_gpu + 1}")
+        visible_devices = (
+            f"{first_gpu},{first_gpu + 1}" if isolated else "0,1,2,3,4,5,6,7"
+        )
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", visible_devices)
+        base_gpu_id = 0 if isolated else first_gpu
         for logical_gpu in range(2):
             scheduler = SimpleNamespace(
-                gpu_id=logical_gpu,
-                server_args=SimpleNamespace(tp_size=2, pp_size=1),
+                gpu_id=base_gpu_id + logical_gpu,
+                server_args=SimpleNamespace(
+                    tp_size=2, pp_size=1, base_gpu_id=base_gpu_id
+                ),
             )
             plugin = AwexSchedulerPlugin(scheduler)
             plugin._receiver = SimpleNamespace(
