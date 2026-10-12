@@ -22,6 +22,7 @@ from areal.api.io_struct import (
     SaveLoadMeta,
     WeightUpdateMeta,
 )
+from areal.api.loss import LossFunction, LossNormalizer
 
 if TYPE_CHECKING:
     from areal.api.workflow_api import WorkflowLike
@@ -378,8 +379,8 @@ class TrainEngine(abc.ABC):
     def train_batch(
         self,
         input_: list[dict[str, Any]] | dict[str, Any],
-        loss_fn: Callable[..., torch.Tensor],
-        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
+        loss_fn: LossFunction,
+        loss_weight_fn: LossNormalizer,
     ) -> dict[str, float]:
         """Update the model with a batch of data and a loss function.
 
@@ -394,15 +395,24 @@ class TrainEngine(abc.ABC):
             Preferred format is ``list[dict[str, Any]]`` (trajectory list).
             Backward compatibility: a pre-batched ``dict[str, Any]`` is
             also accepted.
-        loss_fn : Callable[..., torch.Tensor]
+        loss_fn : LossFunction
             The loss function. For actor (is_critic=False), it receives
             (logprobs, entropy, input_data). For critic (is_critic=True),
-            it receives (values, input_data). Returns a scalar normalized loss.
-        loss_weight_fn : Callable[[dict[str, Any]], torch.Tensor]
+            it receives (values, input_data). Returns a legacy scalar microbatch
+            mean, or a dict of named scalar summed numerators (not means).
+            Named numerators must be finite, including graph-connected zeros
+            for empty terms. The engine normalizes each term independently.
+        loss_weight_fn : LossNormalizer
             A function used to calculate the weight of each micro-batch. Since
             loss_fn normalizes the loss for a micro-batch, we need a corresponding
             weight for each micro-batch to normalize the loss globally. The weight
             is usually the number of response tokens in the batch.
+            For named losses, returns matching scalar masses derived only from
+            the batch, without gradients. Names must be identical on every
+            microbatch and rank; callers must establish that schema before
+            training via @named_loss_normalizer(names=(...)). Zero support must
+            retain its key and return zero mass; transport-only data does not
+            invoke either callback.
 
         Returns
         -------
@@ -417,8 +427,8 @@ class TrainEngine(abc.ABC):
     def eval_batch(
         self,
         input_: list[dict[str, Any]] | dict[str, Any],
-        loss_fn: Callable[..., torch.Tensor],
-        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
+        loss_fn: LossFunction,
+        loss_weight_fn: LossNormalizer,
     ) -> torch.Tensor | None:
         """Evaluate the model using the forward pass and loss function.
 
@@ -433,15 +443,18 @@ class TrainEngine(abc.ABC):
             Preferred format is ``list[dict[str, Any]]`` (trajectory list).
             Backward compatibility: a pre-batched ``dict[str, Any]`` is
             also accepted.
-        loss_fn : Callable[..., torch.Tensor]
+        loss_fn : LossFunction
             The loss function. For actor (is_critic=False), it receives
             (logprobs, entropy, input_data). For critic (is_critic=True),
-            it receives (values, input_data). Returns a scalar normalized loss.
-        loss_weight_fn : Callable[[dict[str, Any]], torch.Tensor]
+            it receives (values, input_data). Returns a legacy scalar microbatch
+            mean or named summed numerators, as in train_batch.
+        loss_weight_fn : LossNormalizer
             A function used to calculate the weight of each micro-batch. Since
             loss_fn normalizes the loss for a micro-batch, we need a corresponding
             weight for each micro-batch to normalize the loss globally. The weight
             is usually the number of response tokens in the batch.
+            Named losses use the same static, fixed-key, per-term mass contract
+            as train_batch; evaluation returns the sum of the global term means.
 
         Returns
         -------
