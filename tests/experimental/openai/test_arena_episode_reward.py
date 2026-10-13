@@ -191,9 +191,14 @@ async def test_arena_compacted_episode_scores_all_actions_once(
         "shared_ancestor",
         "scalar_conflict",
         "reference_conflict",
+        "original_reward_conflict",
         "token_rewards",
         "ancestor_reward",
+        "matching_ancestor_reward",
         "incomplete",
+        "missing_id",
+        "duplicate_id",
+        "non_concat",
         "cycle",
     ],
 )
@@ -207,12 +212,22 @@ def test_arena_episode_reward_leaves_ambiguous_exports_unchanged(ambiguity):
         leaves["72"].reward = 0.25
     elif ambiguity == "reference_conflict":
         leaves["72"].rollout_reward = 0.25
+    elif ambiguity == "original_reward_conflict":
+        leaves["72"].original_reward = 0.25
     elif ambiguity == "token_rewards":
         cache["1"].token_rewards = torch.tensor([0.25])
     elif ambiguity == "ancestor_reward":
         cache["1"].reward = 0.25
+    elif ambiguity == "matching_ancestor_reward":
+        cache["1"].reward = 0.5
     elif ambiguity == "incomplete":
         cache["1"].output_message_list = None
+    elif ambiguity == "missing_id":
+        cache["1"].interaction_id = None
+    elif ambiguity == "duplicate_id":
+        cache["1"].interaction_id = "2"
+    elif ambiguity == "non_concat":
+        cache["1"].chat_template_type = "individual"
     elif ambiguity == "cycle":
         cache["1"].parent = cache["71"]
     before = [(x.reward, x.rollout_reward, x.original_reward) for x in cache.values()]

@@ -192,36 +192,13 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
         if not any(leaf.reward is None for leaf in self.values()):
             return
 
-        seen_ids: set[str] = set()
-        for leaf in self.values():
-            current = leaf
-            while current is not None:
-                interaction_id = current.interaction_id
-                if (
-                    interaction_id is None
-                    or interaction_id in seen_ids
-                    or current.output_message_list is None
-                    or current.chat_template_type != "concat"
-                    or current.token_rewards is not None
-                    or (current is not leaf and current.reward is not None)
-                    or (current.reward is not None and current.reward != reward)
-                    or (
-                        current.original_reward is not None
-                        and current.original_reward != reward
-                    )
-                    or (
-                        current.rollout_reward is not None
-                        and current.rollout_reward != reward
-                    )
-                ):
-                    logger.warning(
-                        "Session %s has ambiguous or explicitly scored branches; "
-                        "leaving missing rewards unchanged.",
-                        self._session_id,
-                    )
-                    return
-                seen_ids.add(interaction_id)
-                current = current.parent
+        if not self._can_assign_episode_reward(reward):
+            logger.warning(
+                "Session %s has ambiguous or explicitly scored branches; "
+                "leaving missing rewards unchanged.",
+                self._session_id,
+            )
+            return
 
         restored = sum(leaf.reward is None for leaf in self.values())
         for interaction_id, leaf in self.items():
@@ -234,6 +211,37 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
             restored,
             len(self),
         )
+
+    def _can_assign_episode_reward(self, reward: float) -> bool:
+        """Check that disjoint concat chains permit episode-level scoring."""
+        seen_ids: set[str] = set()
+        for leaf in self.values():
+            current = leaf
+            while current is not None:
+                interaction_id = current.interaction_id
+                if interaction_id is None or interaction_id in seen_ids:
+                    return False
+                if (
+                    current.output_message_list is None
+                    or current.chat_template_type != "concat"
+                ):
+                    return False
+                if current.token_rewards is not None:
+                    return False
+                if current is not leaf and current.reward is not None:
+                    return False
+                if any(
+                    score is not None and score != reward
+                    for score in (
+                        current.reward,
+                        current.original_reward,
+                        current.rollout_reward,
+                    )
+                ):
+                    return False
+                seen_ids.add(interaction_id)
+                current = current.parent
+        return True
 
     def _invalidate_tensor_caches_from(
         self, interaction: InteractionWithTokenLogpReward
