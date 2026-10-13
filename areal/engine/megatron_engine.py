@@ -100,7 +100,10 @@ from areal.engine.megatron_utils.packed_context_parallel import (
 from areal.engine.megatron_utils.pipeline_parallel import (
     configure_pipeline_layer_splits,
 )
-from areal.engine.megatron_utils.transport import validate_transport_padding
+from areal.engine.megatron_utils.transport import (
+    nonempty_microbatch_target,
+    validate_transport_padding,
+)
 from areal.infra.dist_rollout import DistRolloutCoordinator
 from areal.infra.platforms import current_platform, is_npu_available
 from areal.models.mcore.bailing_v3_bridge import BailingV3Bridge
@@ -118,6 +121,7 @@ from areal.models.mcore.registry import (
     make_mcore_model,
     unwrap_to_gpt_model,
 )
+from areal.models.mcore.vision_checkpoint import checkpoint_qwen3_5_vision_blocks
 from areal.models.mcore.vocab_parallel_head import (
     ChunkedLMHeadOutput,
     chunked_lm_head_logprobs_entropy,
@@ -139,6 +143,7 @@ from areal.utils.constants import (
     DIST_GROUP_DEFAULT_TIMEOUT,
 )
 from areal.utils.data import (
+    TRANSPORT_DUMMY_KEY,
     MicroBatchItem,
     MicroBatchList,
     amend_position_ids,
@@ -652,6 +657,13 @@ class MegatronEngine(TrainEngine):
                     is_critic=self.config.is_critic,
                     use_lora=self.config.use_lora,
                 )
+                if self.config.gradient_checkpointing:
+                    vision_blocks = checkpoint_qwen3_5_vision_blocks(models)
+                    if vision_blocks:
+                        self.logger.info(
+                            "Enabled activation checkpointing for %d Qwen3.5 vision blocks",
+                            vision_blocks,
+                        )
 
         self.model = _MegatronModelList(models)
         _warn_if_areal_lm_head_entropy_is_nondifferentiable(
@@ -1758,10 +1770,12 @@ class MegatronEngine(TrainEngine):
             model_config = get_model_config(self.model[0])
             per_token_loss = model_config.calculate_per_token_loss
             if per_token_loss:
-                # MCore applies the optimizer loss scale configured during engine
-                # initialization to both the main loss and auxiliary losses.
+                # MCore normalizes auxiliary gradients by original tokens. Convert
+                # the external objective's weight units to that same denominator.
                 total_loss_weight = None
-                loss_multiplier = 1.0
+                loss_multiplier = self._per_token_loss_multiplier(
+                    mb_list, loss_weight_fn
+                )
             else:
                 # Use DP+CP group: after CP all-gather each rank computes the
                 # full-sequence loss, so all_gather's backward (reduce_scatter) sums
@@ -1803,6 +1817,31 @@ class MegatronEngine(TrainEngine):
             if mtp_loss is not None:
                 stats["mtp_loss"] = mtp_loss
             return stats
+
+    def _per_token_loss_multiplier(
+        self,
+        mb_list: MicroBatchList,
+        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
+    ) -> torch.Tensor:
+        local_totals = []
+        for mb in mb_list.mbs:
+            weight = compute_microbatch_loss_weight(mb, loss_weight_fn)
+            tokens = self._per_token_count(mb, weight)
+            local_totals.append(torch.stack((weight.float(), tokens.float())))
+        totals = torch.stack(local_totals).sum(dim=0).detach().to(self.device)
+        # Loss-side microbatches contain full sequences on every CP replica.
+        dist.all_reduce(totals, group=mpu.get_data_parallel_group())
+        weight, tokens = totals.unbind()
+        return tokens / torch.where(weight > 0, weight, 1.0)
+
+    @staticmethod
+    def _per_token_count(
+        inputs: dict[str, Any], loss_weight: torch.Tensor
+    ) -> torch.Tensor:
+        # Reward-model batches have no token mask; retain their callback's unit.
+        if inputs.get(TRANSPORT_DUMMY_KEY) is True or "loss_mask" not in inputs:
+            return loss_weight
+        return inputs["loss_mask"].count_nonzero()
 
     def _collect_mtp_loss(self, num_microbatches: int) -> float | None:
         """Reduce and return the per-microbatch Multi-Token-Prediction loss.
@@ -3381,9 +3420,17 @@ class MegatronEngine(TrainEngine):
         # The micro batch list splitted here will be splitted to each
         # context parallel rank, so the total number of tokens per
         # GPU in a forward pass here will be `max_tokens_per_mb / cp_size`.
+        requested_n_mbs = max(min_n_mbs, self.config.mb_spec.n_mbs)
+        if allow_transport_padding:
+            requested_n_mbs = nonempty_microbatch_target(
+                requested_n_mbs,
+                input_["attention_mask"].shape[0] // self.config.mb_spec.granularity,
+                pp_size,
+                min_n_mbs,
+            )
         mb_spec = MicroBatchSpec.new(
             self.config.mb_spec,
-            n_mbs=max(min_n_mbs, self.config.mb_spec.n_mbs),
+            n_mbs=requested_n_mbs,
             n_mbs_divisor=pp_size,
         )
         # Account for the per-sequence padding required by context/sequence
@@ -3468,10 +3515,12 @@ class MegatronEngine(TrainEngine):
         loss_fn: Callable[..., torch.Tensor],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
         total_loss_weight: torch.Tensor | None,
-        loss_multiplier: float = 1.0,
+        loss_multiplier: float | torch.Tensor = 1.0,
         per_token_loss: bool = False,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         local_weight = compute_microbatch_loss_weight(inputs, loss_weight_fn)
+        if per_token_loss:
+            token_count = self._per_token_count(inputs, local_weight)
         if local_weight == 0:
             connected_output = (
                 output.logprobs if isinstance(output, ChunkedLMHeadOutput) else output
@@ -3479,7 +3528,7 @@ class MegatronEngine(TrainEngine):
             loss = connected_output.mean() * 0.0
             if per_token_loss:
                 return self._build_per_token_loss_output(
-                    loss, local_weight, loss_multiplier
+                    loss, local_weight, loss_multiplier, token_count=token_count
                 )
             return loss
 
@@ -3498,7 +3547,7 @@ class MegatronEngine(TrainEngine):
                     loss = output.mean() * 0.0
                     if per_token_loss:
                         return self._build_per_token_loss_output(
-                            loss, local_weight, loss_multiplier
+                            loss, local_weight, loss_multiplier, token_count=token_count
                         )
                     return loss
 
@@ -3637,7 +3686,7 @@ class MegatronEngine(TrainEngine):
 
         if per_token_loss:
             return self._build_per_token_loss_output(
-                loss, local_weight, loss_multiplier
+                loss, local_weight, loss_multiplier, token_count=token_count
             )
         assert total_loss_weight is not None
         loss_scale = local_weight / total_loss_weight * loss_multiplier
@@ -3647,24 +3696,26 @@ class MegatronEngine(TrainEngine):
         self,
         loss: torch.Tensor,
         loss_weight: torch.Tensor,
-        loss_multiplier: float,
+        loss_multiplier: float | torch.Tensor,
+        *,
+        token_count: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Build MCore's per-token loss numerator and local token count.
+        """Preserve external loss weights and MCore's auxiliary token denominator.
 
-        CP training reassembles the full loss on every CP rank. Split the integer
-        loss weight across those ranks so their numerators and token counts sum to
-        exactly one copy of the microbatch. This keeps the main loss invariant to
-        CP while letting MCore apply the same global-token normalization to MoE
-        auxiliary gradients.
+        Main numerators are replicated across CP, so divide them evenly. Split
+        original integer token counts exactly; MCore sums these over DP+CP and
+        divides all gradients by their total. The T/W multiplier compensates
+        only the main objective, leaving auxiliary normalization unchanged.
         """
-        loss_weight = loss_weight.detach().to(device=loss.device, dtype=torch.int64)
+        token_count = token_count.detach().to(device=loss.device, dtype=torch.int64)
         cp_size = mpu.get_context_parallel_world_size()
         cp_rank = mpu.get_context_parallel_rank()
-        local_weight = torch.div(loss_weight, cp_size, rounding_mode="floor")
-        remainder = torch.remainder(loss_weight, cp_size)
-        local_weight = local_weight + (remainder > cp_rank).to(local_weight.dtype)
-        loss_numerator = loss * local_weight.to(loss.dtype) * loss_multiplier
-        return loss_numerator, local_weight
+        local_tokens = torch.div(token_count, cp_size, rounding_mode="floor")
+        remainder = torch.remainder(token_count, cp_size)
+        local_tokens = local_tokens + (remainder > cp_rank).to(local_tokens.dtype)
+        loss_weight = loss_weight.detach().to(device=loss.device, dtype=loss.dtype)
+        loss_numerator = loss * loss_weight * loss_multiplier / cp_size
+        return loss_numerator, local_tokens
 
     def _compute_forward_result(
         self,

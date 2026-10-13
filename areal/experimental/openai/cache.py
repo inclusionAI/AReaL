@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 import os
 import threading
 import time
@@ -176,6 +177,71 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
     def set_last_reward(self, reward: float) -> None:
         """Set reward for the most recent completion/response."""
         self.set_reward(self.last_interaction_id, reward)
+
+    def assign_episode_reward(self, reward: float) -> None:
+        """Score disjoint exported concat segments with one episode return.
+
+        Call only on a view of exported leaves, before tensor serialization.
+        This is an explicit opt-in for agents with episode-level rewards, such
+        as Arena tasks whose context compaction creates independent chains.
+        Shared ancestry or explicit process/branch rewards retain their current
+        semantics: validate every chain before making any changes.
+        """
+        if not math.isfinite(reward):
+            raise ValueError("Episode reward must be finite")
+        if not any(leaf.reward is None for leaf in self.values()):
+            return
+
+        if not self._can_assign_episode_reward(reward):
+            logger.warning(
+                "Session %s has ambiguous or explicitly scored branches; "
+                "leaving missing rewards unchanged.",
+                self._session_id,
+            )
+            return
+
+        restored = sum(leaf.reward is None for leaf in self.values())
+        for interaction_id, leaf in self.items():
+            self.set_reward(interaction_id, reward)
+            leaf.rollout_reward = reward
+        logger.info(
+            "Session %s assigned its episode reward to %d unscored concat "
+            "segments (%d total); retaining one logical rollout.",
+            self._session_id,
+            restored,
+            len(self),
+        )
+
+    def _can_assign_episode_reward(self, reward: float) -> bool:
+        """Check that disjoint concat chains permit episode-level scoring."""
+        seen_ids: set[str] = set()
+        for leaf in self.values():
+            current = leaf
+            while current is not None:
+                interaction_id = current.interaction_id
+                if interaction_id is None or interaction_id in seen_ids:
+                    return False
+                if (
+                    current.output_message_list is None
+                    or current.chat_template_type != "concat"
+                ):
+                    return False
+                if current.token_rewards is not None:
+                    return False
+                if current is not leaf and current.reward is not None:
+                    return False
+                if any(
+                    score is not None and score != reward
+                    for score in (
+                        current.reward,
+                        current.original_reward,
+                        current.rollout_reward,
+                    )
+                ):
+                    return False
+                seen_ids.add(interaction_id)
+                current = current.parent
+        return True
 
     def _invalidate_tensor_caches_from(
         self, interaction: InteractionWithTokenLogpReward
