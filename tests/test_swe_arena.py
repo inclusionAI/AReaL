@@ -639,7 +639,7 @@ def test_agent_launches_task_through_proxy_and_returns_reward(monkeypatch, step)
                 "api_key": "test-llm-key",
                 "harness": "claude-code-with-skills@5.0.1",
                 "experiment": "arena-test-experiment",
-                "metadata": {"step": step},
+                "metadata": {"step": str(step)},
                 "envs": {
                     "MODEL_NAME": registered_model_name,
                     "BASE_URL": "https://arena.example/api",
@@ -2126,6 +2126,33 @@ def test_launch_one_task_failed_result_raises(monkeypatch):
         asyncio.run(launch_task())
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("launch_method", ["launch_one_task", "launch_one_task_result"])
+@pytest.mark.parametrize("metadata", [{"step": 0}, {"step": None}, {1: "0"}])
+async def test_launch_one_task_invalid_metadata_raises_before_request(
+    monkeypatch, launch_method, metadata
+):
+    monkeypatch.setenv("ARENA_OPENAPI_TOKEN", "arena-token")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        pytest.fail("Invalid metadata must be rejected before submitting an Arena task")
+
+    client = ArenaOpenAPIClient(base_url="https://arena.example")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        with pytest.raises(
+            ValueError, match="metadata keys and values must be strings"
+        ):
+            await getattr(client, launch_method)(
+                stream_id="stream-1",
+                data_id="data-1",
+                model_name="deployment-1",
+                proxy_base_url="http://rollout-proxy/v1",
+                proxy_api_key="session-key",
+                metadata=metadata,
+                client=http_client,
+            )
+
+
 def test_launch_one_task_pending_launch_score_polls_result(monkeypatch):
     """Accepted launch envelopes with placeholder scores must still be polled."""
     monkeypatch.setenv("ARENA_OPENAPI_TOKEN", "arena-token")
@@ -2136,7 +2163,7 @@ def test_launch_one_task_pending_launch_score_polls_result(monkeypatch):
         if request.method == "POST":
             payload = json.loads(request.content)
             assert payload["experiment"] == "arena-test-experiment"
-            assert payload["metadata"] == {"step": 0, "custom": "preserved"}
+            assert payload["metadata"] == {"step": "0", "custom": "preserved"}
             return httpx.Response(
                 202,
                 json={"task_id": "task-1", "status": "PENDING", "score": 0},
@@ -2159,7 +2186,7 @@ def test_launch_one_task_pending_launch_score_polls_result(monkeypatch):
                 proxy_base_url="http://rollout-proxy/v1",
                 proxy_api_key="session-key",
                 experiment="arena-test-experiment",
-                metadata={"step": 0, "custom": "preserved"},
+                metadata={"step": "0", "custom": "preserved"},
                 client=http_client,
             )
 

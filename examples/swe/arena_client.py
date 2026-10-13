@@ -928,7 +928,7 @@ class ArenaOpenAPIClient:
         harness: str = "",
         task_envs: Mapping[str, str] | None = None,
         experiment: str = "",
-        metadata: Mapping[str, Any] | None = None,
+        metadata: Mapping[str, str] | None = None,
         client: httpx.AsyncClient | None = None,
         on_launch_success: Callable[[str | None], None] | None = None,
     ) -> float:
@@ -969,13 +969,19 @@ class ArenaOpenAPIClient:
         harness: str = "",
         task_envs: Mapping[str, str] | None = None,
         experiment: str = "",
-        metadata: Mapping[str, Any] | None = None,
+        metadata: Mapping[str, str] | None = None,
         client: httpx.AsyncClient | None = None,
         on_launch_success: Callable[[str | None], None] | None = None,
     ) -> ArenaTaskResult:
-        """Launch one Arena task and return its structured terminal result."""
+        """Launch a task with optional experiment and string-valued metadata."""
         encoded_stream_id = quote(stream_id, safe="")
         url = f"{self.base_url}/openapi/v1/streams/{encoded_stream_id}/launch_one_task"
+        launch_metadata = dict(metadata or {})
+        if not all(
+            isinstance(key, str) and isinstance(value, str)
+            for key, value in launch_metadata.items()
+        ):
+            raise ValueError("Arena task metadata keys and values must be strings")
         envs = dict(task_envs or {})
         if not all(
             isinstance(key, str) and key and isinstance(value, str)
@@ -1002,8 +1008,8 @@ class ArenaOpenAPIClient:
             request["harness"] = harness
         if experiment:
             request["experiment"] = experiment
-        if metadata:
-            request["metadata"] = dict(metadata)
+        if launch_metadata:
+            request["metadata"] = launch_metadata
         if client is not None:
             return await self._launch_and_wait(
                 client,

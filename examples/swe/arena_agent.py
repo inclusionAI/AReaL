@@ -1395,8 +1395,9 @@ class ArenaStreamAgentWorkflow:
         proxy_session_token = str(extra_kwargs.get("proxy_session_token") or "").strip()
         worker_runtime = extra_kwargs.get("worker_runtime")
         get_version = getattr(worker_runtime, "get_version", None)
-        # Snapshot the rollout step before asynchronous setup can advance weights.
-        task_metadata = {"step": get_version()} if callable(get_version) else None
+        # Snapshot the rollout weight version before asynchronous setup can advance
+        # it. Arena's metadata values must be strings.
+        task_metadata = {"step": str(get_version())} if callable(get_version) else None
         if self.llm_route_mode == "session_gateway" and not (
             proxy_gateway_api_key and proxy_session_token
         ):
