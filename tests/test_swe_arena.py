@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -596,7 +597,8 @@ def test_register_llm_proxy_always_advertises_openai_chat(monkeypatch, protocol)
         )
 
 
-def test_agent_launches_task_through_proxy_and_returns_reward(monkeypatch):
+@pytest.mark.parametrize("step", [0, 17])
+def test_agent_launches_task_through_proxy_and_returns_reward(monkeypatch, step):
     """The Arena agent should forward proxy credentials and return task reward."""
     monkeypatch.setenv("ARENA_OPENAPI_TOKEN", "arena-token")
     monkeypatch.setenv("ARENA_LLM_API_KEY", "test-llm-key")
@@ -604,6 +606,8 @@ def test_agent_launches_task_through_proxy_and_returns_reward(monkeypatch):
 
     result_polls = 0
     registered_model_name = ""
+    worker_runtime = SimpleNamespace(version=step)
+    worker_runtime.get_version = lambda: worker_runtime.version
 
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal registered_model_name, result_polls
@@ -613,6 +617,7 @@ def test_agent_launches_task_through_proxy_and_returns_reward(monkeypatch):
             assert request.headers["Authorization"] == "Bearer arena-token"
             payload = json.loads(request.content)
             registered_model_name = payload["model_name"]
+            worker_runtime.version = step + 1
             assert registered_model_name.startswith("stream-areal-")
             assert payload["endpoints"] == [
                 {
@@ -633,6 +638,8 @@ def test_agent_launches_task_through_proxy_and_returns_reward(monkeypatch):
                 "base_url": "https://arena.example/api",
                 "api_key": "test-llm-key",
                 "harness": "claude-code-with-skills@5.0.1",
+                "experiment": "arena-test-experiment",
+                "metadata": {"step": step},
                 "envs": {
                     "MODEL_NAME": registered_model_name,
                     "BASE_URL": "https://arena.example/api",
@@ -661,13 +668,14 @@ def test_agent_launches_task_through_proxy_and_returns_reward(monkeypatch):
         transport = httpx.MockTransport(handler)
         async with httpx.AsyncClient(transport=transport) as http_client:
             workflow = ArenaStreamAgentWorkflow(
+                experiment_name="arena-test-experiment",
                 econfig={
                     "arena_base_url": "https://arena.example",
                     "arena_poll_interval": 0.0,
                     "arena_harness": "claude-code-with-skills@5.0.1",
                     "arena_task_envs": {"CLAUDE_CODE_DISABLE_TERMINAL_TITLE": "1"},
                     "timeout": 10.0,
-                }
+                },
             )
             return await workflow.run(
                 {
@@ -679,6 +687,7 @@ def test_agent_launches_task_through_proxy_and_returns_reward(monkeypatch):
                 base_url="http://rollout-proxy",
                 api_key="session-key",
                 arena_http_client=http_client,
+                worker_runtime=worker_runtime,
             )
 
     reward = asyncio.run(run_agent())
@@ -2125,6 +2134,9 @@ def test_launch_one_task_pending_launch_score_polls_result(monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal get_count
         if request.method == "POST":
+            payload = json.loads(request.content)
+            assert payload["experiment"] == "arena-test-experiment"
+            assert payload["metadata"] == {"step": 0, "custom": "preserved"}
             return httpx.Response(
                 202,
                 json={"task_id": "task-1", "status": "PENDING", "score": 0},
@@ -2146,6 +2158,8 @@ def test_launch_one_task_pending_launch_score_polls_result(monkeypatch):
                 model_name="deployment-1",
                 proxy_base_url="http://rollout-proxy/v1",
                 proxy_api_key="session-key",
+                experiment="arena-test-experiment",
+                metadata={"step": 0, "custom": "preserved"},
                 client=http_client,
             )
 

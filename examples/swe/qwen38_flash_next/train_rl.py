@@ -220,6 +220,7 @@ def main(profile, args):
     generation = config.eval_gconfig if evaluation_only else config.gconfig
     workflow = "examples.swe.arena_agent.ArenaStreamAgentWorkflow"
     kwargs = dict(
+        experiment_name=config.experiment_name,
         econfig=asdict(config.econfig),
         gen_args=dict(
             temperature=generation.temperature,

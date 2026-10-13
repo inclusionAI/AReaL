@@ -499,9 +499,11 @@ class ArenaStreamAgentWorkflow:
         gen_args: dict[str, Any] | None = None,
         timeout: float = 3600.0,
         reject_terminal_task_failures: bool = False,
+        experiment_name: str = "",
     ) -> None:
         self.econfig = econfig or {}
         self.gen_args = gen_args or {}
+        self.experiment_name = experiment_name
         self.reject_terminal_task_failures = reject_terminal_task_failures
         self.timeout = float(self.econfig.get("timeout", timeout))
         self.registration_timeout = float(
@@ -1392,6 +1394,9 @@ class ArenaStreamAgentWorkflow:
         ).strip()
         proxy_session_token = str(extra_kwargs.get("proxy_session_token") or "").strip()
         worker_runtime = extra_kwargs.get("worker_runtime")
+        get_version = getattr(worker_runtime, "get_version", None)
+        # Snapshot the rollout step before asynchronous setup can advance weights.
+        task_metadata = {"step": get_version()} if callable(get_version) else None
         if self.llm_route_mode == "session_gateway" and not (
             proxy_gateway_api_key and proxy_session_token
         ):
@@ -1592,6 +1597,8 @@ class ArenaStreamAgentWorkflow:
                         session_id=proxy_session_id,
                         harness=stream_config.harness,
                         task_envs=launch_task_envs,
+                        experiment=self.experiment_name,
+                        metadata=task_metadata,
                         client=client,
                         on_launch_success=record_launch_success,
                     ),

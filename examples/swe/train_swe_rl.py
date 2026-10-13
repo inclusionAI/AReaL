@@ -343,6 +343,8 @@ def main(args):
         ),
         timeout=econfig.timeout,
     )
+    if econfig.dataset_source == "arena":
+        workflow_kwargs["experiment_name"] = config.experiment_name
 
     # Eval workflow with lower temperature for deterministic evaluation
     eval_workflow_kwargs = workflow_kwargs.copy()

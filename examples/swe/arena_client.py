@@ -927,6 +927,8 @@ class ArenaOpenAPIClient:
         session_id: str = "",
         harness: str = "",
         task_envs: Mapping[str, str] | None = None,
+        experiment: str = "",
+        metadata: Mapping[str, Any] | None = None,
         client: httpx.AsyncClient | None = None,
         on_launch_success: Callable[[str | None], None] | None = None,
     ) -> float:
@@ -946,6 +948,8 @@ class ArenaOpenAPIClient:
             session_id=session_id,
             harness=harness,
             task_envs=task_envs,
+            experiment=experiment,
+            metadata=metadata,
             client=client,
             on_launch_success=on_launch_success,
         )
@@ -964,6 +968,8 @@ class ArenaOpenAPIClient:
         session_id: str = "",
         harness: str = "",
         task_envs: Mapping[str, str] | None = None,
+        experiment: str = "",
+        metadata: Mapping[str, Any] | None = None,
         client: httpx.AsyncClient | None = None,
         on_launch_success: Callable[[str | None], None] | None = None,
     ) -> ArenaTaskResult:
@@ -994,6 +1000,10 @@ class ArenaOpenAPIClient:
             request["session_id"] = session_id
         if harness:
             request["harness"] = harness
+        if experiment:
+            request["experiment"] = experiment
+        if metadata:
+            request["metadata"] = dict(metadata)
         if client is not None:
             return await self._launch_and_wait(
                 client,
