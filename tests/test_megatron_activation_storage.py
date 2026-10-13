@@ -7,7 +7,11 @@ import pytest
 import torch
 
 from areal.engine import megatron_engine as engine_module
-from areal.engine.megatron_utils.activation_storage import ActivationStorageTracker
+from areal.engine.megatron_utils.activation_storage import (
+    ActivationStorageTracker,
+    install_activation_storage_tracking,
+    track_activation_storage,
+)
 
 
 @pytest.mark.parametrize("awex_residency", [False, True])
@@ -82,3 +86,95 @@ def test_tracker_releases_activation_and_preserves_model_alias():
     torch.testing.assert_close(
         model_param, torch.ones_like(model_param), rtol=0, atol=0
     )
+
+
+@pytest.mark.slow
+@pytest.mark.ci
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+def test_cuda_te_checkpoint_tracking_preserves_two_training_steps(
+    dtype: torch.dtype,
+) -> None:
+    """Real TE recomputation preserves gradients, updates and persistent storage."""
+    from megatron.core import utils as mcore_utils
+    from megatron.core.tensor_parallel.random import checkpoint
+    from transformer_engine.pytorch import ops
+
+    class RecomputeModel(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.blocks = torch.nn.ModuleList(
+                [
+                    ops.Sequential(
+                        ops.LayerNorm(16, device="cuda", dtype=dtype),
+                        ops.BasicLinear(16, 32, device="cuda", dtype=dtype),
+                        ops.GELU(),
+                        ops.BasicLinear(32, 16, device="cuda", dtype=dtype),
+                    )
+                    for _ in range(2)
+                ]
+            )
+            self.register_buffer("offset", torch.ones(16, device="cuda", dtype=dtype))
+            self.forward_modes = []
+
+        def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+            hidden = inputs + self.offset
+            for block in self.blocks:
+
+                def recompute(value, block=block):
+                    self.forward_modes.append(torch.is_grad_enabled())
+                    viewless = mcore_utils.make_viewless_tensor(
+                        value.view_as(value), requires_grad=True, keep_graph=True
+                    )
+                    return block(viewless) + value
+
+                hidden = checkpoint(recompute, False, hidden)
+            return hidden
+
+    torch.manual_seed(123)
+    baseline = RecomputeModel()
+    tracked = RecomputeModel()
+    tracked.load_state_dict(baseline.state_dict())
+    models = [baseline, tracked]
+    optimizers = [
+        torch.optim.SGD(model.parameters(), lr=0.05, momentum=0.9) for model in models
+    ]
+    install_activation_storage_tracking()
+
+    for step in range(2):
+        inputs = torch.randn(8, 16, device="cuda", dtype=dtype)
+        target = torch.randn_like(inputs)
+        gradients = []
+        for model, optimizer, enabled in zip(models, optimizers, [False, True]):
+            optimizer.zero_grad(set_to_none=True)
+            protected = [*model.parameters(), *model.buffers()]
+            pointers = [tensor.untyped_storage().data_ptr() for tensor in protected]
+            context = track_activation_storage(protected) if enabled else nullcontext()
+            with context as tracker:
+                output = model(inputs.detach().clone().requires_grad_())
+                loss = (output.float() - target.float()).square().mean()
+                loss.backward()
+            if tracker is not None:
+                assert tracker._nested_released_storages > 0
+                count, size = tracker.release()
+                assert count > 0 and size > 0
+            gradients.append(
+                [parameter.grad.clone() for parameter in model.parameters()]
+            )
+            assert model.forward_modes[step * 4 :] == [False, False, True, True]
+            for tensor, pointer in zip(protected, pointers):
+                assert tensor.untyped_storage().data_ptr() == pointer
+                assert tensor.untyped_storage().nbytes() > 0
+            optimizer.step()
+
+        for reference, actual in zip(gradients[0], gradients[1]):
+            torch.testing.assert_close(actual, reference, rtol=0, atol=0)
+        for reference, actual in zip(baseline.parameters(), tracked.parameters()):
+            torch.testing.assert_close(actual, reference, rtol=0, atol=0)
+            torch.testing.assert_close(
+                optimizers[1].state[actual]["momentum_buffer"],
+                optimizers[0].state[reference]["momentum_buffer"],
+                rtol=0,
+                atol=0,
+            )
+        torch.testing.assert_close(tracked.offset, baseline.offset, rtol=0, atol=0)
