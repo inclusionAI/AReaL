@@ -247,8 +247,9 @@ def test_native_named_missing_token_mask_is_explicit_error():
 @pytest.mark.parametrize("cp_size", [1, 2, 4])
 @pytest.mark.parametrize("native", [False, True])
 @pytest.mark.parametrize("named", [False, True])
+@pytest.mark.parametrize("dummy_count", [1, 3])
 def test_megatron_train_and_eval_preserve_scalar_and_named_contracts(
-    native, named, cp_size, monkeypatch
+    native, named, cp_size, dummy_count, monkeypatch
 ):
     def all_reduce(tensor, group):
         if group == "dp-cp":
@@ -284,7 +285,10 @@ def test_megatron_train_and_eval_preserve_scalar_and_named_contracts(
                 "loss_mask": torch.ones(1),
                 "mass": torch.tensor(0.25),
             },
-            {TRANSPORT_DUMMY_KEY: True, "input_ids": torch.ones(1)},
+            *[
+                {TRANSPORT_DUMMY_KEY: True, "input_ids": torch.ones(1)}
+                for _ in range(dummy_count)
+            ],
             {
                 "x": torch.tensor([[2.0]]),
                 "loss_mask": torch.ones(1),
@@ -334,6 +338,10 @@ def test_megatron_train_and_eval_preserve_scalar_and_named_contracts(
                     # Native schedule may mutate its tensor; eval metric must be cloned.
                     value.mul_(7)
             else:
+                if forward_only:
+                    # MCore's two-element callback output is scaled in-place
+                    # regardless of calculate_per_token_loss.
+                    result.mul_(cp_size).div_(len(mbs))
                 losses.append(result)
         if not forward_only:
             # Simulate CP SUM of identical full-sequence objectives. For these

@@ -1872,38 +1872,18 @@ class MegatronEngine(TrainEngine):
             device=self.device,
         )
 
-        native_named = get_model_config(
-            self.model[0]
-        ).calculate_per_token_loss and is_named_loss_normalizer(loss_weight_fn)
-
         # Step 3: Forward using Megatron's pipeline function, collecting losses
         losses: list[torch.Tensor] = []
 
         def process_output(
             output: torch.Tensor, inputs: dict[str, Any]
-        ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        ) -> torch.Tensor:
             loss = self._compute_logprobs_and_loss(
                 output, inputs, loss_fn, loss_weight_fn, total_loss_weight
             )
-            if native_named:
-                # Keep the normalized metric separate from MCore's mutable callback.
-                losses.append(loss.detach().clone())
-                if inputs.get(TRANSPORT_DUMMY_KEY) is True:
-                    count = loss.new_zeros((), dtype=torch.int64)
-                elif "loss_mask" not in inputs:
-                    raise ValueError(
-                        "Native named losses require an explicit loss_mask"
-                    )
-                else:
-                    count = inputs["loss_mask"].count_nonzero()
-                return scale_named_loss_for_native(
-                    loss,
-                    count,
-                    loss.new_ones((), dtype=torch.int64),
-                    mpu.get_context_parallel_world_size(),
-                    mpu.get_context_parallel_rank(),
-                )
-            losses.append(loss.detach())
+            # MCore scales its callback tensor in-place, even during evaluation.
+            # Keep the already normalized metric independent of that storage.
+            losses.append(loss.detach().clone())
             return loss
 
         self.forward_backward_batch(mb_list, process_output, forward_only=True)

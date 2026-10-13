@@ -119,6 +119,8 @@ def normalize_loss(
     Each named term is independently normalized over the optimizer batch and
     the engine's existing data-parallel group. Fractional masses must not be
     clamped to one. A globally empty term contributes a graph-connected zero.
+    Normalizers must already be validated by compute_microbatch_loss_weight
+    and compute_total_loss_weight; only numerators are validated here.
     """
     if isinstance(loss, dict):
         if not isinstance(local_weight, dict) or not isinstance(total_weight, dict):
@@ -139,8 +141,6 @@ def normalize_loss(
                 torch.isfinite(numerator),
                 f"Loss numerator {name!r} must be finite, including empty terms",
             )
-            _validate_mass(local_weight[name])
-            _validate_mass(total_weight[name])
             mass = total_weight[name].to(device=numerator.device, dtype=torch.float32)
             denominator = torch.where(mass > 0, mass, 1.0)
             normalized.append(
