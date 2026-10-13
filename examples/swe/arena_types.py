@@ -28,3 +28,7 @@ class ArenaStreamConfig:
     )
     reward_threshold: float | None = None
     reward_transform_fn: str = ""
+    # Shared, persistent snapshot of per-data-id rewards from Env version metadata.
+    # Created before training if absent; reused and checked on subsequent starts.
+    # Mutually exclusive with expected_reward_ref (the Stream-default mode).
+    reward_mapping_file: str = ""

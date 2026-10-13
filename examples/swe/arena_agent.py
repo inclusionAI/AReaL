@@ -29,7 +29,8 @@ from examples.swe.arena_client import (
     LLMProtocol,
 )
 from examples.swe.arena_config import load_arena_stream_configs
-from examples.swe.arena_types import ArenaStreamConfig
+from examples.swe.arena_reward_mapping import load_reward_mapping
+from examples.swe.arena_types import ArenaRewardRefConfig, ArenaStreamConfig
 
 from areal.experimental.openai.proxy.workflow import HARNESS_OUTCOME_METRIC_CODES
 from areal.infra import workflow_context
@@ -530,6 +531,13 @@ class ArenaStreamAgentWorkflow:
             )
         stream_configs = load_arena_stream_configs(self.econfig)
         self.stream_configs = {config.name: config for config in stream_configs}
+        self.reward_mappings = {
+            config.name: load_reward_mapping(
+                config.reward_mapping_file, config.stream_id
+            )
+            for config in stream_configs
+            if config.reward_mapping_file
+        }
         self.default_stream_name = (
             stream_configs[0].name if len(stream_configs) == 1 else ""
         )
@@ -1587,6 +1595,10 @@ class ArenaStreamAgentWorkflow:
             logger.info(
                 f"Launching Arena task: stream_id={stream_id}, data_id={data_id}"
             )
+            reward_kwargs = {}
+            if stream_config.reward_mapping_file:
+                ref = self._expected_reward_ref(data, stream_config)
+                reward_kwargs["reward"] = f"{ref.key}@{ref.version}"
             try:
                 task_result_or_score = await asyncio.wait_for(
                     self.client.launch_one_task_result(
@@ -1602,6 +1614,7 @@ class ArenaStreamAgentWorkflow:
                         metadata=task_metadata,
                         client=client,
                         on_launch_success=record_launch_success,
+                        **reward_kwargs,
                     ),
                     timeout=self.timeout,
                 )
@@ -1799,11 +1812,21 @@ class ArenaStreamAgentWorkflow:
             )
         return stream_config
 
-    @staticmethod
+    def _expected_reward_ref(
+        self, data: dict[str, Any], stream_config: ArenaStreamConfig
+    ) -> ArenaRewardRefConfig:
+        if stream_config.reward_mapping_file:
+            mapping = self.reward_mappings[stream_config.name]
+            data_id = str(data.get("data_id") or "")
+            if data_id not in mapping:
+                raise ValueError(f"Arena reward mapping has no data_id {data_id!r}")
+            return mapping[data_id]
+        return stream_config.expected_reward_ref
+
     def _validate_row_reward_ref(
-        data: dict[str, Any], stream_config: ArenaStreamConfig
+        self, data: dict[str, Any], stream_config: ArenaStreamConfig
     ) -> None:
-        expected = stream_config.expected_reward_ref
+        expected = self._expected_reward_ref(data, stream_config)
         row_key = str(data.get("reward_ref_key") or "")
         row_version = str(data.get("reward_ref_version") or "")
         if expected.key and (row_key, row_version) != (
@@ -1904,7 +1927,7 @@ class ArenaStreamAgentWorkflow:
 
         if not self.result_dump_dir:
             return
-        expected_ref = stream_config.expected_reward_ref
+        expected_ref = self._expected_reward_ref(data, stream_config)
 
         def encode_record() -> bytes:
             raw_json = json.dumps(result.raw, ensure_ascii=False, separators=(",", ":"))

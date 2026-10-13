@@ -20,6 +20,7 @@ from examples.swe.arena_config import (
     build_weighted_arena_rows,
     load_arena_stream_configs,
 )
+from examples.swe.arena_reward_mapping import prepare_reward_mapping
 from examples.swe.utils import ArenaRewardRefConfig, ArenaStreamConfig, SWEPPOConfig
 
 from areal import PPOTrainer
@@ -148,15 +149,27 @@ def _resolve_arena_stream(
         configured,
         stream_id=resolved_stream_id,
         llm_protocol=llm_protocol,
-        expected_reward_ref=actual_reward_ref,
+        expected_reward_ref=(
+            ArenaRewardRefConfig()
+            if configured.reward_mapping_file
+            else actual_reward_ref
+        ),
     )
     rows = client.get_all_dataset_rows(resolved_stream_id, llm_protocol)
+    mapping = (
+        prepare_reward_mapping(
+            client, resolved_stream_id, rows, configured.reward_mapping_file
+        )
+        if configured.reward_mapping_file
+        else {}
+    )
     for row in rows:
+        reward_ref = mapping[row["data_id"]] if mapping else actual_reward_ref
         row.update(
             {
                 "arena_stream_name": resolved.name,
-                "reward_ref_key": actual_reward_ref.key,
-                "reward_ref_version": actual_reward_ref.version,
+                "reward_ref_key": reward_ref.key,
+                "reward_ref_version": reward_ref.version,
             }
         )
     return resolved, rows

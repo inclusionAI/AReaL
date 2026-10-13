@@ -48,22 +48,13 @@ finally:
 print("Shared storage preflight: 16 MiB fsync succeeded", flush=True)
 VERIFY_STORAGE
 
-# Keep the current Arena/RPC fixes; use the historical dense-model dependencies.
-python3 - <<'VERIFY_SOURCE'
-import os
-import subprocess
-checkout = os.environ["QWEN_REPO"]
-head = subprocess.check_output(["git", "-C", checkout, "rev-parse", "HEAD"], universal_newlines=True).strip()
-diff = subprocess.check_output(["git", "-C", checkout, "diff", "--binary", "HEAD"])
-untracked = subprocess.check_output(["git", "-C", checkout, "ls-files", "--others", "--exclude-standard"])
-if head != os.environ["QWEN_SOURCE_REVISION"] or diff or untracked:
-    raise SystemExit("Frozen AReaL runtime has unreviewed changes")
-print("Frozen AReaL source verified: " + head, flush=True)
-VERIFY_SOURCE
+# Validate the exact rsynced files, including uncommitted source and site profile.
+python3 "$QWEN_RECIPE_DIR/source_snapshot.py" verify \
+  --snapshot "$QWEN_SUBMITTED_SNAPSHOT" --revision "$QWEN_SOURCE_REVISION"
 export SWE_RL_ADMIN_API_KEY
 SWE_RL_ADMIN_API_KEY=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
 cancel_arena_children() {
-  local log_path="$QWEN_ARENA_OUTPUT/logs/$(id -un)/$QWEN_EXPERIMENT_NAME/$QWEN_ARENA_TRIAL/rollout.log"
+  local log_path="$QWEN_ARENA_OUTPUT/logs/$QWEN_RUN_USER/$QWEN_EXPERIMENT_NAME/$QWEN_ARENA_TRIAL/rollout.log"
   [[ -n ${QWEN_BATCH_REPLAY_PATH:-} ]] && return 0
   [[ -s $log_path ]] || return 0
   ARENA_CANCEL_ROLLOUT_LOG="$log_path" python3 - <<'PY'

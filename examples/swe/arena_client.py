@@ -435,6 +435,37 @@ class ArenaOpenAPIClient:
             raise ArenaAPIError("Stream list response is missing an 'items' array")
         return [dict(item) for item in items if isinstance(item, Mapping)]
 
+    def get_published_version(
+        self,
+        kind: Literal["envs", "rewards"],
+        key: str,
+        version: str,
+        *,
+        client: httpx.Client | None = None,
+    ) -> dict[str, Any]:
+        """Read an exact published Env or reward version for startup pinning."""
+        if kind not in {"envs", "rewards"}:
+            raise ValueError(f"Unsupported Arena version kind: {kind!r}")
+        response = self._sync_request(
+            "GET",
+            f"{self.base_url}/openapi/v1/{kind}/{quote(key, safe='')}/versions/"
+            f"{quote(version, safe='')}",
+            client=client,
+            headers=self._headers,
+        )
+        payload = _response_json(response)
+        if isinstance(payload, Mapping) and "data" in payload:
+            payload = payload["data"]
+        if not isinstance(payload, Mapping) or (
+            payload.get("key"),
+            payload.get("version"),
+            payload.get("status"),
+        ) != (key, version, "PUBLISHED"):
+            raise ArenaAPIError(
+                f"Arena {kind} {key}@{version} did not return the exact PUBLISHED version"
+            )
+        return dict(payload)
+
     def resolve_stream(
         self,
         stream_id: str = "",
@@ -926,6 +957,7 @@ class ArenaOpenAPIClient:
         *,
         session_id: str = "",
         harness: str = "",
+        reward: str = "",
         task_envs: Mapping[str, str] | None = None,
         experiment: str = "",
         metadata: Mapping[str, str] | None = None,
@@ -947,6 +979,7 @@ class ArenaOpenAPIClient:
             proxy_api_key=proxy_api_key,
             session_id=session_id,
             harness=harness,
+            reward=reward,
             task_envs=task_envs,
             experiment=experiment,
             metadata=metadata,
@@ -967,6 +1000,7 @@ class ArenaOpenAPIClient:
         *,
         session_id: str = "",
         harness: str = "",
+        reward: str = "",
         task_envs: Mapping[str, str] | None = None,
         experiment: str = "",
         metadata: Mapping[str, str] | None = None,
@@ -1006,6 +1040,8 @@ class ArenaOpenAPIClient:
             request["session_id"] = session_id
         if harness:
             request["harness"] = harness
+        if reward:
+            request["reward"] = reward
         if experiment:
             request["experiment"] = experiment
         if launch_metadata:

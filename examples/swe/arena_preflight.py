@@ -20,6 +20,7 @@ from examples.swe.arena_client import (
     infer_llm_protocol_from_harness,
 )
 from examples.swe.arena_config import load_arena_stream_configs
+from examples.swe.arena_reward_mapping import prepare_reward_mapping
 from examples.swe.arena_types import ArenaRewardRefConfig
 
 
@@ -197,6 +198,7 @@ def _recent_health(
     *,
     harness: str,
     reward_ref: ArenaRewardRefConfig,
+    reward_mapping: Mapping[str, ArenaRewardRefConfig] | None = None,
 ) -> tuple[int, int]:
     harness_key, _, harness_version = harness.partition("@")
     terminal = 0
@@ -212,13 +214,18 @@ def _recent_health(
         ) != (harness_key, harness_version):
             continue
         task_reward = task.get("reward_ref")
-        if reward_ref.key and (
+        expected = reward_ref
+        if reward_mapping is not None:
+            expected = reward_mapping.get(str(task.get("data_id") or ""))
+            if expected is None:
+                continue
+        if expected.key and (
             not isinstance(task_reward, Mapping)
             or (
                 task_reward.get("key"),
                 task_reward.get("version"),
             )
-            != (reward_ref.key, reward_ref.version)
+            != (expected.key, expected.version)
         ):
             continue
         status = str(task.get("status") or "").upper()
@@ -347,6 +354,21 @@ def _validate_streams_with_client(
             client=client,
         )
         dataset_total = _dataset_total(dataset_payload)
+        reward_mapping = None
+        if configured.reward_mapping_file:
+            arena = ArenaOpenAPIClient(base_url=base_url, request_retries=retries)
+            rows = arena.get_all_dataset_rows(configured.stream_id, client=client)
+            if len(rows) != dataset_total:
+                raise ArenaAPIError(
+                    "Arena dataset total changed during reward preflight"
+                )
+            reward_mapping = prepare_reward_mapping(
+                arena,
+                configured.stream_id,
+                rows,
+                configured.reward_mapping_file,
+                client=client,
+            )
         # The task-list endpoint may return either a paginated object or a bare
         # list under ``data``. Request the full health window directly; reusing a
         # one-row total probe would silently evaluate only one task for the latter.
@@ -368,6 +390,7 @@ def _validate_streams_with_client(
             _task_rows(tasks_payload),
             harness=harness,
             reward_ref=actual_reward_ref,
+            reward_mapping=reward_mapping,
         )
         failure_rate = failure_count / terminal_count if terminal_count else 0.0
         unhealthy = (
@@ -385,7 +408,11 @@ def _validate_streams_with_client(
             configured,
             harness=harness,
             llm_protocol=protocol,
-            expected_reward_ref=actual_reward_ref,
+            expected_reward_ref=(
+                ArenaRewardRefConfig()
+                if configured.reward_mapping_file
+                else actual_reward_ref
+            ),
         )
         summary = asdict(resolved)
         # Task env values can contain operational secrets and are irrelevant to
@@ -394,6 +421,7 @@ def _validate_streams_with_client(
         summary.update(
             {
                 "dataset_total": dataset_total,
+                "reward_mapping_count": len(reward_mapping or {}),
                 "recent_terminal_tasks": terminal_count,
                 "recent_failures": failure_count,
                 "recent_failure_rate": failure_rate,

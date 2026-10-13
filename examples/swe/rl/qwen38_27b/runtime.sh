@@ -1,18 +1,26 @@
 #!/usr/bin/env bash
-# Source in every role. The site profile and all generated files live outside Git.
+# Source in every role. Submission pins shared source, profile, and artifact paths.
 set -euo pipefail
-: "${QWEN_ENV_FILE:?Set the external site profile}"
+export QWEN_ENV_FILE=${QWEN_SUBMITTED_ENV_FILE:-${QWEN_ENV_FILE:-}}
+: "${QWEN_ENV_FILE:?Set the site profile}"
+export QWEN_RUN_USER=${QWEN_RUN_USER:-${SUDO_USER:-$(id -un)}}
 export QWEN_ENV_FILE
+export QWEN_ARENA_TRIAL=${QWEN_SUBMITTED_TRIAL:-${QWEN_ARENA_TRIAL:-}}
 set -a
 source "$QWEN_ENV_FILE"
 set +a
+export QWEN_ARENA_TRIAL=${QWEN_SUBMITTED_TRIAL:-$QWEN_ARENA_TRIAL}
+export QWEN_ENV_FILE=${QWEN_SUBMITTED_ENV_FILE:-$QWEN_ENV_FILE}
+export USER="$QWEN_RUN_USER" LOGNAME="$QWEN_RUN_USER"
 recipe_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-export QWEN_REPO=${QWEN_REPO:-$(cd "$recipe_root/../../../.." && pwd)}
+export QWEN_REPO=${QWEN_SUBMITTED_REPO:-${QWEN_REPO:-$(cd "$recipe_root/../../../.." && pwd)}}
+export QWEN_RUN_DIR=${QWEN_SUBMITTED_RUN_DIR:-${QWEN_RUN_DIR:-}}
+export QWEN_OUTPUT_ROOT=${QWEN_SUBMITTED_OUTPUT_ROOT:-${QWEN_OUTPUT_ROOT:-}}
 export QWEN_RECIPE_DIR="$QWEN_REPO/examples/swe/rl/qwen38_27b"
 export QWEN_RUNTIME_SCRIPT="$QWEN_RECIPE_DIR/runtime.sh"
 export EXPERIMENT_ROOT=${QWEN_RUN_DIR:?Set an external run directory}
 export QWEN_CONFIG="$EXPERIMENT_ROOT/train.yaml"
-export QWEN_EXPERIMENT_NAME=${QWEN_EXPERIMENT_NAME:-chucai-qwen38-graybox19-rl}
+export QWEN_EXPERIMENT_NAME=${QWEN_EXPERIMENT_NAME:-sxj-qwen38-graybox19-rl}
 export QWEN_ARENA_TRIAL=${QWEN_ARENA_TRIAL:?Set a short trial name}
 for name in QWEN_MODEL QWEN_DENSE_RUNTIME AWEX_RUNTIME_ROOT \
   QWEN_ACTOR_IMAGE QWEN_ROLLOUT_IMAGE QWEN_OUTPUT_ROOT QWEN_PARTITION \
@@ -33,7 +41,7 @@ export QWEN_ACTOR_LIBRARY_PATH="$QWEN_DENSE_RUNTIME/dependencies/nvidia/cudnn/li
 case "${SLURM_JOB_NAME:-}" in
   *:rollout*)
     export PYTHONPATH="$QWEN_ROLLOUT_PYTHONPATH"
-    export SGLANG_LOGGING_CONFIG_PATH="$QWEN_OUTPUT_ROOT/logs/$(id -un)/$QWEN_EXPERIMENT_NAME/$QWEN_ARENA_TRIAL/native/sglang-${SLURMD_NODENAME:-$(hostname)}-${SLURM_LOCALID:-0}.json"
+    export SGLANG_LOGGING_CONFIG_PATH="$QWEN_OUTPUT_ROOT/logs/$QWEN_RUN_USER/$QWEN_EXPERIMENT_NAME/$QWEN_ARENA_TRIAL/native/sglang-${SLURMD_NODENAME:-$(hostname)}-${SLURM_LOCALID:-0}.json"
     ;;
   *)
     export PYTHONPATH="$QWEN_ACTOR_PYTHONPATH"

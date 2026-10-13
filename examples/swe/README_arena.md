@@ -116,6 +116,36 @@ are retained for audit, not parsed for training rewards. Model-attributed failur
 retain interactions with zero reward; system and ambiguous failures are rejected. Result
 shards are written under `arena_result_dump_dir` when configured.
 
+## Per-task reward mappings
+
+For a Stream whose tasks use different original graders, set `reward_mapping_file` in
+its Stream entry instead of `expected_reward_ref`:
+
+```yaml
+arena_streams:
+  - name: whitebox-b
+    stream_id: whitebox-b-overfit64-20261013
+    harness: whitebox-unified-b-areal@0.1.0
+    llm_protocol: chat_completions
+    reward_mapping_file: ${oc.env:EXPERIMENT_ROOT}/reward-mapping.json
+```
+
+The file must be on persistent storage visible at the same path to the controller and
+rollout workers. During preflight or training dataset setup, AReaL creates it if absent:
+it resolves every `env:<key>@<version>` to that published Env version's
+`spec.metadata.source_reward_ref`, verifies each distinct reward version is published,
+and saves the complete mapping atomically. Missing references fail before rollout; there
+is no fallback to a Stream default. Reward references must include an exact version,
+including non-semver versions such as `reward-v1`.
+
+Subsequent starts reuse the snapshot, check exact dataset coverage, and verify the
+pinned rewards remain published. An invalid or incomplete existing file is rejected,
+never regenerated automatically. Keep the same file when recovering; use a new run file
+for a changed dataset. Each rollout validates its row against the snapshot and sends
+`reward: "key@version"` to Arena. Result audit records contain the task-specific
+`expected_reward_ref`; terminal `score` processing is unchanged. Without
+`reward_mapping_file`, the existing Stream-default behavior is unchanged.
+
 ## Port provenance and scope
 
 This port applies selected changes from `swe-dev` commits `da1da65c7`, `1d0fc7ba0`,

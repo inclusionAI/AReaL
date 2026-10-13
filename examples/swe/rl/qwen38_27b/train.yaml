@@ -59,9 +59,9 @@ rollout:
   backend: sglang:d16t4
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  max_concurrent_rollouts: 16
+  max_concurrent_rollouts: 1500
   queue_size: 16
-  consumer_batch_size: 8
+  consumer_batch_size: 32
   max_head_offpolicyness: 1
   enable_rollout_tracing: false
   check_trajectory_format: false
@@ -278,16 +278,14 @@ econfig:
   arena_streams_file: ''
   arena_mixture_epoch_size: 0
   arena_streams:
-  - name: graybox19
-    stream_id: graybox19-runtime-collection-20260922
+  - name: whitebox-b
+    stream_id: whitebox-b-overfit64-20261013
     sampling_weight: 1
-    harness: areal-harness@0.2.0-oss-rc.6-graybox-fix1
+    harness: whitebox-unified-b-areal@0.1.0
     llm_protocol: chat_completions
     task_envs:
       DSH_LLM_REQUEST_TIMEOUT_SECONDS: '7200'
-    expected_reward_ref:
-      key: graybox19-frozen-dispatch-reward-20260922
-      version: 1.0.0
+    reward_mapping_file: ${oc.env:EXPERIMENT_ROOT}/reward-mapping.json
 sglang:
   model_path: ${tokenizer_path}
   random_seed: 42
@@ -309,7 +307,7 @@ sglang:
   log_level: info
   enable_multimodal: true
 train_dataset:
-  batch_size: 8
+  batch_size: 32
   shuffle: true
   pin_memory: true
   num_workers: 0
