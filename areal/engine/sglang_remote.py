@@ -522,7 +522,7 @@ class SGLangBackend:
         # real colocation. Resolve base_gpu_id in the worker because scheduler
         # device isolation is only observable here, after Local/Slurm/Ray launch.
         awex_gpus_per_server = server_args.pop("_awex_gpus_per_server", None)
-        awex_transfer_rank_base = None
+        awex_transfer_rank_base = server_args.pop("_awex_transfer_rank_base", None)
         if awex_gpus_per_server is not None:
             fallback_base_gpu_id = int(server_args.get("base_gpu_id", 0))
             awex_transfer_rank_base = fallback_base_gpu_id
