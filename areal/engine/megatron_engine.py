@@ -61,6 +61,7 @@ from areal.engine.core.distributed import (
 from areal.engine.core.model import (
     SequencePackingMode,
     disable_dropout_in_model,
+    is_qwen3_5_model,
     is_valid_vision_model,
     lang_config,
     requires_padded_seq,
@@ -1512,6 +1513,11 @@ class MegatronEngine(TrainEngine):
                 and self.sequence_packing_mode == SequencePackingMode.WRAPPER_THD
                 and self.hf_config.architectures == ["Qwen4ExpForConditionalGeneration"]
             )
+            qwen35_text_thd = (
+                self.use_model_packed_seq
+                and is_qwen3_5_model(self.hf_config.model_type)
+                and not has_vision_inputs
+            )
             # Qwen4Exp's wrapper retains the visual embedding forward while
             # bypassing only the inner language model's final projection. Its
             # mRoPE and token masks are prepared before the shared THD/CP split.
@@ -1520,13 +1526,17 @@ class MegatronEngine(TrainEngine):
                 and not qwen4_wrapper_thd
                 and (
                     has_vision_inputs
-                    or (self.is_vision_model and not self.use_padded_seq)
+                    or (
+                        self.is_vision_model
+                        and not self.use_padded_seq
+                        and not qwen35_text_thd
+                    )
                 )
             ):
                 raise NotImplementedError(
                     "chunked LM Head vision inputs require the Qwen4Exp "
-                    "mcore-bridge WRAPPER_THD path; padded BSHD is supported "
-                    "only for text-only models such as Qwen3.5"
+                    "mcore-bridge WRAPPER_THD path; text-only Qwen3.5 supports "
+                    "padded BSHD and model-owned THD"
                 )
 
             # MTP training: pass the token loss mask through the model's actual

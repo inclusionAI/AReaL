@@ -13,6 +13,80 @@ import pytest
 import torch
 
 
+@pytest.mark.parametrize(
+    ("model_type", "with_vision", "supported"),
+    [
+        ("qwen3_5", False, True),
+        ("qwen3_5_moe", False, True),
+        ("qwen3_5_moe", True, False),
+        ("qwen3_vl", False, False),
+    ],
+)
+def test_chunked_model_thd_forward_accepts_qwen35_text_only(
+    monkeypatch, model_type, with_vision, supported
+):
+    """Vision-capable Qwen3.5 text batches may use chunked model-owned THD."""
+    from areal.engine import megatron_engine as module
+    from areal.engine.core.model import SequencePackingMode
+    from areal.utils.data import MicroBatchList, MicroBatchSpec
+
+    row = {
+        "input_ids": torch.tensor([1, 2]),
+        "max_seqlen": 2,
+        "cu_seqlens": torch.tensor([0, 2], dtype=torch.int32),
+    }
+    if with_vision:
+        row["pixel_values"] = torch.ones(2, 4)
+    batch = MicroBatchList(
+        data={},
+        mb_spec=MicroBatchSpec(),
+        mbs=[row],
+        padded_mbs=[dict(row)],
+        group_lens=[2],
+        padding_lengths=[0],
+        padded_to_lengths=[2],
+    )
+    engine = module.MegatronEngine.__new__(module.MegatronEngine)
+    engine._ensure_ready = lambda: None
+    engine.tf_config = SimpleNamespace(num_moe_experts=None)
+    engine.mcore_config = SimpleNamespace(
+        enable_mtp_training=False, enable_chunked_logits=True, lm_head_loss_chunk_size=2
+    )
+    engine.config = SimpleNamespace(is_critic=False)
+    engine.process_group_initialized = True
+    engine._cpu_group = object()
+    engine.is_vision_model = True
+    engine.enable_tree_training = False
+    engine.device = "cpu"
+    engine.dtype = torch.bfloat16
+    engine.model = [object()]
+    engine.bridge_cls = "megatron-bridge"
+    engine.hf_config = SimpleNamespace(model_type=model_type)
+    engine.sequence_packing_mode = SequencePackingMode.MODEL_THD
+    engine.use_padded_seq = False
+    engine.use_model_packed_seq = True
+
+    class ForwardReached(Exception):
+        pass
+
+    def schedule(**kwargs):
+        kwargs["forward_step_func"](kwargs["data_iterator"], kwargs["model"])
+
+    forward = MagicMock(side_effect=ForwardReached)
+    monkeypatch.setattr(module, "get_forward_backward_func", lambda: schedule)
+    monkeypatch.setattr(
+        module, "validate_transport_padding", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(module, "packed_context_parallel_forward", forward)
+    monkeypatch.setattr(module.mpu, "get_context_parallel_world_size", lambda: 1)
+    monkeypatch.setattr(module.mpu, "is_pipeline_last_stage", lambda **kwargs: True)
+
+    error = ForwardReached if supported else NotImplementedError
+    with pytest.raises(error):
+        engine.forward_backward_batch(batch, lambda *args: None, forward_only=True)
+    assert forward.call_count == int(supported)
+
+
 def test_vision_microbatch_preparation_is_lazy_and_reusable(monkeypatch):
     from areal.engine import megatron_engine as module
     from areal.engine.core.model import SequencePackingMode

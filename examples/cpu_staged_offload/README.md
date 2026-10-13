@@ -19,10 +19,10 @@ No example-specific actor, trainer, or worker environment variables are required
 `buffer_count` controls the number of reusable GPU staging slots; `bucket_size_mb`
 bounds one slot's master/moment/gradient tensors.
 
-The AdamW backend requires Megatron-Core 0.17.0, BF16 training, distributed optimizer,
-precision-aware optimizer semantics, and FP32 master/moment state. Enabling it selects
-precision-aware mode automatically. Staged optimizer checkpoint saves are synchronous;
-`megatron.async_save=true` is rejected.
+The AdamW backend uses the repository-pinned Megatron-Core, BF16 training, distributed
+optimizer, precision-aware optimizer semantics, and FP32 master/moment state. Enabling
+it selects precision-aware mode automatically. Staged optimizer checkpoint saves are
+synchronous; `megatron.async_save=true` is rejected.
 
 Checkpoint loading is fail-stop. DCP writes optimizer state into the authoritative CPU
 slabs in place. If loading fails, the process must terminate and AReaL recovery starts a
@@ -60,12 +60,13 @@ python examples/cpu_staged_offload/dapo-math_rl_cpu_staged.py \
   trial_name=staged
 ```
 
-Use the activated training environment. Qwen3.5 additionally requires AWEX's Qwen3.5
-converter, available in AWEX 0.8.1; the repository's pinned AWEX 0.8.0 lacks it. The
-validated environment used Megatron Bridge 0.4.0, Megatron-Core 0.17.0, SGLang
-0.5.10.post1, and the AWEX 0.8.1 source checkout on `PYTHONPATH`. When using a source
-checkout, export `PYTHONPATH="${AWEX_SOURCE_DIR}:$PWD${PYTHONPATH:+:$PYTHONPATH}"`
-before launching so the workers inherit it.
+Use the activated repository environment, currently pinned to AWEX 0.9.0, Megatron-Core
+0.19.0, and Megatron Bridge 0.6.0. Qwen3.5 requires AWEX's Qwen3.5 converter, introduced
+in AWEX 0.8.1. The historical memory comparison below used Megatron Bridge 0.4.0,
+Megatron-Core 0.17.0, SGLang 0.5.10.post1, and the AWEX 0.8.1 source checkout on
+`PYTHONPATH`. When using a source checkout, export
+`PYTHONPATH="${AWEX_SOURCE_DIR}:$PWD${PYTHONPATH:+:$PYTHONPATH}"` before launching so
+the workers inherit it.
 
 The configuration enables fused FLA Gated DeltaNet kernels and disables gradient
 reduction overlap because text batches leave the vision parameters unused. Vision
