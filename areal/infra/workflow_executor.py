@@ -4,6 +4,7 @@ from __future__ import annotations  # noqa
 
 import asyncio
 import json
+import math
 import os
 import random
 import threading
@@ -322,10 +323,13 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
         self._active_task_ids: set[int] = set()
 
         # Condition variables for coordination
-        self._input_lock = threading.Lock()
+        self._input_lock = threading.RLock()
         self._input_cv = threading.Condition(self._input_lock)
-        self._result_lock = threading.Lock()
+        self._result_lock = self._input_lock
         self._result_cv = threading.Condition(self._result_lock)
+
+        # Independent from runner pause: admitted work must keep draining.
+        self._snapshot_frozen = False
 
         # Background thread infrastructure
         self._shutdown_event = threading.Event()
@@ -391,27 +395,21 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
                 # Check for errors from other threads (fail-fast)
                 self._check_thread_exception()
 
-                task_input = self._get_next_task_for_submission()
-                if task_input is None:
-                    continue
-
-                task_fn = self.task_factory(task_input)
-                try:
-                    self.runner.submit(task_fn, task_id=task_input.task_id)
-                    self.staleness_manager.on_rollout_submitted()
-                    if self.enable_tracing:
-                        self.logger.info(f"Submit rollout. {self._rollout_stats()}")
-                except TaskQueueFullError:
-                    with self._input_cv:
+                # One admission transaction: freeze cannot miss an input popped
+                # from the deque but not yet handed to the runner.
+                with self._input_cv:
+                    task_input = self._get_next_task_for_submission()
+                    if task_input is None:
+                        continue
+                    task_fn = self.task_factory(task_input)
+                    try:
+                        self.runner.submit(task_fn, task_id=task_input.task_id)
+                        self.staleness_manager.on_rollout_submitted()
+                        if self.enable_tracing:
+                            self.logger.info(f"Submit rollout. {self._rollout_stats()}")
+                    except TaskQueueFullError:
                         self._pending_inputs.appendleft(task_input)
-                        self._input_cv.wait_for(
-                            lambda: (
-                                self._shutdown_event.is_set()
-                                or self._has_runner_capacity()
-                            )
-                        )
-                    # Allow other threads to make progress before retrying
-                    continue
+                        self._input_cv.wait(timeout=0.05)
 
             except Exception as e:
                 self.logger.error("Producer thread failed", exc_info=True)
@@ -467,7 +465,8 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
                 self._check_thread_exception()
                 # There is capacity and pending inputs
                 if (
-                    not self.runner.paused.is_set()
+                    not self._snapshot_frozen
+                    and not self.runner.paused.is_set()
                     and self.staleness_manager.get_capacity() > 0
                     and self._pending_inputs
                 ):
@@ -563,13 +562,15 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
         """
         self._check_thread_exception()
         with self._input_cv:
+            self._require_unfrozen()
+            if task_input.task_id in self._active_task_ids:
+                raise ValueError(f"Duplicate task ID {task_input.task_id}")
             self._pending_inputs.append(task_input)
+            self._active_task_ids.add(task_input.task_id)
             self.staleness_manager.on_rollout_enqueued()
             if self.enable_tracing:
                 self.logger.info(f"Enqueue rollout. {self._rollout_stats()}")
             self._input_cv.notify()
-        with self._result_cv:
-            self._active_task_ids.add(task_input.task_id)
 
     def wait_results(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
@@ -599,6 +600,7 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
             timeout = _DEFAULT_WAIT_TIMEOUT_SECONDS
 
         with self._result_cv:
+            self._require_unfrozen()
             while len(self._pending_results) < count:
                 self._check_thread_exception()
 
@@ -613,22 +615,19 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
                     return []
 
                 self._result_cv.wait(timeout=remaining)
+                self._require_unfrozen()
 
             drained: list[TimedResult[TResult]] = list(self._pending_results.values())
             self._pending_results.clear()
 
-        selected, pending = _select_results(
-            drained,
-            count,
-            self.deterministic_order,
-        )
-        with self._result_cv:
-            if pending:
-                for result in pending:
-                    self._pending_results[result.task_id] = result
-                self._result_cv.notify_all()
-            for r in selected:
-                self._active_task_ids.discard(r.task_id)
+            selected, pending = _select_results(
+                drained, count, self.deterministic_order
+            )
+            for result in pending:
+                self._pending_results[result.task_id] = result
+            for result in selected:
+                self._active_task_ids.remove(result.task_id)
+            self._result_cv.notify_all()
 
         return [r.data for r in selected]
 
@@ -641,6 +640,7 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
             timeout = _DEFAULT_WAIT_TIMEOUT_SECONDS
 
         with self._result_cv:
+            self._require_unfrozen()
             if task_id not in self._active_task_ids:
                 raise ValueError(f"Task {task_id} is never submitted.")
 
@@ -655,11 +655,107 @@ class BatchTaskDispatcher(Generic[TInput, TResult]):
                     return None
 
                 self._result_cv.wait(timeout=remaining)
+                self._require_unfrozen()
 
             found_result = self._pending_results.pop(task_id)
             self._active_task_ids.remove(task_id)
             self._result_cv.notify_all()
             return found_result.data
+
+    def _require_unfrozen(self) -> None:
+        if self._snapshot_frozen:
+            raise RuntimeError("Rollout inventory is frozen for a snapshot")
+
+    def freeze_and_drain(self, timeout: float) -> None:
+        """Close admission and collect admitted work without consuming results.
+
+        Normal pause/resume never removes this fence. Failure leaves it closed;
+        callers must not treat a timeout as remote completion.
+        """
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("Drain timeout must be finite and positive")
+        deadline = time.monotonic() + timeout
+        if not self._input_lock.acquire(timeout=timeout):
+            raise TimeoutError("Timed out fencing rollout admission")
+        try:
+            self._require_unfrozen()
+            self._snapshot_frozen = True
+            self._result_cv.notify_all()
+            admitted = self._active_task_ids - {
+                item.task_id for item in self._pending_inputs
+            }
+            while not admitted.issubset(self._pending_results):
+                self._check_thread_exception()
+                if self._shutdown_event.is_set() or self.runner.paused.is_set():
+                    raise RuntimeError("Cannot drain stopped or paused rollout work")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(
+                        "Rollout drain timed out; inventory stays frozen"
+                    )
+                self._result_cv.wait(timeout=min(remaining, 0.1))
+            self._check_thread_exception()
+        finally:
+            self._input_lock.release()
+
+    def release_snapshot(self) -> None:
+        """Release the admission fence after a successful snapshot/restore."""
+        with self._input_cv:
+            self._snapshot_frozen = False
+            self._input_cv.notify_all()
+
+    def state_dict(self) -> dict[str, Any]:
+        """Export a stable inventory; the owner serializes task payloads."""
+        with self._input_cv:
+            if not self._snapshot_frozen:
+                raise RuntimeError("Freeze rollout before exporting state")
+            self._check_thread_exception()
+            inputs = list(self._pending_inputs)
+            ready = sorted(self._pending_results.values(), key=lambda r: r.create_time)
+            ids = [item.task_id for item in inputs] + [r.task_id for r in ready]
+            if len(ids) != len(set(ids)) or set(ids) != self._active_task_ids:
+                raise RuntimeError("Rollout inventory has unsettled tasks")
+            if self._task_callbacks:
+                raise RuntimeError("Cannot snapshot external callback ownership")
+            return {
+                "schema_version": 1,
+                "deterministic_order": self.deterministic_order,
+                "pending_inputs": inputs,
+                # Stable order, never an old process's monotonic clock value.
+                "ready_results": [(r.task_id, r.data) for r in ready],
+                "selection_rng": random.getstate(),
+            }
+
+    def load_state_dict(self, state: dict[str, Any]) -> None:
+        """Install inventory in a fresh frozen dispatcher, without callbacks."""
+        with self._input_cv:
+            if not self._snapshot_frozen or self._active_task_ids:
+                raise RuntimeError("Restore requires a fresh frozen dispatcher")
+            if self._pending_inputs or self._pending_results or self._task_callbacks:
+                raise RuntimeError("Restore requires empty queues and callbacks")
+            if (
+                state["schema_version"] != 1
+                or state["deterministic_order"] != self.deterministic_order
+            ):
+                raise ValueError("Rollout queue schema or ordering mode mismatch")
+            inputs = list(state["pending_inputs"])
+            ready = list(state["ready_results"])
+            ids = [item.task_id for item in inputs] + [task_id for task_id, _ in ready]
+            if any(type(i) is not int or i < 0 for i in ids) or len(ids) != len(
+                set(ids)
+            ):
+                raise ValueError("Invalid or duplicate rollout task IDs")
+            rng = random.Random()
+            rng.setstate(state["selection_rng"])
+            # Restored results precede all newly generated results, even on a
+            # new host whose monotonic clock has a different origin.
+            self._pending_inputs = deque(inputs)
+            self._pending_results = {
+                task_id: TimedResult(index - len(ready), data, task_id)
+                for index, (task_id, data) in enumerate(ready)
+            }
+            self._active_task_ids = set(ids)
+            random.setstate(state["selection_rng"])
 
     def active_submit_and_wait(
         self,
@@ -771,6 +867,24 @@ class TaskIdGenerator:
             task_id = self._task_cnt
             self._task_cnt += 1
         return task_id
+
+    def reserve(self, task_id: int) -> None:
+        """Keep generated IDs above caller-assigned IDs as well."""
+        if type(task_id) is not int or task_id < 0:
+            raise ValueError("Invalid rollout task ID")
+        with self._lock:
+            self._task_cnt = max(self._task_cnt, task_id + 1)
+
+    def state_dict(self) -> dict[str, int]:
+        with self._lock:
+            return {"next_id": self._task_cnt}
+
+    def load_state_dict(self, state: dict[str, int]) -> None:
+        next_id = state["next_id"]
+        if type(next_id) is not int or next_id < 0:
+            raise ValueError("Invalid next rollout task ID")
+        with self._lock:
+            self._task_cnt = next_id
 
 
 class WorkflowExecutor:

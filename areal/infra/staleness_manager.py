@@ -180,3 +180,46 @@ class StalenessManager:
                 rejected=self.rollout_stat.rejected,
                 running=self.rollout_stat.running,
             )
+
+    def state_dict(self) -> dict:
+        """Capture exact counters after admission is frozen and work drained."""
+        with self.lock:
+            if self.rollout_stat.running != 0:
+                raise RuntimeError("Cannot snapshot running rollouts")
+            return {
+                "schema_version": 1,
+                "limits": [
+                    self.max_concurrent_rollouts,
+                    self.consumer_batch_size,
+                    self.max_staleness,
+                ],
+                "counters": {
+                    key: getattr(self.rollout_stat, key)
+                    for key in ("accepted", "enqueued", "rejected", "running")
+                },
+            }
+
+    def load_state_dict(self, state: dict) -> None:
+        """Restore exact counters, not the recovery version-based estimate.
+
+        Cross-configuration counter mapping is an explicit future operation;
+        silently reinterpreting cumulative accepted counts changes capacity.
+        """
+        limits = [
+            self.max_concurrent_rollouts,
+            self.consumer_batch_size,
+            self.max_staleness,
+        ]
+        if state["schema_version"] != 1 or state["limits"] != limits:
+            raise ValueError("Staleness limits require an explicit state mapping")
+        counters = state["counters"]
+        if (
+            set(counters) != {"accepted", "enqueued", "rejected", "running"}
+            or any(type(v) is not int or v < 0 for v in counters.values())
+            or counters["running"] != 0
+        ):
+            raise ValueError("Invalid drained rollout counters")
+        with self.lock:
+            if self.rollout_stat.running:
+                raise RuntimeError("Cannot replace counters while rollouts are running")
+            self.rollout_stat = RolloutStat(**counters)

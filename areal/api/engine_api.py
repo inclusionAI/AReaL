@@ -302,6 +302,21 @@ class TrainEngine(abc.ABC):
         """
         raise NotImplementedError()
 
+    def wait_for_checkpoint(self) -> None:
+        """Wait for all previously submitted checkpoint saves to complete.
+
+        Call after ``save`` returns, on every participating rank, before any
+        further saves or teardown. Successful return confirms both checkpoint
+        data and backend metadata have been written; failures must propagate.
+        Synchronous backends may explicitly implement this as a no-op.
+
+        This method is optional for existing engines, but a backend must
+        implement it before being used for explicit reconfiguration snapshots.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support checkpoint completion waits"
+        )
+
     @abc.abstractmethod
     def load(self, meta: SaveLoadMeta):
         """Load model weights and optimizer states from a file.

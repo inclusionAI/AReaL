@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import math
 from typing import Any
 
 import torch
@@ -696,6 +697,58 @@ class TrainController:
             Metadata containing information about where and how to save
         """
         self._custom_function_call("save", meta)
+
+    def wait_for_checkpoint(self, *, timeout: float = 7200.0) -> None:
+        """Confirm checkpoint completion on ALL workers, including non-DP heads.
+
+        Each worker is called once: retrying an individual rank's collective
+        wait could deadlock. Gather all responses before reporting failures,
+        bounding each RPC by ``timeout`` seconds. A timeout does not cancel
+        remote writes or confirm completion; callers must treat the snapshot
+        as incomplete and must not retry the collective on this worker group.
+        Call only after save() returns and without concurrent save/teardown.
+        """
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("Checkpoint wait timeout must be finite and positive")
+        if not self.workers:
+            raise RuntimeError("Cannot confirm checkpoint completion without workers")
+        workers = tuple(self.workers)
+
+        async def wait_all():
+            # Pass transport options directly to the scheduler for EVERY rank.
+            # _custom_function_call routes kwargs only to DP heads.
+            tasks = [
+                asyncio.wait_for(
+                    self.scheduler.async_call_engine(
+                        worker.id,
+                        "wait_for_checkpoint",
+                        self._engine_name(rank),
+                        http_timeout=timeout,
+                        max_retries=1,
+                    ),
+                    timeout=timeout,
+                )
+                for rank, worker in enumerate(workers)
+            ]
+            return await asyncio.gather(*tasks, return_exceptions=True)
+
+        results = run_async_task(wait_all)
+        failures = []
+        for worker, result in zip(workers, results, strict=True):
+            if isinstance(result, BaseException):
+                failures.append((worker.id, result))
+            elif result is not None:
+                failures.append(
+                    (worker.id, TypeError("Checkpoint wait must return None"))
+                )
+        if failures:
+            details = "; ".join(
+                f"{worker_id}: {type(error).__name__}: {error}"
+                for worker_id, error in failures
+            )
+            raise RuntimeError(
+                f"Checkpoint completion was not confirmed: {details}"
+            ) from failures[0][1]
 
     def load(self, meta: SaveLoadMeta):
         """Load model weights and optimizer states from a file.

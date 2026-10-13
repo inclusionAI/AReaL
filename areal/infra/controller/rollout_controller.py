@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import copy
+import math
 import shutil
 import threading
+import time
 import traceback
 from collections import defaultdict
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from threading import Lock
 from typing import Any
 
+import torch
 from flask import Flask, jsonify, request
 from torchdata.stateful_dataloader import StatefulDataLoader
 from werkzeug.serving import make_server
@@ -36,10 +40,11 @@ from areal.api.cli_args import (
     SchedulingSpec,
     SchedulingStrategyType,
 )
+from areal.infra.reconfiguration import RolloutInputBuffer
+from areal.infra.rpc.rtensor import RTensor
 from areal.infra.rpc.serialization import deserialize_value
 from areal.infra.utils.concurrent import run_async_task
 from areal.utils import logging, perf_tracer
-from areal.utils.data import cycle_dataloader
 from areal.utils.dynamic_import import import_from_string
 from areal.utils.network import find_free_ports, format_hostport, gethostip
 from areal.utils.perf_tracer import trace_perf
@@ -72,6 +77,38 @@ class _RemoteRolloutResult:
     trajectory: dict[str, Any]
 
 
+def _snapshot_cpu_copy(value):
+    """Copy tensor contents without transferring ownership of live shards."""
+    value = RTensor.localize(value)
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu().clone()
+    if isinstance(value, dict):
+        return {key: _snapshot_cpu_copy(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_snapshot_cpu_copy(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_snapshot_cpu_copy(item) for item in value)
+    return copy.deepcopy(value)
+
+
+def _same_input_spec(left, right) -> bool:
+    """Compare restored bindings once; tensor/array equality is not a bool."""
+    if isinstance(left, torch.Tensor) and isinstance(right, torch.Tensor):
+        return torch.equal(left.detach().cpu(), right.detach().cpu())
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(
+            _same_input_spec(left[k], right[k]) for k in left
+        )
+    if isinstance(left, (tuple, list)):
+        return len(left) == len(right) and all(
+            _same_input_spec(a, b) for a, b in zip(left, right)
+        )
+    equal = left == right
+    return bool(equal.all()) if hasattr(equal, "all") else bool(equal)
+
+
 class RolloutController:
     def __init__(
         self,
@@ -100,6 +137,16 @@ class RolloutController:
         self._version = 0
 
         self._task_id_generator = TaskIdGenerator()
+        self._batch_lock = threading.RLock()
+        self._input_buffer: RolloutInputBuffer | None = None
+        self._input_spec: dict[str, Any] | None = None
+        self._snapshot_inventory: dict[str, Any] | None = None
+        self._snapshot_input_buffer = None
+        self._snapshot_input_spec = None
+        self._restored_input_spec = False
+        self._snapshot_restore_failed = False
+        # An RPC failure is not proof of remote workflow completion.
+        self._uncertain_tasks: set[int] = set()
 
         # Use provided staleness manager or create a default one
         # The manager will be properly initialized in initialize()
@@ -900,7 +947,7 @@ class RolloutController:
                     engine_name=engine_name,
                     task_id=engine_task_id,
                     timeout=0.1,  # A short time to prevent blocking other requests
-                    raise_timeout=False,
+                    raise_timeout=True,
                     http_timeout=self.config.request_timeout,
                 )
 
@@ -922,6 +969,7 @@ class RolloutController:
                 if task_id is not None:
                     with self._futures_lock:
                         self._pending_futures.pop(task_id, None)
+                        self._uncertain_tasks.add(task_id)
                 manager.on_rollout_rejected()
                 logger.error(f"Rollout timed out after {self.config.request_timeout}s")
                 return None
@@ -929,6 +977,7 @@ class RolloutController:
                 if task_id is not None:
                     with self._futures_lock:
                         self._pending_futures.pop(task_id, None)
+                        self._uncertain_tasks.add(task_id)
                 manager.on_rollout_rejected()
                 logger.error("Workflow execution failed: %s", exc, exc_info=True)
                 return None
@@ -951,32 +1000,36 @@ class RolloutController:
         reward_normalization: bool = False,
         drop_incomplete_group: bool = False,
     ) -> int:
-        workflow_str = self._resolve_workflow_str(workflow)
-        should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
-        if workflow_kwargs is None:
-            workflow_kwargs = {}
+        with self._batch_lock:
+            self.dispatcher._require_unfrozen()
+            workflow_str = self._resolve_workflow_str(workflow)
+            should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
+            if workflow_kwargs is None:
+                workflow_kwargs = {}
 
-        # NOTE: RolloutController does not support `should_accept_fn`
-        # If the workflow's result should be aborted,
-        # `arun_episode` should return None instead.
-        if task_id is None:
-            task_id = self._task_id_generator.next()
-        task_input = _RemoteRolloutTaskInput(
-            data=data,
-            workflow=workflow_str,
-            workflow_kwargs=workflow_kwargs,
-            should_accept_fn=should_accept_fn,
-            task_id=task_id,
-            is_eval=is_eval,
-            group_size=group_size,
-            proxy_addr=proxy_addr,
-            reward_normalization=reward_normalization,
-            drop_incomplete_group=drop_incomplete_group,
-        )
+            # NOTE: RolloutController does not support `should_accept_fn`
+            # If the workflow's result should be aborted,
+            # `arun_episode` should return None instead.
+            if task_id is None:
+                task_id = self._task_id_generator.next()
+            else:
+                self._task_id_generator.reserve(task_id)
+            task_input = _RemoteRolloutTaskInput(
+                data=data,
+                workflow=workflow_str,
+                workflow_kwargs=workflow_kwargs,
+                should_accept_fn=should_accept_fn,
+                task_id=task_id,
+                is_eval=is_eval,
+                group_size=group_size,
+                proxy_addr=proxy_addr,
+                reward_normalization=reward_normalization,
+                drop_incomplete_group=drop_incomplete_group,
+            )
 
-        # Delegate to dispatcher
-        self.dispatcher.submit_task_input(task_input)
-        return task_id
+            # Delegate to dispatcher
+            self.dispatcher.submit_task_input(task_input)
+            return task_id
 
     def wait(
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
@@ -1039,36 +1092,206 @@ class RolloutController:
         See :meth:`~areal.api.engine_api.InferenceEngine.prepare_batch` for parameters.
         """
 
-        workflow_str = self._resolve_workflow_str(workflow)
-        if workflow_kwargs is None:
-            workflow_kwargs = {}
+        with self._batch_lock:
+            self.dispatcher._require_unfrozen()
+            workflow_str = self._resolve_workflow_str(workflow)
+            if workflow_kwargs is None:
+                workflow_kwargs = {}
 
-        def task_input_generator():
-            for data in cycle_dataloader(dataloader):
-                for item in data:
+            self.dispatcher._require_unfrozen()
+            self.bind_snapshot_dataloader(dataloader)
+            spec = dict(
+                workflow=workflow_str,
+                workflow_kwargs=workflow_kwargs,
+                should_accept_fn=self._resolve_should_accept_fn(should_accept_fn),
+                group_size=group_size,
+                reward_normalization=reward_normalization,
+                drop_incomplete_group=drop_incomplete_group,
+            )
+            if self._input_spec is None:
+                self._input_spec = copy.deepcopy(spec)
+            elif self._restored_input_spec:
+                if not _same_input_spec(self._input_spec, spec):
+                    raise ValueError(
+                        "Rollout input bindings changed without a state mapping"
+                    )
+                self._restored_input_spec = False
+
+            def task_input_generator():
+                while True:
                     yield _RemoteRolloutTaskInput(
-                        data=item,
-                        workflow=workflow_str,
-                        workflow_kwargs=workflow_kwargs,
-                        should_accept_fn=should_accept_fn,
                         task_id=self._task_id_generator.next(),
-                        group_size=group_size,
-                        reward_normalization=reward_normalization,
-                        drop_incomplete_group=drop_incomplete_group,
+                        data=next(self._input_buffer),
+                        **self._input_spec,
                     )
 
-        if not hasattr(self, "data_generator"):
-            self.data_generator = task_input_generator()
+            # Delegate to dispatcher
+            assert dataloader.batch_size is not None
+            results = self.dispatcher.active_submit_and_wait(
+                task_input_generator(),
+                batch_size=dataloader.batch_size,
+                dynamic_bs=dynamic_bs,
+            )
 
-        # Delegate to dispatcher
-        assert dataloader.batch_size is not None
-        results = self.dispatcher.active_submit_and_wait(
-            self.data_generator, batch_size=dataloader.batch_size, dynamic_bs=dynamic_bs
-        )
+            # Return list of trajectories
+            trajectories = [r.trajectory if r is not None else None for r in results]
+            return [t for t in trajectories if t is not None]
 
-        # Return list of trajectories
-        trajectories = [r.trajectory if r is not None else None for r in results]
-        return [t for t in trajectories if t is not None]
+    def bind_snapshot_dataloader(self, dataloader) -> None:
+        """Bind the loader and its prefetched remainder as one state owner."""
+        if self._input_buffer is None:
+            self._input_buffer = RolloutInputBuffer(dataloader)
+        elif self._input_buffer.dataloader is not dataloader:
+            raise ValueError("Rollout is already bound to another dataloader")
+
+    def freeze_and_drain(self, timeout: float = 600.0) -> None:
+        """Freeze controller-owned work while workers can still generate.
+
+        External gateway ingress is not covered. Failure leaves admission
+        closed; it must not be mistaken for a safe point to offload/restart.
+        """
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("Drain timeout must be finite and positive")
+        if self._proxy_gateway_host is not None:
+            raise NotImplementedError(
+                "Snapshot requires external proxy ingress to be stopped"
+            )
+        deadline = time.monotonic() + timeout
+        if not self._batch_lock.acquire(timeout=timeout):
+            raise TimeoutError("Timed out acquiring rollout batch boundary")
+        try:
+            self.dispatcher.freeze_and_drain(
+                timeout=max(1e-9, deadline - time.monotonic())
+            )
+            with self._futures_lock:
+                if self._uncertain_tasks or self._pending_futures:
+                    raise RuntimeError("Remote rollout completion is unconfirmed")
+            inventory = self.dispatcher.state_dict()
+            pending = []
+            for item in inventory["pending_inputs"]:
+                if item.proxy_addr is not None:
+                    raise ValueError(
+                        "Explicit proxy endpoints require a restore binding"
+                    )
+                pending.append({f.name: getattr(item, f.name) for f in fields(item)})
+            inventory["pending_inputs"] = pending
+            inventory["ready_results"] = [
+                (task_id, None if result is None else result.trajectory)
+                for task_id, result in inventory["ready_results"]
+            ]
+            # Fetch while the original owners are alive. Keep live RTensor
+            # references untouched so ordinary clear_batches still owns cleanup.
+            self._snapshot_input_buffer = (
+                None
+                if self._input_buffer is None
+                else _snapshot_cpu_copy(self._input_buffer.state_dict())
+            )
+            self._snapshot_input_spec = _snapshot_cpu_copy(self._input_spec)
+            self._snapshot_inventory = _snapshot_cpu_copy(inventory)
+        finally:
+            self._batch_lock.release()
+
+    def release_snapshot(self) -> None:
+        with self._batch_lock:
+            if self._snapshot_restore_failed:
+                raise RuntimeError("Recreate rollout after a failed restore")
+            if self._snapshot_inventory is None:
+                raise RuntimeError(
+                    "No successfully drained rollout snapshot to release"
+                )
+            self._snapshot_inventory = None
+            self._snapshot_input_buffer = None
+            self._snapshot_input_spec = None
+            self.dispatcher.release_snapshot()
+
+    def state_dict(self) -> dict[str, Any]:
+        """Export frozen rollout plus loader state at the end-of-step boundary."""
+        with self._batch_lock:
+            if self._snapshot_restore_failed:
+                raise RuntimeError("Recreate rollout after a failed restore")
+            if self._snapshot_inventory is None:
+                raise RuntimeError("Drain rollout before saving its state")
+            inventory = copy.deepcopy(self._snapshot_inventory)
+            inventory["selection_rng"] = self.dispatcher.state_dict()["selection_rng"]
+            return {
+                "schema_version": 1,
+                "policy_version": self.get_version(),
+                "inventory": inventory,
+                "input_buffer": copy.deepcopy(self._snapshot_input_buffer),
+                "input_spec": copy.deepcopy(self._snapshot_input_spec),
+                "task_ids": self._task_id_generator.state_dict(),
+                "staleness": self.staleness_manager.state_dict(),
+            }
+
+    def load_state_dict(self, state: dict[str, Any]) -> None:
+        """Restore into an initialized, freshly frozen controller.
+
+        Caller must first load/synchronize weights and set the saved policy
+        version on actor and rollout workers. This method never infers weights
+        from a version number. It leaves admission closed until release_snapshot.
+        """
+        with self._batch_lock:
+            if self._snapshot_restore_failed:
+                raise RuntimeError("Recreate rollout after a failed restore")
+            if self._snapshot_inventory is None:
+                raise RuntimeError("Freeze a fresh rollout controller before restoring")
+            existing = self.dispatcher.state_dict()
+            if (
+                existing["pending_inputs"]
+                or existing["ready_results"]
+                or self._input_spec is not None
+                or self._task_id_generator.state_dict()["next_id"] != 0
+            ):
+                raise RuntimeError("Restore requires a fresh rollout controller")
+            if (
+                state["schema_version"] != 1
+                or state["policy_version"] != self.get_version()
+            ):
+                raise ValueError("Restore requires the saved rollout policy version")
+            inventory = copy.deepcopy(state["inventory"])
+            inventory["pending_inputs"] = [
+                _RemoteRolloutTaskInput(**item) for item in inventory["pending_inputs"]
+            ]
+            if any(item.proxy_addr is not None for item in inventory["pending_inputs"]):
+                raise ValueError("Saved rollout input contains an old proxy endpoint")
+            inventory["ready_results"] = [
+                (
+                    task_id,
+                    None
+                    if trajectory is None
+                    else _RemoteRolloutResult(task_id, trajectory),
+                )
+                for task_id, trajectory in inventory["ready_results"]
+            ]
+            ids = [item.task_id for item in inventory["pending_inputs"]] + [
+                task_id for task_id, _ in inventory["ready_results"]
+            ]
+            next_id = state["task_ids"]["next_id"]
+            if (
+                type(next_id) is not int
+                or next_id < 0
+                or any(i >= next_id for i in ids)
+            ):
+                raise ValueError("Restored task counter overlaps saved inventory")
+            if state["staleness"]["counters"]["enqueued"] != len(
+                inventory["pending_inputs"]
+            ):
+                raise ValueError("Rollout queue and staleness counts disagree")
+            if (state["input_buffer"] is None) != (self._input_buffer is None):
+                raise ValueError("Bind the snapshot dataloader before restoring")
+            # No callbacks: restoring ready results must not count them again.
+            self._snapshot_restore_failed = True
+            self.staleness_manager.load_state_dict(state["staleness"])
+            if self._input_buffer is not None:
+                self._input_buffer.load_state_dict(state["input_buffer"])
+            self._input_spec = copy.deepcopy(state["input_spec"])
+            self._restored_input_spec = True
+            self._task_id_generator.load_state_dict(state["task_ids"])
+            self.dispatcher.load_state_dict(inventory)
+            self._snapshot_inventory = copy.deepcopy(state["inventory"])
+            self._snapshot_input_buffer = copy.deepcopy(state["input_buffer"])
+            self._snapshot_input_spec = copy.deepcopy(state["input_spec"])
+            self._snapshot_restore_failed = False
 
     def compute_logp(self, data: list[dict[str, Any]]) -> list[Any]:
         """Compute token log-probabilities for trajectories via remote workers."""

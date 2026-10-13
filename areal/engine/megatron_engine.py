@@ -1040,6 +1040,16 @@ class MegatronEngine(TrainEngine):
             else:
                 raise ValueError(f"Unknown weight format {meta.weight_format}. ")
 
+    def wait_for_checkpoint(self) -> None:
+        """Finalize pending DCP saves collectively on every training rank."""
+        if self.checkpointer is None:
+            raise NotImplementedError(
+                "DCP checkpoint completion is not available for this Megatron "
+                "configuration"
+            )
+        # Every rank must participate, even if its local queue appears empty.
+        self.checkpointer.wait_async_saves()
+
     def load(self, meta: SaveLoadMeta):
         with self._offload_aware_context():
             if meta.weight_format == "hf":

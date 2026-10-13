@@ -646,6 +646,10 @@ class FSDPEngine(TrainEngine):
             if meta.with_optim and meta.weight_format == "hf":
                 self._save_optimizer_state(meta.path)
 
+    def wait_for_checkpoint(self) -> None:
+        """FSDP saves are synchronous; successful save() already completed I/O."""
+        return None
+
     def load(self, meta: SaveLoadMeta):
         with self._offload_aware_context():
             if meta.weight_format == "hf":

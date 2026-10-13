@@ -45,6 +45,7 @@ from areal.infra import (
 from areal.infra.data_service import DataController
 from areal.infra.data_service.controller.config import DataServiceConfig
 from areal.infra.data_service.rdataset import RDataset
+from areal.infra.reconfiguration import CheckpointParticipant, TrainerReconfiguration
 from areal.infra.utils.concurrent import call_maybe_async
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
 from areal.utils.dataloader import create_dataloader
@@ -645,6 +646,79 @@ class PPOTrainer:
         eval_workflow_kwargs: dict[str, Any] | None = None,
         dynamic_filter_fn: Callable[[dict[str, Any]], bool] | str | None = None,
         total_epochs: int | None = None,
+        *,
+        reconfiguration: TrainerReconfiguration | None = None,
+    ):
+        """Train, optionally servicing snapshot requests at checkpoint boundaries.
+
+        The optional channel captures registered training and drained rollout
+        state. It is not yet a complete restart point. Use one channel per train() call.
+        """
+        error = None
+        try:
+            if reconfiguration is not None:
+                self._bind_reconfiguration(reconfiguration)
+            return self._train_impl(
+                workflow=workflow,
+                eval_workflow=eval_workflow,
+                workflow_kwargs=workflow_kwargs,
+                eval_workflow_kwargs=eval_workflow_kwargs,
+                dynamic_filter_fn=dynamic_filter_fn,
+                total_epochs=total_epochs,
+                reconfiguration=reconfiguration,
+            )
+        except BaseException as exc:
+            error = exc
+            raise
+        finally:
+            if reconfiguration is not None:
+                reconfiguration.close(error)
+
+    def _bind_reconfiguration(self, channel: TrainerReconfiguration) -> None:
+        if not is_single_controller():
+            raise NotImplementedError(
+                "Trainer snapshots currently require v1 single-controller mode; "
+                "SPMD needs coordinated per-rank requests and host state gathering"
+            )
+        engines = {"actor": (self.actor, self.config.actor, self.actor_alloc.backend)}
+        if self.critic is not None:
+            backend = ModelAllocation.from_str(self.config.critic.backend).backend
+            engines["critic"] = (self.critic, self.config.critic, backend)
+        checkpoints = {}
+        for role, (engine, config, backend) in engines.items():
+            if config._version != "v1" or backend not in ("fsdp", "megatron"):
+                raise NotImplementedError(
+                    f"Trainer snapshots require v1 FSDP or Megatron for {role}"
+                )
+            checkpoints[role] = CheckpointParticipant.for_engine(
+                engine, format_id=f"areal-{backend}-dcp"
+            )
+        if not callable(getattr(self.rollout, "bind_snapshot_dataloader", None)):
+            raise NotImplementedError(
+                "Trainer snapshots require the v1 rollout controller"
+            )
+        self.rollout.bind_snapshot_dataloader(self.train_dataloader)
+        channel.bind(
+            checkpoints=checkpoints,
+            statefuls={
+                "saver": self.saver,
+                "evaluator": self.evaluator,
+                "stats_logger": self.stats_logger,
+                "recover_frequency": self.recover_handler.freq_ctl,
+            },
+            rollout=self.rollout,
+        )
+
+    def _train_impl(
+        self,
+        workflow: WorkflowLike | None = None,
+        eval_workflow: WorkflowLike | None = None,
+        workflow_kwargs: dict[str, Any] | None = None,
+        eval_workflow_kwargs: dict[str, Any] | None = None,
+        dynamic_filter_fn: Callable[[dict[str, Any]], bool] | str | None = None,
+        total_epochs: int | None = None,
+        *,
+        reconfiguration: TrainerReconfiguration | None = None,
     ):
         config = self.config
         start_step = (
@@ -705,6 +779,15 @@ class PPOTrainer:
                     dynamic_bs=self.config.dynamic_bs,
                     reward_normalization=config.gconfig.reward_normalization,
                     drop_incomplete_group=config.gconfig.drop_incomplete_group,
+                )
+            if reconfiguration is not None:
+                reconfiguration.prepare_step_snapshot(
+                    step_info=dict(
+                        epoch=epoch,
+                        epoch_step=step,
+                        global_step=global_step,
+                        steps_per_epoch=steps_per_epoch,
+                    )
                 )
             if self._should_offload_rollout:
                 self._offload_rollout()
@@ -868,6 +951,7 @@ class PPOTrainer:
                     epoch=epoch,
                     epoch_step=step,
                     global_step=global_step,
+                    reconfiguration=reconfiguration,
                 )
 
             # pause inference for updating weights, save, and evaluation
@@ -901,6 +985,7 @@ class PPOTrainer:
                     epoch=epoch,
                     epoch_step=step,
                     global_step=global_step,
+                    reconfiguration=reconfiguration,
                 )
 
             # Offload actor before eval
@@ -960,6 +1045,11 @@ class PPOTrainer:
                     epoch=epoch, epoch_step=step, global_step=global_step
                 )
 
+            if reconfiguration is not None and reconfiguration.has_active_snapshot:
+                reconfiguration.finish_step_snapshot(
+                    policy_version=self.actor.get_version()
+                )
+
             # Resume rollout
             self.rollout.resume()
 
@@ -971,6 +1061,7 @@ class PPOTrainer:
         epoch: int,
         epoch_step: int,
         global_step: int,
+        reconfiguration: TrainerReconfiguration | None = None,
     ) -> None:
         with (
             stats_tracker.record_timing("save"),
@@ -994,6 +1085,16 @@ class PPOTrainer:
                 epoch=epoch,
                 epoch_step=epoch_step,
                 global_step=global_step,
+            )
+
+        if reconfiguration is not None:
+            reconfiguration.begin_step_snapshot(
+                step_info={
+                    "epoch": epoch,
+                    "epoch_step": epoch_step,
+                    "global_step": global_step,
+                    "steps_per_epoch": len(self.train_dataloader),
+                }
             )
 
     def close(self):
