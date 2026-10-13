@@ -432,6 +432,20 @@ class TrajBatchMeta:
     rollout_groups: list[RolloutGroup | None] | None = None
 
     @property
+    def rollout_row_counts(self) -> list[int]:
+        """Contiguous row counts per logical rollout; unannotated rows stand alone."""
+        groups = self.rollout_groups or [None] * self.n_trajs
+        return [
+            count
+            for group, rows in zip(groups, self.traj_group_sizes, strict=True)
+            for count in (
+                group.validate_rows(rows).row_counts
+                if group is not None
+                else (1,) * rows
+            )
+        ]
+
+    @property
     def logical_group_sizes(self) -> list[int]:
         if self.rollout_groups is None:
             return self.traj_group_sizes

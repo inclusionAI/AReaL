@@ -105,6 +105,27 @@ valid tokens on any rank is rejected. Transport-only microbatches have zero
 accumulation weight. With the default packing granularity of one,
 `max_tokens_per_mb` only needs to fit individual responses.
 
+`traj_mean` averages token means over logical rollouts, pooling all rows
+exported by one rollout (for example after context compaction). Membership comes
+from `RolloutGroup.row_counts`, which already follows rollout collection and
+redistribution. Unannotated rows count as separate rollouts; custom workflows
+containing multiple logical rollouts must supply their boundaries. The collector
+automatically annotates a single rollout exported as several rows. Logging-only
+`begin_of_trajectory` markers do not define loss membership.
+
+For $R$ nonempty logical rollouts, the full-batch objective is
+$\frac{1}{R} \sum_r \frac{\sum_{t \in r} m_t \ell_t}{\sum_{t \in r} m_t}$.
+Trajectory mean uses the same preparation and scheduling contract as prompt mean,
+with $R$ replacing $G$: coefficients span optimizer steps and engine microbatches,
+and each step uses the fixed denominator $R/K$. Empty rollouts are excluded from
+$R$; filtering preserves each rollout's original token denominator. With one row
+per rollout and one optimizer step, it matches `seq_mean`; with multiple steps it
+preserves full-batch rollout weights rather than renormalizing each step.
+Non-token aggregation remains unsupported with distillation or tree training.
+
+The trajectory-mean idea and reciprocal full-rollout token coefficients are
+inspired by [HwVanICI/AReaL's implementation](https://github.com/HwVanICI/AReaL/commit/3daf152462d8b6427278884a55d2d0d16b02fb6e).
+
 ### Reward and Advantage Normalization (`actor.reward_norm` and `actor.adv_norm`)
 
 The `NormConfig` dataclass controls how rewards and advantages are normalized:

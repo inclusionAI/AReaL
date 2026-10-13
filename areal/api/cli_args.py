@@ -1958,12 +1958,21 @@ class PPOActorConfig(TrainEngineConfig):
             "help": "Policy-gradient loss reduction. "
             "'token_mean': average over valid tokens. "
             "'seq_mean': average per-response token means. "
+            "'traj_mean': average per-logical-rollout token means using "
+            "RolloutGroup row counts; unannotated rows are separate rollouts. "
+            "Preserves the response-level schedule; rollouts may span steps. "
             "'prompt_mean': average per-prompt-group token means while preserving "
             "the response-level optimizer schedule; groups may span steps. "
             "'constant': sum of masked token losses divided by "
             "(n_active_responses * loss_aggregation_divisor). Tree-packed actor "
             "training currently supports only 'token_mean'.",
-            "choices": ["token_mean", "seq_mean", "prompt_mean", "constant"],
+            "choices": [
+                "token_mean",
+                "seq_mean",
+                "traj_mean",
+                "prompt_mean",
+                "constant",
+            ],
         },
     )
     loss_aggregation_divisor: float | None = field(
@@ -2182,12 +2191,13 @@ class PPOActorConfig(TrainEngineConfig):
         if self.loss_aggregation not in (
             "token_mean",
             "seq_mean",
+            "traj_mean",
             "prompt_mean",
             "constant",
         ):
             raise ValueError(
                 "loss_aggregation must be 'token_mean', 'seq_mean', "
-                f"'prompt_mean', or 'constant', got {self.loss_aggregation!r}."
+                f"'traj_mean', 'prompt_mean', or 'constant', got {self.loss_aggregation!r}."
             )
         if self.loss_aggregation == "constant":
             if (

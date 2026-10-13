@@ -11,7 +11,9 @@ from typing import Literal, Protocol
 
 import torch
 
-LossAggregationMode = Literal["token_mean", "seq_mean", "prompt_mean", "constant"]
+LossAggregationMode = Literal[
+    "token_mean", "seq_mean", "traj_mean", "prompt_mean", "constant"
+]
 GroupSizes = Sequence[int]
 
 
@@ -75,13 +77,13 @@ class SequenceMean:
 
 @dataclass(frozen=True, slots=True)
 class PromptMean:
-    """A full-prompt contribution normalized for one response-level step.
+    """A full-unit contribution normalized for one response-level step.
 
-    Preparation supplies original full-group token coefficients, ``step_scale``
-    equal to realized steps / global active groups, and ``engine_weight`` equal
+    Preparation supplies original full-unit token coefficients, ``step_scale``
+    equal to realized steps / global active units, and ``engine_weight`` equal
     to this microbatch's share of the step's real responses. The engine weight
-    cancels the local division, preserving full-group coefficients even when
-    a prompt spans optimizer steps. Real all-masked steps retain positive weight.
+    cancels the local division, preserving full-unit coefficients even when
+    a prompt or logical rollout spans optimizer steps. Real all-masked steps retain positive weight.
     """
 
     token_weights: torch.Tensor

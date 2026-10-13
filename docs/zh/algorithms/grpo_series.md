@@ -91,6 +91,22 @@ python3 examples/math/gsm8k_rl.py \
 的整个更新都没有有效 token，则拒绝该更新。仅参与通信的微批次累积权重为零。
 默认打包粒度为一时，`max_tokens_per_mb` 只需容纳单条响应。
 
+`traj_mean` 对逻辑 rollout 的 token 均值求平均，将同一次 rollout 导出的所有行合并计算
+（例如上下文压缩后导出的多行）。成员关系来自 `RolloutGroup.row_counts`，该元数据已随 rollout
+收集和数据重分发传递。没有元数据时，每行视为独立 rollout；自定义工作流若将一次 rollout
+返回多个逻辑 rollout，必须提供各自的边界。收集器会自动为单次 rollout 导出的多行添加元数据。仅用于日志的 `begin_of_trajectory` 标记不定义损失成员关系。
+
+设有 $R$ 个非空逻辑 rollout，则完整批次的目标为
+$\frac{1}{R} \sum_r \frac{\sum_{t \in r} m_t \ell_t}{\sum_{t \in r} m_t}$。
+轨迹均值复用提示组均值的准备和调度约定，以 $R$ 替代 $G$：系数可以跨优化器步骤和引擎微批次，
+每步使用固定分母 $R/K$。空 rollout 不计入 $R$；过滤后仍使用 rollout 的原始 token 分母。
+当每个 rollout 只有一行且只有一个优化器步骤时，它与 `seq_mean` 相同；多个步骤时，它保留
+完整批次的 rollout 权重，而不会对每步重新归一化。非 token 聚合仍不支持蒸馏或树训练。
+
+轨迹均值的思路及完整 rollout 的 token 倒数权重受
+[HwVanICI/AReaL 的实现](https://github.com/HwVanICI/AReaL/commit/3daf152462d8b6427278884a55d2d0d16b02fb6e)
+启发。
+
 ### 奖励和优势归一化（`actor.reward_norm` 和 `actor.adv_norm`）
 
 `NormConfig` 数据类控制奖励和优势的归一化方式：

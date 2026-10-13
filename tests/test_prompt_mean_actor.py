@@ -10,6 +10,7 @@ import torch
 from areal.api.cli_args import MicroBatchSpec, PPOActorConfig
 from areal.trainer.ppo.actor import PPOActor
 from areal.utils.data import (
+    RolloutGroup,
     concat_batch,
     pack_tensor_dict,
     split_padded_tensor_dict_into_mb_list,
@@ -63,7 +64,9 @@ def _actor(mode, n_steps, train_batch):
     return actor
 
 
-@pytest.mark.parametrize("mode", ["token_mean", "seq_mean", "prompt_mean", "constant"])
+@pytest.mark.parametrize(
+    "mode", ["token_mean", "seq_mean", "traj_mean", "prompt_mean", "constant"]
+)
 def test_actor_modes_keep_original_response_schedule(mode):
     groups = _groups()
     batched, _ = concat_batch(groups)
@@ -160,7 +163,9 @@ def test_actor_prompt_step_mean_matches_frozen_full_group_loss_and_gradient(
         assert saw_zero_step
 
 
-def _distributed_fixed_prompt_objective(rank, rendezvous, requested_steps=6):
+def _distributed_fixed_prompt_objective(
+    rank, rendezvous, requested_steps=6, mode="prompt_mean"
+):
     import torch.distributed as dist
 
     from areal.engine.core.train_engine import (
@@ -181,6 +186,10 @@ def _distributed_fixed_prompt_objective(rank, rendezvous, requested_steps=6):
     )
     try:
         groups = _groups() if rank == 0 else [_groups()[1]]
+        if mode == "traj_mean":
+            # Each prompt here is one rollout, including a multirow export.
+            for group in groups:
+                group["rollout_group"] = RolloutGroup((len(group["loss_mask"]),))
         data, meta = concat_batch(groups)
 
         def token_values(batch):
@@ -203,7 +212,10 @@ def _distributed_fixed_prompt_objective(rank, rendezvous, requested_steps=6):
         expected_gradient = oracle[0] / oracle[1]
 
         prepared = prepare_policy_gradient_batch(
-            data, mode="prompt_mean", group_sizes=meta.traj_group_sizes
+            data,
+            mode=mode,
+            group_sizes=meta.traj_group_sizes,
+            trajectory_sizes=meta.rollout_row_counts,
         )
         schedule = split_training_batch_into_microbatches(
             data, n_mbs=requested_steps, group=dist.group.WORLD
@@ -268,9 +280,17 @@ def _distributed_fixed_prompt_objective(rank, rendezvous, requested_steps=6):
         # Every DP participant rejects the same globally undefined objective.
         data["loss_mask"].zero_()
         prepared = prepare_policy_gradient_batch(
-            data, mode="prompt_mean", group_sizes=meta.traj_group_sizes
+            data,
+            mode=mode,
+            group_sizes=meta.traj_group_sizes,
+            trajectory_sizes=meta.rollout_row_counts,
         )
-        with pytest.raises(ValueError, match="active prompt groups"):
+        with pytest.raises(
+            ValueError,
+            match="active prompt groups"
+            if mode == "prompt_mean"
+            else "active trajectories",
+        ):
             prepared.for_steps(
                 [data],
                 dp_group=dist.group.WORLD,
@@ -286,12 +306,13 @@ def _distributed_fixed_prompt_objective(rank, rendezvous, requested_steps=6):
     not torch.distributed.is_gloo_available(), reason="Gloo is unavailable"
 )
 @pytest.mark.parametrize("requested_steps", [2, 6])
+@pytest.mark.parametrize("mode", ["prompt_mean", "traj_mean"])
 def test_distributed_prompt_fixed_scale_preserves_frozen_objective(
-    tmp_path, requested_steps
+    tmp_path, requested_steps, mode
 ):
     torch.multiprocessing.spawn(
         _distributed_fixed_prompt_objective,
-        args=((tmp_path / "rendezvous").as_uri(), requested_steps),
+        args=((tmp_path / "rendezvous").as_uri(), requested_steps, mode),
         nprocs=2,
         join=True,
     )
