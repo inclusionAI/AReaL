@@ -124,6 +124,37 @@ class _PreparedPrompt:
         )
 
 
+def _share_multimodal_tensors(
+    prompt: _PreparedPrompt,
+    cache: ProcessorCallCache,
+    processor: Any,
+    image_data: list[str],
+) -> _PreparedPrompt:
+    """Share identical CPU vision tensors across turns without caching text output.
+
+    Called in the processor thread. Compare bytes before sharing: some processors
+    can produce different tensors for the same images in different contexts.
+    """
+    tensors = prompt.multi_modal_input
+    if not tensors or any(t.device.type != "cpu" for t in tensors.values()):
+        return prompt
+    key = cache.make_key("openai_vision_tensors", id(processor), image_data)
+    canonical = cache.get_or_compute(key, lambda: dict(tensors))
+    if tensors.keys() != canonical.keys():
+        return prompt
+    for name, tensor in tensors.items():
+        other = canonical[name]
+        if tensor.shape != other.shape or tensor.dtype != other.dtype:
+            return prompt
+        if tensor is not other and not torch.equal(
+            tensor.contiguous().reshape(-1).view(torch.uint8),
+            other.contiguous().reshape(-1).view(torch.uint8),
+        ):
+            return prompt
+    prompt.multi_modal_input = dict(canonical)
+    return prompt
+
+
 def _process_multimodal_prompt(
     processor: "ProcessorMixin",
     tokenizer: "PreTrainedTokenizerFast",
@@ -132,7 +163,11 @@ def _process_multimodal_prompt(
     tools: Iterable[ChatCompletionToolParam] | None,
     chat_template_kwargs: dict[str, Any],
 ) -> _PreparedPrompt:
-    """Build model-ready prompt tokens and vision tensors with an HF processor."""
+    """Build prompt tokens and vision tensors from inline base64 images only.
+
+    Accept image data URIs or bare base64 payloads. URLs and filesystem paths
+    are not supported locally; URL forwarding requires a tokenizer-only client.
+    """
     import base64
     import binascii
     from io import BytesIO
@@ -142,8 +177,17 @@ def _process_multimodal_prompt(
 
     images = []
     for encoded_image in image_data:
+        match = _DATA_URI_RE.match(encoded_image)
+        payload = match.group(1) if match else encoded_image
+        if not re.fullmatch(r"[A-Za-z0-9+/]+={0,2}", payload):
+            raise ValueError(
+                "Local multimodal processing only supports inline base64 image data "
+                "(data:image/<subtype>;base64,... or a bare base64 payload). "
+                "URLs and filesystem paths are not supported. "
+                "URL forwarding is only available for tokenizer-only clients."
+            )
         try:
-            image_bytes = base64.b64decode(encoded_image, validate=True)
+            image_bytes = base64.b64decode(payload, validate=True)
             with Image.open(BytesIO(image_bytes)) as image:
                 images.append(load_image(image))
         except (binascii.Error, OSError, ValueError) as exc:
@@ -381,8 +425,12 @@ def _extract_images_from_messages(
     """Extract image data from OpenAI-format messages.
 
     Scans message ``content`` lists for ``image_url`` content parts,
-    extracts base64 data (or raw URLs), and converts messages to a
+    preserves image data URIs (or raw URLs), and converts messages to a
     HuggingFace-compatible format for ``apply_chat_template``.
+
+    Extraction preserves sources for backend forwarding by tokenizer-only clients.
+    Local preprocessing with an HF processor accepts only inline base64 images;
+    preserving a URL here does not make it supported by local preprocessing.
 
     Args:
         messages: Normalized list of message dicts (OpenAI format).
@@ -390,8 +438,7 @@ def _extract_images_from_messages(
     Returns:
         A 3-tuple of:
 
-        - **image_data** – list of base64 image strings without data-URI prefixes
-          or raw URL strings for each image found.
+        - **image_data** – list of image data URIs or raw URL strings for each image found.
         - **messages_for_tokenizer** – deep copy of *messages* where every
           ``{"type": "image_url", ...}`` part is replaced by
           ``{"type": "image"}`` so that HuggingFace VLM tokenizers insert
@@ -432,15 +479,14 @@ def _extract_images_from_messages(
                 if not isinstance(url, str) or not url:
                     raise ValueError(
                         "image_url content part has an empty or missing URL. "
-                        "Provide a valid data URI or HTTP(S) URL in image_url.url."
+                        "Provide inline base64 image data in image_url.url. "
+                        "HTTP(S) URLs are only supported for backend forwarding "
+                        "by tokenizer-only clients."
                     )
 
-                # Extract base64 payload from data URIs; keep raw URLs as-is.
-                m = _DATA_URI_RE.match(url)
-                if m:
-                    image_data.append(m.group(1))
-                else:
-                    image_data.append(url)
+                # Preserve the URI: bare JPEG base64 starts with "/" and can
+                # otherwise be mistaken for an absolute path by the backend.
+                image_data.append(url)
 
                 tok_parts.append({"type": "image"})
 
@@ -764,7 +810,7 @@ async def _prepare_prompt(
     if image_data and processor is not None:
 
         def process_prompt() -> _PreparedPrompt:
-            return _process_multimodal_prompt(
+            prompt = _process_multimodal_prompt(
                 processor,
                 tokenizer,
                 tokenizer_messages,
@@ -772,6 +818,11 @@ async def _prepare_prompt(
                 tools,
                 chat_template_kwargs,
             )
+            if processor_cache is not None:
+                prompt = _share_multimodal_tensors(
+                    prompt, processor_cache, processor, image_data
+                )
+            return prompt
 
         if processor_cache is None:
             processed_prompt = await asyncio.to_thread(process_prompt)

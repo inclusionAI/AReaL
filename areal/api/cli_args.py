@@ -260,6 +260,13 @@ class GenerationHyperparameters:
             )
         },
     )
+    reward_normalization_use_std: bool = field(
+        default=True,
+        metadata={
+            "help": "Divide grouped rollout rewards by their standard deviation. "
+            "Set False to subtract only the mean when reward_normalization is enabled."
+        },
+    )
     drop_incomplete_group: bool = field(
         default=False,
         metadata={
@@ -267,8 +274,7 @@ class GenerationHyperparameters:
                 "If True, discard the entire group when any of the n_samples "
                 "rollouts fails or returns None. prepare_batch will automatically "
                 "retry with a new prompt. This prevents partial groups from "
-                "causing reward normalization group misalignment. Not supported by "
-                "RolloutControllerV2 yet."
+                "causing reward normalization group misalignment."
             )
         },
     )
@@ -325,6 +331,7 @@ class GenerationHyperparameters:
     # OpenAI client kwargs even when users enable them.
     _WORKFLOW_ONLY_ARGS: ClassVar[set[str]] = {
         "reward_normalization",
+        "reward_normalization_use_std",
         "drop_incomplete_group",
     }
 
@@ -929,6 +936,15 @@ class MegatronEngineConfig:
             )
         },
     )
+    language_model_only: bool = field(
+        default=False,
+        metadata={
+            "help": (
+                "For multimodal ModelScope bridges, build only the language model. "
+                "Set True for text-only inputs and False for vision inputs."
+            )
+        },
+    )
     # Don't use MegatronOptimizerConfig here because OmegaConf
     # does not recognize the annotation "torch.dtype"
     overlap_param_gather_with_optimizer_step: bool = False
@@ -1074,8 +1090,8 @@ class MegatronEngineConfig:
     bridge_type: str = field(
         default="mbridge",
         metadata={
-            "help": "Bridge backend for MegatronEngine. Choices: 'mbridge' or 'megatron-bridge'.",
-            "choices": ["mbridge", "megatron-bridge"],
+            "help": "Bridge backend for MegatronEngine. Choices: 'mbridge', 'megatron-bridge', or 'mcore-bridge'.",
+            "choices": ["mbridge", "megatron-bridge", "mcore-bridge"],
         },
     )
 
@@ -1089,7 +1105,7 @@ class MegatronEngineConfig:
     use_bridge_for_update_weights: bool = field(
         default=False,
         metadata={
-            "help": "When True and bridge_type='megatron-bridge', delegate live "
+            "help": "When True and bridge_type is 'megatron-bridge' or 'mcore-bridge', delegate live "
             "weight sync to bridge.export_hf_weights instead of the hand-rolled "
             "convert_to_hf registry. Required for models without a registry entry "
             "(e.g. Qwen3.5). FP8 paths fall back to the registry automatically.",
@@ -1114,16 +1130,38 @@ class MegatronEngineConfig:
         },
     )
 
+    freeze_ple_table: bool = field(
+        default=True,
+        metadata={
+            "help": (
+                "Freeze the Qwen4-Exp PLE/N-gram table while keeping the PLE "
+                "projection, norm, convolution, and token embedding trainable. "
+                "Set False to train and export the full PLE table."
+            )
+        },
+    )
+
     enable_mtp_training: bool = field(
         default=False,
         metadata={
             "help": "Train the Multi-Token-Prediction (MTP) head as an auxiliary "
-            "objective (SFT/RL). Requires enable_mtp=True. The MTP loss is fed an "
-            "independent label channel (mtp_kwargs) so the main forward keeps "
-            "labels=None and returns logits; MTP gradients are isolated from the "
-            "backbone (output weight detached, backbone hidden states cut from the "
-            "MTP graph). bridge_type=megatron-bridge only; packed context parallel "
-            "training is supported.",
+            "objective (SFT/RL). Requires enable_mtp=True. The main forward keeps "
+            "labels=None and returns logits; Megatron-Core derives MTP targets from "
+            "input_ids and isolates MTP gradients from the backbone and LM head. "
+            "bridge_type=megatron-bridge only; packed context parallel training is "
+            "supported.",
+        },
+    )
+
+    mtp_only: bool = field(
+        default=False,
+        metadata={
+            "help": "Freeze all non-MTP parameters before DDP/optimizer construction. "
+            "Requires enable_mtp_training=True, bridge_type='megatron-bridge', "
+            "and one native MTP layer. Pipeline stages without MTP stay frozen. "
+            "Shared embeddings and output weights stay frozen. "
+            "Not supported with LoRA, critic models, or FSDP wrappers. The main "
+            "loss path is retained to trigger the auxiliary MTP backward.",
         },
     )
 
@@ -1138,6 +1176,53 @@ class MegatronEngineConfig:
     def __post_init__(self) -> None:
         if self.enable_mtp_training and not self.enable_mtp:
             raise ValueError("enable_mtp_training requires enable_mtp=True")
+        if self.mtp_only:
+            if not self.enable_mtp_training:
+                raise ValueError("mtp_only requires enable_mtp_training=True")
+            if self.bridge_type != "megatron-bridge":
+                raise ValueError("mtp_only requires bridge_type='megatron-bridge'")
+            if (
+                not math.isfinite(self.mtp_loss_scaling_factor)
+                or self.mtp_loss_scaling_factor <= 0
+            ):
+                raise ValueError(
+                    "mtp_only requires a finite, positive mtp_loss_scaling_factor"
+                )
+            if self.use_custom_fsdp or self.use_torch_fsdp2:
+                raise ValueError("mtp_only does not support FSDP wrappers")
+            # Check the actual runtime: package metadata alone cannot establish
+            # which cuDNN shared library PyTorch loads.
+            from importlib.metadata import PackageNotFoundError
+
+            import torch
+
+            for package, minimum in (
+                ("megatron-core", "0.19.0"),
+                ("megatron-bridge", "0.6.0"),
+            ):
+                try:
+                    installed = pkg_version.get_version(package)
+                except PackageNotFoundError as exc:
+                    raise ValueError(
+                        f"mtp_only requires {package}>={minimum}; package not installed"
+                    ) from exc
+                if pkg_version.compare_versions(installed, minimum) < 0:
+                    raise ValueError(
+                        f"mtp_only requires {package}>={minimum}; found {installed}"
+                    )
+            try:
+                cudnn_version = torch.backends.cudnn.version()
+            except RuntimeError as exc:
+                raise ValueError(
+                    "mtp_only requires loaded cuDNN>=9.19.0; "
+                    "PyTorch could not load cuDNN"
+                ) from exc
+            if cudnn_version is None or cudnn_version < 91900:
+                raise ValueError(
+                    "mtp_only requires loaded cuDNN>=9.19.0 (91900); "
+                    f"torch.backends.cudnn.version() returned {cudnn_version}. "
+                    "Ensure PyTorch loads the upgraded cuDNN shared libraries."
+                )
         if self.lm_head_loss_chunk_size < 0:
             raise ValueError(
                 "lm_head_loss_chunk_size must be non-negative, got "
@@ -1830,8 +1915,7 @@ class PPOActorConfig(TrainEngineConfig):
             "help": "Minimum usable rollout slots a prompt group must keep to stay "
             "trainable when some slots fail or are filtered. None derives the "
             "minimum from reward_norm/adv_norm: 2 when either uses group "
-            "statistics (1 for a singleton target group), else 1. Only the v1 "
-            "rollout path consumes this option."
+            "statistics (1 for a singleton target group), else 1."
         },
     )
 
@@ -1862,12 +1946,33 @@ class PPOActorConfig(TrainEngineConfig):
         metadata={
             "help": "Use CISPO loss: clip the importance-sampling weight under "
             "stop-gradient and keep gradient on every token's log pi (MiniMax-M1 "
-            "Eq. 4-5). Mutually exclusive with SAPO. Token-level only. Requires "
-            "eps_clip_higher > 0; recommended eps_clip=1.0 (single-sided, lower "
-            "bound 0) with eps_clip_higher=4.0."
+            "Eq. 4-5). Mutually exclusive with SAPO. Uses token-level "
+            "importance-sampling ratios. Requires eps_clip_higher > 0; recommended "
+            "eps_clip=1.0 (single-sided, lower bound 0) with eps_clip_higher=4.0."
         },
     )
 
+    loss_aggregation: str = field(
+        default="token_mean",
+        metadata={
+            "help": "Policy-gradient loss reduction. "
+            "'token_mean': average over valid tokens. "
+            "'seq_mean': average per-response token means. "
+            "'prompt_mean': average per-prompt-group token means while preserving "
+            "the response-level optimizer schedule; groups may span steps. "
+            "'constant': sum of masked token losses divided by "
+            "(n_active_responses * loss_aggregation_divisor). Tree-packed actor "
+            "training currently supports only 'token_mean'.",
+            "choices": ["token_mean", "seq_mean", "prompt_mean", "constant"],
+        },
+    )
+    loss_aggregation_divisor: float | None = field(
+        default=None,
+        metadata={
+            "help": "Positive fixed denominator L for loss_aggregation='constant'. "
+            "Unused by other loss aggregation modes.",
+        },
+    )
     # Asynchronous RL
     recompute_logprob: bool = field(
         default=False,
@@ -2074,6 +2179,37 @@ class PPOActorConfig(TrainEngineConfig):
                     "Please set `actor.use_decoupled_loss=false` in your configuration."
                 )
 
+        if self.loss_aggregation not in (
+            "token_mean",
+            "seq_mean",
+            "prompt_mean",
+            "constant",
+        ):
+            raise ValueError(
+                "loss_aggregation must be 'token_mean', 'seq_mean', "
+                f"'prompt_mean', or 'constant', got {self.loss_aggregation!r}."
+            )
+        if self.loss_aggregation == "constant":
+            if (
+                self.loss_aggregation_divisor is None
+                or not math.isfinite(self.loss_aggregation_divisor)
+                or self.loss_aggregation_divisor <= 0
+            ):
+                raise ValueError(
+                    "loss_aggregation_divisor must be a positive finite value "
+                    "when loss_aggregation='constant'."
+                )
+        elif self.loss_aggregation_divisor is not None:
+            raise ValueError(
+                "loss_aggregation_divisor is only used when "
+                "loss_aggregation='constant'."
+            )
+        if self.enable_tree_training and self.loss_aggregation != "token_mean":
+            raise ValueError(
+                f"loss_aggregation={self.loss_aggregation!r} needs per-sequence "
+                "boundaries, which tree-packed batches do not carry; tree "
+                "training supports only 'token_mean'."
+            )
         # Validate CISPO configuration
         if self.use_cispo_loss:
             if self.use_sapo_loss:
@@ -2542,7 +2678,7 @@ class PRMAdvantageShapingConfig:
 
 @dataclass
 class PRMConfig:
-    """Process-reward scoring and advantage shaping for v1 agent rollouts."""
+    """Process-reward scoring and advantage shaping for agent rollouts."""
 
     enabled: bool = field(
         default=True,
@@ -2561,6 +2697,18 @@ class PRMConfig:
         default_factory=list,
         metadata={"help": "Process-reward scorers whose weighted outputs are summed."},
     )
+
+    error_policy: str = field(
+        default="reject",
+        metadata={
+            "help": "On v1 proxy PRM errors: reject the trajectory or keep pre-scoring rewards.",
+            "choices": ["reject", "keep_original"],
+        },
+    )
+
+    def __post_init__(self) -> None:
+        if self.error_policy not in {"reject", "keep_original"}:
+            raise ValueError("PRM error_policy must be reject or keep_original")
 
 
 @dataclass
@@ -2623,6 +2771,10 @@ class AgentConfig:
     reasoning_parser: str = field(
         default="qwen3",
         metadata={"help": "Parser for reasoning content (<think> tags)."},
+    )
+    chat_template_kwargs: dict[str, Any] = field(
+        default_factory=dict,
+        metadata={"help": "Default chat template arguments for proxy requests."},
     )
     chat_template_type: str = field(
         default="hf",
@@ -2710,7 +2862,7 @@ class AgentConfig:
     prm: PRMConfig = field(
         default_factory=PRMConfig,
         metadata={
-            "help": "Process-reward shaping applied by the v1 proxy on concat "
+            "help": "Process-reward shaping applied by the v1 or v2 proxy on concat "
             "trajectory export, before interactions are serialized."
         },
     )
@@ -4039,9 +4191,14 @@ class PPOConfig(BaseExperimentConfig):
                 "actor.mask_no_eos_with_zero=True"
             )
         if prm.enabled and prm.scorers:
-            if self.rollout._version != "v1":
+            if self.rollout._version not in {"v1", "v2"}:
                 raise ValueError(
-                    "rollout.agent.prm currently requires rollout._version='v1'"
+                    "rollout.agent.prm requires rollout._version='v1' or 'v2'"
+                )
+            if self.rollout._version == "v2" and self.rollout.api_url is not None:
+                raise ValueError(
+                    "PRM scorers do not support v2 external-model mode "
+                    "(rollout.api_url); scoring requires token-backed interactions"
                 )
             if self.rollout.agent.export_style != "concat":
                 raise ValueError(

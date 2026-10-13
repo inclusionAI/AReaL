@@ -19,7 +19,11 @@ from areal.trainer.ppo.gae import (
     _compute_turn_level_gae,
 )
 from areal.trainer.ppo.lambda_fn import resolve_gae_lambda_fn
-from areal.trainer.ppo.stats import infer_token_denominator
+from areal.trainer.ppo.loss_reduction import (
+    PreparedLossStep,
+    prepare_policy_gradient_batch,
+)
+from areal.trainer.ppo.stats import infer_token_denominator, log_train_inference_stats
 from areal.utils import logging, stats_tracker
 from areal.utils.constants import (
     PROX_APPROX_METHOD_LINEAR,
@@ -36,6 +40,7 @@ from areal.utils.data import (
     Normalization,
     TrajBatchMeta,
     batched_call,
+    concat_batch,
     is_multi_modal_key,
     normalize_rollout_rewards,
     split_training_batch_into_microbatches,
@@ -47,7 +52,12 @@ from areal.utils.functional import (
     reward_overlong_penalty,
     sapo_loss_fn,
 )
+from areal.utils.functional.loss_aggregation import (
+    LossAggregationMode,
+    TokenMean,
+)
 from areal.utils.perf_tracer import trace_perf
+from areal.utils.stats_tracker import ReduceType
 from areal.v2.training_service.controller.controller import (
     GatewayTrainController,
 )
@@ -59,6 +69,7 @@ def _group_training_metrics(
     loss_mask: torch.Tensor,
     group_sizes: list[int],
     logical_group_sizes: list[int] | None = None,
+    loss_aggregation: LossAggregationMode = "token_mean",
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     batch_size = loss_mask.shape[0]
     if any(size < 1 for size in group_sizes) or sum(group_sizes) != batch_size:
@@ -76,7 +87,10 @@ def _group_training_metrics(
     ends = sizes.cumsum(0)
     starts = ends - sizes
     token_counts = loss_mask.reshape(batch_size, -1).sum(1, dtype=torch.float32)
-    cumulative_tokens = torch.nn.functional.pad(token_counts.cumsum(0), (1, 0))
+    unit_counts = (
+        token_counts if loss_aggregation == "token_mean" else (token_counts > 0).float()
+    )
+    cumulative_units = torch.nn.functional.pad(unit_counts.cumsum(0), (1, 0))
 
     group_starts[starts] = True
     usable_group_sizes[starts] = torch.tensor(
@@ -84,7 +98,10 @@ def _group_training_metrics(
         dtype=usable_group_sizes.dtype,
         device=loss_mask.device,
     )
-    group_loss_weights[starts] = cumulative_tokens[ends] - cumulative_tokens[starts]
+    weights = cumulative_units[ends] - cumulative_units[starts]
+    if loss_aggregation == "prompt_mean":
+        weights = (weights > 0).float()
+    group_loss_weights[starts] = weights
     return group_starts, usable_group_sizes, group_loss_weights
 
 
@@ -213,6 +230,14 @@ class PPOActor:
 
     def configure_mopd_loss(self, config: MOPDLossConfig) -> None:
         """Bind static MOPD loss settings once on each actor worker."""
+        if (
+            config.distillation_coefficient != 0
+            and self.config.loss_aggregation != "token_mean"
+        ):
+            raise ValueError(
+                "MOPD distillation is only supported with "
+                "loss_aggregation='token_mean'."
+            )
         if self._mopd_loss_config is not None and self._mopd_loss_config != config:
             raise RuntimeError("MOPD loss configuration is already bound")
         self._mopd_loss_config = config
@@ -332,6 +357,7 @@ class PPOActor:
             raise RuntimeError("prepare_mopd_batch is only valid for pure distillation")
         if "mopd_teacher_logp_sum" not in data:
             raise RuntimeError("Pure MOPD distillation requires teacher targets")
+        data["input_token_loss_mask"] = data["loss_mask"].bool()
         loss_mask = torch.roll(data["loss_mask"].float(), shifts=-1, dims=-1)
         behavior_logp = torch.roll(data["logprobs"], shifts=-1, dims=-1)
         data["mopd_behavior_logprobs"] = (behavior_logp * loss_mask).detach()
@@ -419,6 +445,10 @@ class PPOActor:
                 reward_score = self.reward_norm(reward_score, group_sizes=group_sizes)
 
         token_loss_mask = data["loss_mask"].bool()
+        # Preserve token provenance before converting to next-token loss alignment.
+        # Multimodal preprocessing must distinguish generated special IDs from
+        # prompt image/video placeholders even after advantages are computed.
+        data["input_token_loss_mask"] = token_loss_mask
         loss_mask = token_loss_mask.float()
         loss_mask = torch.roll(loss_mask, shifts=-1, dims=-1)
 
@@ -442,6 +472,12 @@ class PPOActor:
                 "include 'turn_ids'."
             )
         # Apply the mask to log probabilities.
+        if data.get("prox_logp") is not None:
+            log_train_inference_stats(
+                data["prox_logp"],
+                torch.roll(data["logprobs"], shifts=-1, dims=-1),
+                loss_mask.bool(),
+            )
         if not self.config.use_decoupled_loss and self.config.recompute_logprob:
             # Overwrite logprobs produced by the inference engine
             prox_logp_value = data["prox_logp"]
@@ -660,11 +696,23 @@ class PPOActor:
     @trace_perf("ppo_actor.ppo_update", category="compute")
     @stats_tracker.scope_func_wrapper("ppo_actor")
     def ppo_update(self, data: list[dict[str, Any]]) -> None:
-        batched_call(self._ppo_update, data, unpack=False, pass_meta=True)
+        batched, meta = concat_batch(data)
+        self._ppo_update(batched, meta)
 
     def _ppo_update(
         self, data: dict[str, Any], meta: TrajBatchMeta | None = None
     ) -> None:
+        if self.config.loss_aggregation != "token_mean" and (
+            data.get("teacher_logp") is not None
+            or data.get("mopd_teacher_logp_sum") is not None
+            or (
+                self._mopd_loss_config is not None
+                and self._mopd_loss_config.distillation_coefficient != 0
+            )
+        ):
+            raise ValueError(
+                "Distillation is only supported with loss_aggregation='token_mean'."
+            )
         attn_mask = data["attention_mask"]
         loss_mask = data["loss_mask"]
         reward_score = data["rewards"]
@@ -700,7 +748,10 @@ class PPOActor:
         group_metrics = None
         if meta is not None:
             group_metrics = _group_training_metrics(
-                loss_mask, meta.traj_group_sizes, meta.logical_group_sizes
+                loss_mask,
+                meta.traj_group_sizes,
+                meta.logical_group_sizes,
+                self.config.loss_aggregation,
             )
             global_denominators["n_groups"] = group_metrics[0]
         stats_tracker.denominator(**global_denominators)
@@ -722,6 +773,13 @@ class PPOActor:
                 final_reward=data["tot_rewards"],
                 denominator="n_valid_tokens",
             )
+            stats_tracker.stat_compact(
+                loss_mask.bool(),
+                ReduceType.AVG,
+                advantage_positive_fraction=(data["advantages"] > 0).float(),
+                advantage_negative_fraction=(data["advantages"] < 0).float(),
+                advantage_zero_fraction=(data["advantages"] == 0).float(),
+            )
 
         prompt_lens = _infer_prompt_lens(data["attention_mask"], data["loss_mask"])
         seq_truncated_mask = _get_truncated_mask(data, seqlens)
@@ -732,6 +790,16 @@ class PPOActor:
             seq_len=seqlens.float(),
         )
         stats_tracker.stat(**seq_stats, denominator="n_seqs")
+        if "versions" in data:
+            # Both regular advantage preprocessing and pure MOPD retain raw
+            # token-position versions. Align only the diagnostic copy here;
+            # changing proximal approximation requires separate validation.
+            metric_versions = torch.roll(data["versions"], shifts=-1, dims=-1)
+            metric_versions[..., -1] = -1
+            with stats_tracker.scope("update"):
+                _log_version_staleness_stats(
+                    metric_versions, self.engine.get_version(), loss_mask.bool()
+                )
         if group_metrics is not None:
             group_starts, usable_group_sizes, group_loss_weights = group_metrics
             stats_tracker.stat(
@@ -784,6 +852,12 @@ class PPOActor:
         # Megatron keeps the full batch on CPU and streams only the current
         # microbatch to the accelerator. Stage before the outer PPO split so
         # that split does not retain every optimizer minibatch on GPU.
+        prepared_loss = prepare_policy_gradient_batch(
+            data,
+            mode=self.config.loss_aggregation,
+            divisor=self.config.loss_aggregation_divisor,
+            group_sizes=meta.traj_group_sizes if meta is not None else None,
+        )
         stage_batch_for_engine(data, self.engine)
         # NOTE: calling engine.train() is critical to enabling gradient checkpointing
         self.engine.train()
@@ -793,31 +867,38 @@ class PPOActor:
             group=self.engine.data_parallel_group,
         )
 
+        loss_steps = prepared_loss.for_steps(
+            mb_inputs,
+            dp_group=self.engine.data_parallel_group,
+            device=self.engine.device,
+        )
+
         with stats_tracker.scope("update"):
             # Get current version for proximal approximation metrics
             current_version = self.engine.get_version()
-
-            for mb in mb_inputs:
+            for mb, loss_step in zip(mb_inputs, loss_steps, strict=True):
+                loss_fn = functools.partial(
+                    grpo_loss_fn,
+                    eps_clip=self.config.eps_clip,
+                    eps_clip_higher=self.config.eps_clip_higher,
+                    c_clip=self.config.c_clip,
+                    rejection_sampling=self.config.rejection_sampling,
+                    m2_threshold=self.m2_threshold,
+                    importance_sampling_level=self.config.importance_sampling_level,
+                    current_version=current_version,
+                    prox_logp_method=self.config.prox_logp_method,
+                    use_sapo_loss=self.config.use_sapo_loss,
+                    sapo_tau_pos=self.config.sapo_tau_pos,
+                    sapo_tau_neg=self.config.sapo_tau_neg,
+                    use_cispo_loss=self.config.use_cispo_loss,
+                    use_decoupled_loss=self.config.use_decoupled_loss,
+                    loss_step=loss_step,
+                    mopd_loss_config=self._mopd_loss_config,
+                )
                 train_stat = self.engine.train_batch(
                     mb,
-                    loss_fn=functools.partial(
-                        grpo_loss_fn,
-                        eps_clip=self.config.eps_clip,
-                        eps_clip_higher=self.config.eps_clip_higher,
-                        c_clip=self.config.c_clip,
-                        rejection_sampling=self.config.rejection_sampling,
-                        m2_threshold=self.m2_threshold,
-                        importance_sampling_level=self.config.importance_sampling_level,
-                        current_version=current_version,
-                        prox_logp_method=self.config.prox_logp_method,
-                        use_sapo_loss=self.config.use_sapo_loss,
-                        sapo_tau_pos=self.config.sapo_tau_pos,
-                        sapo_tau_neg=self.config.sapo_tau_neg,
-                        use_cispo_loss=self.config.use_cispo_loss,
-                        use_decoupled_loss=self.config.use_decoupled_loss,
-                        mopd_loss_config=self._mopd_loss_config,
-                    ),
-                    loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
+                    loss_fn=loss_fn,
+                    loss_weight_fn=loss_step.loss_weight,
                 )
                 stats_tracker.scalar(**train_stat)
 
@@ -1021,15 +1102,19 @@ def grpo_loss_fn(
     sapo_tau_neg: float = 1.05,
     use_cispo_loss: bool = False,
     use_decoupled_loss: bool = False,
+    loss_step: PreparedLossStep | None = None,
     mopd_loss_config: MOPDLossConfig | None = None,
     vocab_min_logits: torch.Tensor | None = None,
     vocab_max_logits: torch.Tensor | None = None,
     vocab_mean_logits: torch.Tensor | None = None,
     vocab_norm_logits: torch.Tensor | None = None,
 ):
-    """Loss function for actor step, all inputs should be splitted into
-    pipeline micro batches, returns loss and logging stats."""
-    loss_mask = input_data["loss_mask"].bool()
+    """Compute loss and logging stats using the actor's assembled reduction."""
+    denominator_mask = input_data["loss_mask"].bool()
+    pg_reduction = (
+        TokenMean(denominator_mask) if loss_step is None else loss_step.bind(input_data)
+    )
+    loss_mask = denominator_mask
     if mopd_loss_config is not None and mopd_loss_config.rl_coefficient == 0:
         teacher_logp_sum = input_data.get("mopd_teacher_logp_sum")
         teacher_weight_sum = input_data.get("mopd_teacher_weight_sum")
@@ -1055,7 +1140,6 @@ def grpo_loss_fn(
                 loss_mask = _apply_m2po_masking(
                     input_data["logprobs"], prox_logp, loss_mask, m2_threshold
                 )
-                normalization_mask = loss_mask
             if rejection_sampling is not None:
                 loss_mask = apply_rejection_sampling(
                     proximal_logprobs=prox_logp,
@@ -1088,6 +1172,11 @@ def grpo_loss_fn(
             old_logp=behavior_logp,
             entropy=entropy.detach().float(),
             denominator="n_mopd_tokens",
+        )
+        stats_tracker.weighted_mean(
+            "actor_loss/avg",
+            loss,
+            pg_reduction.normalizer(),
         )
         return loss
 
@@ -1136,6 +1225,7 @@ def grpo_loss_fn(
             old_logprobs=old_logp,
             rejection_sampling=rejection_sampling,
             cu_seqlens=input_data.get("cu_seqlens"),
+            pg_reduction=pg_reduction,
         )
     elif use_sapo_loss:
         if use_decoupled_loss:
@@ -1152,6 +1242,7 @@ def grpo_loss_fn(
             loss_mask=loss_mask,
             importance_sampling_level=importance_sampling_level,
             cu_seqlens=input_data.get("cu_seqlens"),
+            pg_reduction=pg_reduction,
         )
     else:
         loss, stat = ppo_actor_loss_fn(
@@ -1166,16 +1257,16 @@ def grpo_loss_fn(
             rejection_sampling=rejection_sampling,
             importance_sampling_level=importance_sampling_level,
             cu_seqlens=input_data.get("cu_seqlens"),
+            pg_reduction=pg_reduction,
         )
 
-    # M2 is part of the shared training-validity contract. Behavioral
-    # rejection may narrow the MOPD numerator further, while its denominator
-    # stays at the pre-rejection count to avoid amplifying accepted tokens.
-    mopd_normalization_mask = loss_mask
+    # M2 and rejection narrow both numerators while the engine weight remains
+    # the original valid-token count. Keep both objectives on that denominator.
+    mopd_normalization_mask = denominator_mask
     mopd_loss_mask = stat.get("behave_mask", loss_mask).bool()
 
-    # Multi-teacher on-policy distillation. The deprecated single-teacher
-    # fields retain their original joint-loss semantics for compatibility.
+    # Multi-teacher on-policy distillation. Legacy single-teacher numerators
+    # retain their post-M2, pre-rejection mask; both use the original denominator.
     teacher_logp = input_data.get("teacher_logp")
     mopd_teacher_logp_sum = input_data.get("mopd_teacher_logp_sum")
     rkl_stat = None
@@ -1222,14 +1313,23 @@ def grpo_loss_fn(
             loss = (
                 -distill_loss_weight
                 * rkl_weighted_term.sum()
-                / loss_mask.sum().clamp(min=1)
+                / denominator_mask.sum().clamp(min=1)
             )
             rkl_stat = -rkl_weighted_term
         else:
             rkl_penalty_per_token = (logprobs - teacher_logp) * loss_mask
-            rkl_penalty = rkl_penalty_per_token.sum() / loss_mask.sum().clamp(min=1)
+            rkl_penalty = rkl_penalty_per_token.sum() / denominator_mask.sum().clamp(
+                min=1
+            )
             loss = rl_loss_weight * loss + distill_loss_weight * rkl_penalty
             rkl_stat = rkl_penalty_per_token
+
+    # Match the engine's aggregation across microbatches and data-parallel ranks.
+    stats_tracker.weighted_mean(
+        "actor_loss/avg",
+        loss,
+        pg_reduction.normalizer(),
+    )
 
     # Log training statistics
     stats_tracker.denominator(
@@ -1262,7 +1362,7 @@ def grpo_loss_fn(
         new_logp=logprobs.detach(),
         old_logp=old_logp,
         entropy=entropy.float(),
-        actor_loss=stat["loss"],
+        actor_loss_token_mean=stat["loss"].float(),
         clip_ratio=stat["clip_mask"].float(),
         dual_clip_ratio=stat["dual_clip_mask"].float(),
         logp_diff=logp_diff,
@@ -1330,15 +1430,6 @@ def grpo_loss_fn(
         current_version=current_version,
         compute_logp_mask=compute_logp_mask,
     )
-
-    # Log version staleness metrics
-    if "versions" in input_data and current_version is not None:
-        version_metrics_mask = stat.get("behave_mask", loss_mask)
-        _log_version_staleness_stats(
-            versions=input_data["versions"],
-            current_version=current_version,
-            version_metrics_mask=version_metrics_mask,
-        )
 
     return loss
 
@@ -1818,39 +1909,48 @@ def _log_version_staleness_stats(
     Log sample staleness metrics based on policy versions.
 
     Args:
-        versions: Per-token policy versions from rollout.
-        current_version: Current training version.
-        version_metrics_mask: Mask for valid tokens.
+        versions: Rollout versions aligned to next-token prediction positions.
+        current_version: Last published policy version, before the PPO update.
+        version_metrics_mask: Batch loss mask before M2/rejection filtering.
     """
     with stats_tracker.scope("version_stats"):
-        stats_tracker.denominator(n_valid_tokens=version_metrics_mask.bool())
+        valid_generated_mask = version_metrics_mask.bool() & (versions >= 0)
 
-        v_proximal = current_version - 1
+        # The trainer publishes actor and rollout versions together AFTER an
+        # update. Before the next update, proximal uses that published version.
+        # Retain theta/proximal keys as aliases for checkpoint age, not an
+        # optimizer-minibatch counter.
+        v_proximal = current_version
         v_theta = current_version
         v_behave = versions.float()
 
-        # Filter to generated tokens only (version >= 0)
-        valid_generated_mask = version_metrics_mask & (versions >= 0)
-
-        if not valid_generated_mask.any():
-            return
-
-        # Compute staleness for valid tokens
-        staleness_proximal = (v_proximal - v_behave)[valid_generated_mask]
-        staleness_theta = (v_theta - v_behave)[valid_generated_mask]
-
-        # Compute and log statistics
-        proximal_stats = _tensor_scalar_stats(staleness_proximal)
-        theta_stats = _tensor_scalar_stats(staleness_theta)
-
+        # Retain full shapes and reduce by token count, not microbatch count.
+        # In particular, extrema must not be averaged across workers.
+        for suffix, reduction in (
+            ("avg", ReduceType.AVG),
+            ("min", ReduceType.MIN),
+            ("max", ReduceType.MAX),
+        ):
+            stats_tracker.stat_compact(
+                valid_generated_mask,
+                reduction,
+                **{
+                    f"sample_staleness_proximal_{suffix}": v_proximal - v_behave,
+                    f"sample_staleness_theta_{suffix}": v_theta - v_behave,
+                },
+            )
+        stats_tracker.stat_compact(
+            valid_generated_mask,
+            ReduceType.SUM,
+            n_valid_generated_tokens=torch.ones_like(v_behave),
+        )
+        stats_tracker.stat_compact(
+            valid_generated_mask,
+            ReduceType.AVG,
+            stale_token_fraction=(v_behave < v_proximal).float(),
+            future_token_fraction=(v_behave > v_theta).float(),
+        )
         stats_tracker.scalar(
-            sample_staleness_proximal_avg=proximal_stats["avg"],
-            sample_staleness_proximal_max=proximal_stats["max"],
-            sample_staleness_proximal_min=proximal_stats["min"],
-            sample_staleness_theta_avg=theta_stats["avg"],
-            sample_staleness_theta_max=theta_stats["max"],
-            sample_staleness_theta_min=theta_stats["min"],
             v_theta=v_theta,
             v_proximal=v_proximal,
-            n_valid_generated_tokens=valid_generated_mask.sum().item(),
         )

@@ -18,6 +18,7 @@ from areal.experimental.openai.client import (
     _process_multimodal_prompt,
 )
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
+from areal.infra.processor_cache import ProcessorCallCache
 
 
 class _FakeTokenizer:
@@ -99,9 +100,10 @@ def _response(input_tokens: list[int], output_tokens: list[int]) -> ModelRespons
     )
 
 
-def test_extract_images_preserves_remote_url_for_backend_forwarding():
+@pytest.mark.parametrize("scheme", ["http", "https"])
+def test_extract_images_preserves_remote_url_for_backend_forwarding(scheme):
     """Tokenizer-only clients should keep backend-managed image URLs unchanged."""
-    url = "https://example.com/image.png"
+    url = f"{scheme}://example.com/image.png"
     messages = [
         {
             "role": "user",
@@ -121,11 +123,20 @@ def test_extract_images_preserves_remote_url_for_backend_forwarding():
         "http://169.254.169.254/latest/meta-data/",
         "https://internal.example/image.png",
         "file:///etc/passwd",
+        "ftp://example.com/image.png",
+        "./image.png",
+        "data:image/png,not-base64",
+        "data:text/plain;base64,aGVsbG8=",
     ],
 )
-def test_local_multimodal_processing_rejects_non_inline_urls(url):
-    """Local VLM processing must not fetch external resources."""
-    with pytest.raises(ValueError, match="requires valid base64-encoded image data"):
+def test_local_multimodal_processing_rejects_non_inline_urls(url, monkeypatch):
+    """Unsupported sources must fail before base64 decoding or image loading."""
+
+    def unexpected_decode(*args, **kwargs):
+        pytest.fail("Unsupported image source reached base64 decoding")
+
+    monkeypatch.setattr(base64, "b64decode", unexpected_decode)
+    with pytest.raises(ValueError, match="URLs and filesystem paths are not supported"):
         _process_multimodal_prompt(
             _FakeProcessor(),
             _FakeTokenizer(),
@@ -136,12 +147,26 @@ def test_local_multimodal_processing_rejects_non_inline_urls(url):
         )
 
 
+@pytest.mark.parametrize("payload", ["abc", "aGVsbG8="])
+def test_local_multimodal_processing_rejects_invalid_inline_images(payload):
+    """Base64-shaped input still requires valid padding and decodable image bytes."""
+    with pytest.raises(ValueError, match="requires valid base64-encoded image data"):
+        _process_multimodal_prompt(
+            _FakeProcessor(),
+            _FakeTokenizer(),
+            [{"role": "user", "content": [{"type": "image"}]}],
+            [payload],
+            None,
+            {},
+        )
+
+
 def test_local_multimodal_processing_rejects_existing_local_image_path(tmp_path):
     """Local VLM processing must not open filesystem paths from requests."""
     image_path = tmp_path / "private-image.png"
     Image.new("RGB", (2, 2), color="red").save(image_path)
 
-    with pytest.raises(ValueError, match="requires valid base64-encoded image data"):
+    with pytest.raises(ValueError, match="URLs and filesystem paths are not supported"):
         _process_multimodal_prompt(
             _FakeProcessor(),
             _FakeTokenizer(),
@@ -430,3 +455,59 @@ async def test_generation_api_rejects_vllm_multimodal_trajectory(api_type):
         assert engine.requests == []
     finally:
         await client.close()
+
+
+@pytest.mark.parametrize("image_format", ["JPEG", "PNG"])
+@pytest.mark.parametrize("use_data_uri", [True, False])
+def test_inline_image_uri_preserved_for_backend_and_decoded_locally(
+    image_format, use_data_uri
+):
+    with BytesIO() as buffer:
+        Image.new("RGB", (2, 2), color="red").save(buffer, format=image_format)
+        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    uri = (
+        f"data:image/{image_format.lower()};base64,{encoded}"
+        if use_data_uri
+        else encoded
+    )
+    messages = [
+        {"role": "user", "content": [{"type": "image_url", "image_url": {"url": uri}}]}
+    ]
+    image_data, tokenizer_messages, _ = _extract_images_from_messages(messages)
+    assert image_data == [uri]
+    if image_format == "JPEG":
+        assert encoded.startswith("/9j/")
+    prepared = _process_multimodal_prompt(
+        _FakeProcessor(), _FakeTokenizer(), tokenizer_messages, image_data, None, {}
+    )
+    assert prepared is not None
+
+
+@pytest.mark.asyncio
+async def test_prepare_prompt_changed_text_shares_identical_vision_tensors():
+    cache = ProcessorCallCache()
+    tokenizer = _FakeTokenizer()
+    processor = _FakeProcessor()
+    message = {"role": "user", "content": [{"type": "image"}]}
+    images = [_png_base64()]
+    prompts = []
+    for messages in ([message], [message, {"role": "user", "content": "Again"}]):
+        prompts.append(
+            await _prepare_prompt(
+                tokenizer=tokenizer,
+                processor=processor,
+                tokenizer_messages=messages,
+                concat_messages=messages,
+                image_data=images,
+                parent=None,
+                chat_template_type="hf",
+                tools=None,
+                extra_body={},
+                processor_cache=cache,
+            )
+        )
+    assert prompts[0].input_ids == [10, 2, 20]
+    assert prompts[1].input_ids == [10, 2, 20, 30, 2, 40]
+    assert prompts[1].mm_token_type_ids == [1, 1, 1, 0, 0, 2]
+    for name, tensor in prompts[0].multi_modal_input.items():
+        assert tensor is prompts[1].multi_modal_input[name]

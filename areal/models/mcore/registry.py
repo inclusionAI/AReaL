@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import dataclasses
+import inspect
 import types
+from functools import partial
 from typing import Any
 
 import torch
@@ -12,10 +14,12 @@ from megatron.core.distributed import DistributedDataParallel as DDP
 from megatron.core.distributed import DistributedDataParallelConfig as MCoreDDPConfig
 from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.transformer import TransformerConfig
+from megatron.core.transformer.multi_token_prediction import mtp_on_this_rank
 from transformers import AutoConfig, PretrainedConfig
 
 from areal.api.cli_args import MegatronEngineConfig
 from areal.engine.megatron_utils.deterministic import set_deterministic_algorithms
+from areal.engine.megatron_utils.mtp_only import freeze_non_mtp_parameters
 from areal.models.mcore.bailing_moe import (
     hf_to_mcore_config_bailing_moe,
     make_mcore_layer_specs_bailing_moe,
@@ -130,7 +134,7 @@ def _fp32_lm_head_forward_impl(
     Casting the operands here keeps the matmul and the bias add in fp32 while
     leaving the rest of the model in its configured dtype.
 
-    Mirrors ``ColumnParallelLinear`` from megatron-core, verified against 0.17.0.
+    Mirrors ``ColumnParallelLinear`` from megatron-core, verified against 0.19.0.
     The collective helpers gained a ``group`` keyword in newer releases, so the
     calls fall back to the positional form when it is absent.
 
@@ -141,7 +145,7 @@ def _fp32_lm_head_forward_impl(
     conditions or the collective signatures, this reimplementation drifts
     silently; ``_enable_fp32_lm_head_forward`` therefore steps aside when the
     installed megatron-core exposes a native ``ColumnParallelLinearFP32``
-    (absent as of 0.17.0).
+    (absent as of 0.19.0).
     """
     if sequence_parallel:
         try:
@@ -355,6 +359,8 @@ def make_hf_and_mcore_config(
         if hasattr(hf_config, "_name_or_path"):
             hf_config._name_or_path = hf_path
         return hf_config, bridge.transformer_config
+    elif bridge is not None and bridge_type == "mcore-bridge":
+        return bridge.hf_config, bridge.config
     else:
         hf_config: PretrainedConfig = AutoConfig.from_pretrained(
             pretrained_model_name_or_path=hf_path,
@@ -406,6 +412,12 @@ def make_mcore_model(
     is_critic: bool = False,
     use_lora: bool = False,
 ) -> list[GPTModel | DDP]:
+    if mcore_config is not None and mcore_config.mtp_only:
+        if bridge_type != "megatron-bridge" or bridge is None:
+            raise ValueError("mtp_only requires a megatron-bridge model")
+        if use_lora or is_critic:
+            raise ValueError("mtp_only does not support LoRA or critic models")
+
     if bridge is not None and bridge_type == "mbridge":
         models = bridge.get_model(
             # TODO: Add DDP options when supporting training
@@ -449,6 +461,11 @@ def make_mcore_model(
         provider.sequence_parallel = mpu.get_tensor_model_parallel_world_size() > 1
         provider.pipeline_dtype = tf_config.params_dtype
 
+        # Bridge defaults to fused cross entropy, whereas AReaL defaults to the
+        # unfused implementation. Honor the explicit engine setting for native
+        # internal objectives such as MTP as well as the main model loss.
+        provider.cross_entropy_loss_fusion = mcore_config.cross_entropy_loss_fusion
+
         provider.recompute_granularity = mcore_config.recompute_granularity
         provider.recompute_method = mcore_config.recompute_method
         provider.recompute_num_layers = mcore_config.recompute_num_layers
@@ -475,6 +492,9 @@ def make_mcore_model(
                 # Weight of the auxiliary MTP loss; consumed by Megatron-Core's
                 # process_mtp_loss via config.mtp_loss_scaling_factor.
                 provider.mtp_loss_scaling_factor = mcore_config.mtp_loss_scaling_factor
+                # MCore 0.19 natively isolates the auxiliary MTP head from the
+                # backbone, embedding, and tied or untied LM head.
+                provider.mtp_detach_heads = True
         elif has_mtp:
             logger.warning(
                 "Dropping MTP head (mtp_num_layers=%s -> None); not used in RL and not "
@@ -516,6 +536,31 @@ def make_mcore_model(
 
         provider.finalize()
 
+        if mcore_config.mtp_only:
+            if getattr(provider, "moe_router_enable_expert_bias", False):
+                raise ValueError(
+                    "mtp_only does not support MoE router expert-bias updates"
+                )
+            # Preserve existing Bridge hooks and freeze before DDP allocates
+            # buffers. Do not disable autograd: the main loss still triggers
+            # Megatron-Core's auxiliary MTP loss through MTPLossAutoScaler.
+            # Stages without MTP are fully frozen, including all their virtual
+            # chunks. Keep the missing-MTP check on ranks expected to own MTP.
+            if "config" in inspect.signature(mtp_on_this_rank).parameters:
+                owns_mtp = mtp_on_this_rank(provider, ignore_virtual=True)
+            else:
+                owns_mtp = mtp_on_this_rank(
+                    layout=getattr(provider, "pipeline_model_parallel_layout", None),
+                    mtp_num_layers=provider.mtp_num_layers,
+                    ignore_virtual=True,
+                )
+            provider.register_pre_wrap_hook(
+                partial(
+                    freeze_non_mtp_parameters,
+                    allow_missing_mtp=not owns_mtp,
+                )
+            )
+
         ddp_config = MCoreDDPConfig(**dataclasses.asdict(mcore_config.ddp))
         if use_lora:
             ddp_config.use_distributed_optimizer = False
@@ -540,6 +585,23 @@ def make_mcore_model(
         else:
             _configure_actor_output_layers(models, mcore_config)
 
+        return models
+
+    if bridge is not None and bridge_type == "mcore-bridge":
+        if is_critic or use_lora:
+            raise NotImplementedError(
+                "mcore-bridge currently supports the base actor model only; "
+                "critic heads and LoRA are not adapted."
+            )
+        models = bridge.get_model(
+            wrap_with_ddp=mcore_config.wrap_with_ddp,
+            ddp_config=dataclasses.asdict(mcore_config.ddp),
+            use_torch_fsdp2=mcore_config.use_torch_fsdp2,
+            use_custom_fsdp=mcore_config.use_custom_fsdp,
+            overlap_param_gather_with_optimizer_step=mcore_config.overlap_param_gather_with_optimizer_step,
+        )
+        models = list(models)
+        _configure_actor_output_layers(models, mcore_config)
         return models
 
     else:

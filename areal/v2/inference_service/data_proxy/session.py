@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from areal.experimental.openai.cache import InteractionCache, PrefixMatcher
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.infra.processor_cache import ProcessorCacheRegistry, ProcessorCallCache
+from areal.reward.prm.export import PRMExportStats
 
 # Session timeout for cleanup (1 hour)
 SESSION_TIMEOUT_SECONDS = 3600
@@ -67,12 +68,15 @@ class SetRewardRequest(BaseModel):
 class ExportTrajectoriesRequest(BaseModel):
     """Request to export trajectories for one or more sessions.
 
-    All sessions are exported and merged into a single interactions dict.
-    ``group_id`` is optional metadata used by the gateway for router cleanup;
-    the data proxy itself does not use it.
+    ``session_ids`` owns cleanup for the whole group. ``export_session_ids`` may
+    select a successful subset for training while the remaining sessions are
+    still removed. ``group_id`` is optional metadata used by the gateway for
+    router cleanup; the data proxy itself does not use it.
     """
 
     session_ids: list[str]
+    export_session_ids: list[str] | None = None
+    min_usable_group_size: int = 1
     group_id: str | None = None
     trajectory_id: int | None = None
     discount: float = 1.0
@@ -81,12 +85,14 @@ class ExportTrajectoriesRequest(BaseModel):
     drop_retry_orphans: bool = False
     reward_normalization: bool = False
     discard_trajectory: bool = False
+    is_eval: bool = False
 
 
 class ExportTrajectoriesResponse(BaseModel):
     """Response containing merged serialized interactions."""
 
     traj: dict[str, Any]
+    prm_stats: PRMExportStats | None = None
 
 
 @dataclass(frozen=True)
@@ -533,8 +539,17 @@ class SessionStore:
         with self._lock:
             return self._sessions.get(session_id)
 
-    def remove_session(self, session_id: str) -> None:
+    def remove_session(
+        self, session_id: str, *, expected_session: SessionData | None = None
+    ) -> None:
         with self._lock:
+            # Scoring awaits external code. Another exporter may remove this
+            # session and a new request may reuse its ID while we are waiting.
+            if (
+                expected_session is not None
+                and self._sessions.get(session_id) is not expected_session
+            ):
+                return
             self._remove_session_locked(session_id)
 
     def _remove_session_locked(self, session_id: str) -> None:

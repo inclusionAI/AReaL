@@ -18,6 +18,7 @@ from awex.sharding.param_sharding import get_rank_info_extractor
 from awex.transfer.nccl_comm import batch_send_recv, nccl_build_send_ops
 from awex.transfer.nccl_stream_batch import NcclColocateStreamBatchTransport
 from awex.transfer.transfer_plan import TransferPlan, TransferPlanBuilder, slice_tensor
+from awex.util.cuda_ipc import cuda_ipc_allocation
 from awex.util.tensor_util import (
     cuda_ipc_serialize,
     group_tensors_by_shape_and_dtype,
@@ -115,21 +116,59 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
     def eager_publish_train_info(self, meta_server_addr: str | None) -> None:
         """Publish train world metadata before the colocated reader starts."""
         addr = meta_server_addr or os.environ.get("AWEX_META_SERVER_ADDR", "")
-        if not addr or (dist.is_initialized() and dist.get_rank() != 0):
+        if not addr:
+            return
+        from areal.models.mcore.qwen4_exp_awex_binding import build_awex_train_info
+
+        is_qwen = self._engine.hf_config.architectures == [
+            "Qwen4ExpForConditionalGeneration"
+        ]
+        rank = dist.get_rank() if dist.is_initialized() else 0
+        world = dist.get_world_size() if dist.is_initialized() else 1
+        if rank != 0 and not is_qwen:
             return
         try:
             from awex.meta.meta_server import MetaServerClient
 
             host, port = addr.rsplit(":", 1)
             client = MetaServerClient(host, int(port))
-            world = dist.get_world_size() if dist.is_initialized() else 1
-            client.put_object("awex_train_info", {"train_world_size": world})
-            logger.info(
-                "Eager-published awex_train_info (train_world_size=%d) to %s",
-                world,
-                addr,
-            )
+            if is_qwen:
+                from areal.models.mcore.qwen4_exp_awex_binding import (
+                    actor_frozen_binder,
+                )
+                from areal.models.mcore.qwen4_exp_awex_contract import (
+                    merge_frozen_proofs,
+                )
+
+                binder = actor_frozen_binder(self._engine)
+                record = binder.verify_loaded()
+                if rank == 0 and binder.contract.language_model_only:
+                    record["proof"] = dict(record["proof"])
+                    for name in binder.contract.visual_parameter_names:
+                        record["proof"][name] = binder.checkpoint.verify_source(name)
+                client.put_object(f"qwen4_frozen_actor_{rank}", record)
+                if rank == 0:
+                    records = [
+                        client.get_object(
+                            f"qwen4_frozen_actor_{i}", timeout=awex_colocate_timeout_s()
+                        )
+                        for i in range(world)
+                    ]
+                    proof = merge_frozen_proofs(binder.checkpoint, records)
+                    client.put_object("qwen4_frozen_proof", proof)
+                self._engine._qwen4_awex_frozen_proof = client.get_object(
+                    "qwen4_frozen_proof", timeout=awex_colocate_timeout_s()
+                )
+            if rank == 0:
+                client.put_object(
+                    "awex_train_info", build_awex_train_info(self._engine, world)
+                )
+                logger.info(
+                    "Published verified AWEX training metadata (world_size=%d)", world
+                )
         except Exception as exc:
+            if is_qwen:
+                raise
             logger.warning("Eager publish awex_train_info failed: %s", exc)
 
     @property
@@ -154,6 +193,24 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
             return
 
         from awex.meta.train_meta_resolver import McoreParamMetaResolver
+
+        if isinstance(infer_conf.get("hf_config"), dict):
+            from types import SimpleNamespace
+
+            infer_conf["hf_config"] = SimpleNamespace(**infer_conf["hf_config"])
+
+        if self._engine.hf_config.architectures == ["Qwen4ExpForConditionalGeneration"]:
+            from awex.models.qwen4_exp import register_qwen4_exp_awex
+
+            from areal.models.mcore.qwen4_exp_awex_binding import actor_frozen_binder
+
+            binder = actor_frozen_binder(self._engine)
+            if infer_conf.get("qwen4_exp_frozen_contract") != binder.contract.to_dict():
+                raise ValueError(
+                    "Inference did not confirm the training frozen contract"
+                )
+            self._qwen4_frozen_binder = binder
+            register_qwen4_exp_awex(mcore_binder=binder)
 
         class _EngineShim:
             def __init__(self, engine: MegatronEngine):
@@ -215,14 +272,11 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
         self._legacy_timeout_s = (
             awex_colocate_timeout_s() if timeout_s is None else timeout_s
         )
+        from areal.models.mcore.qwen4_exp_awex_binding import build_awex_train_info
+
+        train_info = build_awex_train_info(self._engine, dist.get_world_size())
         if dist.get_rank() == 0:
-            self._legacy_meta_server_client.put_object(
-                "awex_train_info", {"train_world_size": dist.get_world_size()}
-            )
-            logger.info(
-                "Registered awex_train_info (train_world_size=%d) with MetaServer",
-                dist.get_world_size(),
-            )
+            self._legacy_meta_server_client.put_object("awex_train_info", train_info)
 
         logger.info(
             "Legacy AWEX colocate initialized: meta_server=%s, "
@@ -658,6 +712,12 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
 
         if self._weight_converter is None or self._rank_info is None:
             raise RuntimeError("AWEX Megatron converter is not configured")
+        if self._engine.hf_config.architectures == ["Qwen4ExpForConditionalGeneration"]:
+            if getattr(self, "_qwen4_frozen_binder", None) is None:
+                raise RuntimeError(
+                    "Qwen4Exp weight conversion has no validated binding"
+                )
+            self._weight_converter.refresh_frozen_contract()
 
         overrides = theta_by_id if theta_by_id is not None else {}
         converted_names: set[str] = set()
@@ -750,7 +810,8 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
             version,
         )
 
-        group_tensors, metadata = group_tensors_by_shape_and_dtype(tensors)
+        with cuda_ipc_allocation():
+            group_tensors, metadata = group_tensors_by_shape_and_dtype(tensors)
         torch.cuda.synchronize()
 
         live_storages = set()

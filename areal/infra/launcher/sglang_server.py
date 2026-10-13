@@ -54,8 +54,10 @@ def launch_server_cmd(
     if custom_env is not None:
         _env.update(custom_env)
 
+    from areal.engine.sglang_model_patches import wrap_server_command
+
     return subprocess.Popen(
-        command,
+        wrap_server_command(command),
         env=_env,
         stdout=sys.stdout,
         stderr=subprocess.STDOUT,

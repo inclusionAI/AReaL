@@ -17,6 +17,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionChunk, ChatCompletionMessage
 from openai.types.chat.chat_completion import Choice
 from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice
@@ -220,6 +221,84 @@ async def test_create_preserves_reasoning_tools_and_cache(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("output_tokens", [[2], [2, 0]])
+async def test_create_eos_only_preserves_empty_completion_and_raw_cache(
+    stream, output_tokens
+):
+    tokenizer = MagicMock(eos_token_id=2, pad_token_id=0)
+    tokenizer.apply_chat_template.return_value = {"input_ids": [1]}
+    tokenizer.decode.side_effect = lambda tokens: "" if not tokens else "unexpected"
+
+    class Engine:
+        async def agenerate(self, request):
+            return ModelResponse(
+                input_tokens=request.input_ids,
+                output_tokens=output_tokens.copy(),
+                output_logprobs=[-0.1] * len(output_tokens),
+                output_versions=[0] * len(output_tokens),
+                stop_reason="stop",
+                tokenizer=request.tokenizer,
+            )
+
+    client = ArealOpenAI(engine=Engine(), tokenizer=tokenizer, api_key="test")
+    try:
+        result = await client.chat.completions.create(
+            model="test-model",
+            messages=[{"role": "user", "content": "inspect"}],
+            stream=stream,
+            max_tokens=32,
+        )
+        interaction = next(iter(client._cache.values()))
+        message = interaction.completion.choices[0].message
+        assert message.content == ""
+        assert interaction.completion.choices[0].finish_reason == "stop"
+        assert interaction.completion.usage.completion_tokens == len(output_tokens)
+        assert interaction.model_response.output_tokens == output_tokens
+        assert interaction.model_response.output_logprobs == [-0.1] * len(output_tokens)
+        assert interaction.model_response.output_versions == [0] * len(output_tokens)
+        if stream:
+            chunks = [chunk async for chunk in result]
+            assert all(not chunk.choices[0].delta.content for chunk in chunks)
+            assert chunks[-1].choices[0].finish_reason == "stop"
+        else:
+            assert result == interaction.completion
+
+        followup = await client.chat.completions.create(
+            model="test-model",
+            messages=[
+                {"role": "user", "content": "inspect"},
+                message.model_dump(exclude_none=True),
+                {"role": "user", "content": "continue"},
+            ],
+            max_tokens=32,
+        )
+        assert client.get_interaction(followup.id).parent is interaction
+    finally:
+        await client.close()
+
+
+def test_model_response_stop_without_stop_token_still_raises():
+    response = ModelResponse(
+        output_tokens=[3],
+        tokenizer=MagicMock(eos_token_id=2, pad_token_id=0),
+        stop_reason="stop",
+    )
+    with pytest.raises(ValueError, match="does not end with eos or pad"):
+        _ = response.output_tokens_without_stop
+
+
+@pytest.mark.parametrize("stop_reason", ["length", "abort"])
+def test_model_response_length_or_abort_preserves_unstripped_tokens(stop_reason):
+    response = ModelResponse(
+        output_tokens=[2, 0],
+        tokenizer=MagicMock(eos_token_id=2, pad_token_id=0),
+        stop_reason=stop_reason,
+    )
+    assert response.output_tokens_without_stop == [2, 0]
+
+
+@pytest.mark.asyncio
 async def test_areal_stream_emits_reasoning_before_content():
     client = object.__new__(AsyncCompletionsWithReward)
     response = ModelResponse(input_tokens=[1], output_tokens=[2], stop_reason="stop")
@@ -399,6 +478,51 @@ async def test_message_preprocessor_runs_once_per_request(monkeypatch, path, str
     ]
     assert response.status_code == 200
     assert "hello" in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enable_thinking", [True, False])
+async def test_sdk_template_options_reach_internal_client(monkeypatch, enable_thinking):
+    captured = []
+
+    async def create(
+        *,
+        messages,
+        model,
+        extra_body=None,
+        temperature=None,
+        top_p=None,
+        areal_cache=None,
+    ):
+        captured.append(extra_body)
+        return await _fake_create(
+            messages=messages, model=model, areal_cache=areal_cache
+        )
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = create
+    monkeypatch.setattr(srv, "_openai_client", mock_client)
+    monkeypatch.setattr(srv, "_capacity", 1)
+    options = {"enable_thinking": enable_thinking, "reasoning_effort": "medium"}
+
+    async with _client() as client:
+        start = await client.post(
+            "/rl/start_session", headers=_admin_headers(), json={"task_id": "template"}
+        )
+        sdk = AsyncOpenAI(
+            base_url="http://testserver/v1",
+            api_key=start.json()["api_key"],
+            http_client=client,
+            max_retries=0,
+        )
+        response = await sdk.chat.completions.create(
+            model="default",
+            messages=[{"role": "user", "content": "hello"}],
+            extra_body={"chat_template_kwargs": options},
+        )
+
+    assert response.choices[0].message.content == "hello"
+    assert captured == [{"chat_template_kwargs": options}]
 
 
 class TestChatCompletionsEndpoint:

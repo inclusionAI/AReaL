@@ -81,12 +81,14 @@ class GroupedRolloutWorkflow(RolloutWorkflow):
         reward_normalization: bool = False,
         drop_incomplete_group: bool = False,
         min_usable_group_size: int = 1,
+        reward_normalization_use_std: bool = True,
     ):
         validate_rollout_group_sizes(group_size, min_usable_group_size)
         self.workflow = workflow
         self.group_size = group_size
         self.min_usable_group_size = min_usable_group_size
         self.logger = logger
+        self.reward_normalization_use_std = reward_normalization_use_std
         self.reward_normalization = reward_normalization
         self.drop_incomplete_group = drop_incomplete_group
 
@@ -197,6 +199,22 @@ class GroupedRolloutWorkflow(RolloutWorkflow):
         if group_error is not None:
             raise group_error
 
+        if interaction_group and self.reward_normalization and self.group_size > 1:
+            # An unscored branch invalidates its logical rollout, not scored
+            # siblings. Keep episode metrics above independent of training
+            # eligibility, and apply the usual group-size checks below.
+            for sample_idx, result in enumerate(results):
+                if result and any(v.reward is None for v in result.values()):
+                    unscored = sum(v.reward is None for v in result.values())
+                    self.logger.warning(
+                        "reward_normalization: rejecting rollout "
+                        f"sample_idx={sample_idx} with {unscored}/{len(result)} "
+                        "unscored interactions"
+                    )
+                    results[sample_idx] = None
+            valid_results = [r for r in results if r is not None]
+            usable_slot_count = len(valid_results)
+
         if not valid_results:
             self._record_group_stats(usable_slot_count, trainable=False)
             return None
@@ -283,7 +301,9 @@ class GroupedRolloutWorkflow(RolloutWorkflow):
         from areal.experimental.openai.types import normalize_logical_rollout_rewards
 
         try:
-            if normalize_logical_rollout_rewards(results):
+            if normalize_logical_rollout_rewards(
+                results, use_std=self.reward_normalization_use_std
+            ):
                 return True
         except (ValueError, RuntimeError) as exc:
             raise WorkflowContractError(str(exc)) from exc
@@ -843,6 +863,7 @@ class RemoteInfEngine(InferenceEngine):
         reward_normalization: bool = False,
         drop_incomplete_group: bool = False,
         min_usable_group_size: int = 1,
+        reward_normalization_use_std: bool = True,
     ) -> RolloutWorkflow:
         validate_rollout_group_sizes(group_size, min_usable_group_size)
         resolved: RolloutWorkflow
@@ -864,6 +885,7 @@ class RemoteInfEngine(InferenceEngine):
                     group_size,
                     self.logger,
                     reward_normalization=reward_normalization,
+                    reward_normalization_use_std=reward_normalization_use_std,
                     drop_incomplete_group=drop_incomplete_group,
                     min_usable_group_size=min_usable_group_size,
                 )
@@ -962,6 +984,7 @@ class RemoteInfEngine(InferenceEngine):
                 group_size,
                 self.logger,
                 reward_normalization=reward_normalization,
+                reward_normalization_use_std=reward_normalization_use_std,
                 drop_incomplete_group=drop_incomplete_group,
                 min_usable_group_size=min_usable_group_size,
             )
@@ -1366,6 +1389,7 @@ class RemoteInfEngine(InferenceEngine):
         reward_normalization: bool = False,
         drop_incomplete_group: bool = False,
         min_usable_group_size: int = 1,
+        reward_normalization_use_std: bool = True,
     ) -> int:
         """Submit a request to the inference engine and return immediately.
 
@@ -1411,6 +1435,7 @@ class RemoteInfEngine(InferenceEngine):
             min_usable_group_size=min_usable_group_size,
             proxy_addr=proxy_addr,
             reward_normalization=reward_normalization,
+            reward_normalization_use_std=reward_normalization_use_std,
             drop_incomplete_group=drop_incomplete_group,
         )
         resolved_should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
@@ -1473,6 +1498,7 @@ class RemoteInfEngine(InferenceEngine):
         reward_normalization: bool = False,
         drop_incomplete_group: bool = False,
         min_usable_group_size: int = 1,
+        reward_normalization_use_std: bool = True,
     ) -> list[dict[str, Any]]:
         """Submit a batch of requests and wait for results.
 
@@ -1507,6 +1533,7 @@ class RemoteInfEngine(InferenceEngine):
             group_size,
             min_usable_group_size=min_usable_group_size,
             reward_normalization=reward_normalization,
+            reward_normalization_use_std=reward_normalization_use_std,
             drop_incomplete_group=drop_incomplete_group,
         )
 
@@ -1526,6 +1553,7 @@ class RemoteInfEngine(InferenceEngine):
         reward_normalization: bool = False,
         drop_incomplete_group: bool = False,
         min_usable_group_size: int = 1,
+        reward_normalization_use_std: bool = True,
     ) -> list[dict[str, Any]]:
         """Asynchronously submit and wait until a full batch is ready.
 
@@ -1564,6 +1592,7 @@ class RemoteInfEngine(InferenceEngine):
             group_size,
             min_usable_group_size=min_usable_group_size,
             reward_normalization=reward_normalization,
+            reward_normalization_use_std=reward_normalization_use_std,
             drop_incomplete_group=drop_incomplete_group,
         )
         resolved_should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
@@ -1588,8 +1617,34 @@ class RemoteInfEngine(InferenceEngine):
             if get_pause_requests is not None
             else [self.backend.get_pause_request()]
         )
-        for pause_req in pause_requests:
-            self._run_request_on_all_servers(pause_req)
+        pause_logger = getattr(self, "logger", logger)
+        for stage, pause_req in enumerate(pause_requests, start=1):
+            started = time.monotonic()
+            mode = (pause_req.payload or {}).get("mode", "default")
+            pause_logger.info(
+                "Inference pause stage %d/%d (%s) started",
+                stage,
+                len(pause_requests),
+                mode,
+            )
+            try:
+                self._run_request_on_all_servers(pause_req)
+            except Exception:
+                pause_logger.exception(
+                    "Inference pause stage %d/%d (%s) failed after %.1fs",
+                    stage,
+                    len(pause_requests),
+                    mode,
+                    time.monotonic() - started,
+                )
+                raise
+            pause_logger.info(
+                "Inference pause stage %d/%d (%s) completed in %.1fs",
+                stage,
+                len(pause_requests),
+                mode,
+                time.monotonic() - started,
+            )
 
         # The above http request may require some time to be scheduled and executed.
         # The following line waits until all requests are indeed dropped.

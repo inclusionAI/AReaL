@@ -11,7 +11,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from numbers import Real
 from typing import Any, Literal
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, urlsplit
 
 import httpx
 
@@ -70,6 +70,7 @@ class ArenaTaskFailedError(ArenaAPIError):
         self.status = status
         self.payload = dict(payload or {})
         self.result = result
+        self.harness_result: dict[str, Any] | None = None
         super().__init__(f"Arena task {task_id!r} failed with {status}")
 
 
@@ -80,6 +81,11 @@ def _is_retryable_status(status_code: int) -> bool:
 def _is_retryable_response(response: httpx.Response) -> bool:
     if _is_retryable_status(response.status_code):
         return True
+    if response.status_code == 302:
+        # Spanner renders an upstream 502 as a redirect to an HTML waiting page.
+        # Retry the original request within its existing budget, never the redirect.
+        location = response.headers.get("location", "")
+        return parse_qs(urlsplit(location).query).get("fromspanner") == ["apigwmoe_502"]
     if response.status_code != 403:
         return False
     return "spanner-http-ant-group-watch-all" in response.text[:1000]
@@ -298,12 +304,39 @@ class ArenaOpenAPIClient:
         "CANCELLED",
         "COLLECT_FAILED",
         "EVAL_FAILED",
+        # The result endpoint may expose a grader ERROR even for a DONE task.
+        "ERROR",
         "FAILED",
         "HARNESS_FAILED",
         "NO_OUTPUT",
         "SETUP_FAILED",
         "TIMEOUT",
     }
+
+    async def get_harness_result_async(
+        self,
+        task_id: str,
+        *,
+        client: httpx.AsyncClient,
+        timeout: float,
+    ) -> dict[str, Any]:
+        """Fetch the terminal Harness receipt for one failed task."""
+
+        encoded_task_id = quote(task_id, safe="")
+        url = f"{self.base_url}/api/artifacts/{encoded_task_id}/harness_result.json"
+        response = await self._async_request(
+            client, "GET", url, headers=self._headers, timeout=timeout
+        )
+        response.raise_for_status()
+        if len(response.content) > 65536:
+            raise ArenaAPIError("Harness result artifact exceeds 64 KiB")
+        try:
+            result = response.json()
+        except ValueError as exc:
+            raise ArenaAPIError("Harness result artifact is not JSON") from exc
+        if not isinstance(result, dict):
+            raise ArenaAPIError("Harness result artifact must be a JSON object")
+        return result
 
     def __init__(
         self,
@@ -319,6 +352,29 @@ class ArenaOpenAPIClient:
             api_token=api_token,
         )
         self.llm_api_key = llm_api_key or os.getenv("ARENA_LLM_API_KEY", "")
+        self.llm_base_url = (
+            os.getenv("ARENA_LLM_BASE_URL", "") or f"{self.base_url}/api"
+        ).rstrip("/")
+        try:
+            target = urlsplit(self.llm_base_url)
+            valid_target = (
+                target.scheme in {"http", "https"}
+                and bool(target.hostname)
+                and target.username is None
+                and target.password is None
+                and not target.query
+                and not target.fragment
+                and not any(char.isspace() for char in self.llm_base_url)
+            )
+            # Accessing port validates its syntax and range.
+            target.port
+        except ValueError:
+            valid_target = False
+        if not valid_target:
+            raise ValueError(
+                "Arena LLM base URL must be an absolute HTTP(S) URL without "
+                "credentials, query or fragment; check ARENA_LLM_BASE_URL"
+            )
         self.timeout = timeout
         self.poll_interval = poll_interval
         self.request_retries = request_retries
@@ -658,7 +714,7 @@ class ArenaOpenAPIClient:
                 "LLM registration response returned an unexpected model_name: "
                 f"{registered_model_id!r}"
             )
-        return f"{self.base_url}/api", registered_model_id
+        return self.llm_base_url, registered_model_id
 
     async def register_llm_proxy_async(
         self,
@@ -695,6 +751,37 @@ class ArenaOpenAPIClient:
         )
         registration = _response_json(response)
         return self._registered_llm_target(registration, model_name)
+
+    async def renew_llm_proxy_async(
+        self,
+        model_name: str,
+        *,
+        client: httpx.AsyncClient,
+        timeout: float = 180.0,
+    ) -> bool:
+        """Refresh a live route's idle lease without changing its configuration.
+
+        Arena's empty PATCH preserves the route and updates updated_at, which
+        excludes it from dynamic-model GC. GET alone does not renew this lease.
+        A missing route returns False so its owner can restore the same alias.
+        """
+        if not model_name.startswith("stream-areal-"):
+            raise ValueError("Arena model_name must start with 'stream-areal-'")
+        response = await self._async_request(
+            client,
+            "PATCH",
+            f"{self.base_url}/openapi/v1/llm/models/{quote(model_name, safe='')}",
+            headers=self._headers,
+            json={},
+            timeout=timeout,
+        )
+        if response.status_code == 404:
+            return False
+        payload = _response_json(response)
+        model = payload.get("data", payload) if isinstance(payload, Mapping) else None
+        if not isinstance(model, Mapping) or model.get("model_name") != model_name:
+            raise ArenaAPIError("LLM lease renewal returned an unexpected model_name")
+        return True
 
     async def llm_proxy_exists_async(
         self,
@@ -840,6 +927,8 @@ class ArenaOpenAPIClient:
         session_id: str = "",
         harness: str = "",
         task_envs: Mapping[str, str] | None = None,
+        experiment: str = "",
+        metadata: Mapping[str, str] | None = None,
         client: httpx.AsyncClient | None = None,
         on_launch_success: Callable[[str | None], None] | None = None,
     ) -> float:
@@ -859,6 +948,8 @@ class ArenaOpenAPIClient:
             session_id=session_id,
             harness=harness,
             task_envs=task_envs,
+            experiment=experiment,
+            metadata=metadata,
             client=client,
             on_launch_success=on_launch_success,
         )
@@ -877,12 +968,20 @@ class ArenaOpenAPIClient:
         session_id: str = "",
         harness: str = "",
         task_envs: Mapping[str, str] | None = None,
+        experiment: str = "",
+        metadata: Mapping[str, str] | None = None,
         client: httpx.AsyncClient | None = None,
         on_launch_success: Callable[[str | None], None] | None = None,
     ) -> ArenaTaskResult:
-        """Launch one Arena task and return its structured terminal result."""
+        """Launch a task with optional experiment and string-valued metadata."""
         encoded_stream_id = quote(stream_id, safe="")
         url = f"{self.base_url}/openapi/v1/streams/{encoded_stream_id}/launch_one_task"
+        launch_metadata = dict(metadata or {})
+        if not all(
+            isinstance(key, str) and isinstance(value, str)
+            for key, value in launch_metadata.items()
+        ):
+            raise ValueError("Arena task metadata keys and values must be strings")
         envs = dict(task_envs or {})
         if not all(
             isinstance(key, str) and key and isinstance(value, str)
@@ -907,6 +1006,10 @@ class ArenaOpenAPIClient:
             request["session_id"] = session_id
         if harness:
             request["harness"] = harness
+        if experiment:
+            request["experiment"] = experiment
+        if launch_metadata:
+            request["metadata"] = launch_metadata
         if client is not None:
             return await self._launch_and_wait(
                 client,

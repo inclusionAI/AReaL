@@ -359,6 +359,8 @@ class GatewayTrainController:
                 "areal.v2.training_service.data_proxy",
                 "--worker-addrs",
                 ",".join(self._worker_addrs),
+                "--request-timeout",
+                str(cfg.request_timeout),
                 "--admin-api-key",
                 cfg.admin_api_key,
                 "--log-level",
@@ -1175,6 +1177,7 @@ class GatewayTrainController:
         dynamic_bs: bool = False,
         reward_normalization: bool = False,
         drop_incomplete_group: bool = False,
+        min_usable_group_size: int = 1,
     ) -> list[dict[str, Any]]:
         if self.rollout is None:
             raise RuntimeError("connect_engine() must be called before prepare_batch()")
@@ -1187,6 +1190,7 @@ class GatewayTrainController:
             dynamic_bs=dynamic_bs,
             reward_normalization=reward_normalization,
             drop_incomplete_group=drop_incomplete_group,
+            min_usable_group_size=min_usable_group_size,
         )
 
     def rollout_batch(
@@ -1198,6 +1202,7 @@ class GatewayTrainController:
         group_size: int = 1,
         reward_normalization: bool = False,
         drop_incomplete_group: bool = False,
+        min_usable_group_size: int = 1,
     ) -> list[dict[str, Any]]:
         if self.rollout is None:
             raise RuntimeError("connect_engine() must be called before rollout_batch()")
@@ -1209,6 +1214,7 @@ class GatewayTrainController:
             group_size=group_size,
             reward_normalization=reward_normalization,
             drop_incomplete_group=drop_incomplete_group,
+            min_usable_group_size=min_usable_group_size,
         )
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):

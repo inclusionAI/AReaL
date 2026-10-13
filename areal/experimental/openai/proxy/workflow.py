@@ -5,17 +5,20 @@ from __future__ import annotations
 import asyncio
 import atexit
 import inspect
+import json
 import os
 import threading
 from concurrent.futures import ProcessPoolExecutor
 from typing import TYPE_CHECKING, Any, Literal
 
 import aiohttp
+import torch
 
 from areal.api import RolloutWorkflow
 from areal.infra import workflow_context
 from areal.utils import logging, stats_tracker
 from areal.utils.perf_tracer import session_context, trace_session
+from areal.utils.stats_tracker import DistributedStatsTracker, ReduceType
 
 from .client_session import OpenAIProxyClient, post_json
 from .server import (
@@ -35,6 +38,18 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("OpenAIProxyWorkflow")
 
+
+HARNESS_OUTCOME_METRIC_CODES = frozenset(
+    {
+        "AGENT_MAX_TURNS_EXCEEDED",
+        "AGENT_RUN_TIMEOUT",
+        "AUTONOMOUS_INCOMPLETE_NO_SHIP",
+        "GAMEAGENT_RUN_FAILED",
+        "LLM_CONTEXT_WINDOW_EXCEEDED",
+        "LLM_RESPONSE_FAILED",
+        "LLM_RESPONSE_TIMEOUT",
+    }
+)
 
 AgentFailureDisposition = Literal[
     "model_failure_zero",
@@ -212,14 +227,52 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
     def record_episode_metrics(
         self,
         data: dict[str, Any],
-        reward: float,
+        reward: float | None,
     ) -> None:
         """Delegate optional episode metrics after interactions are exported."""
+        if reward is None:
+            return
         recorder = getattr(self.agent, "record_episode_metrics", None)
         if callable(recorder):
             recorder(data, reward)
 
-    async def _call_agent_hook(self, name: str, *args: Any, **kwargs: Any) -> None:
+    async def _get_agent_episode_metadata(self) -> dict[str, Any]:
+        """Collect bounded audit metadata from an optional agent hook."""
+
+        getter = getattr(self.agent, "get_episode_metadata", None)
+        if not callable(getter):
+            return {}
+        try:
+            metadata = getter()
+            if inspect.isawaitable(metadata):
+                metadata = await metadata
+            if not isinstance(metadata, dict):
+                raise TypeError("get_episode_metadata must return a dict")
+            if not all(isinstance(key, str) for key in metadata):
+                raise TypeError("get_episode_metadata keys must be strings")
+            json.dumps(metadata, allow_nan=False)
+            return metadata
+        except Exception:
+            logger.warning(
+                "Failed to collect optional agent episode metadata.",
+                exc_info=True,
+            )
+            return {}
+
+    @staticmethod
+    def _stamp_interaction_metadata(
+        interactions: dict[str, InteractionWithTokenLogpReward],
+        metadata: dict[str, Any],
+    ) -> None:
+        """Attach episode identifiers to every exported trajectory branch."""
+
+        for interaction in interactions.values():
+            interaction.metadata = {
+                **(interaction.metadata or {}),
+                **metadata,
+            }
+
+    async def _call_agent_hook(self, name: str, *args: Any, **kwargs: Any) -> Any:
         """Call an optional agent lifecycle hook without blocking the event loop."""
 
         hook = getattr(self.agent, name, None)
@@ -227,7 +280,8 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
             return
         result = hook(*args, **kwargs)
         if inspect.isawaitable(result):
-            await result
+            return await result
+        return result
 
     def _classify_agent_failure(
         self,
@@ -328,6 +382,88 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
             last = interactions[next(reversed(interactions))]
             last.rollout_reward = last.reward
 
+    @staticmethod
+    def _record_turn_distribution(
+        tracker: DistributedStatsTracker,
+        metric: str,
+        num_turns: int,
+        *,
+        include: bool = True,
+    ) -> None:
+        """Record average, minimum, and maximum turns for one sample."""
+        values = torch.tensor([float(num_turns)], dtype=torch.float32)
+        denominator = f"{metric}_count"
+        tracker.denominator(
+            **{
+                denominator: torch.full_like(
+                    values,
+                    include,
+                    dtype=torch.bool,
+                )
+            }
+        )
+        tracker.stat(
+            denominator,
+            reduce_type=ReduceType.AVG_MIN_MAX,
+            **{metric: values},
+        )
+
+    @staticmethod
+    def _record_interaction_stats(
+        interactions: dict[str, InteractionWithTokenLogpReward],
+        *,
+        is_harness_error: bool = False,
+        harness_outcome_code: str | None = None,
+    ) -> None:
+        """Record terminal reward and turns in the last exported interaction.
+
+        Concat exports contain cumulative turns; individual exports describe
+        only their final sequence. Episodes without usable exports are absent.
+        """
+        if not interactions:
+            return
+
+        interaction = interactions[next(reversed(interactions))]
+        tracker = stats_tracker.get(workflow_context.stat_scope())
+        if interaction.reward is not None:
+            tracker.scalar(reward=interaction.reward)
+        if interaction.has_tensor_data:
+            try:
+                turn_ids = interaction.to_tensor_dict().get("turn_ids")
+            except Exception:
+                logger.warning("Could not read turn data for metrics.", exc_info=True)
+                return
+            if turn_ids is None:
+                return
+            valid_turn_ids = turn_ids[turn_ids >= 0]
+            num_turns = int(torch.unique(valid_turn_ids).numel())
+            OpenAIProxyWorkflow._record_turn_distribution(
+                tracker, "num_turns", num_turns
+            )
+            OpenAIProxyWorkflow._record_turn_distribution(
+                tracker,
+                "num_turns_no_harness_err",
+                num_turns,
+                include=not is_harness_error,
+            )
+            if is_harness_error:
+                outcome_code = (
+                    harness_outcome_code
+                    if isinstance(harness_outcome_code, str)
+                    and harness_outcome_code in HARNESS_OUTCOME_METRIC_CODES
+                    else "OTHER"
+                )
+                OpenAIProxyWorkflow._record_turn_distribution(
+                    tracker,
+                    "num_turns_harness_err",
+                    num_turns,
+                )
+                OpenAIProxyWorkflow._record_turn_distribution(
+                    tracker,
+                    f"num_turns_harness_err/{outcome_code}",
+                    num_turns,
+                )
+
     @session_context()
     async def arun_episode(
         self, engine: TRolloutEngine, data: dict[str, Any]
@@ -386,11 +522,15 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
                 return None
 
             self._set_individual_rollout_reward(interactions)
-
-            # Record stats
-            last_id = next(reversed(interactions))
-            last_reward = interactions[last_id].reward
-            stats_tracker.get(workflow_context.stat_scope()).scalar(reward=last_reward)
+            episode_metadata = await self._get_agent_episode_metadata()
+            episode_metadata["session_id"] = session_info.session_id
+            self._stamp_interaction_metadata(interactions, episode_metadata)
+            self._record_interaction_stats(
+                interactions,
+                is_harness_error=episode_metadata.get("arena_status")
+                == "HARNESS_FAILED",
+                harness_outcome_code=episode_metadata.get("harness_outcome_code"),
+            )
             return interactions
 
         # ---- Normal mode (inline / subproc) ----
@@ -427,6 +567,14 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
                 else:
                     raise ValueError(f"Invalid reward type: {type(rewards)}")
 
+        if (
+            agent_error is None
+            and proxy_client.context_overflow
+            and proxy_client.system_error
+        ):
+            agent_error = RuntimeError(
+                "Proxy session had a system failure as well as context overflow"
+            )
         failure_disposition: AgentFailureDisposition | None = None
         if agent_error is not None:
             failure_disposition = self._classify_agent_failure(
@@ -441,6 +589,26 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
                 agent_error,
                 failure_disposition,
             )
+
+        reject_failed_sample = getattr(self.agent, "should_reject_failed_sample", None)
+        if (
+            agent_error is not None
+            and not proxy_client.system_error
+            and callable(reject_failed_sample)
+            and reject_failed_sample(agent_error, failure_disposition)
+        ):
+            logger.warning(
+                "Agent task failed with disposition %s (%s: %s). "
+                "Rejecting this sample from its rollout group.",
+                failure_disposition,
+                type(agent_error).__name__,
+                agent_error,
+            )
+            stats_tracker.get(workflow_context.stat_scope()).scalar(
+                context_overflow=float(proxy_client.context_overflow),
+                proxy_system_error=float(proxy_client.system_error),
+            )
+            return None
 
         if agent_error is not None and failure_disposition != "model_failure_zero":
             logger.warning(
@@ -483,12 +651,38 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
                 proxy_system_error=float(proxy_client.system_error),
             )
 
+        # Request episode-return assignment while the proxy still owns the full
+        # parent graph. This is an explicit agent opt-in, never a scalar default.
+        export_kwargs = {}
+        if proxy_client.context_overflow or failure_disposition == "model_failure_zero":
+            episode_reward = await self._call_agent_hook(
+                "get_failure_reward_for_export",
+                data,
+                export_style=self.export_style,
+            )
+            if episode_reward is not None:
+                export_kwargs["episode_reward"] = episode_reward
+        elif (
+            agent_error is None
+            and not proxy_client.context_overflow
+            and isinstance(rewards, float)
+        ):
+            episode_reward = await self._call_agent_hook(
+                "get_episode_reward_for_export",
+                data,
+                rewards,
+                export_style=self.export_style,
+            )
+            if episode_reward is not None:
+                export_kwargs["episode_reward"] = episode_reward
+
         # Apply turn-level discount and export interactions
         interactions = await proxy_client.export_interactions(
             discount=self.discount,
             style=self.export_style,
             drop_retry_orphans=self.drop_retry_orphans,
             is_eval=workflow_context.get().is_eval,
+            **export_kwargs,
         )
 
         if not interactions:
@@ -504,6 +698,9 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
             return None
 
         self._set_individual_rollout_reward(interactions)
+        episode_metadata = await self._get_agent_episode_metadata()
+        episode_metadata["session_id"] = proxy_client.session_id
+        self._stamp_interaction_metadata(interactions, episode_metadata)
 
         # Record stats
         last_id = list(interactions.keys())[-1]
@@ -514,8 +711,12 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
                 data,
                 last_reward,
             )
-            tracker = stats_tracker.get(workflow_context.stat_scope())
-            tracker.scalar(reward=last_reward)
+            self._record_interaction_stats(
+                interactions,
+                is_harness_error=episode_metadata.get("arena_status")
+                == "HARNESS_FAILED",
+                harness_outcome_code=episode_metadata.get("harness_outcome_code"),
+            )
             self.record_episode_metrics(data, last_reward)
 
         return interactions

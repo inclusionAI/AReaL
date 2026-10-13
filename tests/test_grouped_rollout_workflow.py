@@ -93,6 +93,27 @@ async def test_grouped_rollout_workflow_normalizes_rewards_and_updates_cache():
 
 
 @pytest.mark.asyncio
+async def test_grouped_rollout_mean_only_normalization_preserves_scale_and_cache():
+    first = _interaction(0.0)
+    second = _interaction(0.4)
+    workflow = GroupedRolloutWorkflow(
+        _ListWorkflow([{"a": first}, {"b": second}]),
+        group_size=2,
+        logger=_Logger(),
+        reward_normalization=True,
+        reward_normalization_use_std=False,
+    )
+    await workflow.arun_episode(engine=None, data={})
+    assert first.reward == pytest.approx(-0.2)
+    assert second.reward == pytest.approx(0.2)
+    assert first.original_reward == 0.0
+    assert second.original_reward == 0.4
+    assert first._cache["rewards"].item() == pytest.approx(-0.2)
+    assert second._cache["rewards"].item() == pytest.approx(0.2)
+    assert second.rollout_reward == pytest.approx(0.2)
+
+
+@pytest.mark.asyncio
 async def test_grouped_rollout_workflow_drops_incomplete_group():
     logger = _Logger()
     workflow = GroupedRolloutWorkflow(
@@ -163,6 +184,7 @@ async def test_grouped_rollout_reward_normalization_rejects_missing_reward():
     workflow = GroupedRolloutWorkflow(
         _ListWorkflow([{"a": _interaction(1.0)}, {"b": missing_reward}]),
         group_size=2,
+        min_usable_group_size=2,
         logger=logger,
         reward_normalization=True,
     )
@@ -170,7 +192,63 @@ async def test_grouped_rollout_reward_normalization_rejects_missing_reward():
     result = await workflow.arun_episode(engine=None, data={})
 
     assert result is None
-    assert any("reward_normalization: dropping group" in m for m in logger.messages)
+    assert any("reward_normalization: rejecting rollout" in m for m in logger.messages)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("unscored_slots", "drop_incomplete", "accepted"),
+    [(1, False, True), (4, False, True), (5, False, False), (1, True, False)],
+)
+async def test_grouped_rollout_unscored_branches_preserve_healthy_slots_and_metrics(
+    monkeypatch, unscored_slots, drop_incomplete, accepted
+):
+    # Each episode has a valid terminal Arena score; some also export an
+    # unscored branch, as can happen after context compaction.
+    episodes = [{f"terminal-{i}": _interaction(float(i))} for i in range(12)]
+    for i in range(12 - unscored_slots, 12):
+        orphan = _interaction(99.0)
+        orphan.reward = None
+        episodes[i] = {f"unscored-{i}": orphan, **episodes[i]}
+    inner = _ListWorkflow(episodes)
+    recorded_metrics = []
+    inner.record_group_metrics = lambda data, rewards, size: recorded_metrics.append(
+        (rewards, size)
+    )
+    workflow = GroupedRolloutWorkflow(
+        inner,
+        group_size=12,
+        min_usable_group_size=8,
+        drop_incomplete_group=drop_incomplete,
+        reward_normalization=True,
+        reward_normalization_use_std=False,
+        logger=_Logger(),
+    )
+    training_stats = []
+    monkeypatch.setattr(
+        workflow,
+        "_record_group_stats",
+        lambda usable, *, trainable: training_stats.append((usable, trainable)),
+    )
+
+    result = await workflow.arun_episode(engine=None, data={})
+
+    usable = 12 - unscored_slots
+    assert recorded_metrics == [([float(i) for i in range(12)], 12)]
+    assert training_stats == [(usable, accepted)]
+    if accepted:
+        assert list(result) == [f"terminal-{i}" for i in range(usable)]
+        assert [v.rollout_index for v in result.values()] == list(range(usable))
+        for i, interaction in enumerate(result.values()):
+            assert interaction.original_reward == float(i)
+            assert interaction.reward == pytest.approx(i - (usable - 1) / 2)
+            assert interaction._cache["rewards"].item() == interaction.reward
+    else:
+        assert result is None
+    # Rejected episodes are not partially trained or assigned invented scores.
+    for i in range(usable, 12):
+        assert episodes[i][f"unscored-{i}"].reward is None
+        assert episodes[i][f"terminal-{i}"].reward == float(i)
 
 
 def test_dist_rollout_coordinator_forwards_reward_group_flags(monkeypatch):
@@ -188,6 +266,7 @@ def test_dist_rollout_coordinator_forwards_reward_group_flags(monkeypatch):
         dataloader=object(),
         workflow=object(),
         reward_normalization=True,
+        reward_normalization_use_std=False,
         drop_incomplete_group=True,
     )
     coordinator.rollout_batch(
@@ -195,9 +274,12 @@ def test_dist_rollout_coordinator_forwards_reward_group_flags(monkeypatch):
         workflow=object(),
         min_usable_group_size=2,
         reward_normalization=True,
+        reward_normalization_use_std=False,
         drop_incomplete_group=True,
     )
 
+    assert rollout_engine.prepare_kwargs["reward_normalization_use_std"] is False
+    assert rollout_engine.rollout_kwargs["reward_normalization_use_std"] is False
     assert rollout_engine.prepare_kwargs["reward_normalization"] is True
     assert rollout_engine.prepare_kwargs["drop_incomplete_group"] is True
     assert rollout_engine.rollout_kwargs["reward_normalization"] is True

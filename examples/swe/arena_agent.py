@@ -11,11 +11,12 @@ import re
 import socket
 import stat
 import uuid
+from contextlib import suppress
 from contextvars import ContextVar
 from dataclasses import dataclass
 from numbers import Real
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 import httpx
@@ -30,6 +31,7 @@ from examples.swe.arena_client import (
 from examples.swe.arena_config import load_arena_stream_configs
 from examples.swe.arena_types import ArenaStreamConfig
 
+from areal.experimental.openai.proxy.workflow import HARNESS_OUTCOME_METRIC_CODES
 from areal.infra import workflow_context
 from areal.utils import logging, stats_tracker
 from areal.utils.dynamic_import import import_from_string
@@ -38,18 +40,45 @@ logger = logging.getLogger("ArenaStreamAgent")
 
 _ARENA_SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$")
 _GAMEAGENT_OUTCOME_CODE_PATTERN = re.compile(
-    r"(?:^|\s)GAMEAGENT_OUTCOME_CODE=([A-Z][A-Z0-9_]{0,127})(?:\s|$)"
+    r"(?:^|\s)GAMEAGENT_OUTCOME_CODE=([A-Z][A-Z0-9_]{0,127})(?=\s|$)"
 )
 _GAMEAGENT_OUTCOME_CODE_VALUE_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
-_GAMEAGENT_MODEL_FAILURE_CODES = frozenset(
-    {
-        "AGENT_MAX_TURNS_EXCEEDED",
-        "AGENT_RUN_TIMEOUT",
-        "AUTONOMOUS_INCOMPLETE_NO_SHIP",
-        "LLM_RESPONSE_FAILED",
-        "LLM_RESPONSE_TIMEOUT",
-    }
+_GAMEAGENT_MODEL_FAILURE_CODES = {
+    "AGENT_MAX_TURNS_EXCEEDED",
+    "AUTONOMOUS_INCOMPLETE_NO_SHIP",
+}
+_CORE_MODEL_ZERO_FAILURE_MESSAGES = {
+    ("LLM_RESPONSE_FAILED", "empty_completion"): (
+        "model stopped without visible output or tool calls"
+    ),
+    ("LLM_OUTPUT_TOKEN_LIMIT_EXCEEDED", "provider_length_stop"): (
+        "model stopped with reason: length"
+    ),
+}
+_CLAUDE_AGENT_ERROR_MARKER = "harness: agent phase error: claude reported error:"
+_CLAUDE_LIFECYCLE_RECORD_PATTERN = re.compile(
+    r"\n(?:\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)? )?"
+    r"harness: (running collect hook(?=\r?\n|$)|claude reported error:)"
 )
+_CLAUDE_MODEL_ERROR_PATTERN = re.compile(
+    r"prompt (?:is )?too long|context (?:window|length) (?:exceeded|exhausted)"
+    r"|exceeds? (?:the )?(?:maximum )?context (?:window|length)"
+    r"|maximum context length|(?:max(?:imum)? turns? (?:exceeded|reached))"
+    r"|reached (?:the )?max(?:imum)? (?:number of )?turns?",
+    re.IGNORECASE,
+)
+_HARNESS_SYSTEM_ERROR_PATTERN = re.compile(
+    r"authentication|unauthorized|invalid api key|permission denied|rate.?limit"
+    r"|connection (?:reset|refused|error)|connectionerror|connecttimeout"
+    r"|readtimeout|timed out|timeout|service unavailable|internal server error"
+    r"|bad gateway|out of memory|no space left|traceback"
+    r"|LLM_RESPONSE_FAILED|SYSTEM_FAILURE|EXPORT_FAILED|SETUP_FAILED|EVAL_FAILED"
+    r"|(?:export|collect|setup)[^\n]*(?:failed|error)"
+    r"|(?:http(?: error)?|status(?: code)?|api error)\s*[:=]?\s*"
+    r"(?:401|403|408|429|500|502|503|504)\b",
+    re.IGNORECASE,
+)
+_GAMEAGENT_OUTCOME_METRIC_CODES = tuple(sorted(HARNESS_OUTCOME_METRIC_CODES))
 _WORKER_GATEWAY_REGISTRY_ATTR = "_arena_session_gateway_registry_v1"
 _WORKER_GATEWAY_CLEANUP_KEY = "arena-session-gateway-registrations"
 
@@ -59,7 +88,12 @@ def _record_arena_metrics(**metrics: float) -> None:
 
 
 def _record_arena_domain_reward(reward: float, arena_task_type: str) -> None:
-    _record_arena_metrics(**{f"{arena_task_type}/reward": float(reward)})
+    _record_arena_metrics(
+        **{
+            f"{arena_task_type}/reward": float(reward),
+            f"domain/{arena_task_type}/reward": float(reward),
+        }
+    )
 
 
 @dataclass
@@ -453,10 +487,10 @@ def _arena_task_type(data: dict[str, Any]) -> str:
 class ArenaStreamAgentWorkflow:
     """Launch an Arena online task and use its returned reward for RL."""
 
-    _MODEL_FAILURE_STATUSES_WITH_INTERACTIONS = {"NO_OUTPUT", "TIMEOUT"}
     _SYSTEM_FAILURE_STATUSES = ArenaOpenAPIClient.FAILED_TASK_STATUSES - {
         "HARNESS_FAILED",
-        *_MODEL_FAILURE_STATUSES_WITH_INTERACTIONS,
+        "NO_OUTPUT",
+        "TIMEOUT",
     }
 
     def __init__(
@@ -464,9 +498,13 @@ class ArenaStreamAgentWorkflow:
         econfig: dict[str, Any] | None = None,
         gen_args: dict[str, Any] | None = None,
         timeout: float = 3600.0,
+        reject_terminal_task_failures: bool = False,
+        experiment_name: str = "",
     ) -> None:
         self.econfig = econfig or {}
         self.gen_args = gen_args or {}
+        self.experiment_name = experiment_name
+        self.reject_terminal_task_failures = reject_terminal_task_failures
         self.timeout = float(self.econfig.get("timeout", timeout))
         self.registration_timeout = float(
             self.econfig.get("arena_registration_timeout", 180.0)
@@ -509,6 +547,9 @@ class ArenaStreamAgentWorkflow:
         self._task_result_dumped: ContextVar[bool] = ContextVar(
             "arena_task_result_dumped", default=False
         )
+        self._proxy_session_id: ContextVar[str] = ContextVar(
+            "arena_proxy_session_id", default=""
+        )
         self.result_dump_dir = str(
             self.econfig.get("arena_result_dump_dir", "") or ""
         ).strip()
@@ -548,6 +589,14 @@ class ArenaStreamAgentWorkflow:
             reward is not None and self._is_solved_reward(reward, stream_config)
             for reward in rewards
         )
+        group_quality = {
+            "all_correct": float(pass_count == group_size),
+            "all_wrong": float(pass_count == 0),
+            **{
+                f"group_pass_count_{count}_ratio": float(count == pass_count)
+                for count in range(group_size + 1)
+            },
+        }
         group_pass_distribution = {
             f"group_pass_{count}": float(count == pass_count)
             for count in range(group_size + 1)
@@ -558,50 +607,512 @@ class ArenaStreamAgentWorkflow:
                 f"{arena_task_type}/pass@k": float(pass_count > 0),
                 f"stream/{stream_config.name}/pass@k": float(pass_count > 0),
                 **group_pass_distribution,
+                **group_quality,
+                **{
+                    f"{prefix}/{name}": value
+                    for prefix in (
+                        f"domain/{arena_task_type}",
+                        f"stream/{stream_config.name}",
+                    )
+                    for name, value in group_quality.items()
+                },
+                f"domain/{arena_task_type}/pass@k": float(pass_count > 0),
             }
         )
 
     @staticmethod
     def _gameagent_outcome_code(raw: Any) -> str | None:
-        """Read an explicit GameAgent outcome, preferring structured fields."""
+        """Read one consistent outcome; malformed fields never fall back to logs."""
+        if not isinstance(raw, dict):
+            return None
+        codes = []
+        if "outcome" in raw:
+            outcome = raw["outcome"]
+            if not isinstance(outcome, dict):
+                return None
+            codes.append(outcome.get("code"))
+        if "outcome_code" in raw:
+            codes.append(raw["outcome_code"])
+        detail = raw.get("error")
+        if isinstance(detail, str) and "GAMEAGENT_OUTCOME_CODE=" in detail:
+            markers = _GAMEAGENT_OUTCOME_CODE_PATTERN.findall(detail)
+            if len(markers) != detail.count("GAMEAGENT_OUTCOME_CODE="):
+                return None
+            codes.extend(markers)
+        if not codes or any(
+            not isinstance(code, str)
+            or not _GAMEAGENT_OUTCOME_CODE_VALUE_PATTERN.fullmatch(code)
+            for code in codes
+        ):
+            return None
+        return codes[0] if len(set(codes)) == 1 else None
+
+    @classmethod
+    def _core_model_zero_failure_message(cls, raw: Any) -> str | None:
+        """Identify a model-origin terminal failure in Arena's runner envelope."""
         if not isinstance(raw, dict):
             return None
         outcome = raw.get("outcome")
-        if isinstance(outcome, dict):
-            code = outcome.get("code")
-            if isinstance(
-                code, str
-            ) and _GAMEAGENT_OUTCOME_CODE_VALUE_PATTERN.fullmatch(code):
-                return code
-        code = raw.get("outcome_code")
-        if isinstance(code, str) and _GAMEAGENT_OUTCOME_CODE_VALUE_PATTERN.fullmatch(
-            code
-        ):
-            return code
-        detail = raw.get("error")
-        if not isinstance(detail, str):
+        harness = raw.get("harness")
+        if not isinstance(outcome, dict) or not isinstance(harness, dict):
             return None
-        marker = _GAMEAGENT_OUTCOME_CODE_PATTERN.search(detail)
-        return marker.group(1) if marker is not None else None
+        if (
+            outcome.get("class") != "agent"
+            or outcome.get("source") != "core_model"
+            or not isinstance(outcome.get("details"), dict)
+            or set(outcome["details"]) != {"reason"}
+            or not isinstance(outcome["details"]["reason"], str)
+            or cls._gameagent_outcome_code(raw) != outcome.get("code")
+            or harness.get("phase") != "agent"
+            or harness.get("result_status") != "ERROR"
+            or type(harness.get("exit_code")) is not int
+            or harness["exit_code"] != 1
+            or raw.get("failure") is not None
+        ):
+            return None
+        code = outcome["code"]
+        if harness.get("summary") != (
+            f"GAMEAGENT_OUTCOME_CODE={code} GAMEAGENT_OUTCOME_CLASS=agent"
+        ):
+            return None
+        return _CORE_MODEL_ZERO_FAILURE_MESSAGES.get(
+            (code, outcome["details"]["reason"])
+        )
 
     @classmethod
-    def _is_model_attributed_harness_failure(cls, error: ArenaTaskFailedError) -> bool:
-        """Recognize explicit, allowlisted Harness model-failure outcomes."""
-
-        result = error.result
-        raw = result.raw if result is not None else None
-        if cls._gameagent_outcome_code(raw) in _GAMEAGENT_MODEL_FAILURE_CODES:
-            return True
+    def _core_context_zero_failure_message(cls, raw: Any) -> str | None:
+        """Validate an agent context guard before treating it as a zero reward."""
         if not isinstance(raw, dict):
+            return None
+        outcome = raw.get("outcome")
+        harness = raw.get("harness")
+        if not isinstance(outcome, dict) or not isinstance(harness, dict):
+            return None
+        details = outcome.get("details")
+        if (
+            outcome.get("code") != "LLM_CONTEXT_WINDOW_EXCEEDED"
+            or outcome.get("class") != "agent"
+            or outcome.get("source") != "core_context_budget"
+            or not isinstance(details, dict)
+            or set(details)
+            != {
+                "byteLimit",
+                "byteLimitExceeded",
+                "bytes",
+                "compactionEnabled",
+                "estimatedTokens",
+                "tokenLimit",
+                "tokenLimitExceeded",
+            }
+            or cls._gameagent_outcome_code(raw) != outcome["code"]
+            or harness.get("phase") != "agent"
+            or harness.get("result_status") != "ERROR"
+            or type(harness.get("exit_code")) is not int
+            or harness["exit_code"] != 1
+            or raw.get("failure") is not None
+            or harness.get("summary")
+            != "GAMEAGENT_OUTCOME_CODE=LLM_CONTEXT_WINDOW_EXCEEDED "
+            "GAMEAGENT_OUTCOME_CLASS=agent"
+        ):
+            return None
+        for key in ("byteLimit", "bytes", "estimatedTokens", "tokenLimit"):
+            if type(details[key]) is not int or details[key] <= 0:
+                return None
+        for key in (
+            "byteLimitExceeded",
+            "compactionEnabled",
+            "tokenLimitExceeded",
+        ):
+            if type(details[key]) is not bool:
+                return None
+        byte_exceeded = details["bytes"] > details["byteLimit"]
+        token_exceeded = details["estimatedTokens"] >= details["tokenLimit"]
+        if (
+            details["compactionEnabled"]
+            or details["byteLimitExceeded"] != byte_exceeded
+            or details["tokenLimitExceeded"] != token_exceeded
+            or not (byte_exceeded or token_exceeded)
+        ):
+            return None
+        return (
+            "context window limit exceeded: compaction is disabled "
+            f"({details['bytes']} bytes / {details['estimatedTokens']} estimated tokens)"
+        )
+
+    @classmethod
+    def _is_core_agent_zero_failure(cls, raw: Any, receipt: Any) -> bool:
+        """Require a matching native receipt for model or context exhaustion."""
+        message = cls._core_model_zero_failure_message(raw)
+        if message is None:
+            message = cls._core_context_zero_failure_message(raw)
+        if message is None or not isinstance(receipt, dict):
             return False
+        if (
+            receipt.get("implementation") != "rust-core-runtime"
+            or receipt.get("status") != "ERROR"
+            or type(receipt.get("exit_code")) is not int
+            or receipt["exit_code"] != 1
+            or receipt.get("turn_statuses") != ["failed"]
+            or receipt.get("delivery") is not None
+            or receipt.get("summary") != raw["harness"]["summary"]
+        ):
+            return False
+        errors = receipt.get("error")
+        if (
+            not isinstance(errors, list)
+            or len(errors) != 1
+            or not isinstance(errors[0], dict)
+            or errors[0].get("message") != message
+        ):
+            return False
+        expected = raw["outcome"]
+        for outcome in (
+            errors[0].get("outcome"),
+            receipt.get("raw", {}).get("outcome")
+            if isinstance(receipt.get("raw"), dict)
+            else None,
+        ):
+            if not isinstance(outcome, dict) or any(
+                outcome.get(field) != expected.get(field)
+                for field in ("code", "class", "source", "details")
+            ):
+                return False
+        return True
+
+    @staticmethod
+    def _is_abbreviated_runner_failure(raw: Any) -> bool:
+        """Recognize Arena's error-only wrapper, including adopted Harness tasks."""
+        if not isinstance(raw, dict) or set(raw) != {"error"}:
+            return False
+        detail = raw["error"]
+        return (
+            isinstance(detail, str)
+            and re.match(
+                r"harness: (?:adopted harness: )?"
+                r"harness agent phase exited with code 1: ",
+                detail,
+            )
+            is not None
+            and re.search(
+                r"harness: running task lifecycle(?: for [^\n]*)? "
+                r"\(runner=[^\n)]+/runner\)",
+                detail,
+            )
+            is not None
+        )
+
+    @classmethod
+    def _harness_result_format(
+        cls,
+        raw: Any,
+    ) -> Literal["native", "native-runner", "gameagent", "legacy-claude"] | None:
+        """Identify the envelope before validation, including broken receipts.
+
+        Presence of reserved fields identifies a family even if their values are
+        invalid. Multiple families are ambiguous, never an ordered parser list.
+        """
+        if not isinstance(raw, dict):
+            return None
         detail = raw.get("error")
+        detail = detail if isinstance(detail, str) else ""
+        native = any(
+            isinstance(key, str) and key.startswith("native") for key in raw
+        ) or any(
+            key in raw for key in ("runTerminals", "runFailures", "exportedRunCount")
+        )
+        # Recognize the older native wrapper too, without treating it as a v1
+        # health receipt. This prevents a partial wrapper becoming legacy data.
+        native = native or raw.get("harness") == "AReaLHarness"
+        gameagent = (
+            "outcome" in raw
+            or "outcome_code" in raw
+            or "GAMEAGENT_OUTCOME_CODE=" in detail
+            or "gameagent.envarena:" in detail
+        )
+        claude = "harness: harness agent phase exited with code" in detail.lower() and (
+            "harness: agent phase error: claude " in detail.lower()
+            or "(claude=" in detail
+        )
+        runner = "implementation" in raw or (
+            (
+                isinstance(raw.get("harness"), dict)
+                or cls._is_abbreviated_runner_failure(raw)
+            )
+            and not any((native, gameagent, claude))
+        )
+        if sum((native, runner, gameagent, claude)) != 1:
+            return None
+        if native:
+            return "native"
+        if runner:
+            return "native-runner"
+        return "gameagent" if gameagent else "legacy-claude"
+
+    @staticmethod
+    def _is_runner_context_failure(raw: dict[str, Any]) -> bool:
+        """Validate the runner terminal receipt or Arena's abbreviated envelope.
+
+        Requires a typed proxy overflow at the caller. Arena currently returns
+        only the beginning of the harness log, not the terminal receipt. Normal
+        setup/collect timeout settings in that prefix are not timeout failures.
+        Proxy system errors remain a separate, sticky veto in the workflow.
+        """
+        if "implementation" in raw:
+            if (
+                raw["implementation"] != "rust-core-runtime"
+                or raw.get("status") != "ERROR"
+                or type(raw.get("exit_code")) is not int
+                or raw["exit_code"] != 1
+                or raw.get("execution_state") != "exited"
+                or raw.get("unconfirmed_tools") != []
+                or raw.get("unconfirmed_tool_count") != 0
+                or raw.get("delivery") is not None
+            ):
+                return False
+            for field in (
+                "turn_statuses",
+                "recorded_turn_statuses",
+                "root_turn_statuses",
+            ):
+                statuses = raw.get(field)
+                if (
+                    not isinstance(statuses, list)
+                    or not statuses
+                    or any(status != "failed" for status in statuses)
+                ):
+                    return False
+            errors = raw.get("error")
+            return (
+                isinstance(errors, list)
+                and bool(errors)
+                and all(
+                    isinstance(error, dict)
+                    and re.fullmatch(
+                        r"model reported a streaming error \(event=error, "
+                        r'code=Some\("context_length_exceeded"\), '
+                        r'type=Some\("context_length_exceeded"\), reason=None\)',
+                        str(error.get("message", "")),
+                    )
+                    is not None
+                    for error in errors
+                )
+            )
+        detail = raw.get("error", "")
         if not isinstance(detail, str):
             return False
-        normalized = detail.lower()
-        return (
-            "harness: harness agent phase exited with code" in normalized
-            and "harness: agent phase error: claude reported error" in normalized
+        # Ignore only known lifecycle configuration records, not actual timeout
+        # failures or later collect/export/provider errors in the same log.
+        detail = re.sub(
+            r"running (?:setup|collect) hook \(timeout=[0-9.hms]+\)",
+            "running hook",
+            detail,
         )
+        if _HARNESS_SYSTEM_ERROR_PATTERN.search(detail):
+            return False
+        harness = raw.get("harness")
+        return (
+            isinstance(harness, dict)
+            and harness.get("phase") == "agent"
+            and harness.get("result_status") == "ERROR"
+            and type(harness.get("exit_code")) is int
+            and harness["exit_code"] == 1
+        )
+
+    @classmethod
+    def _is_runner_model_failure(cls, raw: dict[str, Any], receipt: Any) -> bool:
+        """Accept explicit native model failures with a healthy runner envelope."""
+
+        abbreviated = cls._is_abbreviated_runner_failure(raw)
+        if not isinstance(receipt, dict) or not (
+            cls._is_runner_context_failure(raw) or abbreviated
+        ):
+            return False
+        if abbreviated:
+            detail = re.sub(
+                r"running (?:setup|collect) hook \(timeout=[0-9.hms]+\)",
+                "running hook",
+                raw["error"],
+            )
+            collection = receipt.get("collection")
+            if (
+                _HARNESS_SYSTEM_ERROR_PATTERN.search(detail)
+                or "delivery" not in receipt
+                or cls._harness_result_format(receipt) != "native-runner"
+                or receipt.get("failure") is not None
+                or receipt.get("raw") is not None
+                or not isinstance(collection, dict)
+                or collection.get("status") != "OK"
+                or type(collection.get("file_count")) is not int
+                or collection["file_count"] < 0
+            ):
+                return False
+        if (
+            receipt.get("implementation") != "rust-core-runtime"
+            or receipt.get("status") != "ERROR"
+            or type(receipt.get("exit_code")) is not int
+            or receipt["exit_code"] != 1
+            or receipt.get("delivery") is not None
+            or receipt.get("turn_statuses") != ["failed"]
+        ):
+            return False
+        errors = receipt.get("error")
+        if (
+            not isinstance(errors, list)
+            or len(errors) != 1
+            or not isinstance(errors[0], dict)
+            or not isinstance(errors[0].get("message"), str)
+        ):
+            return False
+        if abbreviated and "outcome" in errors[0]:
+            return False
+        message = errors[0]["message"]
+        return (
+            message == "model stopped with reason: length"
+            or message == "model stopped without visible output or tool calls"
+            or re.fullmatch(
+                r"context window limit exceeded: compaction is disabled "
+                r"\([1-9][0-9]* bytes / [1-9][0-9]* estimated tokens\)",
+                message,
+            )
+            is not None
+        )
+
+    @staticmethod
+    def _is_native_model_failure(raw: Any) -> bool:
+        """Require a complete, healthy native receipt with only model failures."""
+        if not isinstance(raw, dict):
+            return False
+        if (
+            type(raw.get("nativeRlReceiptVersion")) is not int
+            or raw.get("nativeRlReceiptVersion") != 1
+            or raw.get("nativeExecutionHealthy") is not True
+            or raw.get("nativeExportHealthy") is not True
+            or raw.get("status") != "ERROR"
+            or raw.get("trajectoryHealth") != "healthy"
+            or raw.get("nativeStopReason") != "completed"
+            or "nativeFailure" not in raw
+            or raw["nativeFailure"] is not None
+        ):
+            return False
+        terminals = raw.get("runTerminals")
+        failures = raw.get("runFailures")
+        if (
+            not isinstance(terminals, dict)
+            or not terminals
+            or type(raw.get("exportedRunCount")) is not int
+            or raw.get("exportedRunCount") != len(terminals)
+            or not isinstance(failures, list)
+            or not failures
+        ):
+            return False
+        if any(
+            not isinstance(run_id, str)
+            or not run_id
+            or terminal not in ("run.completed", "run.failed")
+            for run_id, terminal in terminals.items()
+        ):
+            return False
+        failed_runs = {
+            run_id for run_id, terminal in terminals.items() if terminal == "run.failed"
+        }
+        seen = set()
+        for failure in failures:
+            if not isinstance(failure, dict):
+                return False
+            run_id = failure.get("runId")
+            if (
+                not isinstance(run_id, str)
+                or run_id not in failed_runs
+                or run_id in seen
+            ):
+                return False
+            error = failure.get("error")
+            if (
+                not isinstance(error, dict)
+                or error.get("code") != "RUNTIME_EXECUTION_FAILED"
+            ):
+                return False
+            details = error.get("details")
+            native = (
+                details.get("runtimeFailure") if isinstance(details, dict) else None
+            )
+            if not isinstance(native, dict) or (
+                native.get("code") != "DSH_PUBLIC_ANSWER_MISSING"
+                or native.get("reason") != "public_answer_missing"
+            ):
+                return False
+            seen.add(run_id)
+        return seen == failed_runs
+
+    @classmethod
+    def _gameagent_outcome_metric_code(cls, raw: Any) -> str:
+        """Normalize Harness outcomes to the bounded metric cardinality."""
+
+        code = cls._gameagent_outcome_code(raw)
+        return code if code in HARNESS_OUTCOME_METRIC_CODES else "OTHER"
+
+    @classmethod
+    def _is_model_attributed_harness_failure(
+        cls, error: ArenaTaskFailedError, *, context_overflow: bool = False
+    ) -> bool:
+        """Select one result family, then apply only that family's admission rules."""
+        result = error.result
+        raw = result.raw if result is not None else None
+        result_format = cls._harness_result_format(raw)
+        if result_format is None:
+            return False
+        if "trajectoryHealth" in raw and raw["trajectoryHealth"] != "healthy":
+            return False
+        if raw.get("failure") is not None:
+            return False
+        if "status" in raw and raw["status"] != "ERROR":
+            return False
+        if result_format == "native-runner":
+            if cls._is_abbreviated_runner_failure(raw) and result.score != 0.0:
+                return False
+            return (
+                context_overflow and cls._is_runner_context_failure(raw)
+            ) or cls._is_runner_model_failure(raw, error.harness_result)
+        if (
+            result_format == "gameagent"
+            and result is not None
+            and result.score == 0.0
+            and cls._is_core_agent_zero_failure(raw, error.harness_result)
+        ):
+            return True
+        detail = raw.get("error")
+        if detail is not None and not isinstance(detail, str):
+            return False
+        detail = detail or ""
+        # Explicit runtime/provider errors cannot be overridden by a model code
+        # or by an overflow from an earlier request in the same trajectory.
+        if _HARNESS_SYSTEM_ERROR_PATTERN.search(detail):
+            return False
+        if result_format == "native":
+            return cls._is_native_model_failure(raw)
+        if result_format == "gameagent":
+            return cls._gameagent_outcome_code(raw) in _GAMEAGENT_MODEL_FAILURE_CODES
+        normalized = detail.lower()
+        if normalized.count(_CLAUDE_AGENT_ERROR_MARKER) != 1:
+            return False
+        _, _, reason = normalized.partition(_CLAUDE_AGENT_ERROR_MARKER)
+        # EnvArena runs collect after the agent error, then logs that error
+        # again. Keep multiline error details, but do not interpret collect
+        # output as the Claude reason. The whole-log system veto above still
+        # applies, and a conflicting repeated error is not model attribution.
+        records = _CLAUDE_LIFECYCLE_RECORD_PATTERN.split(reason)
+        if len(records) > 1 and records[-2] != "claude reported error:":
+            # A truncated collect log can hide a later infrastructure failure.
+            return False
+        reason = records[0].strip()
+        for marker, body in zip(records[1::2], records[2::2], strict=True):
+            if marker == "claude reported error:" and body.strip() != reason:
+                return False
+        if reason:
+            return _CLAUDE_MODEL_ERROR_PATTERN.search(reason) is not None
+        # Some Claude result events omit their error detail. Only the proxy's
+        # typed overflow can attribute that otherwise empty agent error.
+        return context_overflow
 
     @classmethod
     def classify_proxy_failure(
@@ -611,30 +1122,75 @@ class ArenaStreamAgentWorkflow:
         context_overflow: bool,
         interaction_count: int,
     ) -> str:
-        """Keep attributed model failures without accepting arbitrary errors.
+        """Retain model-attributed failures using the identified Harness format.
 
-        Explicit GameAgent outcomes, local context overflow, and the legacy
-        Claude agent-phase envelope may identify a model failure. A GameAgent
-        log marker is supported for Harnesses without structured outcome fields.
-        Unknown outcomes and system failures retain their rejection behavior.
+        Format detection and admission are separate. An invalid native receipt,
+        conflicting outcome, or infrastructure error cannot be rescued by a
+        different parser or an earlier overflow. The proxy independently rejects
+        service errors and must successfully export usable interactions.
         """
-
         if not isinstance(error, ArenaTaskFailedError):
             return "system_failure_reject"
         if error.status in cls._SYSTEM_FAILURE_STATUSES:
             return "system_failure_reject"
         if (
-            error.status in cls._MODEL_FAILURE_STATUSES_WITH_INTERACTIONS
-            and interaction_count > 0
-        ):
-            return "model_failure_zero"
-        if (
             error.status == "HARNESS_FAILED"
             and interaction_count > 0
-            and (context_overflow or cls._is_model_attributed_harness_failure(error))
+            and cls._is_model_attributed_harness_failure(
+                error, context_overflow=context_overflow
+            )
         ):
             return "model_failure_zero"
         return "unknown_failure_reject"
+
+    def should_reject_failed_sample(self, error: Exception, disposition: str) -> bool:
+        """Drop a failed Arena sample while retaining healthy group siblings."""
+        if not self.reject_terminal_task_failures or not isinstance(
+            error, ArenaTaskFailedError
+        ):
+            return False
+        # A failed grader leaves this task unscored. It does not invalidate
+        # other tasks' rewards, even though it is not a model-attributed failure.
+        if error.status == "EVAL_FAILED":
+            return disposition == "system_failure_reject"
+        return (
+            error.status in {"HARNESS_FAILED", "NO_OUTPUT", "TIMEOUT"}
+            and disposition == "unknown_failure_reject"
+        )
+
+    def get_episode_reward_for_export(
+        self,
+        data: dict[str, Any],
+        reward: float,
+        *,
+        export_style: str,
+    ) -> float | None:
+        """Opt successful Arena concat episodes into segment reward assignment.
+
+        The proxy validates and scores the full conversation graph before tensor
+        serialization removes parent links. Arena's terminal score applies to
+        the whole episode, including context-compaction requests.
+        """
+        result = self._task_result.get()
+        if (
+            export_style == "concat"
+            and result is not None
+            and result.status in {"OK", "DONE"}
+            and math.isfinite(reward)
+        ):
+            return reward
+        return None
+
+    def get_failure_reward_for_export(
+        self, data: dict[str, Any], *, export_style: str
+    ) -> float | None:
+        """Score every valid concat segment after approved model-failure recovery.
+
+        Called only after the proxy workflow's failure classification and system
+        error veto. The cache still validates the conversation graph, preserving
+        explicit process rewards and rejecting ambiguous unscored branches.
+        """
+        return 0.0 if export_style == "concat" else None
 
     def record_episode_metrics(
         self,
@@ -649,6 +1205,20 @@ class ArenaStreamAgentWorkflow:
             "training_score": float(reward),
             f"stream/{stream_config.name}/training_score": float(reward),
         }
+        is_harness_error = result is not None and result.status == "HARNESS_FAILED"
+        is_harness_success = result is not None and result.status in {"DONE", "OK"}
+        outcome_code = (
+            self._gameagent_outcome_metric_code(result.raw)
+            if is_harness_error and result is not None
+            else None
+        )
+        metrics["harness_success"] = float(is_harness_success)
+        metrics["harness_error"] = float(is_harness_error)
+        for code in _GAMEAGENT_OUTCOME_METRIC_CODES:
+            metrics[f"harness_error/{code}"] = float(outcome_code == code)
+        metrics["harness_error/OTHER"] = float(
+            is_harness_error and outcome_code not in _GAMEAGENT_OUTCOME_METRIC_CODES
+        )
         if result is not None and result.score is not None:
             metrics.update(
                 {
@@ -657,6 +1227,7 @@ class ArenaStreamAgentWorkflow:
                     # never the heterogeneous Arena ``raw`` object.
                     "raw_reward": result.score,
                     f"{arena_task_type}/raw_reward": result.score,
+                    f"domain/{arena_task_type}/raw_reward": result.score,
                     "arena_raw_present": float(result.raw is not None),
                     "arena_trace_present": float(result.trace_id is not None),
                     "arena_artifacts_present": float(result.artifacts_uri is not None),
@@ -678,6 +1249,28 @@ class ArenaStreamAgentWorkflow:
             self._task_result.set(None)
             self._task_result_dumped.set(False)
 
+    def get_episode_metadata(self) -> dict[str, str]:
+        """Return bounded identifiers used to join rollout and Arena audits."""
+
+        metadata: dict[str, str] = {}
+        session_id = self._proxy_session_id.get()
+        if session_id:
+            metadata["session_id"] = session_id
+        result = self._task_result.get()
+        if result is None:
+            return metadata
+        metadata.update(
+            {
+                "arena_task_id": result.task_id,
+                "arena_status": result.status,
+            }
+        )
+        if result.status == "HARNESS_FAILED":
+            metadata["harness_outcome_code"] = self._gameagent_outcome_metric_code(
+                result.raw
+            )
+        return metadata
+
     async def persist_episode_result(
         self,
         data: dict[str, Any],
@@ -696,6 +1289,11 @@ class ArenaStreamAgentWorkflow:
         )
         self._task_result_dumped.set(True)
 
+    def get_session_metadata(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Supply generation defaults for requests that omit these fields."""
+        del data
+        return {"generation_args": dict(self.gen_args)} if self.gen_args else {}
+
     async def record_failure_disposition(
         self,
         data: dict[str, Any],
@@ -710,6 +1308,49 @@ class ArenaStreamAgentWorkflow:
             return
         await self.persist_episode_result(data, None)
 
+    async def _maintain_gateway_registration(
+        self,
+        *,
+        model_name: str,
+        deployment_id: str,
+        proxy_base_url: str,
+        proxy_api_key: str,
+        protocol: LLMProtocol,
+        client: httpx.AsyncClient,
+    ) -> None:
+        """Keep a prompt route alive while colocated training pauses generation."""
+        while True:
+            await asyncio.sleep(self.registration_probe_interval)
+            try:
+                present = await asyncio.wait_for(
+                    self.client.renew_llm_proxy_async(
+                        model_name, client=client, timeout=self.registration_timeout
+                    ),
+                    timeout=self.registration_timeout,
+                )
+                if not present:
+                    await asyncio.wait_for(
+                        self.client.register_llm_proxy_async(
+                            model_name=model_name,
+                            upstream_base_url=proxy_base_url,
+                            upstream_api_key=proxy_api_key,
+                            deployment_id=deployment_id,
+                            protocol=protocol,
+                            client=client,
+                            timeout=self.registration_timeout,
+                        ),
+                        timeout=self.registration_timeout,
+                    )
+                _record_arena_metrics(**{"arena/registration_renew_success": 1.0})
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _record_arena_metrics(**{"arena/registration_renew_success": 0.0})
+                logger.warning(
+                    "Failed to renew active Arena gateway registration: model_id=%s",
+                    model_name,
+                )
+
     async def run(
         self,
         data: dict[str, Any],
@@ -718,6 +1359,7 @@ class ArenaStreamAgentWorkflow:
         """Launch the row's task with the current rollout proxy session."""
         self._task_result.set(None)
         self._task_result_dumped.set(False)
+        self._proxy_session_id.set("")
         stream_config = self._stream_config_for_data(data)
         stream_id = str(data.get("stream_id") or stream_config.stream_id or "")
         data_id = str(data.get("data_id") or "")
@@ -727,6 +1369,7 @@ class ArenaStreamAgentWorkflow:
         proxy_base_url = extra_kwargs.get("base_url")
         proxy_api_key = extra_kwargs.get("api_key")
         proxy_session_id = str(extra_kwargs.get("session_id") or "").strip()
+        self._proxy_session_id.set(proxy_session_id)
         arena_http_client: httpx.AsyncClient | None = extra_kwargs.get(
             "arena_http_client"
         ) or extra_kwargs.get("http_client")
@@ -751,6 +1394,10 @@ class ArenaStreamAgentWorkflow:
         ).strip()
         proxy_session_token = str(extra_kwargs.get("proxy_session_token") or "").strip()
         worker_runtime = extra_kwargs.get("worker_runtime")
+        get_version = getattr(worker_runtime, "get_version", None)
+        # Snapshot the rollout weight version before asynchronous setup can advance
+        # it. Arena's metadata values must be strings.
+        task_metadata = {"step": str(get_version())} if callable(get_version) else None
         if self.llm_route_mode == "session_gateway" and not (
             proxy_gateway_api_key and proxy_session_token
         ):
@@ -778,6 +1425,7 @@ class ArenaStreamAgentWorkflow:
         launch_api_key = str(proxy_api_key)
         launch_task_envs = dict(stream_config.task_envs)
         registration_created = False
+        registration_keepalive: asyncio.Task[None] | None = None
         session_gateway_acquired = False
         session_gateway_registry: _WorkerSessionGatewayRegistry | None = None
         session_gateway_key = str(proxy_base_url).rstrip("/")
@@ -837,6 +1485,16 @@ class ArenaStreamAgentWorkflow:
                     _record_arena_metrics(**{"arena/registration_success": 0.0})
                     _record_arena_metrics(**{"arena/call_success": 0.0})
                     raise
+                registration_keepalive = asyncio.create_task(
+                    self._maintain_gateway_registration(
+                        model_name=registered_model_id,
+                        deployment_id=deployment_id,
+                        proxy_base_url=str(proxy_base_url),
+                        proxy_api_key=str(proxy_api_key),
+                        protocol=llm_protocol,
+                        client=client,
+                    )
+                )
                 launch_api_key = self.client.llm_gateway_api_key
                 _record_arena_metrics(**{"arena/registration_success": 1.0})
                 logger.info(
@@ -940,6 +1598,8 @@ class ArenaStreamAgentWorkflow:
                         session_id=proxy_session_id,
                         harness=stream_config.harness,
                         task_envs=launch_task_envs,
+                        experiment=self.experiment_name,
+                        metadata=task_metadata,
                         client=client,
                         on_launch_success=record_launch_success,
                     ),
@@ -950,6 +1610,28 @@ class ArenaStreamAgentWorkflow:
                 _record_arena_metrics(**{"arena/call_success": 0.0})
                 if exc.result is not None:
                     self._task_result.set(exc.result)
+                    if exc.status == "HARNESS_FAILED" and (
+                        self._harness_result_format(exc.result.raw) == "native-runner"
+                        or self._core_model_zero_failure_message(exc.result.raw)
+                        is not None
+                        or self._core_context_zero_failure_message(exc.result.raw)
+                        is not None
+                    ):
+                        try:
+                            exc.harness_result = (
+                                await self.client.get_harness_result_async(
+                                    exc.task_id,
+                                    client=client,
+                                    timeout=min(self.request_timeout, 15.0),
+                                )
+                            )
+                        except Exception:
+                            logger.warning(
+                                "Failed to fetch Harness receipt for task %s; "
+                                "keeping the failure unscored.",
+                                exc.task_id,
+                                exc_info=True,
+                            )
                 raise
             except asyncio.CancelledError:
                 await audit_incomplete_task("LOCAL_WAIT_CANCELLED")
@@ -1022,6 +1704,12 @@ class ArenaStreamAgentWorkflow:
             _record_arena_metrics(**{"arena/terminal_success": 1.0})
             _record_arena_metrics(**{"arena/call_success": 1.0})
         finally:
+            if registration_keepalive is not None:
+                # Stop renewal/restoration before DELETE, including cancellation,
+                # so the background task cannot resurrect a finished route.
+                registration_keepalive.cancel()
+                with suppress(asyncio.CancelledError):
+                    await registration_keepalive
             if session_gateway_acquired and session_gateway_registry is not None:
                 await session_gateway_registry.release(
                     arena_base_url=self.client.base_url,
@@ -1227,7 +1915,14 @@ class ArenaStreamAgentWorkflow:
                 "stream_id": str(data.get("stream_id") or stream_config.stream_id),
                 "data_id": str(data.get("data_id") or ""),
                 "task_id": result.task_id,
+                "arena_task_id": result.task_id,
+                "session_id": self._proxy_session_id.get() or None,
                 "status": result.status,
+                "harness_outcome_code": (
+                    self._gameagent_outcome_metric_code(result.raw)
+                    if result.status == "HARNESS_FAILED"
+                    else None
+                ),
                 "expected_reward_ref": {
                     "key": expected_ref.key,
                     "version": expected_ref.version,

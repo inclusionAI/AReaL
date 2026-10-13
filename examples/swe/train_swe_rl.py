@@ -197,7 +197,7 @@ def get_arena_mixture_dataset(
     if size_multiple > 1 and len(dataset) % size_multiple:
         logger.warning(
             "Arena raw union has %d rows, not divisible by training batch size %d; "
-            "drop_last will omit %d tail rows without repeating source data",
+            "the caller must pad or accept a final batch of %d rows",
             len(dataset),
             size_multiple,
             len(dataset) % size_multiple,
@@ -337,10 +337,14 @@ def main(args):
         econfig=econfig_dict,
         gen_args=dict(
             temperature=config.gconfig.temperature,
+            top_p=config.gconfig.top_p,
+            top_k=config.gconfig.top_k,
             max_completion_tokens=config.gconfig.max_new_tokens,
         ),
         timeout=econfig.timeout,
     )
+    if econfig.dataset_source == "arena":
+        workflow_kwargs["experiment_name"] = config.experiment_name
 
     # Eval workflow with lower temperature for deterministic evaluation
     eval_workflow_kwargs = workflow_kwargs.copy()

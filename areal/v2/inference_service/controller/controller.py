@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import json
 import os
 import sys
 import threading
@@ -28,6 +29,7 @@ import httpx
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 
 from areal.infra.utils.http import async_http_retry, create_httpx_client
+from areal.infra.workflow_executor import validate_rollout_group_sizes
 
 if TYPE_CHECKING:
     from areal.api.scheduler_api import Scheduler, Worker
@@ -91,6 +93,16 @@ class RolloutControllerV2:
             )
         if not config.model:
             raise ValueError("InferenceEngineConfig.model must not be empty")
+        if (
+            config.api_url is not None
+            and config.agent is not None
+            and config.agent.prm.enabled
+            and config.agent.prm.scorers
+        ):
+            raise ValueError(
+                "PRM scorers do not support v2 external-model mode "
+                "(rollout.api_url); scoring requires token-backed interactions"
+            )
         self.config = config
         self.scheduler = scheduler
 
@@ -489,6 +501,8 @@ class RolloutControllerV2:
                 "--prefix-matcher",
                 agent_cfg.prefix_matcher,
             ]
+        if agent_cfg.prm.enabled and agent_cfg.prm.scorers:
+            data_proxy_base_cmd += ["--prm-config", json.dumps(asdict(agent_cfg.prm))]
 
         async def _fork_data_proxy(group_idx: int) -> tuple[str, int, str]:
             if self.external_mode:
@@ -1215,17 +1229,17 @@ class RolloutControllerV2:
         group_size: int = 1,
         reward_normalization: bool = False,
         drop_incomplete_group: bool = False,
+        min_usable_group_size: int = 1,
     ) -> int:
         self._ensure_initialized()
-        if drop_incomplete_group:
-            raise ValueError(
-                "RolloutControllerV2 does not support drop_incomplete_group yet."
-            )
+        validate_rollout_group_sizes(group_size, min_usable_group_size)
         resolved_workflow = self._resolve_workflow(
             workflow,
             workflow_kwargs,
             group_size,
             reward_normalization,
+            drop_incomplete_group,
+            min_usable_group_size,
         )
         resolved_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
         return self.workflow_executor.submit(
@@ -1269,6 +1283,7 @@ class RolloutControllerV2:
         batch_size: int | None = None,
         reward_normalization: bool = False,
         drop_incomplete_group: bool = False,
+        min_usable_group_size: int = 1,
     ) -> list[dict[str, Any]]:
         """Submit a batch of data items and wait for all results.
 
@@ -1301,10 +1316,7 @@ class RolloutControllerV2:
             A list of trajectory dicts (one per completed rollout).
         """
         self._ensure_initialized()
-        if drop_incomplete_group:
-            raise ValueError(
-                "RolloutControllerV2 does not support drop_incomplete_group yet."
-            )
+        validate_rollout_group_sizes(group_size, min_usable_group_size)
         if not self._gateway_addr:
             raise RuntimeError("RolloutControllerV2.initialize() must be called first")
         if data is None:
@@ -1322,6 +1334,8 @@ class RolloutControllerV2:
             workflow_kwargs,
             group_size,
             reward_normalization,
+            drop_incomplete_group,
+            min_usable_group_size,
         )
         resolved_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
         for item in data:
@@ -1345,6 +1359,7 @@ class RolloutControllerV2:
         batch_size: int | None = None,
         reward_normalization: bool = False,
         drop_incomplete_group: bool = False,
+        min_usable_group_size: int = 1,
     ) -> list[dict[str, Any]]:
         """Prepare a full training batch by consuming data from a dataloader.
 
@@ -1378,10 +1393,7 @@ class RolloutControllerV2:
             A list of trajectory dicts (matching ``RolloutController`` API).
         """
         self._ensure_initialized()
-        if drop_incomplete_group:
-            raise ValueError(
-                "RolloutControllerV2 does not support drop_incomplete_group yet."
-            )
+        validate_rollout_group_sizes(group_size, min_usable_group_size)
         if not self._gateway_addr:
             raise RuntimeError("RolloutControllerV2.initialize() must be called first")
         if dataloader is None:
@@ -1396,6 +1408,8 @@ class RolloutControllerV2:
             workflow_kwargs,
             group_size,
             reward_normalization,
+            drop_incomplete_group,
+            min_usable_group_size,
         )
         resolved_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
         results = self.workflow_executor.prepare_batch(
@@ -1688,6 +1702,8 @@ class RolloutControllerV2:
         agent: Any,
         group_size: int = 1,
         reward_normalization: bool = False,
+        drop_incomplete_group: bool = False,
+        min_usable_group_size: int = 1,
     ):
         """Wrap an agent in an InferenceServiceWorkflow.
 
@@ -1725,6 +1741,8 @@ class RolloutControllerV2:
             serialize_group_samples=self.config.serialize_group_samples,
             drop_retry_orphans=agent_cfg.drop_retry_orphans,
             reward_normalization=reward_normalization,
+            drop_incomplete_group=drop_incomplete_group,
+            min_usable_group_size=min_usable_group_size,
         )
 
     def _resolve_workflow(
@@ -1733,6 +1751,8 @@ class RolloutControllerV2:
         workflow_kwargs=None,
         group_size=1,
         reward_normalization=False,
+        drop_incomplete_group=False,
+        min_usable_group_size=1,
     ):
         """Resolve a workflow-like input to an InferenceServiceWorkflow.
 
@@ -1770,6 +1790,11 @@ class RolloutControllerV2:
 
         # (a) None → online mode: create InferenceServiceWorkflow without agent
         if workflow is None:
+            if drop_incomplete_group:
+                raise ValueError(
+                    "Online mode (workflow=None) does not support "
+                    "drop_incomplete_group."
+                )
             if reward_normalization:
                 raise ValueError(
                     "Online mode (workflow=None) does not support reward_normalization."
@@ -1789,6 +1814,11 @@ class RolloutControllerV2:
             online_kwargs.setdefault(
                 "drop_retry_orphans", self._agent_config.drop_retry_orphans
             )
+            if self._agent_config.prm.enabled and self._agent_config.prm.scorers:
+                online_kwargs.setdefault(
+                    "export_style", self._agent_config.export_style
+                )
+                online_kwargs.setdefault("discount", self._agent_config.turn_discount)
             return InferenceServiceWorkflow(
                 controller=self,
                 agent=None,
@@ -1831,6 +1861,8 @@ class RolloutControllerV2:
             agent,
             group_size=group_size,
             reward_normalization=reward_normalization,
+            drop_incomplete_group=drop_incomplete_group,
+            min_usable_group_size=min_usable_group_size,
         )
 
         return resolved
