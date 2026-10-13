@@ -39,77 +39,6 @@ if TYPE_CHECKING:
 logger = getLogger("AwexColocate")
 
 
-@torch.no_grad()
-def _pack_tensors_for_cuda_ipc(
-    tensors: list[torch.Tensor],
-    max_group_bytes: int = 5 * 1024**3,
-) -> tuple[list[torch.Tensor], list[dict]]:
-    """Pack tensors into bounded, single-allocation CUDA IPC groups.
-
-    AWEX's packer uses ``torch.cat(...).clone()`` and only checks the size
-    limit after adding the next tensor.  The redundant allocation doubles the
-    transient pressure and makes it much more likely that the eventual export
-    occupies a split training segment.  CUDA IPC exports the whole segment, so
-    one live payload can pin tens of GiB of inactive splits.
-
-    Plan groups first, allocate each flat destination exactly once, and copy
-    shaped source views directly into it.  Grouping by dtype preserves AWEX's
-    low-handle-count format and remains compatible with
-    ``reconstruct_tensors_from_groups``.
-    """
-    if not tensors:
-        return [], []
-
-    by_dtype: dict[torch.dtype, list[tuple[int, torch.Tensor]]] = {}
-    for index, tensor in enumerate(tensors):
-        by_dtype.setdefault(tensor.dtype, []).append((index, tensor))
-
-    planned_groups: list[list[tuple[int, torch.Tensor]]] = []
-    for dtype_group in by_dtype.values():
-        current: list[tuple[int, torch.Tensor]] = []
-        current_bytes = 0
-        for index, tensor in dtype_group:
-            tensor_bytes = tensor.numel() * tensor.element_size()
-            if current and current_bytes + tensor_bytes > max_group_bytes:
-                planned_groups.append(current)
-                current = []
-                current_bytes = 0
-            current.append((index, tensor))
-            current_bytes += tensor_bytes
-            if current_bytes >= max_group_bytes:
-                planned_groups.append(current)
-                current = []
-                current_bytes = 0
-        if current:
-            planned_groups.append(current)
-
-    packed_groups: list[torch.Tensor] = []
-    metadata: list[dict] = []
-    for group_index, group in enumerate(planned_groups):
-        dtype = group[0][1].dtype
-        device = group[0][1].device
-        total_numel = sum(tensor.numel() for _, tensor in group)
-        packed = torch.empty(total_numel, dtype=dtype, device=device)
-        offset = 0
-        for original_index, tensor in group:
-            size = tensor.numel()
-            packed[offset : offset + size].view(tensor.shape).copy_(tensor)
-            metadata.append(
-                {
-                    "original_index": original_index,
-                    "shape": tensor.shape,
-                    "dtype": tensor.dtype,
-                    "group_index": group_index,
-                    "offset": offset,
-                    "size": size,
-                }
-            )
-            offset += size
-        packed_groups.append(packed)
-
-    return packed_groups, metadata
-
-
 def resolve_physical_gpu_id(relative_gpu_id: int) -> int:
     """Map a CUDA-masked relative device index to its physical GPU id.
 
@@ -427,6 +356,7 @@ class AwexWeightPublisher:
         """
         from awex.util.tensor_util import (
             cuda_ipc_serialize,
+            group_tensors_by_shape_and_dtype,
             release_tensors,
         )
 
@@ -468,7 +398,7 @@ class AwexWeightPublisher:
         )
 
         with cuda_ipc_allocation():
-            group_tensors, metadata = _pack_tensors_for_cuda_ipc(tensors)
+            group_tensors, metadata = group_tensors_by_shape_and_dtype(tensors)
         torch.cuda.synchronize()
         logger.info(
             "Grouped into %d tensor groups for IPC serialization", len(group_tensors)
