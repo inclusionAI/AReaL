@@ -658,7 +658,6 @@ def call_engine_method():
             preserve_output_tensor_aliases = method_name in {
                 "wait_for_task",
                 "_wait_for_task_result",
-                "load_diagnostic_replay",
             }
             result = RTensor.remotize(
                 result,
