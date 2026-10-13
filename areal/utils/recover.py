@@ -6,6 +6,7 @@ import inspect
 import json
 import os
 import pickle
+import time
 from typing import TYPE_CHECKING, Any
 
 import torch.distributed as dist
@@ -182,38 +183,6 @@ class RecoverHandler:
         )
 
     @staticmethod
-    def _is_gateway_train_controller(
-        engine: TrainEngine
-        | TrainController
-        | dict[str, TrainEngine | TrainController],
-    ) -> bool:
-        from areal.v2.training_service.controller.controller import (
-            GatewayTrainController,
-        )
-
-        if isinstance(engine, GatewayTrainController):
-            return True
-        if isinstance(engine, dict):
-            return any(
-                isinstance(controller, GatewayTrainController)
-                for controller in engine.values()
-            )
-        return False
-
-    def _ensure_recover_supported(
-        self,
-        engine: TrainEngine
-        | TrainController
-        | dict[str, TrainEngine | TrainController],
-    ) -> None:
-        if self._is_gateway_train_controller(engine):
-            raise NotImplementedError(
-                "Recovery is not supported with GatewayTrainController "
-                '(`_version="v2"`) yet. Disable `recover.mode` or use '
-                '`_version="v1"`.'
-            )
-
-    @staticmethod
     def _normalize_recover_engines(
         engine: TrainEngine
         | TrainController
@@ -290,6 +259,57 @@ class RecoverHandler:
             and bool(getattr(megatron_config, "async_save", False))
         )
 
+    @staticmethod
+    def _restore_v2_weights(
+        update_engine: TrainEngine | TrainController,
+        inference_engine: InferenceEngine,
+        versioned_meta: WeightUpdateMeta,
+        recovery_version: int,
+    ) -> None:
+        """Publish recovered V2 weights before admitting generation again."""
+        transfer_completed = False
+        try:
+            update_engine.update_weights(versioned_meta, resume_generation=False)
+            transfer_completed = True
+
+            publish_deadline = time.monotonic() + 30.0
+            for attempt in range(3):
+                try:
+                    remaining = publish_deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("Recovery version publish deadline exceeded")
+                    update_engine.broadcast_version(recovery_version, timeout=remaining)
+                    remaining = publish_deadline - time.monotonic()
+                    inference_engine.broadcast_version(
+                        recovery_version, timeout=max(0.001, remaining)
+                    )
+                    break
+                except BaseException:
+                    if attempt == 2 or time.monotonic() >= publish_deadline:
+                        raise
+                    time.sleep(min(0.1, max(0.0, publish_deadline - time.monotonic())))
+
+            update_engine.commit_local_version(recovery_version)
+            inference_engine.commit_local_version(recovery_version)
+            inference_engine.continue_generation()
+            inference_engine.resume()
+        except BaseException as exc:
+            setattr(exc, "weight_transfer_completed", transfer_completed)
+            safe_to_resume = (
+                not transfer_completed
+                and not getattr(exc, "inference_weights_may_be_mutated", True)
+                and not getattr(exc, "generation_pause_state_unresolved", False)
+            )
+            if safe_to_resume:
+                try:
+                    inference_engine.continue_generation()
+                    inference_engine.resume()
+                except BaseException as resume_error:
+                    exc.add_note(
+                        f"Generation/dispatcher rollback also failed: {resume_error}"
+                    )
+            raise
+
     def dump(
         self,
         engine: TrainEngine
@@ -306,7 +326,6 @@ class RecoverHandler:
     ):
         if self.config.mode in ("disabled", "off"):
             return
-        self._ensure_recover_supported(engine)
         # currently only support recover on one engine
         if not self.freq_ctl.check(
             epochs=int(step_info.epoch_step == self.ft_spec.steps_per_epoch - 1),
@@ -438,14 +457,21 @@ class RecoverHandler:
     ) -> RecoverInfo | None:
         if self.config.mode in ("disabled", "off"):
             return
-        self._ensure_recover_supported(engine)
         if inference_engine is not None and weight_update_meta is None:
             raise ValueError("Weight update meta is required for recovery.")
+        from areal.v2.inference_service.controller.controller import (
+            RolloutControllerV2,
+        )
 
-        # TODO(agent): GatewayTrainController is currently duck-typed and does
-        # not satisfy this TrainController type check. Extend recovery to accept
-        # controller-v2 instances (or make v2 inherit TrainController) before
-        # relying on resumed runs with `_version="v2"`.
+        if (
+            isinstance(inference_engine, RolloutControllerV2)
+            and getattr(weight_update_meta, "type", None) == "awex"
+            and colocated_rollout
+        ):
+            raise NotImplementedError(
+                "V2 colocated AWEX recovery is not supported; disable "
+                "`recover.mode` or use separated actor/rollout placement."
+            )
         normalized_engine: dict[str, TrainEngine | TrainController] = (
             self._normalize_recover_engines(engine)
         )
@@ -506,6 +532,18 @@ class RecoverHandler:
                 versioned_meta = weight_update_meta.with_version(recovery_version)
                 update_engine.connect_engine(inference_engine, versioned_meta)
                 inference_engine.pause()
+                from areal.v2.training_service.controller.controller import (
+                    GatewayTrainController,
+                )
+
+                if isinstance(update_engine, GatewayTrainController):
+                    self._restore_v2_weights(
+                        update_engine,
+                        inference_engine,
+                        versioned_meta,
+                        recovery_version,
+                    )
+                    return recover_info
                 colocate_restore_started = is_awex_colocate
                 can_resume_inference = not is_awex_colocate
                 try:

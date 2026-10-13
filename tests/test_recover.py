@@ -18,6 +18,7 @@ from areal.utils.recover import (
     check_if_recover,
 )
 from areal.utils.saver import Saver
+from areal.v2.inference_service.controller.controller import RolloutControllerV2
 from areal.v2.training_service.controller.controller import (
     GatewayTrainController,
 )
@@ -446,45 +447,77 @@ class TestRecoverHandler:
         assert checkpoint_pointer.read_latest(save_root) is None
 
     @pytest.mark.parametrize("mode", ["on", "auto"])
-    def test_load_rejects_gateway_train_controller(self, mode):
+    def test_load_accepts_gateway_train_controller(self, mode, tmp_path, monkeypatch):
         with tempfile.TemporaryDirectory() as tmpdir:
             handler = self._make_handler(tmpdir, mode)
+            handler.freq_ctl = Mock()
+            controller = self._make_gateway_controller()
+            info = RecoverInfo(
+                last_step_info=self._step_info(handler),
+                saver_info={},
+                evaluator_info={},
+                stats_logger_info={},
+                dataloader_info={},
+                checkpoint_info={},
+            )
+            monkeypatch.setattr(RecoverInfo, "load", lambda _: info)
+            monkeypatch.setattr(
+                checkpoint_pointer,
+                "resolve_checkpoint",
+                lambda *_: SimpleNamespace(
+                    manifest="manifest",
+                    label="generation3",
+                    payloads={"default": str(tmp_path / "payload")},
+                    transactional=True,
+                ),
+            )
+            load_checkpoint = Mock()
+            monkeypatch.setattr(handler, "_load_checkpoint", load_checkpoint)
 
-            with pytest.raises(NotImplementedError) as exc_info:
-                handler.load(
-                    self._make_gateway_controller(),
-                    Mock(),
-                    Mock(),
-                    Mock(),
-                    Mock(),
-                )
+            result = handler.load(controller, *self._dump_dependencies())
 
-            assert "GatewayTrainController" in str(exc_info.value)
-            assert '`_version="v2"`' in str(exc_info.value)
-
-    @pytest.mark.parametrize("mode", ["on", "auto"])
-    def test_dump_rejects_gateway_train_controller(self, mode):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            handler = self._make_handler(tmpdir, mode)
-            step_info = StepInfo(
-                epoch=0,
-                epoch_step=0,
-                global_step=0,
-                steps_per_epoch=handler.ft_spec.steps_per_epoch,
+            assert result is info
+            load_checkpoint.assert_called_once_with(
+                controller, path=str(tmp_path / "payload"), name="default"
             )
 
-            with pytest.raises(NotImplementedError) as exc_info:
-                handler.dump(
-                    self._make_gateway_controller(),
-                    step_info,
-                    Mock(),
-                    Mock(),
-                    Mock(),
-                    Mock(),
-                )
+    @pytest.mark.parametrize("mode", ["on", "auto"])
+    def test_dump_accepts_gateway_train_controller(self, mode, tmp_path, monkeypatch):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            handler = self._make_handler(tmpdir, mode)
+            handler.freq_ctl = Mock()
+            handler.freq_ctl.check.return_value = True
+            monkeypatch.setattr(handler, "_supports_checkpoint_pointer", lambda: False)
+            save_checkpoint = Mock()
+            dump_info = Mock()
+            monkeypatch.setattr(handler, "_save_checkpoint", save_checkpoint)
+            monkeypatch.setattr(RecoverInfo, "dump", dump_info)
+            controller = self._make_gateway_controller()
 
-            assert "GatewayTrainController" in str(exc_info.value)
-            assert "recover.mode" in str(exc_info.value)
+            handler.dump(
+                controller, self._step_info(handler), *self._dump_dependencies()
+            )
+
+            save_checkpoint.assert_called_once()
+            dump_info.assert_called_once()
+
+    def test_v2_colocate_recovery_rejected_before_checkpoint_resolution(
+        self, tmp_path, monkeypatch
+    ):
+        handler = self._make_handler(str(tmp_path), "on")
+        resolve = Mock()
+        monkeypatch.setattr(checkpoint_pointer, "resolve_checkpoint", resolve)
+
+        with pytest.raises(NotImplementedError, match="V2 colocated AWEX"):
+            handler.load(
+                self._make_gateway_controller(),
+                *self._dump_dependencies(),
+                inference_engine=RolloutControllerV2.__new__(RolloutControllerV2),
+                weight_update_meta=WeightUpdateMeta(type="awex"),
+                colocated_rollout=True,
+            )
+
+        resolve.assert_not_called()
 
     @pytest.mark.parametrize("no_save_optim", [False, True])
     def test_save_checkpoint_passes_with_optim_from_config(self, no_save_optim):
@@ -696,6 +729,115 @@ class TestAwexRecoverRestore:
         inference.resume.assert_called_once_with()
         events.offload.assert_not_called()
         inference.onload.assert_not_called()
+
+
+class TestV2RecoverRestore:
+    @staticmethod
+    def prepare(tmp_path, monkeypatch):
+        handler = TestRecoverHandler._make_handler(str(tmp_path), "on")
+        handler.freq_ctl = Mock()
+        info = RecoverInfo(
+            last_step_info=TestRecoverHandler._step_info(handler),
+            saver_info={},
+            evaluator_info={},
+            stats_logger_info={},
+            dataloader_info={},
+            checkpoint_info={},
+        )
+        monkeypatch.setattr(RecoverInfo, "load", lambda _: info)
+        monkeypatch.setattr(
+            checkpoint_pointer,
+            "resolve_checkpoint",
+            lambda *_: SimpleNamespace(
+                manifest="manifest",
+                label="generation3",
+                payloads={"default": "payload"},
+                transactional=True,
+            ),
+        )
+        monkeypatch.setattr(handler, "_load_checkpoint", Mock())
+        controller = GatewayTrainController.__new__(GatewayTrainController)
+        controller.connect_engine = Mock()
+        controller.update_weights = Mock()
+        controller.broadcast_version = Mock()
+        controller.commit_local_version = Mock()
+        inference = Mock()
+        dependencies = TestRecoverHandler._dump_dependencies()
+        return handler, controller, inference, dependencies, info
+
+    def test_failed_v2_transfer_keeps_inference_paused(self, tmp_path, monkeypatch):
+        handler, controller, inference, dependencies, _ = self.prepare(
+            tmp_path, monkeypatch
+        )
+        controller.update_weights.side_effect = RuntimeError("transfer failed")
+
+        with pytest.raises(RuntimeError, match="transfer failed") as exc_info:
+            handler.load(
+                controller,
+                *dependencies,
+                inference_engine=inference,
+                weight_update_meta=WeightUpdateMeta(type="awex"),
+            )
+
+        assert exc_info.value.weight_transfer_completed is False
+        controller.broadcast_version.assert_not_called()
+        inference.broadcast_version.assert_not_called()
+        inference.continue_generation.assert_not_called()
+        inference.resume.assert_not_called()
+
+    def test_v2_publish_retries_without_repeating_transfer(self, tmp_path, monkeypatch):
+        handler, controller, inference, dependencies, info = self.prepare(
+            tmp_path, monkeypatch
+        )
+        order = []
+        controller.update_weights.side_effect = lambda *_args, **_kwargs: order.append(
+            "transfer"
+        )
+        controller.broadcast_version.side_effect = (
+            lambda *_args, **_kwargs: order.append("train-publish")
+        )
+        inference_broadcasts = 0
+
+        def broadcast_inference(*_args, **_kwargs):
+            nonlocal inference_broadcasts
+            inference_broadcasts += 1
+            order.append("infer-publish")
+            if inference_broadcasts == 1:
+                raise RuntimeError("publish response lost")
+
+        inference.broadcast_version.side_effect = broadcast_inference
+        controller.commit_local_version.side_effect = lambda *_: order.append(
+            "train-commit"
+        )
+        inference.commit_local_version.side_effect = lambda *_: order.append(
+            "infer-commit"
+        )
+        inference.continue_generation.side_effect = lambda: order.append("continue")
+        inference.resume.side_effect = lambda: order.append("resume")
+
+        result = handler.load(
+            controller,
+            *dependencies,
+            inference_engine=inference,
+            weight_update_meta=WeightUpdateMeta(type="awex"),
+        )
+
+        assert result is info
+        controller.update_weights.assert_called_once()
+        assert controller.update_weights.call_args.kwargs == {
+            "resume_generation": False
+        }
+        assert order == [
+            "transfer",
+            "train-publish",
+            "infer-publish",
+            "train-publish",
+            "infer-publish",
+            "train-commit",
+            "infer-commit",
+            "continue",
+            "resume",
+        ]
 
 
 class TestAwexColocateGate:
