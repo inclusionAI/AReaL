@@ -347,6 +347,18 @@ class SnapshotRef:
 
 
 @dataclass(frozen=True)
+class SnapshotStopResult:
+    """Committed boundary returned when train() stops for reconfiguration.
+
+    Rollout admission remains closed. Leave the trainer context (or call
+    trainer.close()) to clean up workers. This is not a process-exit receipt.
+    """
+
+    snapshot: SnapshotRef
+    context: SnapshotContext
+
+
+@dataclass(frozen=True)
 class RestoreResult:
     """Registered state was loaded; runtime confirmation is still required."""
 
@@ -846,6 +858,7 @@ class _SnapshotRequest:
     directory: Path
     state_id: str
     result: Future[SnapshotRef]
+    stop_after_save: bool = False
 
 
 class TrainerReconfiguration:
@@ -855,13 +868,14 @@ class TrainerReconfiguration:
     trainer supplies the actual step and policy version. At most one request
     may be queued or executing. Requests arriving after the rollout preparation hook
     wait until the next step. A Future completes only after end-of-step state
-    and the manifest are written. Training continues after successful saves.
+    and the manifest are written. Training normally continues after a save.
+    With ``stop_after_save=True``, the channel closes, rollout stays fenced,
+    and train() returns a SnapshotStopResult at that completed boundary.
 
-    This is NOT a stop/restart interface. Coverage remains registered_components:
-    backend-omitted scheduler/RNG state is not automatically captured. Registered
-    rollout queues include their input buffer and loader cursor. Restore-time
-    weight synchronization and restart orchestration remain caller-owned. Do not
-    stop the runtime on this result.
+    Coverage remains registered_components. The trainer registers supplemental
+    backend state, rollout queues, the input buffer and loader cursor. A snapshot
+    Future confirms saving only: caller-owned trainer cleanup must finish before
+    checking process exit. Restore/startup and restart orchestration are separate.
 
     Example (using the application's existing trainer and workflow)::
 
@@ -871,6 +885,10 @@ class TrainerReconfiguration:
         saved = control.request_snapshot(snapshot_dir, state_id="boundary-1")
         trainer.train(workflow=workflow, reconfiguration=control)
         snapshot = saved.result()
+
+    For save-then-exit, request ``stop_after_save=True`` and call train() inside
+    ``with PPOTrainer(...) as trainer``. Its normal context exit closes runtime
+    resources; callers not using a context must call close() themselves.
 
     request_snapshot() may also be called by another thread during train().
     All other methods are called by the trainer thread; no planner or external
@@ -907,12 +925,25 @@ class TrainerReconfiguration:
         self._closed = False
 
     def request_snapshot(
-        self, directory: str | Path, *, state_id: str
+        self,
+        directory: str | Path,
+        *,
+        state_id: str,
+        stop_after_save: bool = False,
     ) -> Future[SnapshotRef]:
-        """Queue a snapshot into a new directory; its parent must already exist."""
+        """Queue a snapshot, optionally ending training after successful saving.
+
+        The directory must be new and its parent must exist. The stop flag is
+        fixed for this request; cancelling before the trainer latches it also
+        cancels the stop. The returned Future confirms saving, not process exit.
+        """
         if not isinstance(state_id, str) or not state_id.strip():
             raise ValueError("Snapshot state_id must be a nonempty string")
-        request = _SnapshotRequest(Path(directory).absolute(), state_id, Future())
+        if type(stop_after_save) is not bool:
+            raise TypeError("stop_after_save must be a bool")
+        request = _SnapshotRequest(
+            Path(directory).absolute(), state_id, Future(), stop_after_save
+        )
         with self._lock:
             if self._closed:
                 raise SnapshotError("This trainer reconfiguration channel is closed")
@@ -991,8 +1022,8 @@ class TrainerReconfiguration:
             self.close(exc)
             raise
 
-    def finish_step_snapshot(self, *, policy_version: int) -> None:
-        """Capture final host state and publish only for the request latched earlier."""
+    def finish_step_snapshot(self, *, policy_version: int) -> SnapshotStopResult | None:
+        """Publish the latched boundary; return an exit result only for stop requests."""
         if self._active is None:
             return
         request = self._active
@@ -1014,14 +1045,20 @@ class TrainerReconfiguration:
         except BaseException as exc:
             self.close(exc)
             raise
-        if self._rollout is not None:
+        stop = SnapshotStopResult(result, context) if request.stop_after_save else None
+        if self._rollout is not None and stop is None:
             self._rollout.release_snapshot()
         with self._lock:
             self._active = None
             self._prepared = None
             self._step_info = None
-        # Future callbacks may submit a request for the next training step.
+            if stop is not None:
+                # Terminal before invoking callbacks: no subsequent request can
+                # race with trainer exit or reopen rollout admission.
+                self._closed = True
+        # Ordinary save callbacks may request another step; stop callbacks cannot.
         request.result.set_result(result)
+        return stop
 
     def close(self, error: BaseException | None = None) -> None:
         """End requests on training exit, including failures between the two hooks."""

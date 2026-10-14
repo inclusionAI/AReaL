@@ -49,6 +49,7 @@ from areal.infra.reconfiguration import (
     CheckpointParticipant,
     EngineRuntimeState,
     ProcessRngState,
+    SnapshotStopResult,
     TrainerReconfiguration,
 )
 from areal.infra.utils.concurrent import call_maybe_async
@@ -653,14 +654,25 @@ class PPOTrainer:
         total_epochs: int | None = None,
         *,
         reconfiguration: TrainerReconfiguration | None = None,
-    ):
+    ) -> SnapshotStopResult | None:
         """Train, optionally servicing snapshot requests at checkpoint boundaries.
 
         The optional channel captures registered training and drained rollout
-        state. It is not yet a complete restart point. Use one channel per train() call.
+        state. A stop-after-save request returns SnapshotStopResult without
+        resuming rollout or entering another step. Leave the trainer context
+        (or call close()) to clean up runtime resources. This result does not
+        confirm worker process exit; startup restoration is a separate step.
+        Use one channel per train() call.
         """
+        if getattr(self, "_train_running", False):
+            raise RuntimeError("train() is already running on this trainer")
+        self._train_running = True
         error = None
         try:
+            if getattr(self, "_reconfiguration_stopped", False):
+                raise RuntimeError(
+                    "Trainer stopped for reconfiguration; create a new trainer"
+                )
             if reconfiguration is not None:
                 self._bind_reconfiguration(reconfiguration)
             return self._train_impl(
@@ -676,8 +688,11 @@ class PPOTrainer:
             error = exc
             raise
         finally:
-            if reconfiguration is not None:
-                reconfiguration.close(error)
+            try:
+                if reconfiguration is not None:
+                    reconfiguration.close(error)
+            finally:
+                self._train_running = False
 
     def _bind_reconfiguration(self, channel: TrainerReconfiguration) -> None:
         if not is_single_controller():
@@ -729,7 +744,7 @@ class PPOTrainer:
         total_epochs: int | None = None,
         *,
         reconfiguration: TrainerReconfiguration | None = None,
-    ):
+    ) -> SnapshotStopResult | None:
         config = self.config
         start_step = (
             self.recover_info.last_step_info.next().global_step
@@ -1056,9 +1071,13 @@ class PPOTrainer:
                 )
 
             if reconfiguration is not None and reconfiguration.has_active_snapshot:
-                reconfiguration.finish_step_snapshot(
+                stop = reconfiguration.finish_step_snapshot(
                     policy_version=self.actor.get_version()
                 )
+                if stop is not None:
+                    self._reconfiguration_stopped = True
+                    self._save_perf_tracer(step=global_step)
+                    return stop
 
             # Resume rollout
             self.rollout.resume()
