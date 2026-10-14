@@ -20,6 +20,7 @@ from areal.trainer.ppo.gae import (
 )
 from areal.trainer.ppo.lambda_fn import resolve_gae_lambda_fn
 from areal.trainer.ppo.loss_reduction import (
+    PG_TOKEN_WEIGHTS,
     PreparedLossStep,
     prepare_policy_gradient_batch,
 )
@@ -70,6 +71,7 @@ def _group_training_metrics(
     group_sizes: list[int],
     logical_group_sizes: list[int] | None = None,
     loss_aggregation: LossAggregationMode = "token_mean",
+    token_weights: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     batch_size = loss_mask.shape[0]
     if any(size < 1 for size in group_sizes) or sum(group_sizes) != batch_size:
@@ -90,6 +92,10 @@ def _group_training_metrics(
     unit_counts = (
         token_counts if loss_aggregation == "token_mean" else (token_counts > 0).float()
     )
+    if loss_aggregation == "traj_mean":
+        if token_weights is None or token_weights.shape != loss_mask.shape:
+            raise ValueError("Trajectory metrics require prepared token weights.")
+        unit_counts = token_weights.sum(-1)
     cumulative_units = torch.nn.functional.pad(unit_counts.cumsum(0), (1, 0))
 
     group_starts[starts] = True
@@ -713,6 +719,17 @@ class PPOActor:
             raise ValueError(
                 "Distillation is only supported with loss_aggregation='token_mean'."
             )
+        prepared_loss = prepare_policy_gradient_batch(
+            data,
+            mode=self.config.loss_aggregation,
+            divisor=self.config.loss_aggregation_divisor,
+            group_sizes=meta.traj_group_sizes if meta is not None else None,
+            trajectory_sizes=(
+                meta.rollout_row_counts
+                if meta is not None and self.config.loss_aggregation == "traj_mean"
+                else None
+            ),
+        )
         attn_mask = data["attention_mask"]
         loss_mask = data["loss_mask"]
         reward_score = data["rewards"]
@@ -752,6 +769,7 @@ class PPOActor:
                 meta.traj_group_sizes,
                 meta.logical_group_sizes,
                 self.config.loss_aggregation,
+                data.get(PG_TOKEN_WEIGHTS),
             )
             global_denominators["n_groups"] = group_metrics[0]
         stats_tracker.denominator(**global_denominators)
@@ -852,12 +870,6 @@ class PPOActor:
         # Megatron keeps the full batch on CPU and streams only the current
         # microbatch to the accelerator. Stage before the outer PPO split so
         # that split does not retain every optimizer minibatch on GPU.
-        prepared_loss = prepare_policy_gradient_batch(
-            data,
-            mode=self.config.loss_aggregation,
-            divisor=self.config.loss_aggregation_divisor,
-            group_sizes=meta.traj_group_sizes if meta is not None else None,
-        )
         stage_batch_for_engine(data, self.engine)
         # NOTE: calling engine.train() is critical to enabling gradient checkpointing
         self.engine.train()

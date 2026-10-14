@@ -23,7 +23,7 @@ from areal.utils.functional.loss_aggregation import (
 )
 
 PG_TOKEN_WEIGHTS = "_pg_token_weights"
-_MODES = ("token_mean", "seq_mean", "prompt_mean", "constant")
+_MODES = ("token_mean", "seq_mean", "traj_mean", "prompt_mean", "constant")
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,8 +68,9 @@ class _IndependentSteps:
 
 
 @dataclass(frozen=True, slots=True)
-class _PromptMeanBatch:
-    local_active_groups: torch.Tensor
+class _UnitMeanBatch:
+    local_active_units: torch.Tensor
+    unit_name: str
 
     def for_steps(
         self,
@@ -78,16 +79,16 @@ class _PromptMeanBatch:
         dp_group: dist.ProcessGroup | None = None,
         device: torch.device | str | None = None,
     ) -> list[PreparedLossStep]:
-        """Fix K/G and each microbatch's physical-response share after scheduling.
+        """Fix K/U and each microbatch's physical-response share after scheduling.
 
-        The scheduler owns identical step counts across ranks. Reduce exact group
+        The scheduler owns identical step counts across ranks. Reduce exact unit
         and response counts over DP, excluding CP replicas, then copy the small
         counts to the host once so binding needs no device synchronization.
         """
         if not microbatches:
             raise ValueError("Cannot prepare an empty optimizer schedule.")
         collective_device = (
-            device if device is not None else self.local_active_groups.device
+            device if device is not None else self.local_active_units.device
         )
         if dist.is_initialized() and dist.get_backend(dp_group) == "gloo":
             collective_device = "cpu"
@@ -101,22 +102,24 @@ class _PromptMeanBatch:
         )
         counts = torch.cat(
             [
-                self.local_active_groups.reshape(1).to(device=collective_device),
+                self.local_active_units.reshape(1).to(device=collective_device),
                 row_counts,
             ]
         )
         if dist.is_initialized():
             dist.all_reduce(counts, group=dp_group)
-        active_groups, *global_rows = counts.cpu().tolist()
-        if active_groups == 0:
-            raise ValueError("Prompt mean requires active prompt groups in the update.")
+        active_units, *global_rows = counts.cpu().tolist()
+        if active_units == 0:
+            raise ValueError(
+                f"Unit mean requires active {self.unit_name} in the update."
+            )
         if any(rows <= 0 for rows in global_rows):
             raise ValueError("Every optimizer step must contain real responses.")
-        step_scale = len(microbatches) / active_groups
+        step_scale = len(microbatches) / active_units
         return [
             PreparedLossStep(
                 functools.partial(
-                    _bind_prompt_mean, step_scale=step_scale, global_rows=rows
+                    _bind_unit_mean, step_scale=step_scale, global_rows=rows
                 )
             )
             for rows in global_rows
@@ -129,12 +132,21 @@ def prepare_policy_gradient_batch(
     mode: LossAggregationMode,
     divisor: float | None = None,
     group_sizes: GroupSizes | None = None,
+    trajectory_sizes: GroupSizes | None = None,
 ) -> PreparedLossBatch:
     """Prepare loss metadata before response-level splitting.
 
     Token coefficients travel with the batch through splitting and packing. The
-    returned context retains only configuration or the active-group scalar;
+    returned context retains only configuration or the active-unit scalar;
     optimizer-step constants are resolved once the schedule is known.
+
+    ``trajectory_sizes`` gives contiguous row counts per logical rollout from
+    ``RolloutGroup`` metadata. Without it, traj_mean treats each row as a rollout.
+    Like prompt_mean it preserves response-level steps with a fixed U/K
+    denominator, rather than renormalizing each step's fragment.
+
+    The trajectory averaging idea and full-rollout token coefficients are
+    inspired by HwVanICI/AReaL commit 3daf152462d8b6427278884a55d2d0d16b02fb6e.
     """
     if mode not in _MODES:
         raise ValueError(f"loss_aggregation must be one of {_MODES}, got {mode!r}.")
@@ -150,19 +162,33 @@ def prepare_policy_gradient_batch(
         return _IndependentSteps(PreparedLossStep(_bind_token_mean))
     if mode == "seq_mean":
         return _IndependentSteps(PreparedLossStep(_bind_sequence_mean))
-    mask = data["loss_mask"].bool()
-    if mask.ndim != 2:
-        raise ValueError("Preparing prompt mean requires a 2D loss_mask.")
+    if mode == "traj_mean":
+        sizes = (
+            trajectory_sizes
+            if trajectory_sizes is not None
+            else [1] * data["loss_mask"].shape[0]
+        )
+        return _prepare_unit_mean(data, sizes, "trajectories")
     if group_sizes is None:
         raise ValueError("group_sizes are required to prepare prompt mean.")
-    if torch.is_tensor(group_sizes):
-        raise TypeError("group_sizes must be a sequence of ints, not a tensor.")
-    sizes = [int(size) for size in group_sizes]
-    if any(size <= 0 for size in sizes):
-        raise ValueError(f"group_sizes must be positive, got {sizes}.")
+    return _prepare_unit_mean(data, group_sizes, "prompt groups")
+
+
+def _prepare_unit_mean(
+    data: dict[str, Any], sizes: GroupSizes, unit_name: str
+) -> _UnitMeanBatch:
+    """Attach full-unit reciprocal token counts before scheduling or packing."""
+    mask = data["loss_mask"].bool()
+    if mask.ndim != 2:
+        raise ValueError("Preparing unit mean requires a 2D loss_mask.")
+    if torch.is_tensor(sizes):
+        raise TypeError("unit sizes must be a sequence of ints, not a tensor.")
+    sizes = list(sizes)
+    if any(type(size) is not int or size <= 0 for size in sizes):
+        raise ValueError(f"unit sizes must be positive integers, got {sizes}.")
     if sum(sizes) != mask.shape[0]:
         raise ValueError(
-            f"group_sizes sum to {sum(sizes)} but sequence count is {mask.shape[0]}."
+            f"unit sizes sum to {sum(sizes)} but sequence count is {mask.shape[0]}."
         )
     ids = torch.arange(len(sizes), device=mask.device).repeat_interleave(
         torch.tensor(sizes, dtype=torch.long, device=mask.device),
@@ -171,7 +197,7 @@ def prepare_policy_gradient_batch(
     counts = torch.zeros(len(sizes), dtype=torch.int64, device=mask.device)
     counts.scatter_add_(0, ids, mask.sum(dim=-1, dtype=torch.int64))
     data[PG_TOKEN_WEIGHTS] = mask.float() / counts[ids].unsqueeze(-1).clamp_min(1)
-    return _PromptMeanBatch(counts.count_nonzero())
+    return _UnitMeanBatch(counts.count_nonzero(), unit_name)
 
 
 def _bind_token_mean(data: dict[str, Any]) -> TokenMean:
@@ -186,12 +212,12 @@ def _bind_constant_length(data: dict[str, Any], *, divisor: float) -> ConstantLe
     return ConstantLength(divisor, data["loss_mask"], data.get("cu_seqlens"))
 
 
-def _bind_prompt_mean(
+def _bind_unit_mean(
     data: dict[str, Any], *, step_scale: float, global_rows: int
 ) -> PromptMean:
     weights = data.get(PG_TOKEN_WEIGHTS)
     if weights is None:
-        raise ValueError("Prompt mean requires prepared token weights.")
+        raise ValueError("Unit mean requires prepared token weights.")
     mask = data["loss_mask"]
     if weights.shape != mask.shape or weights.device != mask.device:
         raise ValueError(
