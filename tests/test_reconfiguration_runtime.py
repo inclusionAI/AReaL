@@ -8,10 +8,8 @@ and real distributed backend checkpoints still require integration testing.
 
 from __future__ import annotations
 
-import asyncio
 import copy
 import dataclasses
-import math
 import random
 import sys
 import threading
@@ -21,13 +19,18 @@ from unittest.mock import Mock
 
 import pytest
 
+from tests import test_reconfiguration as snapshot_tests
 from tests.test_reconfiguration import (
     M,
     Owner,
+    RpcTransport,
+    _controller,
     _snapshot_manager,
     _source_function,
     _trainer_fixture,
 )
+
+wait_methods = snapshot_tests.wait_methods
 
 IDENTITY = {"backend": "test", "parallelism": {"dp": 3}, "schedule": {"steps": 20}}
 
@@ -283,62 +286,17 @@ def test_device_rng_mismatch_fails_before_changing_host_streams(rng_dependencies
 
 
 @pytest.fixture
-def runtime_controller():
-    namespace = {
-        "asyncio": asyncio,
-        "math": math,
-        "run_async_task": lambda f: asyncio.run(f()),
-    }
-    names = (
-        "_runtime_state_call",
-        "runtime_state_dict",
-        "load_runtime_state_dict",
-        "restore_runtime_rng",
-    )
-    cls = type(
-        "RuntimeController",
-        (),
-        {
-            name: _source_function(
-                "areal/infra/controller/train_controller.py",
-                "TrainController",
-                name,
-                namespace,
-            )
-            for name in names
-        },
-    )
-    owner = cls()
-    owner.workers = [types.SimpleNamespace(id=f"worker/{i}") for i in range(3)]
+def runtime_controller(wait_methods):
+    owner = _controller(wait_methods, RpcTransport())
     owner.workers_is_dp_head = [True, False, True]
-    owner._engine_name = lambda rank: f"actor/{rank}"
     return owner
-
-
-class RuntimeTransport:
-    def __init__(self, outcomes=None):
-        self.outcomes = outcomes or {}
-        self.calls = []
-        self.finished = []
-
-    async def async_call_engine(self, worker, method, engine, *args, **options):
-        self.calls.append((worker, method, engine, args, options))
-        result = self.outcomes.get(worker)
-        if isinstance(result, BaseException):
-            self.finished.append(worker)
-            raise result
-        if result == "hang":
-            await asyncio.Event().wait()
-        await asyncio.sleep(0)
-        self.finished.append(worker)
-        return result
 
 
 def test_runtime_rpc_retains_all_ranks_and_disables_individual_retries(
     runtime_controller,
 ):
     packet = _packet()
-    transport = RuntimeTransport({"worker/0": packet, "worker/2": packet})
+    transport = RpcTransport({"worker/0": packet, "worker/2": packet})
     runtime_controller.scheduler = transport
     assert runtime_controller.runtime_state_dict() == packet
     assert len(transport.calls) == 3
@@ -347,44 +305,18 @@ def test_runtime_rpc_retains_all_ranks_and_disables_individual_retries(
         == {"http_timeout": 7200.0, "max_retries": 1, "rpc_meta": {"broadcast": False}}
         for call in transport.calls
     )
-    transport = RuntimeTransport()
+    transport = RpcTransport()
     runtime_controller.scheduler = transport
     runtime_controller.load_runtime_state_dict(packet)
     assert [call[3] for call in transport.calls] == [(packet,), (packet,), (packet,)]
 
 
-@pytest.mark.parametrize(
-    "failure", [OSError("rank failed"), "hang", asyncio.CancelledError()]
-)
-def test_runtime_rpc_non_head_failure_is_reported_after_peers_finish(
-    runtime_controller, failure
-):
-    transport = RuntimeTransport({"worker/1": failure})
-    runtime_controller.scheduler = transport
-    with pytest.raises(RuntimeError, match="worker/1"):
-        runtime_controller._runtime_state_call(
-            "restore_runtime_rng", _packet(), timeout=0.05
-        )
-    assert {"worker/0", "worker/2"} <= set(transport.finished)
-    assert len(transport.calls) == 3
-
-
 def test_runtime_rpc_disagreeing_dp_heads_cannot_publish(runtime_controller):
-    runtime_controller.scheduler = RuntimeTransport(
+    runtime_controller.scheduler = RpcTransport(
         {"worker/0": _packet(), "worker/2": "different"}
     )
     with pytest.raises(RuntimeError, match="inconsistent runtime state"):
         runtime_controller.runtime_state_dict()
-
-
-@pytest.mark.parametrize("bad_timeout", [0, -1, float("inf"), float("nan")])
-def test_runtime_rpc_invalid_deadline_starts_no_calls(runtime_controller, bad_timeout):
-    runtime_controller.scheduler = RuntimeTransport()
-    with pytest.raises(ValueError, match="finite and positive"):
-        runtime_controller._runtime_state_call(
-            "runtime_state_dict", timeout=bad_timeout
-        )
-    assert not runtime_controller.scheduler.calls
 
 
 @pytest.mark.parametrize(

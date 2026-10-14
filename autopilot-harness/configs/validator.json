@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "name": "areal-configuration-and-transition-v2",
+  "runtime_revision": "7599750a260aac07281d2c01694e70e045bf8ec8",
+  "notes": "Harness-owned policy. Native types and layout grammar follow the pinned AReaL source. Defaults/interpolations must be resolved. Model, resource, backend, memory upper bounds and state-transition evidence are required in a separate trusted context bound to the exact baseline/candidate pair. Missing evidence never passes. Validation does not execute configuration changes.",
+  "parameters": {
+    "actor.backend": {
+      "type": "string",
+      "source_ref": "areal/api/cli_args.py:TrainEngineConfig.backend; areal/api/alloc_mode.py"
+    },
+    "actor.mb_spec.n_mbs": {
+      "type": "integer", "nullable": true, "minimum": 1,
+      "source_ref": "areal/api/cli_args.py:MicroBatchSpec.n_mbs"
+    },
+    "actor.mb_spec.max_tokens_per_mb": {
+      "type": "integer", "nullable": true, "minimum": 1,
+      "source_ref": "areal/api/cli_args.py:MicroBatchSpec.max_tokens_per_mb"
+    },
+    "actor.pad_to_maximum": {
+      "type": "boolean",
+      "source_ref": "areal/api/cli_args.py:TrainEngineConfig.pad_to_maximum"
+    },
+    "rollout.backend": {
+      "type": "string",
+      "source_ref": "areal/api/cli_args.py:InferenceEngineConfig.backend; areal/api/alloc_mode.py"
+    },
+    "rollout.max_concurrent_rollouts": {
+      "type": "integer", "nullable": true, "minimum": 1,
+      "source_ref": "areal/api/cli_args.py:InferenceEngineConfig.max_concurrent_rollouts"
+    },
+    "sglang.enable_dp_attention": {
+      "type": "boolean", "active_backend": "sglang",
+      "source_ref": "areal/api/cli_args.py:SGLangConfig.enable_dp_attention"
+    },
+    "sglang.dp_size": {
+      "type": "integer", "minimum": 1, "active_backend": "sglang",
+      "source_ref": "areal/api/cli_args.py:SGLangConfig.dp_size"
+    },
+    "sglang.enable_ep_moe": {
+      "type": "boolean", "active_backend": "sglang",
+      "source_ref": "areal/api/cli_args.py:SGLangConfig.enable_ep_moe"
+    },
+    "sglang.ep_size": {
+      "type": "integer", "minimum": 1, "active_backend": "sglang",
+      "source_ref": "areal/api/cli_args.py:SGLangConfig.ep_size"
+    },
+    "sglang.max_running_requests": {
+      "type": "integer", "nullable": true, "minimum": 1, "active_backend": "sglang",
+      "source_ref": "areal/api/cli_args.py:SGLangConfig.max_running_requests"
+    },
+    "sglang.max_prefill_tokens": {
+      "type": "integer", "minimum": 1, "active_backend": "sglang",
+      "source_ref": "areal/api/cli_args.py:SGLangConfig.max_prefill_tokens"
+    },
+    "sglang.mem_fraction_static": {
+      "type": "number", "nullable": true, "minimum": 0,
+      "exclusive_minimum": true, "maximum": 1, "active_backend": "sglang",
+      "source_ref": "areal/api/cli_args.py:SGLangConfig.mem_fraction_static"
+    },
+    "vllm.max_num_seqs": {
+      "type": "integer", "minimum": 1, "active_backend": "vllm",
+      "source_ref": "areal/api/cli_args.py:vLLMConfig.max_num_seqs"
+    }
+  },
+  "checks": ["preserve_backend", "explicit_padding_limit", "megatron_n_mbs"],
+  "deferred_paths": []
+}

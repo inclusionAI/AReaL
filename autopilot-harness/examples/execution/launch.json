@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "python3",
+    "examples/execution/cpu_runtime.py"
+  ],
+  "cwd": "../..",
+  "run_id": "cpu-restart-demo",
+  "runtime_revision": "fixture:areal-snapshot-core",
+  "configuration_id": "sha256:09279cd119823aa39d2e658f03ceff78af31ddf7f885938e64b1986e195d14cd",
+  "timeouts": {
+    "startup": 15,
+    "snapshot": 15,
+    "exit": 10,
+    "restore": 15
+  }
+}

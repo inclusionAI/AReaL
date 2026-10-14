@@ -1,0 +1,18 @@
+{
+  "inference_running_requests": {
+    "status": "success",
+    "data": {
+      "resultType": "matrix",
+      "result": [
+        {
+          "metric": {"__name__": "sglang_num_running_reqs", "experiment": "synthetic", "trial": "demo", "instance": "worker-0:8000"},
+          "values": [[1790812800, "4"], [1790812815, "6"], [1790812830, "3"]]
+        },
+        {
+          "metric": {"__name__": "sglang_num_running_reqs", "experiment": "synthetic", "trial": "demo", "instance": "worker-1:8000"},
+          "values": [[1790812800, "2"], [1790812815, "5"], [1790812830, "4"]]
+        }
+      ]
+    }
+  }
+}

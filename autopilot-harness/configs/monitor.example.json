@@ -1,0 +1,39 @@
+{
+  "run_id": "replace-with-training-run-id",
+  "segment_id": "initial",
+  "training_specification": {
+    "runtime_code": {"uri": "../..", "version": null},
+    "workflow_code": {"uri": null, "version": null, "entrypoint": null},
+    "model": {"uri": null, "version": null},
+    "resources": {"gpu_type": null, "gpu_count": null, "memory_per_gpu_gib": null, "topology": null}
+  },
+  "wandb": {
+    "run": "ENTITY/PROJECT/RUN_ID",
+    "timeout_seconds": 30,
+    "max_rows": 100000,
+    "metrics": {
+      "timeperf/rollout": "s",
+      "timeperf/train_step": "s",
+      "timeperf/update_weights": "s",
+      "ppo_actor/task_reward/avg": "dimensionless"
+    }
+  },
+  "prometheus": {
+    "start": "2026-10-01T00:00:00Z",
+    "end": "2026-10-01T00:10:00Z",
+    "step_seconds": 15,
+    "timeout_seconds": 30,
+    "queries": [
+      {
+        "name": "inference_running_requests",
+        "expression": "sglang_num_running_reqs{experiment=\"REPLACE_EXPERIMENT\",trial=\"REPLACE_TRIAL\"}",
+        "unit": "requests"
+      },
+      {
+        "name": "gpu_utilization",
+        "expression": "DCGM_FI_DEV_GPU_UTIL{instance=\"REPLACE_NODE_EXPORTER\"}",
+        "unit": "%"
+      }
+    ]
+  }
+}

@@ -4,10 +4,8 @@
 from __future__ import annotations
 
 import ast
-import copy
 import dataclasses
 import json
-import pickle
 import random
 import subprocess
 import sys
@@ -38,168 +36,14 @@ def _control():
 def _fixture(
     monkeypatch, *, awex=False, critic=False, colocated=False, evaluation=False
 ):
-    trainer, events = _trainer_fixture(monkeypatch, awex=awex, critic=critic)
-    trainer.config.total_train_epochs = 2
-    trainer.config.total_train_steps = 3
-    trainer._snapshot_restore = None
-    trainer.snapshot_restore_result = None
-    trainer.weight_update_meta.type = "awex" if awex else "disk"
-    monkeypatch.setattr(
-        M, "capture_rng_state", lambda **_: {"python": random.getstate()}
+    return _trainer_fixture(
+        monkeypatch,
+        awex=awex,
+        critic=critic,
+        colocated=colocated,
+        evaluation=evaluation,
+        total_steps=3,
     )
-
-    def host_rng(state, **_):
-        events.append("host.rng")
-        random.setstate(state["python"])
-
-    monkeypatch.setattr(M, "restore_rng_state", host_rng)
-    module = types.ModuleType("areal.infra.controller.rollout_controller")
-    module._same_input_spec = _source_function(
-        "areal/infra/controller/rollout_controller.py",
-        None,
-        "_same_input_spec",
-        {"torch": types.SimpleNamespace(Tensor=type("Tensor", (), {}))},
-    )
-    monkeypatch.setitem(sys.modules, module.__name__, module)
-    rollout = trainer.rollout
-    rollout._resolve_workflow_str = lambda workflow: workflow
-    rollout._resolve_should_accept_fn = lambda value: value
-    rollout.input_spec = None
-    rollout.inventory = {"pending": [], "ready": [], "accepted": 0}
-    rollout.paused = False
-    rollout.weights = [0]
-    rollout.kv_offloaded = rollout.weights_offloaded = False
-    trainer.samples = []
-
-    def pause():
-        rollout.paused = True
-        events.append("rollout.pause")
-
-    def resume():
-        rollout.paused = False
-        events.append("rollout.resume")
-
-    rollout.pause = pause
-    rollout.resume = resume
-    rollout.pause_generation_sync = lambda: events.append("generation.pause")
-
-    def offload(tags):
-        events.append(f"offload.{tags[0]}")
-        setattr(rollout, f"{tags[0].replace('kv_cache', 'kv')}_offloaded", True)
-
-    rollout.offload = offload
-
-    def rollout_state():
-        assert rollout.frozen
-        return copy.deepcopy(
-            dict(
-                policy_version=rollout.version,
-                input_spec=rollout.input_spec,
-                dataloader=trainer.train_dataloader.state_dict(),
-                inventory=rollout.inventory,
-            )
-        )
-
-    def rollout_load(state):
-        assert rollout.frozen
-        assert state["policy_version"] == rollout.version
-        events.append("rollout.load")
-        rollout.input_spec = copy.deepcopy(state["input_spec"])
-        rollout.inventory = copy.deepcopy(state["inventory"])
-        trainer.train_dataloader.load_state_dict(state["dataloader"])
-
-    rollout.state_dict = rollout_state
-    rollout.load_state_dict = rollout_load
-
-    def batch(loader, **kwargs):
-        assert not rollout.frozen and not rollout.paused
-        if trainer.actor.loads:
-            assert rollout.weights == trainer.actor.value["weights"]
-        events.append("batch")
-        trainer.samples.append((loader.value["position"], random.random()))
-        loader.value["position"] += 2
-        rollout.input_spec = {
-            key: value for key, value in kwargs.items() if key != "dynamic_bs"
-        }
-        if rollout.input_spec["workflow_kwargs"] is None:
-            rollout.input_spec["workflow_kwargs"] = {}
-        return [{}]
-
-    trainer.actor.prepare_batch = batch
-    for engine in (trainer.actor, trainer.critic):
-        if engine is None:
-            continue
-        engine.schedule_step = 0
-        engine.rng = random.Random(10)
-        original_update = engine.ppo_update
-
-        def update(batch, engine=engine, original=original_update):
-            engine.rng.random()
-            original(batch)
-
-        engine.ppo_update = update
-
-        def step_lr(engine=engine):
-            engine.schedule_step += 1
-            events.append(f"{engine.name}.lr")
-
-        engine.step_lr_scheduler = step_lr
-
-        def runtime_state(engine=engine):
-            return pickle.dumps((engine.schedule_step, engine.rng.getstate())).hex()
-
-        engine.runtime_state_dict = runtime_state
-
-        def runtime_load(state, engine=engine):
-            engine.schedule_step = pickle.loads(bytes.fromhex(state))[0]
-            events.append(f"{engine.name}.schedule")
-
-        engine.load_runtime_state_dict = runtime_load
-
-        def rng_load(state, engine=engine):
-            engine.rng.setstate(pickle.loads(bytes.fromhex(state))[1])
-            events.append(f"{engine.name}.rng")
-
-        engine.restore_runtime_rng = rng_load
-        original_load = engine.load
-
-        def load(meta, engine=engine, original=original_load):
-            assert rollout.frozen
-            if awex:
-                assert rollout.kv_offloaded and rollout.weights_offloaded
-            events.append(f"{engine.name}.load")
-            original(meta)
-
-        engine.load = load
-
-    def sync(meta):
-        assert trainer.actor.version == rollout.version
-        rollout.weights = trainer.actor.value["weights"].copy()
-        events.append("weight_sync")
-
-    trainer.actor.update_weights = sync
-    trainer._should_offload_rollout = colocated
-    trainer._should_offload_actor = colocated
-    trainer._offload_model = lambda engine, role: events.append(f"{role}.offload")
-    trainer._onload_model = lambda engine, role: events.append(f"{role}.onload")
-    trainer._offload_rollout = lambda **_: events.append("rollout.offload")
-
-    def onload(is_eval=False):
-        events.append("rollout.onload")
-        # Deliberately consume RNG during initialization to check finalization.
-        random.random()
-        if not is_eval:
-            rollout.resume()
-
-    trainer._onload_rollout = onload
-    if evaluation:
-        ev = types.SimpleNamespace(version=0)
-        ev.set_version = lambda version: setattr(ev, "version", version)
-        ev.get_version = lambda: ev.version
-        ev.pause = lambda: events.append("eval.pause")
-        ev.resume = lambda: events.append("eval.resume")
-        trainer.eval_rollout = ev
-    return trainer, events
 
 
 def _save(monkeypatch, tmp_path, **options):

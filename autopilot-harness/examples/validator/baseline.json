@@ -1,0 +1,28 @@
+{
+  "experiment_name": "synthetic-validator-demo",
+  "trial_name": "initial",
+  "seed": 1,
+  "train_dataset": {"batch_size": 128},
+  "gconfig": {"n_samples": 4, "max_new_tokens": 1024, "temperature": 1.0},
+  "actor": {
+    "backend": "fsdp:d4p1t1",
+    "mb_spec": {"n_mbs": 1, "max_tokens_per_mb": 10240, "granularity": 1, "n_mbs_divisor": 1, "packing_algorithm": "ffd"},
+    "pad_to_maximum": false,
+    "optimizer": {"lr": 0.000017},
+    "ppo_n_minibatches": 1,
+    "scheduling_spec": [{"gpu": 1, "mem": 32}]
+  },
+  "rollout": {
+    "backend": "sglang:d4p1t1",
+    "max_concurrent_rollouts": 256,
+    "consumer_batch_size": 128,
+    "max_head_offpolicyness": 2
+  },
+  "sglang": {
+    "enable_dp_attention": false, "dp_size": 1,
+    "enable_ep_moe": false, "ep_size": 1,
+    "max_running_requests": null, "max_prefill_tokens": 32768,
+    "mem_fraction_static": 0.8
+  },
+  "vllm": {"max_num_seqs": 256}
+}

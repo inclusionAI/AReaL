@@ -1,0 +1,31 @@
+{
+  "run_id": "synthetic-monitor-demo",
+  "segment_id": "initial",
+  "training_specification": {
+    "runtime_code": {"uri": "fixture://AReaL", "version": "synthetic"},
+    "workflow_code": {"uri": "fixture://workflow", "version": "synthetic", "entrypoint": "demo"},
+    "model": {"uri": "fixture://model", "version": "synthetic"},
+    "resources": {"gpu_type": "simulated", "gpu_count": 2, "memory_per_gpu_gib": 80, "topology": "synthetic single node"}
+  },
+  "wandb": {
+    "run": "demo/autopilot/synthetic",
+    "fixture": "wandb.json",
+    "metrics": {
+      "timeperf/train_step": "s",
+      "ppo_actor/task_reward/avg": "dimensionless"
+    }
+  },
+  "prometheus": {
+    "fixture": "prometheus.json",
+    "start": "2026-10-01T00:00:00Z",
+    "end": "2026-10-01T00:00:30Z",
+    "step_seconds": 15,
+    "queries": [
+      {
+        "name": "inference_running_requests",
+        "expression": "sglang_num_running_reqs{experiment=\"synthetic\",trial=\"demo\"}",
+        "unit": "requests"
+      }
+    ]
+  }
+}

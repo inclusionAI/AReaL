@@ -17,6 +17,7 @@ import hashlib
 import json
 import math
 import pickle
+import random
 import sys
 import tempfile
 import threading
@@ -485,191 +486,42 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(self.actor.loads, 0)
 
 
-def _source_function(relative_path, class_name, name, namespace=None):
-    """Load a real function body without importing optional GPU dependencies."""
+def _source_namespace(relative_path, names, namespace=None, *, class_name=None):
+    """Execute selected production definitions with explicit CPU dependencies."""
     path = REPO_ROOT / relative_path
-    tree = ast.parse(path.read_text(), filename=str(path))
-    body = tree.body
+    body = ast.parse(path.read_text(), filename=str(path)).body
     if class_name is not None:
         body = next(
-            node
-            for node in body
-            if isinstance(node, ast.ClassDef) and node.name == class_name
+            n for n in body if isinstance(n, ast.ClassDef) and n.name == class_name
         ).body
-    function = next(
-        node for node in body if isinstance(node, ast.FunctionDef) and node.name == name
-    )
-    scope = {} if namespace is None else dict(namespace)
-    exec(
-        compile(ast.Module(body=[function], type_ignores=[]), str(path), "exec"), scope
-    )
-    return scope[name]
-
-
-@pytest.fixture
-def portable_optimizer(monkeypatch):
-    """Exercise common-state mapping without emulating tensor resharding."""
-    path = "areal/engine/megatron_utils/checkpointer.py"
-    scope = {
-        "copy": copy,
-        "torch": types.SimpleNamespace(Tensor=type("TensorPlaceholder", (), {})),
-    }
-    tree = ast.parse((REPO_ROOT / path).read_text())
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and any(
-            isinstance(target, ast.Name) and target.id == "_GROUP_KEYS"
+    selected = [
+        node
+        for node in body
+        if getattr(node, "name", None) in names
+        or isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id in names
             for target in node.targets
-        ):
-            scope["_GROUP_KEYS"] = ast.literal_eval(node.value)
-    for name in (
-        "_common_equal",
-        "_optimizer_leaves",
-        "_merge_optimizer_common",
-        "_portable_optimizer_template",
-    ):
-        scope[name] = _source_function(path, None, name, scope)
-    monkeypatch.setitem(
-        sys.modules,
-        "megatron.core.dist_checkpointing.mapping",
-        types.SimpleNamespace(
-            LocalNonpersistentObject=lambda value: types.SimpleNamespace(data=value)
-        ),
-    )
-    return types.SimpleNamespace(
-        merge=scope["_merge_optimizer_common"],
-        map=scope["_portable_optimizer_template"],
-    )
-
-
-def _optimizer_common_group(*, expert=False, wd=1.0, step=12):
-    return {
-        "wd_mult": wd,
-        "lr_mult": 1.0,
-        "is_decoupled_lr": False,
-        "is_expert_parallel": expert,
-        "step": step,
-        "lr": 0.25,
-        "weight_decay": 0.1,
-        "betas": (0.9, 0.95),
-        "eps": 1e-8,
-    }
-
-
-def _optimizer_common_leaf(groups):
-    return {
-        "optimizer": {"param_groups": groups},
-        "grad_scaler": {"scale": 1024, "growth_tracker": 3},
-    }
-
-
-def test_portable_optimizer_chain_changes_preserve_state(portable_optimizer):
-    """Dense/expert ownership can merge and split without losing progress."""
-    source = [
-        _optimizer_common_leaf([_optimizer_common_group()]),
-        _optimizer_common_leaf([_optimizer_common_group(expert=True, wd=0.0)]),
+        )
     ]
-    original = copy.deepcopy(source)
-    common = portable_optimizer.merge([source])
-    # A new layout owns both groups in one optimizer, in the opposite order.
-    target = _optimizer_common_leaf(
-        [_optimizer_common_group(wd=0.0, step=0), _optimizer_common_group(step=0)]
+    module = ast.Module(
+        body=[
+            ast.ImportFrom(
+                module="__future__", names=[ast.alias(name="annotations")], level=0
+            ),
+            *selected,
+        ],
+        type_ignores=[],
     )
-    tensors = {"native-sharded-key": object()}
-    target["param_state"] = tensors
-    portable_optimizer.map(target, common)
-    assert target["param_state"] is tensors
-    assert target["optimizer"].data["param_groups"] == [
-        _optimizer_common_group(wd=0.0),
-        _optimizer_common_group(),
-    ]
-    assert target["grad_scaler"].data == source[0]["grad_scaler"]
-    # Restoring into separate dense/expert children retains target ownership.
-    split = {
-        index: dict(
-            _optimizer_common_leaf([_optimizer_common_group(expert=expert, step=0)]),
-            param_state=tensors,
-        )
-        for index, expert in enumerate((False, True))
-    }
-    portable_optimizer.map(split, common)
-    for index, expert in enumerate((False, True)):
-        assert split[index]["param_state"] is tensors
-        assert split[index]["optimizer"].data["param_groups"] == [
-            _optimizer_common_group(expert=expert)
-        ]
-    assert source == original
+    scope = {} if namespace is None else namespace
+    exec(compile(ast.fix_missing_locations(module), str(path), "exec"), scope)
+    return scope
 
 
-@pytest.mark.parametrize("field,value", [("step", 99), ("lr", 0.5), ("eps", 1e-6)])
-def test_portable_optimizer_inconsistent_groups_rejected(
-    portable_optimizer, field, value
-):
-    """Changing ownership cannot silently discard differing optimizer state."""
-    changed = dict(_optimizer_common_group(expert=True), **{field: value})
-    with pytest.raises(ValueError):
-        portable_optimizer.merge(
-            [[_optimizer_common_leaf([_optimizer_common_group(), changed])]]
-        )
-
-
-def test_portable_optimizer_empty_child_preserves_global_step(portable_optimizer):
-    """MCore can omit the step for a child with no locally owned parameters."""
-    empty_group = _optimizer_common_group(expert=True)
-    del empty_group["step"]
-    common = portable_optimizer.merge(
-        [
-            [_optimizer_common_leaf([_optimizer_common_group()])],
-            [_optimizer_common_leaf([empty_group])],
-        ]
-    )
-    assert common["optimizer"]["param_groups"][0]["step"] == 12
-
-
-@pytest.mark.parametrize("portable", [False, True])
-def test_checkpoint_loading_template_keeps_recovery_default(portable):
-    """Portable loading requests moments; ordinary recovery keeps native RNG."""
-    generate = _source_function(
-        "areal/engine/megatron_utils/checkpointer.py",
-        "MegatronCheckpointManager",
-        "generate_state_dict",
-        {
-            "torch": types.SimpleNamespace(distributed=Mock()),
-            "_mcore_version": lambda: "0.17.0",
-            "_PORTABLE_METADATA": {"megatron_core": "0.17.0"},
-        },
-    )
-    manager = types.SimpleNamespace(
-        model=[types.SimpleNamespace(sharded_state_dict=Mock(return_value={}))],
-        optimizer=types.SimpleNamespace(sharded_state_dict=Mock(return_value={})),
-        lr_scheduler=None,
-        get_rng_state=Mock(return_value="saved-native-rng"),
-    )
-    options = (
-        {"with_rng": False, "optimizer_sharding_type": "fully_reshardable"}
-        if portable
-        else {}
-    )
-    state = generate(manager, is_loading=True, **options)
-    optimizer_args = manager.optimizer.sharded_state_dict.call_args.kwargs
-    assert optimizer_args["is_loading"] is True
-    if portable:
-        assert optimizer_args["metadata"] == {
-            "distrib_optim_sharding_type": "fully_reshardable",
-            "chained_optim_avoid_prefix": True,
-            "singleton_local_shards": False,
-            "distrib_optim_fully_reshardable_mem_efficient": True,
-        }
-        manager.model[0].sharded_state_dict.assert_called_once_with(
-            metadata=optimizer_args["metadata"]
-        )
-        assert "rng_state" not in state
-        manager.get_rng_state.assert_not_called()
-    else:
-        assert optimizer_args["metadata"] == {
-            "distrib_optim_sharding_type": "dp_reshardable"
-        }
-        manager.model[0].sharded_state_dict.assert_called_once_with()
-        assert state["rng_state"] == "saved-native-rng"
+def _source_function(relative_path, class_name, name, namespace=None):
+    return _source_namespace(
+        relative_path, {name}, dict(namespace or {}), class_name=class_name
+    )[name]
 
 
 @pytest.fixture(scope="module")
@@ -681,7 +533,7 @@ def wait_methods():
         "run_async_task",
         {"asyncio": asyncio},
     )
-    return {
+    methods = {
         "base": _source_function(
             "areal/api/engine_api.py", "TrainEngine", "wait_for_checkpoint"
         ),
@@ -703,6 +555,19 @@ def wait_methods():
             "_engine_name",
         ),
     }
+    for name in (
+        "_runtime_state_call",
+        "runtime_state_dict",
+        "load_runtime_state_dict",
+        "restore_runtime_rng",
+    ):
+        methods[name] = _source_function(
+            "areal/infra/controller/train_controller.py",
+            "TrainController",
+            name,
+            {"asyncio": asyncio, "math": math, "run_async_task": run_async_task},
+        )
+    return methods
 
 
 def _controller(wait_methods, scheduler, count=3):
@@ -713,6 +578,15 @@ def _controller(wait_methods, scheduler, count=3):
         {
             "wait_for_checkpoint": wait_methods["controller"],
             "_engine_name": wait_methods["engine_name"],
+            **{
+                name: wait_methods[name]
+                for name in (
+                    "_runtime_state_call",
+                    "runtime_state_dict",
+                    "load_runtime_state_dict",
+                    "restore_runtime_rng",
+                )
+            },
         },
     )
     controller = cls()
@@ -723,7 +597,7 @@ def _controller(wait_methods, scheduler, count=3):
     return controller
 
 
-class CompletionScheduler:
+class RpcTransport:
     """Fake network transport that records completion and injected failures."""
 
     def __init__(self, outcomes=None):
@@ -731,8 +605,8 @@ class CompletionScheduler:
         self.calls = []
         self.finished = []
 
-    async def async_call_engine(self, worker_id, method, engine_name, **kwargs):
-        self.calls.append((worker_id, method, engine_name, kwargs))
+    async def async_call_engine(self, worker_id, method, engine_name, *args, **kwargs):
+        self.calls.append((worker_id, method, engine_name, args, kwargs))
         # A failed rank returns immediately, while peers are still in flight.
         outcome = self.outcomes.get(worker_id)
         if isinstance(outcome, BaseException):
@@ -811,63 +685,74 @@ def test_adapter_without_completion_interface_rejects_early():
 
 def test_controller_wait_contacts_every_rank_once(wait_methods):
     """Transport retry and timeout settings apply to DP heads and all peers."""
-    scheduler = CompletionScheduler()
+    scheduler = RpcTransport()
     controller = _controller(wait_methods, scheduler)
     assert controller.wait_for_checkpoint(timeout=1) is None
     assert len(scheduler.calls) == 3
     assert set(scheduler.finished) == {"worker/0", "worker/1", "worker/2"}
-    for i, (worker_id, method, engine_name, options) in enumerate(scheduler.calls):
+    for i, (worker_id, method, engine_name, args, options) in enumerate(
+        scheduler.calls
+    ):
         assert worker_id == f"worker/{i}"
         assert engine_name == f"actor/{i}"
         assert method == "wait_for_checkpoint"
+        assert args == ()
         assert options == {"max_retries": 1, "http_timeout": 1}
 
 
+def _checkpoint_rpc(controller, method, timeout):
+    if method == "wait_for_checkpoint":
+        return controller.wait_for_checkpoint(timeout=timeout)
+    return controller._runtime_state_call(method, "opaque-state", timeout=timeout)
+
+
+@pytest.mark.parametrize("method", ["wait_for_checkpoint", "restore_runtime_rng"])
 @pytest.mark.parametrize("failed_rank", [0, 1, 2])
-def test_controller_failure_collects_peer_responses(wait_methods, failed_rank):
-    """Failure on any rank propagates only after the other RPCs have settled."""
+@pytest.mark.parametrize(
+    "failure", [OSError("rank failed"), "hang", asyncio.CancelledError()]
+)
+def test_controller_failure_collects_peer_responses(
+    wait_methods, method, failed_rank, failure
+):
+    """Both checkpoint protocols wait for peers even when any rank fails."""
     worker_id = f"worker/{failed_rank}"
-    scheduler = CompletionScheduler({worker_id: OSError("write failed")})
+    scheduler = RpcTransport({worker_id: failure})
     controller = _controller(wait_methods, scheduler)
     with pytest.raises(RuntimeError, match=worker_id) as error:
-        controller.wait_for_checkpoint(timeout=1)
-    assert isinstance(error.value.__cause__, OSError)
+        _checkpoint_rpc(controller, method, timeout=0.05)
+    if failure == "hang":
+        assert isinstance(error.value.__cause__, TimeoutError)
+        expected = {f"worker/{rank}" for rank in range(3)} - {worker_id}
+    else:
+        assert isinstance(error.value.__cause__, type(failure))
+        expected = {f"worker/{rank}" for rank in range(3)}
     assert len(scheduler.calls) == 3
-    assert set(scheduler.finished) == {"worker/0", "worker/1", "worker/2"}
+    assert set(scheduler.finished) == expected
 
 
-def test_controller_wait_timeout_is_failure(wait_methods):
-    """A transport that never responds is bounded by the controller deadline."""
-    scheduler = CompletionScheduler({"worker/1": "hang"})
-    controller = _controller(wait_methods, scheduler)
-    with pytest.raises(RuntimeError, match="worker/1: TimeoutError"):
-        controller.wait_for_checkpoint(timeout=0.02)
-    assert len(scheduler.calls) == 3
-    assert set(scheduler.finished) == {"worker/0", "worker/2"}
-
-
-@pytest.mark.parametrize("outcome", [False, "unfinished", asyncio.CancelledError()])
+@pytest.mark.parametrize("outcome", [False, "unfinished"])
 def test_controller_wait_invalid_ack_is_failure(wait_methods, outcome):
     """Non-None replies and cancelled requests cannot confirm completion."""
-    scheduler = CompletionScheduler({"worker/1": outcome})
+    scheduler = RpcTransport({"worker/1": outcome})
     controller = _controller(wait_methods, scheduler)
     with pytest.raises(RuntimeError, match="worker/1"):
         controller.wait_for_checkpoint(timeout=1)
 
 
+@pytest.mark.parametrize("method", ["wait_for_checkpoint", "runtime_state_dict"])
 @pytest.mark.parametrize("timeout", [0, -1, float("inf"), float("nan")])
-def test_controller_invalid_timeout_starts_no_rpc(wait_methods, timeout):
+def test_controller_invalid_timeout_starts_no_rpc(wait_methods, method, timeout):
     """A completion request always has a finite positive deadline."""
-    scheduler = CompletionScheduler()
+    scheduler = RpcTransport()
     controller = _controller(wait_methods, scheduler)
     with pytest.raises(ValueError, match="finite and positive"):
-        controller.wait_for_checkpoint(timeout=timeout)
+        _checkpoint_rpc(controller, method, timeout)
     assert scheduler.calls == []
 
 
 def test_controller_without_workers_cannot_confirm(wait_methods):
     """An uninitialized or torn-down controller cannot return vacuous success."""
-    scheduler = CompletionScheduler()
+    scheduler = RpcTransport()
     controller = _controller(wait_methods, scheduler, count=0)
     with pytest.raises(RuntimeError, match="without workers"):
         controller.wait_for_checkpoint()
@@ -903,9 +788,11 @@ def test_snapshot_waits_for_all_worker_writes_before_publication(
     release = threading.Event()
     manager, context, role, root = _snapshot_manager(tmp_path, lambda: None)
 
-    class DelayedScheduler(CompletionScheduler):
-        async def async_call_engine(self, worker_id, method, engine_name, **kwargs):
-            self.calls.append((worker_id, method, engine_name, kwargs))
+    class DelayedScheduler(RpcTransport):
+        async def async_call_engine(
+            self, worker_id, method, engine_name, *args, **kwargs
+        ):
+            self.calls.append((worker_id, method, engine_name, args, kwargs))
             if len(self.calls) == 3:
                 entered.set()
             while not release.is_set():
@@ -935,7 +822,7 @@ def test_snapshot_waits_for_all_worker_writes_before_publication(
 @pytest.mark.parametrize("failure", [OSError("disk failed"), "hang"])
 def test_controller_failure_never_publishes_snapshot(tmp_path, wait_methods, failure):
     """Completed-looking files are insufficient when a worker fails to confirm."""
-    scheduler = CompletionScheduler({"worker/1": failure})
+    scheduler = RpcTransport({"worker/1": failure})
     controller = _controller(wait_methods, scheduler)
     manager, context, role, root = _snapshot_manager(
         tmp_path, partial(controller.wait_for_checkpoint, timeout=0.02)
@@ -1106,11 +993,36 @@ def test_channel_completion_callback_can_request_next_step(channel, tmp_path):
     )
 
 
-def _trainer_fixture(monkeypatch, *, awex=False, critic=False, single=True):
+def _trainer_fixture(
+    monkeypatch,
+    *,
+    awex=False,
+    critic=False,
+    single=True,
+    colocated=False,
+    evaluation=False,
+    total_steps=1,
+):
     """Exercise the actual trainer loop against fake engines and state owners."""
     events = []
 
-    monkeypatch.setattr(M, "capture_rng_state", lambda **kwargs: {"host_seed": 3})
+    monkeypatch.setattr(
+        M, "capture_rng_state", lambda **_: {"python": random.getstate()}
+    )
+
+    def host_rng(state, **_):
+        events.append("host.rng")
+        random.setstate(state["python"])
+
+    monkeypatch.setattr(M, "restore_rng_state", host_rng)
+    module = types.ModuleType("areal.infra.controller.rollout_controller")
+    module._same_input_spec = _source_function(
+        "areal/infra/controller/rollout_controller.py",
+        None,
+        "_same_input_spec",
+        {"torch": types.SimpleNamespace(Tensor=type("Tensor", (), {}))},
+    )
+    monkeypatch.setitem(sys.modules, module.__name__, module)
 
     class Loader(Owner):
         def __len__(self):
@@ -1120,11 +1032,22 @@ def _trainer_fixture(monkeypatch, *, awex=False, critic=False, single=True):
         def __init__(self, name):
             super().__init__({"weights": [0], "optimizer": {"moment": [0]}})
             self.name = name
-            self.version = 0
-            self.get_version_calls = 0
+            self.version = self.get_version_calls = self.schedule_step = 0
+            self.rng = random.Random(10)
 
         def prepare_batch(self, loader, **kwargs):
+            rollout = trainer.rollout
+            assert not rollout.frozen and not rollout.paused
+            if self.loads:
+                assert rollout.weights == self.value["weights"]
+            events.append("batch")
+            trainer.samples.append((loader.value["position"], random.random()))
             loader.value["position"] += 2
+            rollout.input_spec = {
+                key: value for key, value in kwargs.items() if key != "dynamic_bs"
+            }
+            if rollout.input_spec["workflow_kwargs"] is None:
+                rollout.input_spec["workflow_kwargs"] = {}
             return [{}]
 
         def compute_values(self, batch):
@@ -1134,11 +1057,13 @@ def _trainer_fixture(monkeypatch, *, awex=False, critic=False, single=True):
             return batch
 
         def ppo_update(self, batch):
+            self.rng.random()
             self.value["weights"][0] += 1
             self.value["optimizer"]["moment"][0] += 1
             events.append(f"{self.name}.update")
 
         def step_lr_scheduler(self):
+            self.schedule_step += 1
             events.append(f"{self.name}.lr")
 
         def get_device_stats(self):
@@ -1148,6 +1073,8 @@ def _trainer_fixture(monkeypatch, *, awex=False, critic=False, single=True):
             events.append(f"{self.name}.onload")
 
         def update_weights(self, meta):
+            assert self.version == trainer.rollout.version
+            trainer.rollout.weights = self.value["weights"].copy()
             events.append("weight_sync")
 
         def set_version(self, version):
@@ -1173,17 +1100,25 @@ def _trainer_fixture(monkeypatch, *, awex=False, critic=False, single=True):
             super().wait()
 
         def load(self, meta):
+            assert trainer.rollout.frozen
+            if awex:
+                assert (
+                    trainer.rollout.kv_offloaded and trainer.rollout.weights_offloaded
+                )
+            events.append(f"{self.name}.load")
             super().load(Path(meta.path))
 
         def runtime_state_dict(self):
             events.append(f"{self.name}.runtime")
-            return f"runtime-{self.name}"
+            return pickle.dumps((self.schedule_step, self.rng.getstate())).hex()
 
         def load_runtime_state_dict(self, state):
-            assert state == f"runtime-{self.name}"
+            self.schedule_step = pickle.loads(bytes.fromhex(state))[0]
+            events.append(f"{self.name}.schedule")
 
         def restore_runtime_rng(self, state):
-            assert state == f"runtime-{self.name}"
+            self.rng.setstate(pickle.loads(bytes.fromhex(state))[1])
+            events.append(f"{self.name}.rng")
 
     @dataclasses.dataclass
     class Meta:
@@ -1228,6 +1163,9 @@ def _trainer_fixture(monkeypatch, *, awex=False, critic=False, single=True):
         },
     )
     trainer = cls()
+    trainer._snapshot_restore = None
+    trainer.snapshot_restore_result = None
+    trainer.samples = []
     actor_config = types.SimpleNamespace(
         _version="v1",
         backend="megatron:d1" if awex else "fsdp:d1",
@@ -1235,8 +1173,8 @@ def _trainer_fixture(monkeypatch, *, awex=False, critic=False, single=True):
     )
     trainer.config = types.SimpleNamespace(
         actor=actor_config,
-        total_train_epochs=1,
-        total_train_steps=1,
+        total_train_epochs=(total_steps + 1) // 2,
+        total_train_steps=total_steps,
         critic=types.SimpleNamespace(_version="v1", backend="fsdp:d1")
         if critic
         else None,
@@ -1259,7 +1197,13 @@ def _trainer_fixture(monkeypatch, *, awex=False, critic=False, single=True):
         def __init__(self):
             super().__init__({})
             self.version = 0
-            self.frozen = False
+            self.frozen = self.paused = False
+            self.kv_offloaded = self.weights_offloaded = False
+            self.weights = [0]
+            self.input_spec = None
+            self.inventory = {"pending": [], "ready": [], "accepted": 0}
+            self._resolve_workflow_str = lambda workflow: workflow
+            self._resolve_should_accept_fn = lambda value: value
 
         def bind_snapshot_dataloader(self, loader):
             self.loader = loader
@@ -1274,7 +1218,21 @@ def _trainer_fixture(monkeypatch, *, awex=False, critic=False, single=True):
 
         def state_dict(self):
             assert self.frozen
-            return {"dataloader": self.loader.state_dict()}
+            return copy.deepcopy(
+                dict(
+                    policy_version=self.version,
+                    input_spec=self.input_spec,
+                    dataloader=self.loader.state_dict(),
+                    inventory=self.inventory,
+                )
+            )
+
+        def load_state_dict(self, state):
+            assert self.frozen and state["policy_version"] == self.version
+            events.append("rollout.load")
+            self.input_spec = copy.deepcopy(state["input_spec"])
+            self.inventory = copy.deepcopy(state["inventory"])
+            self.loader.load_state_dict(state["dataloader"])
 
         def set_version(self, version):
             self.version = version
@@ -1282,11 +1240,22 @@ def _trainer_fixture(monkeypatch, *, awex=False, critic=False, single=True):
         def get_version(self):
             return self.version
 
+        def pause(self):
+            self.paused = True
+            events.append("rollout.pause")
+
+        def resume(self):
+            self.paused = False
+            events.append("rollout.resume")
+
+        def pause_generation_sync(self):
+            events.append("generation.pause")
+
+        def offload(self, tags):
+            events.append(f"offload.{tags[0]}")
+            setattr(self, f"{tags[0].replace('kv_cache', 'kv')}_offloaded", True)
+
     trainer.rollout = Rollout()
-    trainer.rollout.pause = lambda: events.append("rollout.pause")
-    trainer.rollout.resume = lambda: events.append("rollout.resume")
-    trainer.rollout.pause_generation_sync = lambda: None
-    trainer.rollout.offload = lambda **kwargs: None
     trainer.saver = Owner({"count": 0})
     trainer.saver.maybe_wait_for_staging = lambda: None
     trainer.evaluator = Owner({"count": 0})
@@ -1294,10 +1263,11 @@ def _trainer_fixture(monkeypatch, *, awex=False, critic=False, single=True):
     trainer.recover_handler = types.SimpleNamespace(freq_ctl=Owner({"count": 0}))
     trainer.recover_info = None
     trainer.weight_update_meta = types.SimpleNamespace(
-        with_version=lambda version: types.SimpleNamespace(version=version)
+        type="awex" if awex else "disk",
+        with_version=lambda version: types.SimpleNamespace(version=version),
     )
-    trainer._should_offload_rollout = False
-    trainer._should_offload_actor = False
+    trainer._should_offload_rollout = colocated
+    trainer._should_offload_actor = colocated
     trainer._should_offload_critic = False
     trainer._is_v1_awex_colocate = lambda config: awex
     trainer._requires_proxy_workflow = lambda workflow: False
@@ -1322,6 +1292,25 @@ def _trainer_fixture(monkeypatch, *, awex=False, critic=False, single=True):
     trainer._save_recover_checkpoint = save_recover
     trainer._evaluate = evaluate
     trainer._export_and_commit_stats = commit
+    trainer._offload_model = lambda engine, role: events.append(f"{role}.offload")
+    trainer._onload_model = lambda engine, role: events.append(f"{role}.onload")
+    trainer._offload_rollout = lambda **_: events.append("rollout.offload")
+
+    def onload(is_eval=False):
+        events.append("rollout.onload")
+        # Deliberately consume RNG during initialization to check finalization.
+        random.random()
+        if not is_eval:
+            trainer.rollout.resume()
+
+    trainer._onload_rollout = onload
+    if evaluation:
+        ev = types.SimpleNamespace(version=0)
+        ev.set_version = lambda version: setattr(ev, "version", version)
+        ev.get_version = lambda: ev.version
+        ev.pause = lambda: events.append("eval.pause")
+        ev.resume = lambda: events.append("eval.resume")
+        trainer.eval_rollout = ev
     return trainer, events
 
 
@@ -1335,7 +1324,7 @@ def test_trainer_snapshot_preserves_native_order_and_final_state(
     root = tmp_path / "snapshot"
     future = channel.request_snapshot(root, state_id="actual-boundary")
     future.add_done_callback(lambda _: events.append("published"))
-    trainer.train(workflow=object(), reconfiguration=channel)
+    trainer.train(workflow="test.workflow", reconfiguration=channel)
     manifest = M.inspect_snapshot(future.result())
     if awex:
         assert events.index("actor.wait") < events.index("weight_sync")
@@ -1365,10 +1354,15 @@ def test_trainer_snapshot_preserves_native_order_and_final_state(
     with (root / "state.pkl").open("rb") as stream:
         states = pickle.load(stream)
     assert states == {
-        "actor_runtime": "runtime-actor",
-        **({"critic_runtime": "runtime-critic"} if critic else {}),
-        "host_rng": {"host_seed": 3},
-        "rollout": {"dataloader": {"position": 2}},
+        "actor_runtime": trainer.actor.runtime_state_dict(),
+        **({"critic_runtime": trainer.critic.runtime_state_dict()} if critic else {}),
+        "host_rng": {"python": random.getstate()},
+        "rollout": {
+            "dataloader": {"position": 2},
+            "policy_version": 1,
+            "input_spec": trainer.rollout.input_spec,
+            "inventory": {"pending": [], "ready": [], "accepted": 0},
+        },
         "saver": {"count": 1},
         "evaluator": {"count": 1},
         "stats_logger": {"last_commit_step": 0},
@@ -1559,15 +1553,7 @@ def rollout_types(monkeypatch):
             },
         ),
     ]:
-        path = REPO_ROOT / relative
-        body = [
-            n
-            for n in ast.parse(path.read_text()).body
-            if getattr(n, "name", None) in names
-            or isinstance(n, ast.Assign)
-            and any(isinstance(t, ast.Name) and t.id in names for t in n.targets)
-        ]
-        exec(compile(ast.Module(body=body, type_ignores=[]), str(path), "exec"), scope)
+        _source_namespace(relative, names, scope)
     return module
 
 

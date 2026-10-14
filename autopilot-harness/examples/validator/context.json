@@ -1,0 +1,299 @@
+{
+  "schema_version": 1,
+  "runtime_revision": "7599750a260aac07281d2c01694e70e045bf8ec8",
+  "baseline_id": "sha256:c052da8dc2c8e339511cd45a638526e2d5b72a1b7e1f9fd2f2df099d3e71d68e",
+  "candidate_id": "sha256:6a70e5d40951951dff06d57a33b024bc09f9ae7ea7fb2fbe6f9d94f97ed7242a",
+  "state_id": "fixture:synthetic-training-boundary-100",
+  "model": {
+    "source_ref": "fixture:synthetic-model",
+    "hidden_size": 4096,
+    "num_attention_heads": 32,
+    "num_key_value_heads": 8,
+    "num_hidden_layers": 24,
+    "num_experts": 0
+  },
+  "resources": {
+    "source_ref": "fixture:synthetic-reservation",
+    "gpus": {
+      "gpu0": {
+        "node": "node0",
+        "memory_bytes": 85899345920,
+        "unavailable_bytes": 2147483648
+      },
+      "gpu1": {
+        "node": "node0",
+        "memory_bytes": 85899345920,
+        "unavailable_bytes": 2147483648
+      },
+      "gpu2": {
+        "node": "node0",
+        "memory_bytes": 85899345920,
+        "unavailable_bytes": 2147483648
+      },
+      "gpu3": {
+        "node": "node0",
+        "memory_bytes": 85899345920,
+        "unavailable_bytes": 2147483648
+      },
+      "gpu4": {
+        "node": "node1",
+        "memory_bytes": 85899345920,
+        "unavailable_bytes": 2147483648
+      },
+      "gpu5": {
+        "node": "node1",
+        "memory_bytes": 85899345920,
+        "unavailable_bytes": 2147483648
+      },
+      "gpu6": {
+        "node": "node1",
+        "memory_bytes": 85899345920,
+        "unavailable_bytes": 2147483648
+      },
+      "gpu7": {
+        "node": "node1",
+        "memory_bytes": 85899345920,
+        "unavailable_bytes": 2147483648
+      }
+    },
+    "role_pools": {
+      "actor": [
+        "gpu0",
+        "gpu1",
+        "gpu2",
+        "gpu3"
+      ],
+      "rollout": [
+        "gpu4",
+        "gpu5",
+        "gpu6",
+        "gpu7"
+      ]
+    },
+    "rank_devices": {
+      "actor": [
+        "gpu0",
+        "gpu1",
+        "gpu2",
+        "gpu3"
+      ],
+      "rollout": [
+        "gpu4",
+        "gpu5",
+        "gpu6",
+        "gpu7"
+      ]
+    },
+    "colocation_groups": [],
+    "host_memory_bytes": 137438953472,
+    "disk_bytes": 1099511627776
+  },
+  "backends": {
+    "actor": {
+      "source_ref": "fixture:synthetic-backend-support",
+      "supported_layouts": [
+        "fsdp:d4p1t1",
+        "fsdp:d2p1t2",
+        "megatron:d4p1t1",
+        "megatron:d1p2t2",
+        "archon:d4p1t1"
+      ],
+      "kv_head_replication": false,
+      "layer_partition": "uniform",
+      "max_nodes_per_instance": 1
+    },
+    "rollout": {
+      "source_ref": "fixture:synthetic-backend-support",
+      "supported_layouts": [
+        "sglang:d4p1t1",
+        "sglang:d2p1t2",
+        "sglang:d1p1t4",
+        "vllm:d4p1t1",
+        "vllm:d2p1t2"
+      ],
+      "kv_head_replication": true,
+      "layer_partition": "uniform",
+      "max_nodes_per_instance": 1
+    }
+  },
+  "dispatch": {
+    "source_ref": "fixture:training-batch-at-boundary",
+    "train_batch_size": 128,
+    "group_size": 1,
+    "allow_uneven_dp": true
+  },
+  "memory": {
+    "source_ref": "fixture:synthetic-upper-bounds-NOT-runtime-measurements",
+    "basis": "upper_bound",
+    "devices": {
+      "gpu0": {
+        "roles": {
+          "actor": {
+            "parameters": 8589934592,
+            "gradients": 4294967296,
+            "optimizer": 17179869184,
+            "activations": 4294967296,
+            "kv_cache": 0,
+            "buffers": 2147483648,
+            "other": 1073741824
+          }
+        },
+        "transition_extra": 8589934592
+      },
+      "gpu1": {
+        "roles": {
+          "actor": {
+            "parameters": 8589934592,
+            "gradients": 4294967296,
+            "optimizer": 17179869184,
+            "activations": 4294967296,
+            "kv_cache": 0,
+            "buffers": 2147483648,
+            "other": 1073741824
+          }
+        },
+        "transition_extra": 8589934592
+      },
+      "gpu2": {
+        "roles": {
+          "actor": {
+            "parameters": 8589934592,
+            "gradients": 4294967296,
+            "optimizer": 17179869184,
+            "activations": 4294967296,
+            "kv_cache": 0,
+            "buffers": 2147483648,
+            "other": 1073741824
+          }
+        },
+        "transition_extra": 8589934592
+      },
+      "gpu3": {
+        "roles": {
+          "actor": {
+            "parameters": 8589934592,
+            "gradients": 4294967296,
+            "optimizer": 17179869184,
+            "activations": 4294967296,
+            "kv_cache": 0,
+            "buffers": 2147483648,
+            "other": 1073741824
+          }
+        },
+        "transition_extra": 8589934592
+      },
+      "gpu4": {
+        "roles": {
+          "rollout": {
+            "parameters": 8589934592,
+            "gradients": 0,
+            "optimizer": 0,
+            "activations": 4294967296,
+            "kv_cache": 17179869184,
+            "buffers": 2147483648,
+            "other": 1073741824
+          }
+        },
+        "transition_extra": 8589934592
+      },
+      "gpu5": {
+        "roles": {
+          "rollout": {
+            "parameters": 8589934592,
+            "gradients": 0,
+            "optimizer": 0,
+            "activations": 4294967296,
+            "kv_cache": 17179869184,
+            "buffers": 2147483648,
+            "other": 1073741824
+          }
+        },
+        "transition_extra": 8589934592
+      },
+      "gpu6": {
+        "roles": {
+          "rollout": {
+            "parameters": 8589934592,
+            "gradients": 0,
+            "optimizer": 0,
+            "activations": 4294967296,
+            "kv_cache": 17179869184,
+            "buffers": 2147483648,
+            "other": 1073741824
+          }
+        },
+        "transition_extra": 8589934592
+      },
+      "gpu7": {
+        "roles": {
+          "rollout": {
+            "parameters": 8589934592,
+            "gradients": 0,
+            "optimizer": 0,
+            "activations": 4294967296,
+            "kv_cache": 17179869184,
+            "buffers": 2147483648,
+            "other": 1073741824
+          }
+        },
+        "transition_extra": 8589934592
+      }
+    },
+    "host_bytes": 8589934592,
+    "disk_bytes": 34359738368,
+    "inference_memory_fraction": 0.8
+  },
+  "transition": {
+    "source_ref": "fixture:synthetic-transition-support-NOT-an-implemented-adapter",
+    "supported": true,
+    "changes": [
+      "actor.mb_spec.n_mbs",
+      "actor.mb_spec.max_tokens_per_mb",
+      "rollout.max_concurrent_rollouts"
+    ],
+    "boundary": "fixture:after-optimizer-step",
+    "state_mapping": {
+      "parameters": {
+        "method": "preserve",
+        "source_ref": "fixture:synthetic-state-preservation"
+      },
+      "optimizer": {
+        "method": "preserve",
+        "source_ref": "fixture:synthetic-state-preservation"
+      },
+      "lr_scheduler": {
+        "method": "preserve",
+        "source_ref": "fixture:synthetic-state-preservation"
+      },
+      "gradients": {
+        "method": "none_at_boundary",
+        "source_ref": "fixture:synthetic-state-preservation"
+      },
+      "data_cursor": {
+        "method": "preserve",
+        "source_ref": "fixture:synthetic-state-preservation"
+      },
+      "rng": {
+        "method": "preserve",
+        "source_ref": "fixture:synthetic-state-preservation"
+      },
+      "ready_rollouts": {
+        "method": "preserve",
+        "source_ref": "fixture:synthetic-state-preservation"
+      },
+      "in_flight_rollouts": {
+        "method": "preserve",
+        "source_ref": "fixture:synthetic-state-preservation"
+      },
+      "policy_version": {
+        "method": "preserve",
+        "source_ref": "fixture:synthetic-state-preservation"
+      },
+      "device_residency": {
+        "method": "preserve",
+        "source_ref": "fixture:synthetic-state-preservation"
+      }
+    },
+    "recovery_ref": "fixture:synthetic-recovery-support"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "config": {
+    "experiment_name": "synthetic",
+    "trial_name": "demo",
+    "actor": {"micro_batch_size": 2},
+    "stats_logger": {"wandb": {"wandb_api_key": "synthetic-secret-for-redaction-test"}}
+  },
+  "history": [
+    {"_step": 0, "_timestamp": 1790812805, "timeperf/train_step": 1.8},
+    {"_step": 0, "_timestamp": 1790812806, "ppo_actor/task_reward/avg": 0.3},
+    {"_step": 1, "_timestamp": 1790812820, "timeperf/train_step": 1.6, "ppo_actor/task_reward/avg": 0.35}
+  ]
+}
