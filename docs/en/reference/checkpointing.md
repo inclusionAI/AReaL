@@ -220,6 +220,28 @@ When training resumes:
 1. Training continues from `last_step_info.next().global_step`
 1. Inference engine weights are synchronized to match recovered state
 
+### Controller v2 recovery
+
+Controller v2 follows controller v1 single-controller recovery semantics and uses its
+checkpoint layout. Recovery covers PPO (including a configured critic), SFT, DPO, and
+reward-model training. For PPO, the restored actor weights are sent to the inference
+service and the recovered version is published to all training and inference workers
+before generation resumes. A failed transfer keeps generation paused until the run
+exits. With `recover.mode` set to `on` or `auto`, a subsequent invocation resumes from
+the last published checkpoint. Single-controller runs do not restart the driver
+automatically; an external supervisor is needed for automatic process restarts.
+`recover.retries` applies to the legacy SPMD launchers, not to single-controller runs.
+
+A controller v2 run can read a controller v1 checkpoint from `LATEST` or the legacy
+layout when the model, training backend, optimizer configuration, and parallel topology
+are compatible. This does not convert a checkpoint between FSDP, Megatron, and Archon,
+or remap a multi-rank SPMD dataloader into a single-controller dataloader. Use the same
+experiment and trial names and the same shared checkpoint directory when restarting.
+
+For colocated AWEX, use a Megatron actor and SGLang rollout with matching train and
+inference worker counts, and set `enable_offload: true`. The rollout's
+`scheduling_strategy` should target `actor`.
+
 ## Best Practices
 
 ### Frequency Guidelines

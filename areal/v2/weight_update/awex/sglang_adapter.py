@@ -769,14 +769,32 @@ class AwexSGLangAdapter(AwexInferenceAdapter):
         )
 
     # Tags understood by SGLang's native release/resume_memory_occupation.
-    _SGLANG_MEMORY_TAGS = {"kv_cache"}
+    _SGLANG_MEMORY_TAGS = ("weights", "kv_cache", "cuda_graph")
+
+    def _offloaded_memory_tags(self) -> set[str]:
+        # The data-proxy's offload endpoint can change residency without
+        # going through this AWEX adapter.  SGLang's owner is the source of
+        # truth when colocated recovery resumes memory via the gateway.
+        owner = getattr(self._scheduler, "weight_updater", None) or self._scheduler
+        tags = getattr(owner, "offload_tags", None)
+        return set(tags) if tags is not None else set(self._released_tags)
+
+    def _memory_transition_tags(
+        self, tags: list[str] | None, *, release: bool
+    ) -> list[str]:
+        requested = tags or []
+        offloaded = self._offloaded_memory_tags()
+        return [
+            tag
+            for tag in requested
+            if tag in self._SGLANG_MEMORY_TAGS
+            and ((tag not in offloaded) if release else (tag in offloaded))
+        ]
 
     def release_memory(self, tags: list[str] | None = None) -> None:
         from sglang.srt.managers.io_struct import ReleaseMemoryOccupationReqInput
 
-        native_tags = (
-            [t for t in tags if t in self._SGLANG_MEMORY_TAGS] if tags else None
-        )
+        native_tags = self._memory_transition_tags(tags, release=True)
         unsupported = (
             [t for t in tags if t not in self._SGLANG_MEMORY_TAGS] if tags else []
         )
@@ -796,15 +814,7 @@ class AwexSGLangAdapter(AwexInferenceAdapter):
     def resume_memory(self, tags: list[str] | None = None) -> None:
         from sglang.srt.managers.io_struct import ResumeMemoryOccupationReqInput
 
-        native_tags = (
-            [
-                t
-                for t in tags
-                if t in self._SGLANG_MEMORY_TAGS and t in self._released_tags
-            ]
-            if tags
-            else None
-        )
+        native_tags = self._memory_transition_tags(tags, release=False)
         unsupported = (
             [t for t in tags if t not in self._SGLANG_MEMORY_TAGS] if tags else []
         )

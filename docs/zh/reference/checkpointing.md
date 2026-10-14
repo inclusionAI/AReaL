@@ -208,6 +208,21 @@ generation，但恢复仍使用 `LATEST` 选中的 generation。指针成功切�
 1. 训练从 `last_step_info.next().global_step` 继续
 1. 推理引擎权重同步以匹配恢复的状态
 
+### v2 控制器恢复
+
+v2 控制器遵循 v1 single-controller 的恢复语义，并沿用其检查点布局。恢复覆盖 PPO（包括配置了 critic 的情况）、SFT、DPO
+和奖励模型训练。 对于 PPO，恢复后的 actor 权重会同步到推理服务；所有训练和推理 worker 都确认恢复的版本后，才继续生成。如果权重传输失败，生成会保持暂停，
+当前运行随后退出。当 `recover.mode` 为 `on` 或 `auto` 时，再次启动训练会从上一个已发布检查点恢复。single-controller 不会自行重启
+driver； 如需进程自动重启，应使用外部 supervisor。`recover.retries` 仅适用于旧的 SPMD launcher，不适用于
+single-controller。
+
+当模型、训练后端、优化器配置及并行拓扑兼容时，v2 控制器可以读取 v1 控制器通过 `LATEST` 发布的检查点或旧布局检查点。这不会在 FSDP、Megatron 与
+Archon 之间转换 检查点，也不会把多 rank SPMD dataloader 状态重新映射为 single-controller 状态。
+重启时应使用相同的实验名、试次名和共享检查点目录。
+
+同机 AWEX 需使用 Megatron actor 和 SGLang rollout，训练与推理 worker 数量一致， 并设置
+`enable_offload: true`；rollout 的 `scheduling_strategy` 指向 `actor`。
+
 ## 最佳实践
 
 ### 频率指南

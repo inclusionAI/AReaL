@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 import torch
 
-from areal.api.cli_args import SchedulingSpec, TrainEngineConfig
+from areal.api.cli_args import SchedulingSpec, SchedulingStrategy, TrainEngineConfig
+from areal.api.io_struct import WeightUpdateMeta
 from areal.infra.rpc.rtensor import RTensor, TensorShardInfo
+from areal.v2.inference_service.controller.controller import RolloutControllerV2
 from areal.v2.training_service.controller.controller import (
     GatewayTrainController,
 )
@@ -93,6 +96,9 @@ class TestGatewayTrainControllerInitialization:
 
         controller = _make_controller(scheduler)
         controller._role = "train-role"
+        controller.config.scheduling_strategy = SchedulingStrategy(
+            type="colocation", target="actor"
+        )
 
         port_client = _FakeAsyncClient(
             [
@@ -146,6 +152,7 @@ class TestGatewayTrainControllerInitialization:
         create_call = mock_to_thread.await_args_list[0]
         get_call = mock_to_thread.await_args_list[1]
         assert create_call.args[0] is scheduler.create_workers
+        assert create_call.kwargs["job"].scheduling_strategy.target == "actor-guard"
         assert get_call.args[0] is scheduler.get_workers
         assert get_call.kwargs == {
             "role": "train-role-guard",
@@ -182,6 +189,77 @@ class TestGatewayTrainControllerInitialization:
         assert controller._gateway_addr == "http://127.0.0.1:18080"
         assert controller.api_key is not None
         assert controller.api_key.startswith("ak-train-role-")
+
+
+class TestGatewayTrainControllerRecovery:
+    def test_colocated_awex_pair_uses_colocate_gateway_protocol(self):
+        controller = _make_controller()
+        controller._role = "actor"
+        controller._worker_addrs = ["http://train-worker"]
+        rollout = RolloutControllerV2.__new__(RolloutControllerV2)
+        rollout.config = SimpleNamespace(
+            scheduling_strategy=SchedulingStrategy(type="colocation", target="actor")
+        )
+        rollout._inf_addrs = ["http://inference-worker"]
+        rollout.workers = [MagicMock(ip="127.0.0.1", worker_ports=[19000])]
+        gateway = MagicMock()
+        port_response = MagicMock()
+        port_response.json.return_value = {"host": "127.0.0.1", "ports": [29500]}
+
+        with (
+            patch.object(controller, "_ensure_initialized"),
+            patch.object(rollout, "_ensure_initialized"),
+            patch(
+                "areal.v2.weight_update.controller.controller.WeightUpdateController",
+                return_value=gateway,
+            ),
+            patch("requests.post", return_value=port_response),
+        ):
+            controller.connect_engine(rollout, WeightUpdateMeta(type="awex"))
+
+        assert gateway.connect.call_args.kwargs["colocate"] is True
+
+    def test_reconnecting_same_pair_reuses_live_gateway(self):
+        """Recovery must not attach a second AWEX group to existing workers."""
+        controller = _make_controller()
+        rollout = RolloutControllerV2.__new__(RolloutControllerV2)
+        gateway = MagicMock()
+        controller.rollout = rollout
+        controller._weight_update_ctrl = gateway
+        controller._weight_update_mode = "awex"
+
+        with patch.object(controller, "_ensure_initialized"):
+            controller.connect_engine(rollout, WeightUpdateMeta(type="awex"))
+
+        assert controller._weight_update_ctrl is gateway
+        gateway.connect.assert_not_called()
+
+    def test_failed_recovery_transfer_keeps_generation_paused(self):
+        """An AWEX gateway error must not publish a recovered version."""
+        controller = _make_controller()
+        controller.rollout = MagicMock()
+        controller._weight_update_ctrl = MagicMock()
+        controller._weight_update_ctrl.update_weights.return_value = SimpleNamespace(
+            status="error", version=7, error="copy failed", duration_ms=1.0
+        )
+
+        with pytest.raises(RuntimeError, match="copy failed"):
+            controller.update_weights_for_recovery(
+                WeightUpdateMeta(type="awex", version=7)
+            )
+
+        controller.rollout.pause_generation.assert_not_called()
+        controller.rollout.continue_generation.assert_not_called()
+
+    def test_recovery_version_failure_does_not_update_local_version(self):
+        """The local counter advances only after every remote worker accepts it."""
+        controller = _make_controller()
+        controller._gateway_post = MagicMock(side_effect=RuntimeError("worker failed"))
+
+        with pytest.raises(RuntimeError, match="worker failed"):
+            controller.set_version_for_recovery(7)
+
+        assert controller.get_version() == 0
 
 
 class TestGatewayTrainControllerClearBatches:

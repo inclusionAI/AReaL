@@ -58,6 +58,7 @@ class GatewayTrainController:
         self._own_process_group = False
         self.rollout: Any | None = None
         self._weight_update_ctrl: Any | None = None
+        self._weight_update_mode: str | None = None
 
         # Version management
         self._version_lock = Lock()
@@ -160,7 +161,7 @@ class GatewayTrainController:
         ft_spec: FinetuneSpec | None = None,
         **kwargs: Any,
     ) -> None:
-        from dataclasses import asdict
+        from dataclasses import asdict, replace
 
         from areal.api.cli_args import SchedulingSpec
         from areal.api.scheduler_api import Job
@@ -186,10 +187,18 @@ class GatewayTrainController:
             guard_spec.cmd = "python -m areal.v2.training_service.guard"
 
             guard_role = f"{role}{self._GUARD_SUFFIX}"
+            strategy = cfg.scheduling_strategy
+            if strategy.type == "colocation" and strategy.target is not None:
+                target = (
+                    "rollout-inf"
+                    if strategy.target == "rollout"
+                    else f"{strategy.target}{self._GUARD_SUFFIX}"
+                )
+                strategy = replace(strategy, target=target)
             guard_job = Job(
                 replicas=world_size,
                 tasks=[guard_spec],
-                scheduling_strategy=cfg.scheduling_strategy,
+                scheduling_strategy=strategy,
                 role=guard_role,
             )
             await asyncio.to_thread(self.scheduler.create_workers, job=guard_job)
@@ -822,6 +831,20 @@ class GatewayTrainController:
             },
         )
 
+    def set_version_for_recovery(self, version: int) -> None:
+        """Publish a restored version to every worker before storing it locally."""
+        from areal.infra.rpc.serialization import serialize_value
+
+        self._gateway_post(
+            "/set_version",
+            {
+                "args": serialize_value([version]),
+                "kwargs": serialize_value({}),
+            },
+        )
+        with self._version_lock:
+            self._version = version
+
     def get_version(self) -> int:
         with self._version_lock:
             return self._version
@@ -853,6 +876,10 @@ class GatewayTrainController:
 
     def onload(self) -> None:
         self._gateway_post("/onload")
+
+    def init_weight_residency_adapter(self) -> None:
+        """Use Megatron's shared flat-buffer residency for colocated AWEX."""
+        self._gateway_post("/init_weight_residency_adapter")
 
     def step_lr_scheduler(self) -> None:
         self._gateway_post("/step_lr_scheduler")
@@ -1084,13 +1111,23 @@ class GatewayTrainController:
                 f"Ensure _version='v2' is set on InferenceEngineConfig."
             )
 
-        self.rollout = rollout
-
         if meta.type not in ("awex", "disk"):
             raise ValueError(
                 f"GatewayTrainController supports 'awex' or 'disk' weight "
                 f"updates, got '{meta.type}'"
             )
+
+        # PPOTrainer connects before RecoverHandler.load().  A resumed run
+        # already has a live pair, so reconnecting here would leak the first
+        # gateway and leave two AWEX groups attached to the same workers.
+        if self._weight_update_ctrl is not None:
+            if self.rollout is rollout and self._weight_update_mode == meta.type:
+                return
+            raise RuntimeError(
+                "A weight-update pair is already connected to this train controller"
+            )
+
+        self.rollout = rollout
 
         ctrl = WeightUpdateController(
             WeightUpdateControllerConfig(
@@ -1106,6 +1143,13 @@ class GatewayTrainController:
 
         inference_urls: list[str] = rollout.inference_worker_urls
         pair_name = f"{self._role}-rollout"
+        colocate = (
+            rollout.config.scheduling_strategy.type == "colocation"
+            and rollout.config.scheduling_strategy.target == self._role
+        ) or (
+            self.config.scheduling_strategy.type == "colocation"
+            and self.config.scheduling_strategy.target == "rollout"
+        )
 
         if meta.type == "awex":
             # NCCL rendezvous master must live on the rank-0 process's node.
@@ -1124,6 +1168,7 @@ class GatewayTrainController:
                 train_worker_urls=self._worker_addrs,
                 inference_worker_urls=inference_urls,
                 mode="awex",
+                colocate=colocate,
                 nccl_master_addr=port_data["host"],
                 nccl_master_port=port_data["ports"][0],
             )
@@ -1139,6 +1184,7 @@ class GatewayTrainController:
                 lora_keep_versions=meta.lora_keep_versions,
             )
         self._weight_update_ctrl = ctrl
+        self._weight_update_mode = meta.type
         logger.info(
             "WeightUpdateController connected (pair=%s, train=%d, inf=%d)",
             pair_name,
@@ -1152,11 +1198,28 @@ class GatewayTrainController:
                 "connect_engine() must be called before update_weights()"
             )
         self.rollout.pause_generation()
+        self._transfer_weights(meta, require_success=False)
+        self.rollout.continue_generation()
+
+    def update_weights_for_recovery(self, meta: Any) -> None:
+        """Transfer a recovered version while generation is already paused."""
+        if self._weight_update_ctrl is None or self.rollout is None:
+            raise RuntimeError(
+                "connect_engine() must be called before update_weights_for_recovery()"
+            )
+        self._transfer_weights(meta, require_success=True)
+
+    def _transfer_weights(self, meta: Any, *, require_success: bool) -> None:
         assert meta.version is not None and meta.version > 0, (
             f"meta.version must be a positive integer, got {meta.version}"
         )
         result = self._weight_update_ctrl.update_weights(version=meta.version)
-        self.rollout.continue_generation()
+        if require_success and (
+            result.status != "ok" or result.version != meta.version
+        ):
+            raise RuntimeError(
+                f"Weight update v{meta.version} failed: {result.error or result.status}"
+            )
         logger.info(
             "Weight update v%d completed (%s, %.0fms)",
             meta.version,
@@ -1279,6 +1342,19 @@ class GatewayTrainController:
         logger.info("All training worker engines destroyed gracefully")
 
     def _cleanup_runtime_state(self) -> None:
+        if self._weight_update_ctrl is not None:
+            try:
+                self._weight_update_ctrl.destroy()
+            except Exception:
+                logger.error(
+                    "Failed to destroy weight-update controller: %s",
+                    traceback.format_exc(),
+                )
+            finally:
+                self._weight_update_ctrl = None
+                self._weight_update_mode = None
+                self.rollout = None
+
         if self._router_addr and self._model_addr:
             try:
                 import requests

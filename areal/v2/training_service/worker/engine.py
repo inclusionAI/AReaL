@@ -282,6 +282,11 @@ def create_engine_module(
     _register_engine_route("/load", "load")
     _register_engine_route("/offload", "offload")
     _register_engine_route("/onload", "onload")
+    _register_engine_route(
+        "/init_weight_residency_adapter",
+        "init_weight_residency_adapter",
+        return_result=False,
+    )
     _register_engine_route("/optimizer_zero_grad", "optimizer_zero_grad")
     _register_engine_route("/optimizer_step", "optimizer_step")
     _register_engine_route("/step_lr_scheduler", "step_lr_scheduler")

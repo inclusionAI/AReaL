@@ -52,6 +52,7 @@ from areal.v2.weight_update.training_adapter import (
 
 if TYPE_CHECKING:
     from areal.engine.megatron_engine import MegatronEngine
+    from areal.engine.megatron_utils.weight_residency import MegatronWeightResidency
 
 logger = logging.getLogger("AwexMegatronAdapter")
 
@@ -86,6 +87,7 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
             int,
             list[tuple[dict[str, object], str, torch.Tensor, torch.device]],
         ] = {}
+        self._residency: MegatronWeightResidency | None = None
         self._colocate_lock = threading.Lock()
         self._colocate_admin_api_key: str = "areal-admin-key"
         self._colocate_http_client: httpx.Client | None = None
@@ -93,6 +95,11 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
         self._dte_config = DTERuntimeConfig.from_env()
         self._delta_tracker = None
         self._delta_detector = None
+
+    def _is_released(self, tag: str) -> bool:
+        if self._residency is not None:
+            return self._residency.is_released(tag)
+        return tag in self._released_tags
 
     @property
     def parallelism_strategy(self) -> dict:
@@ -163,7 +170,7 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
         return result
 
     def save_parameters(self, save_path: str, names: list[str] | None = None) -> None:
-        weights_offloaded = "weights" in self._released_tags
+        weights_offloaded = self._is_released("weights")
         if weights_offloaded:
             self.resume_memory(tags=["weights"])
         try:
@@ -653,6 +660,11 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
         admin_api_key: str = "areal-admin-key",
         timeout_s: float = 120.0,
     ) -> None:
+        # The train engine also offloads between rollout and PPO updates.
+        # Both paths must own the same DDP flat-buffer residency state.
+        self._engine.init_weight_residency_adapter()
+        self._residency = self._engine._weight_residency
+        assert self._residency is not None
         self._colocate_pair_name = pair_name
         self._colocate_kv_store_url = kv_store_url
         self._colocate_transfer_rank = transfer_rank
@@ -682,7 +694,7 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
         auth_headers = {"Authorization": f"Bearer {self._colocate_admin_api_key}"}
         timeout_s = self._colocate_timeout_s
 
-        weights_offloaded = "weights" in self._released_tags
+        weights_offloaded = self._is_released("weights")
         if weights_offloaded:
             self.resume_memory(tags=["weights"])
 
@@ -761,6 +773,10 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
             - "optimizer": Offload optimizer state tensors (exp_avg, exp_avg_sq, etc.)
             - "weights": Offload model parameters
         """
+        if self._residency is not None:
+            self._residency.release_memory(tags)
+            return
+
         tags = tags or ["optimizer", "weights"]
         tags_to_release = [t for t in tags if t not in self._released_tags]
         if not tags_to_release:
@@ -789,6 +805,10 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
             - "optimizer": Reload optimizer state tensors to GPU
             - "weights": Reload model parameters to GPU
         """
+        if self._residency is not None:
+            self._residency.resume_memory(tags)
+            return
+
         tags = tags or ["optimizer", "weights"]
         tags_to_resume = [t for t in tags if t in self._released_tags]
         if not tags_to_resume:

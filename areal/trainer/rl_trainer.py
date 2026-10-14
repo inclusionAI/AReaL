@@ -442,6 +442,12 @@ class PPOTrainer:
         initial_lora_path = self._save_initial_lora_weights()
 
         # Offload actor before rollout init so sglang can use the GPU memory
+        if (
+            config.actor._version == "v2"
+            and self._is_actor_rollout_colocated(config)
+            and not config.actor.use_lora
+        ):
+            self.actor.init_weight_residency_adapter()
         if self._should_offload_actor:
             self._offload_model(self.actor, role="actor")
 
@@ -1675,6 +1681,12 @@ class PPOTrainer:
                 # teachers and the actor, so this is a correctness requirement
                 # rather than an optional inference tuning flag.
                 server_args["enable_memory_saver"] = True
+            elif config._version == "v2" and self._is_actor_rollout_colocated(
+                self.config
+            ):
+                # v2's colocate gateway hands the GPU between the actor and
+                # SGLang through the same tagged memory release endpoints.
+                server_args["enable_memory_saver"] = True
         elif rollout_backend == "vllm":
             if self.config.rollout.return_routed_experts:
                 raise ValueError(
@@ -2096,6 +2108,17 @@ class PPOTrainer:
                     "weight_update_mode='awex' requires SGLang rollout backend, "
                     f"got {rollout_backend!r}."
                 )
+
+        if (
+            self.config.actor._version == "v2"
+            and self._is_actor_rollout_colocated(self.config)
+            and not self.config.actor.use_lora
+            and (actor_backend != "megatron" or rollout_backend != "sglang")
+        ):
+            raise ValueError(
+                "v2 colocated AWEX weight updates require a Megatron actor "
+                "and an SGLang rollout."
+            )
 
         if rollout_backend == "vllm" and self.config.rollout.return_routed_experts:
             raise ValueError(
