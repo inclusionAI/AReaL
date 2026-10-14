@@ -1,3 +1,5 @@
+# SGLang 0.5.20 images are built with Dockerfile.sglang. This Dockerfile is
+# retained for the vLLM variant and the older SGLang 0.5.10 build.
 # Supports sglang and vllm variants via the VARIANT build argument.
 # VARIANT is declared early so each variant gets the correct torch version
 # and C++ extensions compiled against it.

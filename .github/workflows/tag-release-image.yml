@@ -159,14 +159,12 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: ./Dockerfile
+          file: ./Dockerfile.sglang
           push: true
           tags: |
             ${{ env.IMAGE_NAME }}:${{ steps.get-version.outputs.release_tag }}-sglang
             ${{ env.IMAGE_NAME }}:latest
             ${{ env.IMAGE_NAME }}:dev-sglang
-          build-args: |
-            VARIANT=sglang
 
       - name: Build and push vllm image
         uses: docker/build-push-action@v7

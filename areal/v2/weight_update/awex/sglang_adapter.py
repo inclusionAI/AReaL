@@ -80,6 +80,7 @@ class AwexSGLangAdapter(AwexInferenceAdapter):
 
     def _get_model_context(self) -> dict[str, Any]:
         server_args = self._scheduler.server_args
+        parallel = getattr(self._scheduler, "ps", self._scheduler)
         tp_size = int(getattr(server_args, "tp_size", 1))
         pp_size = int(getattr(server_args, "pp_size", 1))
         dp_size = int(getattr(server_args, "dp_size", 1))
@@ -89,35 +90,33 @@ class AwexSGLangAdapter(AwexInferenceAdapter):
             global_rank = int(dist.get_rank())
         else:
             world_size = int(tp_size * pp_size)
-            global_rank = int(getattr(self._scheduler, "tp_rank", 0))
+            global_rank = int(getattr(parallel, "tp_rank", 0))
 
+        # SGLang 0.5.20 selects the model device with ps.gpu_id. The inherited
+        # LOCAL_RANK may describe the parent launcher rather than this scheduler.
         local_rank = int(
             getattr(
-                self._scheduler,
-                "local_rank",
-                os.environ.get("LOCAL_RANK", getattr(self._scheduler, "gpu_id", 0)),
+                parallel,
+                "gpu_id",
+                getattr(self._scheduler, "local_rank", os.environ.get("LOCAL_RANK", 0)),
             )
         )
 
         return {
             "scheduler": self._scheduler,
-            "tp_rank": int(getattr(self._scheduler, "tp_rank", 0)),
+            "tp_rank": int(getattr(parallel, "tp_rank", 0)),
             "tp_size": tp_size,
-            "pp_rank": int(getattr(self._scheduler, "pp_rank", 0)),
+            "pp_rank": int(getattr(parallel, "pp_rank", 0)),
             "pp_size": pp_size,
             "dp_size": dp_size,
             "world_size": world_size,
             "global_rank": global_rank,
             "local_rank": local_rank,
             "attn_tp_rank": int(
-                getattr(
-                    self._scheduler,
-                    "attn_tp_rank",
-                    getattr(self._scheduler, "tp_rank", 0),
-                )
+                getattr(parallel, "attn_tp_rank", getattr(parallel, "tp_rank", 0))
             ),
-            "attn_tp_size": int(getattr(self._scheduler, "attn_tp_size", tp_size)),
-            "attn_dp_rank": int(getattr(self._scheduler, "attn_dp_rank", 0)),
+            "attn_tp_size": int(getattr(parallel, "attn_tp_size", tp_size)),
+            "attn_dp_rank": int(getattr(parallel, "attn_dp_rank", 0)),
         }
 
     @property
@@ -789,7 +788,7 @@ class AwexSGLangAdapter(AwexInferenceAdapter):
             )
         if native_tags:
             req = ReleaseMemoryOccupationReqInput(tags=native_tags)
-            self._scheduler.release_memory_occupation(req)
+            self._scheduler.weight_updater.release_memory_occupation(req)
             self._released_tags.update(native_tags)
         logger.info("release_memory completed with tags=%s", tags)
 
@@ -817,6 +816,6 @@ class AwexSGLangAdapter(AwexInferenceAdapter):
             )
         if native_tags:
             req = ResumeMemoryOccupationReqInput(tags=native_tags)
-            self._scheduler.resume_memory_occupation(req)
+            self._scheduler.weight_updater.resume_memory_occupation(req)
             self._released_tags.difference_update(native_tags)
         logger.info("resume_memory completed with tags=%s", tags)

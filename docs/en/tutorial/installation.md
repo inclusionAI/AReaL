@@ -38,8 +38,8 @@ checkpoints and logs.
 
 ### Option 1: Docker (Recommended)
 
-We recommend using Docker with our provided image. The Dockerfile is available in the
-top-level directory of the AReaL repository.
+We recommend using Docker with our provided image. The repository root contains
+`Dockerfile.sglang` for SGLang 0.5.20 and `Dockerfile` for vLLM.
 
 ```bash
 docker pull ghcr.io/areal-project/areal-runtime:v2.1.0-sglang
@@ -125,25 +125,17 @@ uv pip install -r pyproject.vllm.toml --extra cuda
 
 #### Flash Attention Pre-built Wheels
 
-Flash Attention v2 is included in `--extra cuda`, but PyPI only ships source
-distributions that require CUDA compilation (~30 min). To skip compilation, install a
-**pre-built wheel** before running `uv sync`.
-
-Flash Attention wheels are linked against a specific PyTorch version at compile time.
-SGLang (the default `pyproject.toml`) uses **torch 2.9** and vLLM
-(`pyproject.vllm.toml`) uses **torch 2.10**, so you must pick the matching wheel.
-Replace `cpXYZ` with your Python version (`cp311` for 3.11, `cp312` for 3.12).
-
-**SGLang** (default, torch 2.9):
+SGLang 0.5.20 (the default `pyproject.toml`) uses **torch 2.13 / CUDA 13** and resolves
+Flash Attention 4 through the lockfile. Install its locked dependencies:
 
 ```bash
-# Python 3.12
-uv pip install "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu128torch2.9-cp312-cp312-linux_x86_64.whl"
-# Python 3.11
-# uv pip install "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.16/flash_attn-2.8.3+cu128torch2.9-cp311-cp311-linux_x86_64.whl"
-
 uv sync --extra cuda
 ```
+
+For the separate vLLM environment, Flash Attention v2 wheels are linked against a
+specific PyTorch version at compile time. Install a matching pre-built wheel before
+`uv sync` to avoid compiling it from source. Replace `cpXYZ` with your Python version
+(`cp311` for 3.11, `cp312` for 3.12).
 
 **vLLM** (torch 2.10, requires `pyproject.vllm.toml`):
 
@@ -172,10 +164,9 @@ You can also install individual extras instead of the full `cuda` bundle:
 - `vllm`: vLLM inference engine (in `pyproject.vllm.toml`)
 - `megatron`: Megatron training backend
 - `tms`: Torch Memory Saver
-- `flash-attn`: Flash Attention v2
 - `kernels`: Hugging Face Kernels runtime
 - `cuda-train`: Training packages only (megatron + tms + kernels, no inference backend)
-- `cuda`: cuda-train + inference backend + flash-attn
+- `cuda`: cuda-train + SGLang inference backend (including Flash Attention 4)
 
 ### Using Hugging Face Kernels in Training
 
@@ -226,8 +217,8 @@ the already-installed PyTorch for CUDA compilation. Install PyTorch first via
 For running DeepSeek-V3 style MoE models with optimal performance, the Docker image also
 includes the following packages. These packages have complex build requirements and GPU
 architecture constraints. **Refer to the
-[Dockerfile](https://github.com/areal-project/AReaL/blob/main/Dockerfile) for the exact
-installation commands and environment variables.**
+[Dockerfile.sglang](https://github.com/areal-project/AReaL/blob/main/Dockerfile.sglang)
+for the exact installation commands and environment variables.**
 
 | Package                | Purpose                                     | GPU Requirement |
 | ---------------------- | ------------------------------------------- | --------------- |
@@ -240,8 +231,8 @@ installation commands and environment variables.**
 **Notes**:
 
 - FlashMLA and DeepGEMM require Hopper (H100/H800) or newer GPUs.
-- DeepEP requires NVSHMEM for internode and low-latency features. The Docker image
-  installs `nvidia-nvshmem-cu12` via pip, which DeepEP auto-detects.
+- DeepEP requires NVSHMEM for internode and low-latency features. The SGLang image
+  installs `nvidia-nvshmem-cu13` through the lockfile, which DeepEP auto-detects.
 - flash-linear-attention uses pure Triton kernels and works on any GPU.
 - These packages are cloned from GitHub and compiled during Docker build. For manual
   installation, ensure git submodules are initialized

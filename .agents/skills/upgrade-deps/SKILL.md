@@ -29,12 +29,13 @@ mutually-incompatible `torch` / `torchao` versions:
 | `pyproject.toml`      | SGLang (default)  | `uv.lock`      |
 | `pyproject.vllm.toml` | vLLM              | `uv.vllm.lock` |
 
-Both share the same core dependencies, megatron extras, and dev group. They diverge only
-in inference backend extras and `torch`/`torchao` version constraints.
+Both share dependencies where their backend constraints allow it, along with the
+megatron extras and dev group. Backend-bound packages such as `torch`, `torchao`,
+`transformers`, `kernels`, and Torch Memory Saver can resolve to different versions.
 
-The `Dockerfile` builds both variants from a single file using `ARG VARIANT` (`sglang`
-or `vllm`). The base image, torch install, and flash-attn wheels are all
-variant-specific.
+`Dockerfile.sglang` builds the SGLang 0.5.20 image. The existing `Dockerfile` still
+builds the vLLM variant with `ARG VARIANT=vllm` and retains a legacy SGLang 0.5.10 path.
+Review each image recipe only for the backend being upgraded.
 
 ### Focused Packages
 
@@ -543,7 +544,7 @@ ______________________________________________________________________
 | `megatron-bridge` | `checklists/megatron-bridge.md` | ✅ 9 API entries (AutoBridge, LoRA, save/load HF, Qwen3-VL patch target, AutoMapping, monkey-patch guard)                                                                           |
 | `mbridge`         | `checklists/mbridge.md`         | ✅ 14 API entries (AutoBridge, Bridge properties, weight mappings, LLMBridge subclassing, register_model, monkey-patch target)                                                      |
 | `vllm`            | `checklists/vllm.md`            | ✅ 14 API entries (entrypoints, LoRA manager, worker V0/V1, tool parsers, CLI)                                                                                                      |
-| `sglang`          | `checklists/sglang.md`          | ✅ 14 API entries (HTTP endpoints, tool/reasoning parsers, CLI flags, version guards)                                                                                               |
+| `sglang`          | `checklists/sglang.md`          | ✅ 22 API entries (HTTP endpoints, parsers, scheduler/weight-update bridges, CLI flags, version guards)                                                                             |
 | `transformers`    | `checklists/transformers.md`    | ✅ 12 API entries (Auto\* classes, tokenizer, flash attention monkey-patches, Qwen VL internals, LR schedulers)                                                                     |
 | `peft`            | `checklists/peft.md`            | ✅ 4 API entries (LoraConfig, TaskType, get_peft_model, weight key format)                                                                                                          |
 | `torchao`         | `checklists/torchao.md`         | ✅ 5 API entries (fp8_blockwise_mm, enable_fp8_linear/experts, shard validation, Triton kernels)                                                                                    |
