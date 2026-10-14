@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import runpy
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -142,6 +143,61 @@ def test_unknown_source_rejects_entire_profile_without_partial_modification(runt
 
     assert all(target.read_bytes() == source for target, source in before.items())
     assert not (root / ".areal-sglang-patches.lock").exists()
+
+
+def test_startup_uninstalled_qsa_patch_rejects_before_exec(runtime, monkeypatch):
+    """A no-op installer must not allow an unpatched QSA server to start."""
+    root, model, _ = runtime
+    monkeypatch.setattr(startup, "install_source_patches", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "bootstrap",
+            "--entrypoint",
+            "areal.engine.awex.sglang_plugin",
+            "--",
+            "--model-path",
+            str(model),
+        ],
+    )
+    monkeypatch.setattr(
+        startup.os, "execv", lambda *args: pytest.fail("unpatched server started")
+    )
+    before = (root / qsa.TARGET_RELATIVE).read_bytes()
+
+    with pytest.raises(RuntimeError, match="QSA patch verification failed") as caught:
+        startup.main()
+
+    assert str(root / qsa.TARGET_RELATIVE) in str(caught.value)
+    assert qsa.PATCHED_SHA256 in str(caught.value)
+    assert hashlib.sha256(before).hexdigest() in str(caught.value)
+    assert (root / qsa.TARGET_RELATIVE).read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("legacy", "patch"),
+    [
+        ("patch_sglang_qsa_compress_gather", qsa),
+        ("patch_sglang_qwen4_vl", qwen),
+        ("patch_sglang_mm_executor", executor),
+    ],
+)
+def test_legacy_patch_cli_applies_canonical_fix_and_repeats_safely(
+    runtime, monkeypatch, legacy, patch
+):
+    """External YAML commands keep the current guarded, idempotent transforms."""
+    root, _, sources = runtime
+    target = root / patch.TARGET_RELATIVE
+    monkeypatch.setattr(sys, "argv", [legacy, "--target", str(target)])
+
+    runpy.run_module(f"examples.swe.qwen38_flash_next.{legacy}", run_name="__main__")
+    assert target.read_bytes() == patch.patched_source(sources[patch])
+    mtime = target.stat().st_mtime_ns
+    runpy.run_module(f"examples.swe.qwen38_flash_next.{legacy}", run_name="__main__")
+
+    assert target.stat().st_mtime_ns == mtime
+    assert target.read_bytes() == patch.patched_source(sources[patch])
 
 
 def test_concurrent_starts_install_each_source_once(runtime, monkeypatch):

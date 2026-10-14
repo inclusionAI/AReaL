@@ -12,6 +12,9 @@ from areal.engine._sglang_source_patch import (
     install_source_patches,
     installed_sglang_root,
 )
+from areal.utils.logging import getLogger
+
+logger = getLogger("SGLangModelPatches")
 
 _BOOTSTRAP = "areal.engine.sglang_model_patches"
 _ENTRYPOINTS = (
@@ -82,6 +85,13 @@ def apply_model_patches(server_args: Sequence[str]) -> None:
     install_source_patches(
         [(root / patch.TARGET_RELATIVE, patch.patched_source) for patch in patches],
         lock_path=root / ".areal-sglang-patches.lock",
+    )
+    # Validate what the server will import, not only the generated patch bytes.
+    sglang_qsa_compress_gather.verify_installed_patch(root)
+    logger.info(
+        "Verified installed QSA patch: path=%s SHA256=%s",
+        root / sglang_qsa_compress_gather.TARGET_RELATIVE,
+        sglang_qsa_compress_gather.PATCHED_SHA256,
     )
 
 
