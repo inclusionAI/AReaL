@@ -20,7 +20,7 @@ from megatron.core.tensor_parallel.layers import (
 from megatron.core.transformer import TransformerConfig
 from transformers import AutoConfig, PretrainedConfig
 
-from areal.api.cli_args import MegatronEngineConfig
+from areal.api.cli_args import MegatronEngineConfig, MindSpeedEngineConfig
 from areal.engine.core.model import is_valid_vision_model
 from areal.infra.platforms import is_npu_available
 from areal.models.mcore.bailing_moe import (
@@ -330,6 +330,7 @@ def make_mcore_model(
     is_critic: bool = False,
     use_lora: bool = False,
     pre_wrap_hook: Callable[[list[Any]], list[Any]] | None = None,
+    mindspeed_config: MindSpeedEngineConfig | None = None,
 ) -> list[GPTModel | DDP]:
     if bridge is not None and bridge_type == "mbridge":
         models = bridge.get_model(
@@ -518,6 +519,16 @@ def make_mcore_model(
 
         provider.moe_permute_fusion = mcore_config.moe_permute_fusion
         tf_config.moe_permute_fusion = provider.moe_permute_fusion
+
+        if is_npu_available and mindspeed_config is not None:
+            provider.moe_aux_loss_coeff = mindspeed_config.moe_aux_loss_coeff
+            provider.moe_router_load_balancing_type = (
+                mindspeed_config.moe_router_load_balancing_type
+            )
+            tf_config.moe_aux_loss_coeff = provider.moe_aux_loss_coeff
+            tf_config.moe_router_load_balancing_type = (
+                provider.moe_router_load_balancing_type
+            )
 
         tf_config.batch_p2p_comm = provider.batch_p2p_comm
         tf_config.overlap_p2p_comm = provider.overlap_p2p_comm
