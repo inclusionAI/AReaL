@@ -89,36 +89,9 @@ jobs:
       - name: Set up Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v3
 
-      - name: Fetch GitHub runner token
-        id: runner-token
-        uses: actions/github-script@v8
-        env:
-          GH_PAT: ${{ secrets.GH_PAT }}
-        with:
-          github-token: ${{ secrets.GH_PAT }}
-          script: |
-            const pat = process.env.GH_PAT;
-            if (!pat) {
-              core.setFailed('GH_PAT secret is not configured.');
-              return;
-            }
-
-            const tokenResponse = await github.rest.actions.createRegistrationTokenForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              request: {
-                headers: {
-                  authorization: `token ${pat}`,
-                },
-              },
-            });
-
-            core.setOutput('token', tokenResponse.data.token);
-
       - name: Render startup script and metadata files
         env:
           RUNNER_VERSION: ${{ env.RUNNER_VERSION }}
-          TOKEN: ${{ steps.runner-token.outputs.token }}
         run: |
           cat <<'EOF' > startup-script.template
           #!/bin/bash
@@ -190,14 +163,14 @@ jobs:
           sed -e "s/__RUNNER_VERSION__/${RUNNER_VERSION}/g" -e "s#__CONTAINER_IMAGE__#${CONTAINER_IMAGE}#g" startup-script.template > startup-script.sh
           rm startup-script.template
 
-          printf '%s' "$TOKEN" > runner-token.txt
-
       - name: Create runner instance
         id: create-instance
         env:
           INSTANCE_NAME: ${{ steps.vars.outputs.instance_name }}
+          GH_PAT: ${{ secrets.GH_PAT }}
         run: |
           set -euo pipefail
+          : "${GH_PAT:?GH_PAT secret is not configured.}"
           zones=$(gcloud compute zones list --project "$GCP_PROJECT_ID" --filter="status=UP" --format="value(name)")
           if [ -z "$zones" ]; then
             echo "No available zones found." >&2
@@ -206,6 +179,13 @@ jobs:
 
           for zone in $zones; do
             echo "Attempting to create instance in $zone..."
+            # Registration tokens expire after one hour. GPU capacity retries
+            # across zones can exceed that, so refresh before each attempt.
+            curl -fsS -X POST \
+              -H "Authorization: Bearer ${GH_PAT}" \
+              -H "Accept: application/vnd.github+json" \
+              "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/runners/registration-token" \
+              | python3 -c 'import json, sys; print(json.load(sys.stdin)["token"])' > runner-token.txt
             if gcloud compute instances create "$INSTANCE_NAME" \
               --project "$GCP_PROJECT_ID" \
               --zone "$zone" \
@@ -217,7 +197,7 @@ jobs:
               --max-run-duration "2h" \
               --instance-termination-action DELETE \
               --scopes "https://www.googleapis.com/auth/cloud-platform" \
-              --metadata "^::^repo=${{ github.repository }}::runner_labels=${RUNNER_LABELS}" \
+              --metadata "^::^repo=${GITHUB_REPOSITORY}::runner_labels=${RUNNER_LABELS}" \
               --metadata-from-file startup-script=startup-script.sh,runner_token=runner-token.txt
             then
               echo "Successfully created instance in $zone."
