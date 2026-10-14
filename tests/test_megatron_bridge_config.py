@@ -14,6 +14,7 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 from areal.api.alloc_mode import ParallelStrategy
+from areal.api.cli_args import MegatronEngineConfig, MindSpeedEngineConfig
 
 
 def _load_function(path, name, namespace):
@@ -221,3 +222,73 @@ def test_qwen_vision_config_isolates_dense_moe_options(monkeypatch, experts):
     assert config.moe_alltoall_overlap_comm == bool(experts)
     assert VisionConfig.gemm_gradient_accumulation_fusion
     assert VisionConfig.moe_alltoall_overlap_comm
+
+
+@pytest.mark.parametrize("is_npu", [False, True])
+@pytest.mark.parametrize("aux_coeff", [0.0, 0.02, None])
+def test_bridge_model_honors_mindspeed_aux_settings_before_finalize(
+    monkeypatch, is_npu, aux_coeff
+):
+    """NPU Bridge construction honors explicit zero and nonzero auxiliary losses."""
+    provider_module = ModuleType("megatron.bridge.models.gpt_provider")
+    provider_module.default_layer_spec = object()
+    provider_module.local_layer_spec = object()
+    monkeypatch.setitem(sys.modules, provider_module.__name__, provider_module)
+    provider = SimpleNamespace(
+        moe_aux_loss_coeff=0.001,
+        moe_router_load_balancing_type="global_aux_loss",
+    )
+    finalized = []
+
+    def finalize():
+        finalized.append(
+            (provider.moe_aux_loss_coeff, provider.moe_router_load_balancing_type)
+        )
+
+    def provide_distributed_model(**kwargs):
+        assert len(finalized) == 1
+        return []
+
+    provider.finalize = finalize
+    provider.provide_distributed_model = provide_distributed_model
+    make_model = _load_function(
+        "areal/models/mcore/registry.py",
+        "make_mcore_model",
+        {
+            "dataclasses": dataclasses,
+            "is_npu_available": is_npu,
+            "mpu": SimpleNamespace(
+                get_tensor_model_parallel_world_size=lambda: 2,
+                get_pipeline_model_parallel_world_size=lambda: 1,
+                get_context_parallel_world_size=lambda: 8,
+                get_expert_model_parallel_world_size=lambda: 8,
+                get_expert_tensor_parallel_world_size=lambda: 1,
+            ),
+            "MCoreDDPConfig": SimpleNamespace,
+            "logger": SimpleNamespace(warning=lambda *args: None),
+        },
+    )
+    tf_config = SimpleNamespace(params_dtype="bf16", fp16=False, bf16=True)
+    mindspeed_config = (
+        MindSpeedEngineConfig(
+            moe_aux_loss_coeff=aux_coeff, moe_router_load_balancing_type="aux_loss"
+        )
+        if aux_coeff is not None
+        else None
+    )
+
+    make_model(
+        hf_config=SimpleNamespace(model_type="test_moe"),
+        tf_config=tf_config,
+        mcore_config=MegatronEngineConfig(),
+        bridge=SimpleNamespace(to_megatron_provider=lambda **kw: provider),
+        bridge_type="megatron-bridge",
+        mindspeed_config=mindspeed_config,
+    )
+
+    if is_npu and mindspeed_config is not None:
+        assert finalized == [(aux_coeff, "aux_loss")]
+        assert tf_config.moe_aux_loss_coeff == aux_coeff
+        assert tf_config.moe_router_load_balancing_type == "aux_loss"
+    else:
+        assert finalized == [(0.001, "global_aux_loss")]

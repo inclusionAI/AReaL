@@ -621,6 +621,7 @@ class MegatronEngine(TrainEngine):
                     is_critic=self.config.is_critic,
                     use_lora=self.lora_mode,
                     pre_wrap_hook=pre_wrap_hook,
+                    mindspeed_config=self.mindspeed_config,
                 )
 
         self.model = _MegatronModelList(models)
@@ -1088,7 +1089,8 @@ class MegatronEngine(TrainEngine):
         self,
         mb_list: MicroBatchList,
         process_output_fn: Callable[
-            [torch.Tensor, dict[str, Any]], torch.Tensor | None
+            [torch.Tensor, dict[str, Any]],
+            torch.Tensor | tuple[torch.Tensor, torch.Tensor] | None,
         ],
         forward_only: bool = False,
     ) -> None:
@@ -1139,6 +1141,9 @@ class MegatronEngine(TrainEngine):
 
             def _process_output(input_, output_):
                 loss = process_output_fn(output_, input_)
+                if isinstance(loss, tuple):
+                    loss, num_tokens = loss
+                    return loss, num_tokens, {}
                 if loss is None:
                     loss = torch.tensor(1.0, device=output_.device)
                 return loss, {}
@@ -1206,36 +1211,52 @@ class MegatronEngine(TrainEngine):
         # loss, so all_gather's backward (reduce_scatter) sums cp_size identical
         # gradients, amplifying by cp_size. Including CP in the weight all-reduce
         # introduces a matching cp_size factor in the denominator, cancelling out.
+        # Per-token mode uses this reduction only to validate a positive batch weight.
         total_loss_weight = compute_total_loss_weight(
             mb_list,
             loss_weight_fn,
             mpu.get_data_parallel_group(with_context_parallel=True),
         )
 
+        calculate_per_token_loss = get_model_config(
+            self.model[0]
+        ).calculate_per_token_loss
+
         # Step 3: Forward-backward using Megatron's pipeline function.
-        # `len(mb_list)` compensates Megatron Core's `output_tensor /= num_microbatches`
-        # applied in the 2-tuple `(loss, {})` branch of
-        # `megatron.core.pipeline_parallel.schedules._forward_step_helper`. Our
-        # per-microbatch loss is already globally normalized via `w_i / W_total`, so
-        # that extra division would shrink every gradient (and thus grad_norm and the
-        # effective optimizer step) by `num_microbatches`.
-        loss_multiplier = (
-            mpu.get_data_parallel_world_size()
-            * self.optimizer.get_loss_scale().item()
-            * len(mb_list)
-        )
+        if calculate_per_token_loss:
+            # Megatron normalizes the summed gradients by the reported token count.
+            # CP all-gather backward sums the replicated full-sequence losses.
+            loss_multiplier = 1.0 / mpu.get_context_parallel_world_size()
+            for model in self.model:
+                get_model_config(model).grad_scale_func = self.optimizer.scale_loss
+        else:
+            # The two-value callback is already globally normalized; compensate
+            # Megatron's division by num_microbatches and DDP's averaging.
+            loss_multiplier = (
+                mpu.get_data_parallel_world_size()
+                * self.optimizer.get_loss_scale().item()
+                * len(mb_list)
+            )
 
         def process_output(
             output: torch.Tensor, inputs: dict[str, Any]
-        ) -> torch.Tensor:
-            return self._compute_logprobs_and_loss(
+        ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+            loss = self._compute_logprobs_and_loss(
                 output,
                 inputs,
                 loss_fn,
                 loss_weight_fn,
-                total_loss_weight,
+                None if calculate_per_token_loss else total_loss_weight,
                 loss_multiplier=loss_multiplier,
             )
+            if calculate_per_token_loss:
+                # Full-sequence counts are replicated across CP. Count each once;
+                # keep integer-valued float counts from DPO/RW compatible with MCore.
+                num_tokens = loss_weight_fn(inputs).detach().to(torch.int64)
+                if mpu.get_context_parallel_rank() != 0:
+                    num_tokens = torch.zeros_like(num_tokens)
+                return loss, num_tokens
+            return loss
 
         self.forward_backward_batch(
             mb_list,
@@ -3250,7 +3271,7 @@ class MegatronEngine(TrainEngine):
         inputs: dict[str, Any],
         loss_fn: Callable[..., torch.Tensor],
         loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
-        total_loss_weight: torch.Tensor,
+        total_loss_weight: torch.Tensor | None,
         loss_multiplier: float = 1.0,
     ) -> torch.Tensor:
         local_weight = loss_weight_fn(inputs)
@@ -3357,7 +3378,10 @@ class MegatronEngine(TrainEngine):
             values = output.squeeze(-1)
             loss = loss_fn(values, inputs)
 
-        loss_scale = local_weight / total_loss_weight * loss_multiplier
+        if total_loss_weight is None:
+            loss_scale = local_weight * loss_multiplier
+        else:
+            loss_scale = local_weight / total_loss_weight * loss_multiplier
         return loss * loss_scale
 
     def _compute_forward_result(
