@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import copy
 import os
 import random
 from importlib import metadata
@@ -42,6 +43,178 @@ from areal.infra.platforms import current_platform
 from areal.utils import logging, stats_tracker
 
 logger = logging.getLogger("MegatronCheckpointer")
+
+_PORTABLE_METADATA = {
+    "format": "areal-megatron-fully-reshardable-v1",
+    "megatron_core": "0.17.0",
+    "optimizer_common": "semantic-groups-v1",
+    "rng": "supplemental-runtime-state",
+    "distrib_optim_sharding_type": "fully_reshardable",
+    "chained_optim_avoid_prefix": True,
+    "singleton_local_shards": False,
+}
+_PORTABLE_COMMON = "areal_reconfiguration_optimizer"
+_GROUP_KEYS = ("wd_mult", "lr_mult", "is_decoupled_lr")
+
+
+def _optimizer_leaves(state):
+    """MCore uses a bare state for one child, integer keys for a chain."""
+    if "optimizer" in state:
+        return [state]
+    if not state or any(type(key) is not int for key in state):
+        raise ValueError("Unsupported portable optimizer state structure")
+    return [state[key] for key in sorted(state)]
+
+
+def _common_to_cpu(value):
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu().clone()
+    if isinstance(value, dict):
+        return {key: _common_to_cpu(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return type(value)(_common_to_cpu(item) for item in value)
+    return copy.deepcopy(value)
+
+
+def _common_equal(left, right):
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, torch.Tensor):
+        return left.dtype == right.dtype and torch.equal(left, right)
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(
+            _common_equal(left[key], right[key]) for key in left
+        )
+    if isinstance(left, (list, tuple)):
+        return len(left) == len(right) and all(
+            _common_equal(a, b) for a, b in zip(left, right, strict=True)
+        )
+    return left == right
+
+
+def _merge_optimizer_common(parts):
+    """Collapse rank/chain ownership while preserving semantic group state.
+
+    EP may move a parameter between the dense and expert optimizer. Removing
+    only is_expert_parallel is safe when every remaining group attribute agrees.
+    Never merge differing hyperparameters or discard optimizer/scaler progress.
+    """
+    groups = {}
+    shared = None
+    step = None
+    for part in parts:
+        for leaf in part:
+            common = copy.deepcopy(leaf)
+            raw_groups = common["optimizer"].pop("param_groups")
+            if shared is None:
+                shared = common
+            elif not _common_equal(shared, common):
+                raise ValueError(
+                    "Optimizer common/scaler state differs across ranks or chains"
+                )
+            for group in raw_groups:
+                group = dict(group)
+                group_step = group.pop("step", None)
+                if group_step is not None:
+                    if step is not None and not _common_equal(step, group_step):
+                        raise ValueError(
+                            "Optimizer steps differ across ranks or chains"
+                        )
+                    step = group_step
+                group.pop("is_expert_parallel")
+                key = tuple(group[name] for name in _GROUP_KEYS)
+                if key in groups and not _common_equal(groups[key], group):
+                    raise ValueError(
+                        "Optimizer semantic groups have inconsistent state"
+                    )
+                groups[key] = group
+    if shared is None or not groups:
+        raise ValueError("Portable optimizer has no parameter groups")
+    if step is not None:
+        for group in groups.values():
+            group["step"] = step
+    shared["optimizer"]["param_groups"] = [groups[key] for key in sorted(groups)]
+    return shared
+
+
+def _gather_optimizer_common(state):
+    # All ranks reach the same collective even if local extraction fails.
+    try:
+        leaves = [
+            _common_to_cpu(
+                {
+                    k: v
+                    for k, v in leaf.items()
+                    if k not in {"param_state", "param_state_sharding_type"}
+                }
+            )
+            for leaf in _optimizer_leaves(state)
+        ]
+        payload = {"leaves": leaves}
+    except Exception as error:
+        payload = {"error": str(error)}
+    gathered = [None] * torch.distributed.get_world_size()
+    torch.distributed.all_gather_object(gathered, payload)
+    if any("error" in part for part in gathered):
+        raise ValueError("Unable to capture portable optimizer common state")
+    return _merge_optimizer_common([part["leaves"] for part in gathered])
+
+
+def _portable_optimizer_template(state, common=None):
+    """Remove source ownership from disk; inject target common tree on load.
+
+    LocalNonpersistentObject is MCore's supported way to supply local structure.
+    Tensor values remain native ShardedTensor/Factory objects with global keys.
+    """
+    from megatron.core.dist_checkpointing.mapping import LocalNonpersistentObject
+
+    groups = (
+        None
+        if common is None
+        else {
+            tuple(group[name] for name in _GROUP_KEYS): group
+            for group in common["optimizer"]["param_groups"]
+        }
+    )
+    for leaf in _optimizer_leaves(state):
+        tensors = leaf["param_state"]
+        target_groups = leaf["optimizer"]["param_groups"]
+        leaf.clear()
+        leaf["param_state"] = tensors if tensors else LocalNonpersistentObject(tensors)
+        if common is None:
+            continue
+        mapped = copy.deepcopy(common)
+        mapped_groups = []
+        for target in target_groups:
+            key = tuple(target[name] for name in _GROUP_KEYS)
+            if key not in groups:
+                raise ValueError(
+                    "Target optimizer group is absent from portable checkpoint"
+                )
+            source = groups[key]
+            # Scheduler/progress fields legitimately differ in a fresh runtime.
+            dynamic = {
+                "step",
+                "lr",
+                "weight_decay",
+                "_areal_last_step_lr",
+                "is_expert_parallel",
+            }
+            if not _common_equal(
+                {k: v for k, v in source.items() if k not in dynamic},
+                {k: v for k, v in target.items() if k not in dynamic},
+            ):
+                raise ValueError(
+                    "Target optimizer hyperparameters differ from checkpoint"
+                )
+            mapped_groups.append(
+                dict(source, is_expert_parallel=target["is_expert_parallel"])
+            )
+        mapped["optimizer"]["param_groups"] = mapped_groups
+        mapped["param_state_sharding_type"] = "fully_reshardable"
+        leaf.update(
+            {key: LocalNonpersistentObject(value) for key, value in mapped.items()}
+        )
 
 
 def log_with_rank(message: str, rank: int, log_only_rank_0: bool = False):
@@ -131,7 +304,7 @@ def _release_retained_payload(tensor_lists: list[list]) -> None:
 
 
 def save_dist_checkpointing(
-    sharded_state_dict, ckpt_path, async_save=False
+    sharded_state_dict, ckpt_path, async_save=False, *, content_metadata=None
 ) -> AsyncRequest | None:
     validate_sharding_integrity = True
     # Get checkpointing strategies
@@ -154,6 +327,8 @@ def save_dist_checkpointing(
     )
     if async_save:
         save_kwargs["async_strategy"] = "mcore"
+    if content_metadata is not None:
+        save_kwargs["content_metadata"] = content_metadata
     async_save_request = dist_checkpointing.save(**save_kwargs)
 
     return async_save_request
@@ -353,7 +528,29 @@ class MegatronCheckpointManager:
         with_optimizer: bool = True,
         with_rng: bool = True,
         is_loading: bool = False,
+        *,
+        optimizer_sharding_type: str = "dp_reshardable",
     ):
+        if optimizer_sharding_type not in {"dp_reshardable", "fully_reshardable"}:
+            raise ValueError(
+                f"Unsupported optimizer sharding: {optimizer_sharding_type}"
+            )
+        portable = optimizer_sharding_type == "fully_reshardable"
+        if portable and _mcore_version() != _PORTABLE_METADATA["megatron_core"]:
+            raise ValueError(
+                "Portable checkpoints require the pinned Megatron-Core 0.17.0"
+            )
+        if portable and with_rng:
+            raise ValueError(
+                "Portable checkpoints restore RNG through supplemental runtime state"
+            )
+        optimizer_metadata = {"distrib_optim_sharding_type": optimizer_sharding_type}
+        if portable:
+            optimizer_metadata.update(
+                chained_optim_avoid_prefix=True,
+                singleton_local_shards=False,
+                distrib_optim_fully_reshardable_mem_efficient=True,
+            )
         # For save dist checkpointing
         state_dict = {}
 
@@ -368,28 +565,21 @@ class MegatronCheckpointManager:
                     key = "model"
                 if hasattr(model, "module"):
                     model = model.module
-                state_dict[key] = model.sharded_state_dict()
+                state_dict[key] = model.sharded_state_dict(
+                    **({"metadata": optimizer_metadata} if portable else {})
+                )
 
         # Optimizer State Dict
         if with_optimizer:
             torch.distributed.barrier()
-            # megatron-core v0.14+ removed flattened_range support (Megatron-LM
-            # PR #2126), but the sharded_state_dict default
-            # (fully_sharded_model_space) still emits it, so saving optimizer
-            # state fails on the pinned 0.17.0. dp_reshardable is upstream's
-            # current default. Trade-off: the optimizer state (not the model
-            # weights) becomes reshardable only along DP -- load hard-asserts
-            # the same bucket layout (per_bucket_numel_unpadded), so save and
-            # load must use identical TP/PP. Fine today since recover enforces
-            # the same topology; switch to fully_reshardable if cross-topology
-            # resume is ever needed (also flattened_range-free, at the cost of
-            # gathering optimizer state). is_loading=True pre-allocates
-            # exp_avg/exp_avg_sq so the load template requests them --
-            # otherwise DCP silently drops the moments on resume.
+            # Both formats avoid the flattened_range encoding removed in
+            # MCore 0.17. Ordinary recovery keeps DP-only bucket sharding.
+            # Reconfiguration uses global parameter keys and shard metadata.
+            # Loading must use the SAME format and initialize Adam moments.
             optimizer_sharded_states = self.optimizer.sharded_state_dict(
                 state_dict,
                 is_loading=is_loading,
-                metadata={"distrib_optim_sharding_type": "dp_reshardable"},
+                metadata=optimizer_metadata,
             )
             state_dict["optimizer"] = optimizer_sharded_states
 
@@ -431,6 +621,8 @@ class MegatronCheckpointManager:
         with_model: bool = True,
         with_optimizer: bool = True,
         with_rng: bool = True,
+        *,
+        optimizer_sharding_type: str = "dp_reshardable",
     ):
         # If a prior save to the same directory is still flushing in the
         # background, block until it finishes so we don't load a half-written
@@ -443,10 +635,38 @@ class MegatronCheckpointManager:
             )
         dist_checkpoint_path = local_path
 
+        portable = optimizer_sharding_type == "fully_reshardable"
+        common = None
+        if portable:
+            common = dist_checkpointing.load_common_state_dict(dist_checkpoint_path)
+            content = dist_checkpointing.load_content_metadata(
+                preloaded_state_dict=common
+            )
+            if content != _PORTABLE_METADATA:
+                raise ValueError(
+                    "Checkpoint is not the declared portable Megatron format"
+                )
+
         # Get State Dict for loading
         sharded_state_dict = self.generate_state_dict(
-            with_model, with_optimizer, with_rng, is_loading=True
+            with_model,
+            with_optimizer,
+            with_rng,
+            is_loading=True,
+            optimizer_sharding_type=optimizer_sharding_type,
         )
+        if portable and with_optimizer:
+            error = None
+            try:
+                _portable_optimizer_template(
+                    sharded_state_dict["optimizer"], common[_PORTABLE_COMMON]
+                )
+            except Exception as exc:
+                error = str(exc)
+            errors = [None] * torch.distributed.get_world_size()
+            torch.distributed.all_gather_object(errors, error)
+            if any(item is not None for item in errors):
+                raise ValueError(f"Portable optimizer mapping failed: {errors}")
         # Load Dist Checkpointing
         state_dict = load_dist_checkpointing(
             sharded_state_dict=sharded_state_dict,
@@ -515,6 +735,8 @@ class MegatronCheckpointManager:
         with_model: bool = True,
         with_optimizer=True,
         with_rng: bool = True,
+        *,
+        optimizer_sharding_type: str = "dp_reshardable",
     ):
         dist_checkpoint_path = local_path
 
@@ -527,12 +749,24 @@ class MegatronCheckpointManager:
         self._reap_finished_async_saves()
 
         # Generate state dict for saving
-        state_dict = self.generate_state_dict(with_model, with_optimizer, with_rng)
+        state_dict = self.generate_state_dict(
+            with_model,
+            with_optimizer,
+            with_rng,
+            optimizer_sharding_type=optimizer_sharding_type,
+        )
+        portable = optimizer_sharding_type == "fully_reshardable"
+        if portable and with_optimizer:
+            state_dict[_PORTABLE_COMMON] = _gather_optimizer_common(
+                state_dict["optimizer"]
+            )
+            _portable_optimizer_template(state_dict["optimizer"])
         # Start Async save if enabled
         async_save_request = save_dist_checkpointing(
             sharded_state_dict=state_dict,
             ckpt_path=dist_checkpoint_path,
             async_save=self.async_save,
+            **({"content_metadata": dict(_PORTABLE_METADATA)} if portable else {}),
         )
 
         if self.async_save:

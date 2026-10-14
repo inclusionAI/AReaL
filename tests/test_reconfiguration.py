@@ -380,23 +380,37 @@ class SnapshotTests(unittest.TestCase):
             save=lambda meta: calls.append(("save", meta)),
             load=lambda meta: calls.append(("load", meta)),
         )
-        callback = M.CheckpointParticipant.for_engine(
-            engine,
-            format_id="native-dcp",
-            wait_saved=lambda: calls.append(("wait", None)),
-        )
-        with patch.dict(sys.modules, {"areal.api.io_struct": stub}):
-            callback.save(self.root)
-            callback.wait_saved()
-            callback.load(self.root)
-        self.assertEqual([kind for kind, _ in calls], ["save", "wait", "load"])
-        self.assertTrue(
-            all(
-                meta.with_optim and meta.weight_format == "dcp"
-                for _, meta in calls
-                if meta is not None
-            )
-        )
+        for format_id, expected_format in (
+            ("native-dcp", "dcp"),
+            ("areal-fsdp-dcp", "dcp"),
+            ("areal-megatron-dcp", "dcp-reconfiguration"),
+            ("areal-megatron-fully-reshardable-v1", "dcp-reconfiguration"),
+        ):
+            with self.subTest(format_id=format_id):
+                calls.clear()
+                callback = M.CheckpointParticipant.for_engine(
+                    engine,
+                    format_id=format_id,
+                    wait_saved=lambda: calls.append(("wait", None)),
+                )
+                with patch.dict(sys.modules, {"areal.api.io_struct": stub}):
+                    callback.save(self.root)
+                    callback.wait_saved()
+                    callback.load(self.root)
+                self.assertEqual([kind for kind, _ in calls], ["save", "wait", "load"])
+                self.assertTrue(
+                    all(
+                        meta.with_optim and meta.weight_format == expected_format
+                        for _, meta in calls
+                        if meta is not None
+                    )
+                )
+                self.assertEqual(
+                    callback.format_id,
+                    "areal-megatron-fully-reshardable-v1"
+                    if expected_format == "dcp-reconfiguration"
+                    else format_id,
+                )
 
     def test_invalid_path_does_not_leak_lock(self):
         with self.assertRaises(M.SnapshotError):
@@ -490,6 +504,172 @@ def _source_function(relative_path, class_name, name, namespace=None):
         compile(ast.Module(body=[function], type_ignores=[]), str(path), "exec"), scope
     )
     return scope[name]
+
+
+@pytest.fixture
+def portable_optimizer(monkeypatch):
+    """Exercise common-state mapping without emulating tensor resharding."""
+    path = "areal/engine/megatron_utils/checkpointer.py"
+    scope = {
+        "copy": copy,
+        "torch": types.SimpleNamespace(Tensor=type("TensorPlaceholder", (), {})),
+    }
+    tree = ast.parse((REPO_ROOT / path).read_text())
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "_GROUP_KEYS"
+            for target in node.targets
+        ):
+            scope["_GROUP_KEYS"] = ast.literal_eval(node.value)
+    for name in (
+        "_common_equal",
+        "_optimizer_leaves",
+        "_merge_optimizer_common",
+        "_portable_optimizer_template",
+    ):
+        scope[name] = _source_function(path, None, name, scope)
+    monkeypatch.setitem(
+        sys.modules,
+        "megatron.core.dist_checkpointing.mapping",
+        types.SimpleNamespace(
+            LocalNonpersistentObject=lambda value: types.SimpleNamespace(data=value)
+        ),
+    )
+    return types.SimpleNamespace(
+        merge=scope["_merge_optimizer_common"],
+        map=scope["_portable_optimizer_template"],
+    )
+
+
+def _optimizer_common_group(*, expert=False, wd=1.0, step=12):
+    return {
+        "wd_mult": wd,
+        "lr_mult": 1.0,
+        "is_decoupled_lr": False,
+        "is_expert_parallel": expert,
+        "step": step,
+        "lr": 0.25,
+        "weight_decay": 0.1,
+        "betas": (0.9, 0.95),
+        "eps": 1e-8,
+    }
+
+
+def _optimizer_common_leaf(groups):
+    return {
+        "optimizer": {"param_groups": groups},
+        "grad_scaler": {"scale": 1024, "growth_tracker": 3},
+    }
+
+
+def test_portable_optimizer_chain_changes_preserve_state(portable_optimizer):
+    """Dense/expert ownership can merge and split without losing progress."""
+    source = [
+        _optimizer_common_leaf([_optimizer_common_group()]),
+        _optimizer_common_leaf([_optimizer_common_group(expert=True, wd=0.0)]),
+    ]
+    original = copy.deepcopy(source)
+    common = portable_optimizer.merge([source])
+    # A new layout owns both groups in one optimizer, in the opposite order.
+    target = _optimizer_common_leaf(
+        [_optimizer_common_group(wd=0.0, step=0), _optimizer_common_group(step=0)]
+    )
+    tensors = {"native-sharded-key": object()}
+    target["param_state"] = tensors
+    portable_optimizer.map(target, common)
+    assert target["param_state"] is tensors
+    assert target["optimizer"].data["param_groups"] == [
+        _optimizer_common_group(wd=0.0),
+        _optimizer_common_group(),
+    ]
+    assert target["grad_scaler"].data == source[0]["grad_scaler"]
+    # Restoring into separate dense/expert children retains target ownership.
+    split = {
+        index: dict(
+            _optimizer_common_leaf([_optimizer_common_group(expert=expert, step=0)]),
+            param_state=tensors,
+        )
+        for index, expert in enumerate((False, True))
+    }
+    portable_optimizer.map(split, common)
+    for index, expert in enumerate((False, True)):
+        assert split[index]["param_state"] is tensors
+        assert split[index]["optimizer"].data["param_groups"] == [
+            _optimizer_common_group(expert=expert)
+        ]
+    assert source == original
+
+
+@pytest.mark.parametrize("field,value", [("step", 99), ("lr", 0.5), ("eps", 1e-6)])
+def test_portable_optimizer_inconsistent_groups_rejected(
+    portable_optimizer, field, value
+):
+    """Changing ownership cannot silently discard differing optimizer state."""
+    changed = dict(_optimizer_common_group(expert=True), **{field: value})
+    with pytest.raises(ValueError):
+        portable_optimizer.merge(
+            [[_optimizer_common_leaf([_optimizer_common_group(), changed])]]
+        )
+
+
+def test_portable_optimizer_empty_child_preserves_global_step(portable_optimizer):
+    """MCore can omit the step for a child with no locally owned parameters."""
+    empty_group = _optimizer_common_group(expert=True)
+    del empty_group["step"]
+    common = portable_optimizer.merge(
+        [
+            [_optimizer_common_leaf([_optimizer_common_group()])],
+            [_optimizer_common_leaf([empty_group])],
+        ]
+    )
+    assert common["optimizer"]["param_groups"][0]["step"] == 12
+
+
+@pytest.mark.parametrize("portable", [False, True])
+def test_checkpoint_loading_template_keeps_recovery_default(portable):
+    """Portable loading requests moments; ordinary recovery keeps native RNG."""
+    generate = _source_function(
+        "areal/engine/megatron_utils/checkpointer.py",
+        "MegatronCheckpointManager",
+        "generate_state_dict",
+        {
+            "torch": types.SimpleNamespace(distributed=Mock()),
+            "_mcore_version": lambda: "0.17.0",
+            "_PORTABLE_METADATA": {"megatron_core": "0.17.0"},
+        },
+    )
+    manager = types.SimpleNamespace(
+        model=[types.SimpleNamespace(sharded_state_dict=Mock(return_value={}))],
+        optimizer=types.SimpleNamespace(sharded_state_dict=Mock(return_value={})),
+        lr_scheduler=None,
+        get_rng_state=Mock(return_value="saved-native-rng"),
+    )
+    options = (
+        {"with_rng": False, "optimizer_sharding_type": "fully_reshardable"}
+        if portable
+        else {}
+    )
+    state = generate(manager, is_loading=True, **options)
+    optimizer_args = manager.optimizer.sharded_state_dict.call_args.kwargs
+    assert optimizer_args["is_loading"] is True
+    if portable:
+        assert optimizer_args["metadata"] == {
+            "distrib_optim_sharding_type": "fully_reshardable",
+            "chained_optim_avoid_prefix": True,
+            "singleton_local_shards": False,
+            "distrib_optim_fully_reshardable_mem_efficient": True,
+        }
+        manager.model[0].sharded_state_dict.assert_called_once_with(
+            metadata=optimizer_args["metadata"]
+        )
+        assert "rng_state" not in state
+        manager.get_rng_state.assert_not_called()
+    else:
+        assert optimizer_args["metadata"] == {
+            "distrib_optim_sharding_type": "dp_reshardable"
+        }
+        manager.model[0].sharded_state_dict.assert_called_once_with()
+        assert state["rng_state"] == "saved-native-rng"
 
 
 @pytest.fixture(scope="module")
@@ -982,7 +1162,10 @@ def _trainer_fixture(monkeypatch, *, awex=False, critic=False, single=True):
 
         def save(self, meta):
             events.append(f"{self.name}.save")
-            assert meta.weight_format == "dcp" and meta.with_optim
+            expected_format = (
+                "dcp-reconfiguration" if awex and self.name == "actor" else "dcp"
+            )
+            assert meta.weight_format == expected_format and meta.with_optim
             super().save(Path(meta.path))
 
         def wait_for_checkpoint(self):
@@ -1171,6 +1354,11 @@ def test_trainer_snapshot_preserves_native_order_and_final_state(
     assert set(manifest["checkpoints"]) == (
         {"actor", "critic"} if critic else {"actor"}
     )
+    assert manifest["checkpoints"]["actor"] == (
+        "areal-megatron-fully-reshardable-v1" if awex else "areal-fsdp-dcp"
+    )
+    if critic:
+        assert manifest["checkpoints"]["critic"] == "areal-fsdp-dcp"
     assert manifest["context"]["step_info"] == STEP
     assert manifest["context"]["policy_version"] == trainer.actor.version == 1
     assert trainer.actor.get_version_calls == 1

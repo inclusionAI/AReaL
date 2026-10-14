@@ -1032,7 +1032,7 @@ class MegatronEngine(TrainEngine):
                     processor=meta.processor,
                     base_model_path=meta.base_model_path,
                 )
-            elif meta.weight_format == "dcp":
+            elif meta.weight_format in {"dcp", "dcp-reconfiguration"}:
                 if self.checkpointer is None:
                     raise NotImplementedError(
                         "DCP checkpoint save is not available for this Megatron configuration "
@@ -1040,7 +1040,16 @@ class MegatronEngine(TrainEngine):
                         "Please use weight_format='hf' for adapter/full-model export."
                     )
                 self.checkpointer.save_checkpoint(
-                    meta.path, with_optimizer=meta.with_optim
+                    meta.path,
+                    with_optimizer=meta.with_optim,
+                    **(
+                        {
+                            "optimizer_sharding_type": "fully_reshardable",
+                            "with_rng": False,
+                        }
+                        if meta.weight_format == "dcp-reconfiguration"
+                        else {}
+                    ),
                 )
             else:
                 raise ValueError(f"Unknown weight format {meta.weight_format}. ")
@@ -1083,7 +1092,12 @@ class MegatronEngine(TrainEngine):
         local = select_runtime_state(
             self, state, identity=self._runtime_state_identity()
         )
-        self.checkpointer.load_rng_states([local["rng"]])
+        if local.get("layout_mapped"):
+            from areal.infra.reconfiguration import install_megatron_rng
+
+            install_megatron_rng(self, local["rng"])
+        else:
+            self.checkpointer.load_rng_states([local["rng"]])
 
     def load(self, meta: SaveLoadMeta):
         with self._offload_aware_context():
@@ -1093,7 +1107,7 @@ class MegatronEngine(TrainEngine):
                         "HF format does not support optimizer state loading, please use DCP format instead."
                     )
                 self._load_model_from_hf(meta.path)
-            elif meta.weight_format == "dcp":
+            elif meta.weight_format in {"dcp", "dcp-reconfiguration"}:
                 if self.checkpointer is None:
                     raise NotImplementedError(
                         "DCP checkpoint load is not available for this Megatron configuration "
@@ -1101,7 +1115,16 @@ class MegatronEngine(TrainEngine):
                         "Please use weight_format='hf' for adapter/full-model load."
                     )
                 self.checkpointer.load_checkpoint(
-                    meta.path, with_optimizer=meta.with_optim
+                    meta.path,
+                    with_optimizer=meta.with_optim,
+                    **(
+                        {
+                            "optimizer_sharding_type": "fully_reshardable",
+                            "with_rng": False,
+                        }
+                        if meta.weight_format == "dcp-reconfiguration"
+                        else {}
+                    ),
                 )
             else:
                 raise ValueError(f"Unknown weight format {meta.weight_format}. ")

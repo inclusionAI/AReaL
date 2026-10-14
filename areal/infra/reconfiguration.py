@@ -8,8 +8,9 @@ backend does not save it). The trainer channel drains registered rollout work
 and registers FSDP/Megatron scheduler and per-rank RNG state. Restoration offers
 a weight-synchronization callback before loading owners, then restores RNGs last.
 TrainerSnapshotRestore wires these stages into explicit PPOTrainer startup.
-Process restart, layout conversion and Validator integration remain separate
-steps. A successful component restore does not authorize a config transition.
+ConfigurationTransition executes mappings approved by the external Validator.
+Process restart stays in the harness. A successful component restore alone
+does not authorize a config transition.
 
 Use one coordinator per snapshot. Checkpoint callbacks must dispatch any required
 collectives to ALL participating ranks; this module never runs rank-local save
@@ -34,6 +35,7 @@ import pickle
 import random
 import re
 import stat
+import sys
 import threading
 import uuid
 from collections import deque
@@ -47,6 +49,18 @@ _SCHEMA_VERSION = 1
 _SCOPE = "registered_components"
 _MANIFEST = "manifest.json"
 _STATE = "state.pkl"
+CONFIGURATION_APPLY_ADAPTER = "areal-v1-drained-restart-v1"
+FSDP_LAYOUT_RNG_POLICY = "fsdp-mesh-reseed-v1"
+MEGATRON_LAYOUT_RNG_POLICY = "megatron-model-parallel-reseed-v1"
+MEGATRON_PORTABLE_FORMAT = "areal-megatron-fully-reshardable-v1"
+_PARALLEL_DIMS = (
+    "data_parallel_size",
+    "tensor_parallel_size",
+    "pipeline_parallel_size",
+    "context_parallel_size",
+    "expert_parallel_size",
+    "expert_tensor_parallel_size",
+)
 
 
 class SnapshotError(RuntimeError):
@@ -79,11 +93,30 @@ def capture_rng_state(*, include_device: bool = True) -> dict[str, Any]:
         if current_platform.device_type != "cpu":
             state["device_type"] = current_platform.device_type
             state["device"] = current_platform.get_rng_state().cpu().clone()
+            dtensor_rng = sys.modules.get("torch.distributed.tensor._random")
+            tracker = getattr(dtensor_rng, "_rng_tracker", None)
+            state["dtensor"] = {
+                "initialized": tracker is not None,
+                "distribute_region_enabled": (
+                    tracker.distribute_region_enabled if tracker is not None else None
+                ),
+            }
+    seeding = sys.modules.get("areal.utils.seeding")
+    if seeding is not None:
+        shuffler = seeding._SHUFFLER
+        state["seeding"] = {
+            "seed": seeding._SEED,
+            "base_seed": seeding._BASE_SEED,
+            "shuffler": None if shuffler is None else vars(shuffler).copy(),
+        }
     return state
 
 
 def restore_rng_state(state: Mapping[str, Any]) -> None:
     """Restore the assigned device only; do not initialize other accelerators."""
+    if state.get("policy") == FSDP_LAYOUT_RNG_POLICY:
+        _install_fsdp_rng(state)
+        return
     import numpy as np
     import torch
 
@@ -92,10 +125,67 @@ def restore_rng_state(state: Mapping[str, Any]) -> None:
 
         if state["device_type"] != current_platform.device_type:
             raise SnapshotError("Runtime RNG device type does not match")
+        if "dtensor" in state and "_dtensor_mesh" in state:
+            _restore_dtensor_metadata(state["dtensor"], state["_dtensor_mesh"])
         current_platform.set_rng_state(state["device"])
     random.setstate(state["python"])
     np.random.set_state(state["numpy"])
     torch.set_rng_state(state["torch"])
+    if "seeding" in state:
+        from areal.utils import seeding
+
+        metadata = state["seeding"]
+        seeding._SEED = metadata["seed"]
+        seeding._BASE_SEED = metadata["base_seed"]
+        seeding._SHUFFLER = None
+        if metadata["shuffler"] is not None:
+            seeding._SHUFFLER = seeding.Shuffler()
+            vars(seeding._SHUFFLER).update(metadata["shuffler"])
+
+
+def _restore_dtensor_metadata(metadata: dict, mesh: Any) -> None:
+    from torch.distributed.tensor import _random as dtensor_rng
+
+    if not metadata["initialized"]:
+        dtensor_rng._rng_tracker = None
+        return
+    if dtensor_rng._rng_tracker is None:
+        # Without this, the first random DTensor op in a fresh worker would
+        # broadcast WORLD rank zero's state over the just-restored rank streams.
+        dtensor_rng._rng_tracker = dtensor_rng.OffsetBasedRNGTracker(
+            mesh, run_state_sync=False
+        )
+    dtensor_rng._rng_tracker.distribute_region_enabled = metadata[
+        "distribute_region_enabled"
+    ]
+
+
+def _install_fsdp_rng(state: Mapping[str, Any]) -> None:
+    """Install new logical streams only after all checkpoint/owner loads."""
+    import numpy as np
+    import torch
+    from torch.distributed.tensor._random import manual_seed
+
+    from areal.infra.platforms import current_platform
+    from areal.utils import seeding
+
+    if state["device_type"] != current_platform.device_type:
+        raise SnapshotError("Runtime RNG device type does not match")
+    # The pinned torch 2.9/2.10 API also initializes the DTensor tracker without
+    # a WORLD-rank-zero broadcast. A plain torch.manual_seed omits that step.
+    manual_seed(state["tensor_seed"], state["mesh"])
+    random.seed(state["host_seed"])
+    np.random.seed(state["host_seed"])
+    cpu_rng = torch.Generator(device="cpu").manual_seed(state["host_seed"])
+    torch.set_rng_state(cpu_rng.get_state())
+    seeding._SEED = state["tensor_seed"]
+    seeding._BASE_SEED = state["tensor_seed"]
+    seeding._SHUFFLER = None
+
+
+def _derived_seed(material: dict, domain: str, coordinates: list[int]) -> int:
+    digest = hashlib.sha256(_json_bytes([material, domain, coordinates])).digest()
+    return int.from_bytes(digest[:8], "big") % (2**31 - 1) + 1
 
 
 def _encode_runtime_state(state: Any) -> str:
@@ -161,8 +251,10 @@ def collect_runtime_state(
 def select_runtime_state(
     engine: Any, state: str, *, identity: dict[str, Any]
 ) -> dict[str, Any]:
-    """Select this logical rank; changed layouts need a future explicit mapping."""
+    """Select the old rank exactly, or execute an explicit layout mapping."""
     decoded = _decode_runtime_state(state)
+    if decoded.get("version") == 2:
+        return _select_mapped_runtime_state(engine, decoded, identity)
     ranks = [_decode_runtime_state(item) for item in decoded["ranks"]]
     if (
         decoded["version"] != 1
@@ -174,7 +266,11 @@ def select_runtime_state(
         )
     ):
         raise SnapshotError("Runtime topology or scheduler definition does not match")
-    return ranks[engine.rank]
+    local = ranks[engine.rank]
+    if identity.get("backend") == "fsdp" and "dtensor" in local["rng"]:
+        # DeviceMesh is process-local; never serialize it into a snapshot/RPC.
+        local["rng"]["_dtensor_mesh"] = engine.parallel_helper.world_mesh["tp"]
+    return local
 
 
 def load_runtime_scheduler(
@@ -187,17 +283,130 @@ def load_runtime_scheduler(
     """Restore scheduler progress after DCP, without taking an extra LR step."""
     local = select_runtime_state(engine, state, identity=identity)
     groups = engine.optimizer.param_groups
-    if len(groups) != len(local["lrs"]):
+    mapped_megatron = local.get("layout_mapped") and identity["backend"] == "megatron"
+    if not mapped_megatron and len(groups) != len(local["lrs"]):
         raise SnapshotError("Runtime optimizer parameter groups do not match")
     if reset_steps:
         # Megatron's load_state_dict adds the saved count to num_steps. Native
         # DCP may already have loaded it; make this explicit restore absolute.
         engine.lr_scheduler.num_steps = 0
     engine.lr_scheduler.load_state_dict(local["scheduler"])
+    if mapped_megatron:
+        # Target stages/expert ownership may change group order/count. Native
+        # OptimizerParamScheduler.load_state_dict applies the saved absolute
+        # step to target groups using their lr_mult/wd_mult; never zip old LRs.
+        return
     # LambdaLR.load_state_dict does not update optimizer LRs. Restore these
     # explicitly; Megatron's scheduler may have updated them while loading.
     for group, lr in zip(groups, local["lrs"], strict=True):
         group["lr"] = lr
+    if local.get("layout_mapped") and engine.optimizer_config.type == "adam":
+        # Native DCP restores source param_groups, including this execution
+        # option. VLM+TP requires the target's non-fused AdamW implementation.
+        fused = not (engine.is_vision_model and engine.parallel_helper.tp_enabled)
+        for group in groups:
+            group["fused"] = fused
+
+
+def _select_mapped_runtime_state(engine: Any, packet: dict, identity: dict) -> dict:
+    mapping = TrainingLayoutTransition(**packet["mapping"])
+    source = _decode_runtime_state(packet["source"])
+    ranks = [_decode_runtime_state(item) for item in source["ranks"]]
+
+    def parallelism(dims):
+        value = dict(zip(_PARALLEL_DIMS, dims))
+        if mapping.backend == "megatron":
+            value.update(
+                virtual_pipeline_parallel_size=mapping.virtual_pipeline_size,
+                use_sequence_parallel=dims[1] > 1,
+            )
+        return value
+
+    source_identity = dict(identity, parallelism=parallelism(mapping.source))
+    if (
+        source.get("version") != 1
+        or identity["backend"] != mapping.backend
+        or identity["parallelism"] != parallelism(mapping.target)
+        or len(ranks) != mapping.source_world_size
+        or engine.world_size != mapping.target_world_size
+        or not 0 <= engine.rank < engine.world_size
+        or any(
+            item["rank"] != i or item["identity"] != source_identity
+            for i, item in enumerate(ranks)
+        )
+    ):
+        raise SnapshotError(
+            "Runtime identity does not match the approved layout mapping"
+        )
+    common = ranks[0]
+    if any(
+        _json_bytes(item["scheduler"]) != _json_bytes(common["scheduler"])
+        or (
+            mapping.backend == "fsdp"
+            and _json_bytes(item["lrs"]) != _json_bytes(common["lrs"])
+        )
+        for item in ranks[1:]
+    ):
+        raise SnapshotError(
+            "Source ranks disagree on scheduler progress or learning rates"
+        )
+    material = packet["seed_material"]
+    if material["policy"] != mapping.rng_policy:
+        raise SnapshotError("Runtime RNG policy does not match transition")
+    if mapping.backend == "megatron":
+        return dict(
+            common,
+            rank=engine.rank,
+            identity=identity,
+            layout_mapped=True,
+            rng={
+                "policy": mapping.rng_policy,
+                "device_type": identity["device_type"],
+                "root_seed": _derived_seed(material, "model-parallel", []),
+            },
+        )
+    helper = engine.parallel_helper
+    world_mesh = helper.world_mesh
+    # The native FSDP path uses TP for random DTensor operations. Logical
+    # (DP, SP) replicas get separate streams; TP peers share a tensor seed.
+    mesh = world_mesh["tp"]
+    coordinates = [world_mesh["dp"].get_local_rank(), world_mesh["sp"].get_local_rank()]
+    return dict(
+        common,
+        rank=engine.rank,
+        identity=identity,
+        layout_mapped=True,
+        rng={
+            "policy": mapping.rng_policy,
+            "device_type": identity["device_type"],
+            "mesh": mesh,
+            "host_seed": _derived_seed(material, "host", [engine.rank]),
+            "tensor_seed": _derived_seed(material, "tensor", coordinates),
+        },
+    )
+
+
+def install_megatron_rng(engine: Any, state: Mapping[str, Any]) -> None:
+    """Install new streams with the pinned MCore TP/EP/ETP rank semantics."""
+    import numpy as np
+    import torch
+    from megatron.core import mpu, tensor_parallel
+
+    from areal.infra.platforms import current_platform
+
+    if (
+        state["policy"] != MEGATRON_LAYOUT_RNG_POLICY
+        or state["device_type"] != current_platform.device_type
+    ):
+        raise SnapshotError("Megatron RNG policy/device type does not match")
+    # Match native model-parallel seeding: pipeline stages differ, DP and CP
+    # peers share the base. Native code adds TP and expert rank offsets.
+    seed = state["root_seed"] + 100 * mpu.get_pipeline_model_parallel_rank()
+    random.seed(seed)
+    np.random.seed(seed % 2**32)
+    torch.set_rng_state(torch.Generator(device="cpu").manual_seed(seed).get_state())
+    tensor_parallel.model_parallel_cuda_manual_seed(seed)
+    engine.seed = seed
 
 
 class EngineRuntimeState:
@@ -347,15 +556,156 @@ class SnapshotRef:
 
 
 @dataclass(frozen=True)
+class TrainingLayoutTransition:
+    """Native DCP resharding plus deterministic new logical RNG streams.
+
+    Dimensions are DP, TP, PP, CP, EP, ETP. Model/optimizer tensors are restored
+    by native DCP, never by copying one source rank's tensor state to new ranks.
+    """
+
+    source: tuple[int, int, int, int, int, int]
+    target: tuple[int, int, int, int, int, int]
+    rng_policy: str = FSDP_LAYOUT_RNG_POLICY
+    backend: str = "fsdp"
+    virtual_pipeline_size: int = 1
+
+    def __post_init__(self):
+        for name in ("source", "target"):
+            dims = tuple(getattr(self, name))
+            if len(dims) != 6 or any(type(v) is not int or v < 1 for v in dims):
+                raise ValueError("Invalid training layout dimensions")
+            if self.backend == "fsdp" and (dims[2] != 1 or dims[4:] != (1, 1)):
+                raise ValueError("Native FSDP layout mapping supports DP/TP/CP only")
+            if math.prod(dims[:4]) % (dims[2] * dims[4] * dims[5]):
+                raise ValueError("Expert dimensions must divide the training world")
+            object.__setattr__(self, name, dims)
+        policy = {
+            "fsdp": FSDP_LAYOUT_RNG_POLICY,
+            "megatron": MEGATRON_LAYOUT_RNG_POLICY,
+        }.get(self.backend)
+        if policy is None or self.rng_policy != policy or self.source == self.target:
+            raise ValueError("Invalid training layout RNG mapping")
+        if (
+            type(self.virtual_pipeline_size) is not int
+            or self.virtual_pipeline_size < 1
+        ):
+            raise ValueError("Invalid virtual pipeline size")
+        if self.virtual_pipeline_size > 1 and (
+            self.backend != "megatron"
+            or any(dims[2] == 1 for dims in (self.source, self.target))
+        ):
+            raise ValueError("Virtual pipeline requires pipeline parallelism")
+
+    @property
+    def source_world_size(self) -> int:
+        return math.prod(self.source[:4])
+
+    @property
+    def target_world_size(self) -> int:
+        return math.prod(self.target[:4])
+
+
+@dataclass(frozen=True)
+class ConfigurationTransition:
+    """A prevalidated mapping for a drained, end-of-step restart.
+
+    The caller binds the resolved source/target configurations and Validator
+    result in plan_id. Scheduler definition, sampling and staleness semantics
+    stay fixed. Inference instances are rebuilt by normal initialization.
+    Training RNGs survive unchanged layouts; an explicit training_layout uses
+    native checkpoint resharding and records deterministic new RNG streams.
+    """
+
+    plan_id: str
+    source_configuration_id: str
+    target_configuration_id: str
+    source_limits: tuple[int, int, int]
+    target_limits: tuple[int, int, int]
+    adapter_id: str = CONFIGURATION_APPLY_ADAPTER
+    training_layout: TrainingLayoutTransition | None = None
+
+    def __post_init__(self):
+        if self.adapter_id != CONFIGURATION_APPLY_ADAPTER:
+            raise ValueError("Unknown configuration transition adapter")
+        for name in ("plan_id", "source_configuration_id", "target_configuration_id"):
+            if not re.fullmatch(r"sha256:[0-9a-f]{64}", getattr(self, name)):
+                raise ValueError(f"Invalid transition {name}")
+        for name in ("source_limits", "target_limits"):
+            value = tuple(getattr(self, name))
+            if len(value) != 3 or any(
+                type(v) is not int or v < (0 if i == 2 else 1)
+                for i, v in enumerate(value)
+            ):
+                raise ValueError("Invalid transition rollout limits")
+            object.__setattr__(self, name, value)
+        if self.source_limits[1:] != self.target_limits[1:]:
+            raise ValueError("Batch size and staleness have no state mapping")
+        if isinstance(self.training_layout, dict):
+            object.__setattr__(
+                self,
+                "training_layout",
+                TrainingLayoutTransition(**self.training_layout),
+            )
+        if self.training_layout is not None and not isinstance(
+            self.training_layout, TrainingLayoutTransition
+        ):
+            raise TypeError("training_layout must be a TrainingLayoutTransition")
+
+    def map_training_state(self, state: str, snapshot: SnapshotRef) -> str:
+        """Keep source identity and bind reseeding to a recorded plan/snapshot.
+
+        The same plan and snapshot always produce the same target streams;
+        no clock, PID, host placement or Python hash() participates.
+        """
+        if self.training_layout is None:
+            return state
+        return _encode_runtime_state(
+            {
+                "version": 2,
+                "source": state,
+                "mapping": asdict(self.training_layout),
+                "seed_material": {
+                    "policy": self.training_layout.rng_policy,
+                    "plan_id": self.plan_id,
+                    "snapshot_id": snapshot.snapshot_id,
+                    "manifest_sha256": snapshot.manifest_sha256,
+                    "target_configuration_id": self.target_configuration_id,
+                    "target_layout": self.training_layout.target,
+                    "role": "actor",
+                },
+            }
+        )
+
+    def map_rollout_state(self, state: dict, target_limits: list[int]) -> dict:
+        """Verify snapshot/target binding, then copy only the effective limit.
+
+        These are execution integrity checks, not a new configuration decision.
+        Any mismatch means the captured state or runtime violated the plan.
+        """
+        staleness = state["staleness"]
+        if (
+            staleness["schema_version"] != 1
+            or tuple(staleness["limits"]) != self.source_limits
+            or tuple(target_limits) != self.target_limits
+            or staleness["counters"]["running"] != 0
+        ):
+            raise SnapshotError("Rollout snapshot/target does not match transition")
+        mapped = copy.deepcopy(state)
+        mapped["staleness"]["limits"] = list(self.target_limits)
+        return mapped
+
+
+@dataclass(frozen=True)
 class SnapshotRestoreRequest:
     """Explicit source for a fresh trainer; no automatic 'latest' fallback.
 
-    The trusted caller supplies the expected source context and the same
-    configuration. Cross-configuration state mappings are not installed here.
+    Ordinary recovery uses the same configuration. A cross-configuration caller
+    supplies a transition approved before the source was paused.
     """
 
     snapshot: SnapshotRef
     expected_context: SnapshotContext
+    transition: ConfigurationTransition | None = None
 
 
 @dataclass(frozen=True)
@@ -427,15 +777,20 @@ class CheckpointParticipant:
                 "Engine must provide wait_for_checkpoint() or an explicit wait_saved"
             )
 
+        weight_format = "dcp"
+        if format_id in {"areal-megatron-dcp", MEGATRON_PORTABLE_FORMAT}:
+            format_id = MEGATRON_PORTABLE_FORMAT
+            weight_format = "dcp-reconfiguration"
+
         def save(path: Path) -> None:
             from areal.api.io_struct import SaveLoadMeta
 
-            _call(engine.save, SaveLoadMeta(str(path), "dcp", with_optim=True))
+            _call(engine.save, SaveLoadMeta(str(path), weight_format, with_optim=True))
 
         def load(path: Path) -> None:
             from areal.api.io_struct import SaveLoadMeta
 
-            _call(engine.load, SaveLoadMeta(str(path), "dcp", with_optim=True))
+            _call(engine.load, SaveLoadMeta(str(path), weight_format, with_optim=True))
 
         return cls(format_id, save, wait_saved, load)
 
@@ -834,12 +1189,43 @@ class ReconfigurationManager:
             self._lock.release()
 
 
+class _RestoreTrainingRuntime:
+    """Apply the frozen mapping before the existing scheduler/RNG RPCs."""
+
+    def __init__(
+        self,
+        owner: EngineRuntimeState,
+        transition: ConfigurationTransition,
+        snapshot: SnapshotRef,
+    ):
+        self.owner = owner
+        self.transition = transition
+        self.snapshot = snapshot
+
+    def state_dict(self) -> str:
+        return self.owner.state_dict()
+
+    def load_state_dict(self, state: str) -> None:
+        self.owner.load_state_dict(
+            self.transition.map_training_state(state, self.snapshot)
+        )
+
+    def finalize_restore(self) -> None:
+        self.owner.finalize_restore()
+
+
 class _RestoreRollout:
     """Validate the native input binding while restored work is still fenced."""
 
-    def __init__(self, rollout: Any, input_spec: dict[str, Any]):
+    def __init__(
+        self,
+        rollout: Any,
+        input_spec: dict[str, Any],
+        transition: ConfigurationTransition | None = None,
+    ):
         self.rollout = rollout
         self.input_spec = input_spec
+        self.transition = transition
 
     def state_dict(self) -> dict[str, Any]:
         return self.rollout.state_dict()
@@ -853,6 +1239,10 @@ class _RestoreRollout:
         if not _same_input_spec(state["input_spec"], self.input_spec):
             raise SnapshotError(
                 "Rollout input bindings changed without a state mapping"
+            )
+        if self.transition is not None:
+            state = self.transition.map_rollout_state(
+                state, self.rollout.staleness_manager.state_dict()["limits"]
             )
         self.rollout.load_state_dict(state)
 
@@ -873,9 +1263,23 @@ class TrainerSnapshotRestore:
             raise TypeError("expected_context must be a SnapshotContext")
         self.snapshot = copy.deepcopy(request.snapshot)
         self.context = SnapshotContext(**_context_dict(request.expected_context))
+        self.transition = request.transition
+        if self.transition is not None and (
+            not isinstance(self.transition, ConfigurationTransition)
+            or self.transition.source_configuration_id != self.context.configuration_id
+        ):
+            raise SnapshotError("Transition does not match the snapshot configuration")
         manifest = inspect_snapshot(self.snapshot)
         if manifest["context"] != _context_dict(self.context):
             raise SnapshotError("Snapshot does not match the expected source context")
+        self.checkpoint_formats = manifest["checkpoints"]
+        if (
+            self.transition is not None
+            and self.transition.training_layout is not None
+            and self.transition.training_layout.backend == "megatron"
+            and self.checkpoint_formats.get("actor") != MEGATRON_PORTABLE_FORMAT
+        ):
+            raise SnapshotError("Megatron layout changes require a portable snapshot")
         step = self.context.step_info
         if step["global_step"] != (
             step["epoch"] * step["steps_per_epoch"] + step["epoch_step"]
@@ -903,6 +1307,39 @@ class TrainerSnapshotRestore:
         if len(trainer.train_dataloader) != self.context.step_info["steps_per_epoch"]:
             raise SnapshotError("Snapshot steps_per_epoch differs from the dataloader")
         checkpoints, statefuls = trainer._reconfiguration_components()
+        # Old snapshots still use the ordinary DP-only checkpoint encoding.
+        # Adapt this restore alone; the trainer's next save uses the new format.
+        for role, participant in list(checkpoints.items()):
+            if (
+                self.checkpoint_formats.get(role) == "areal-megatron-dcp"
+                and participant.format_id == MEGATRON_PORTABLE_FORMAT
+            ):
+                owner = statefuls.get(f"{role}_runtime")
+                if not isinstance(owner, EngineRuntimeState):
+                    raise SnapshotError(
+                        "Legacy Megatron restore requires runtime state"
+                    )
+
+                def load_legacy(path: Path, engine: Any = owner.engine) -> None:
+                    from areal.api.io_struct import SaveLoadMeta
+
+                    _call(engine.load, SaveLoadMeta(str(path), "dcp", with_optim=True))
+
+                checkpoints[role] = CheckpointParticipant(
+                    "areal-megatron-dcp",
+                    participant.save,
+                    participant.wait_saved,
+                    load_legacy,
+                )
+        if self.transition is not None and self.transition.training_layout is not None:
+            owner = statefuls.get("actor_runtime")
+            if not isinstance(owner, EngineRuntimeState):
+                raise SnapshotError(
+                    "Training layout restore requires actor runtime state"
+                )
+            statefuls["actor_runtime"] = _RestoreTrainingRuntime(
+                owner, self.transition, self.snapshot
+            )
         rollout = trainer.rollout
         gconfig = trainer.config.gconfig
         input_spec = dict(
@@ -962,7 +1399,10 @@ class TrainerSnapshotRestore:
 
         manager = ReconfigurationManager(
             checkpoints=checkpoints,
-            statefuls=dict(statefuls, rollout=_RestoreRollout(rollout, input_spec)),
+            statefuls=dict(
+                statefuls,
+                rollout=_RestoreRollout(rollout, input_spec, self.transition),
+            ),
         )
         self.result = manager.restore_snapshot(
             self.snapshot, expected_context=self.context, after_checkpoints=synchronize
