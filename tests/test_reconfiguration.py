@@ -1040,6 +1040,7 @@ def _trainer_fixture(monkeypatch, *, awex=False, critic=False, single=True):
                 "_train_impl",
                 "_save_training_state",
                 "_bind_reconfiguration",
+                "_reconfiguration_components",
             )
         },
     )
@@ -1965,3 +1966,76 @@ def test_actor_rollout_version_mismatch_does_not_publish(
         trainer.train(workflow=object(), reconfiguration=channel)
     assert isinstance(saved.exception(), M.SnapshotError)
     assert not (root / "manifest.json").exists()
+
+
+def test_trainer_restore_keeps_real_pending_inputs_fenced_until_resume(
+    rollout_types, make_dispatcher, monkeypatch, tmp_path
+):
+    """Run the startup coordinator with the actual v1 controller and dispatcher."""
+    monkeypatch.setitem(
+        sys.modules, "areal.infra.controller.rollout_controller", rollout_types
+    )
+    monkeypatch.setattr(CursorLoader, "__len__", lambda _: 2, raising=False)
+    source = _rollout_controller(rollout_types, make_dispatcher)
+    source._resolve_workflow_str = lambda value: value
+    spec = dict(
+        workflow="example.Workflow",
+        workflow_kwargs={},
+        should_accept_fn=None,
+        group_size=1,
+        reward_normalization=False,
+        drop_incomplete_group=False,
+    )
+    source._input_spec = spec
+    source.dispatcher.pause()
+    source.submit(next(source._input_buffer), **spec)
+    source.freeze_and_drain(1)
+    context = M.SnapshotContext("trial", "runtime", "config", "boundary", STEP, 0)
+    original_actor = Role({"weights": [4], "optimizer": {"moment": [8]}})
+    ref = M.ReconfigurationManager(
+        checkpoints={"actor": original_actor.binding()}, statefuls={"rollout": source}
+    ).save_snapshot(tmp_path / "snapshot", context=context)
+    source.dispatcher.destroy()
+
+    target = _rollout_controller(rollout_types, make_dispatcher)
+    target._resolve_workflow_str = lambda value: value
+    actor = Role({})
+    actor.set_version = Mock()
+    actor.get_version = lambda: 0
+    actor.update_weights = Mock()
+    trainer = types.SimpleNamespace(
+        actor=actor,
+        critic=None,
+        rollout=target,
+        eval_rollout=None,
+        train_dataloader=target._input_buffer.dataloader,
+        config=types.SimpleNamespace(
+            gconfig=types.SimpleNamespace(
+                n_samples=1, reward_normalization=False, drop_incomplete_group=False
+            )
+        ),
+        _should_offload_actor=False,
+        _should_offload_critic=False,
+        _should_offload_rollout=False,
+        _is_v1_awex_colocate=lambda _: False,
+        _reconfiguration_components=lambda: ({"actor": actor.binding()}, {}),
+        weight_update_meta=types.SimpleNamespace(type="disk", with_version=lambda v: v),
+    )
+    restore = M.TrainerSnapshotRestore(M.SnapshotRestoreRequest(ref, context))
+    restore.restore(
+        trainer,
+        workflow="example.Workflow",
+        workflow_kwargs=None,
+        should_accept_fn=None,
+        max_steps=3,
+    )
+    assert actor.value == original_actor.value
+    actor.update_weights.assert_called_once_with(0)
+    assert target.dispatcher._snapshot_frozen
+    inventory = target.dispatcher.state_dict()
+    assert [i.data["item"] for i in inventory["pending_inputs"]] == [0]
+    assert target.staleness_manager.get_stats().enqueued == 1
+    assert target.staleness_manager.get_stats().running == 0
+    assert next(target._input_buffer) == {"item": 1}
+    restore.resume(trainer)
+    assert target.dispatcher.wait_results(1, timeout=3) == [{"id": 0}]

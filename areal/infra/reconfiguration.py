@@ -7,9 +7,9 @@ and register every required state owner (including scheduler/RNG state where the
 backend does not save it). The trainer channel drains registered rollout work
 and registers FSDP/Megatron scheduler and per-rank RNG state. Restoration offers
 a weight-synchronization callback before loading owners, then restores RNGs last.
-Process restart, trainer startup wiring, layout conversion and Validator
-integration remain separate steps. A successful component restore does not
-authorize resuming training.
+TrainerSnapshotRestore wires these stages into explicit PPOTrainer startup.
+Process restart, layout conversion and Validator integration remain separate
+steps. A successful component restore does not authorize a config transition.
 
 Use one coordinator per snapshot. Checkpoint callbacks must dispatch any required
 collectives to ALL participating ranks; this module never runs rank-local save
@@ -344,6 +344,18 @@ class SnapshotRef:
     path: str
     snapshot_id: str
     manifest_sha256: str
+
+
+@dataclass(frozen=True)
+class SnapshotRestoreRequest:
+    """Explicit source for a fresh trainer; no automatic 'latest' fallback.
+
+    The trusted caller supplies the expected source context and the same
+    configuration. Cross-configuration state mappings are not installed here.
+    """
+
+    snapshot: SnapshotRef
+    expected_context: SnapshotContext
 
 
 @dataclass(frozen=True)
@@ -820,6 +832,152 @@ class ReconfigurationManager:
             raise SnapshotError(f"Snapshot restore failed: {detail}") from exc
         finally:
             self._lock.release()
+
+
+class _RestoreRollout:
+    """Validate the native input binding while restored work is still fenced."""
+
+    def __init__(self, rollout: Any, input_spec: dict[str, Any]):
+        self.rollout = rollout
+        self.input_spec = input_spec
+
+    def state_dict(self) -> dict[str, Any]:
+        return self.rollout.state_dict()
+
+    def load_state_dict(self, state: dict[str, Any]) -> None:
+        # Use the v1 controller's comparison (including tensor/array kwargs).
+        # prepare_batch checks again, but that would be too late for queued work:
+        # release_snapshot permits its dispatcher to submit pending inputs.
+        from areal.infra.controller.rollout_controller import _same_input_spec
+
+        if not _same_input_spec(state["input_spec"], self.input_spec):
+            raise SnapshotError(
+                "Rollout input bindings changed without a state mapping"
+            )
+        self.rollout.load_state_dict(state)
+
+
+class TrainerSnapshotRestore:
+    """One explicit restore into a fresh PPOTrainer, before its first batch.
+
+    Construct before creating workers so corrupt or misbound snapshots fail
+    without allocating a runtime. Call restore() after workflow/proxy setup and
+    initial offload; call resume() only when there is a step left to execute.
+    Any failure requires a new trainer. This is not a process restart manager.
+    """
+
+    def __init__(self, request: SnapshotRestoreRequest):
+        if not isinstance(request, SnapshotRestoreRequest):
+            raise TypeError("restore must be a SnapshotRestoreRequest")
+        if not isinstance(request.expected_context, SnapshotContext):
+            raise TypeError("expected_context must be a SnapshotContext")
+        self.snapshot = copy.deepcopy(request.snapshot)
+        self.context = SnapshotContext(**_context_dict(request.expected_context))
+        manifest = inspect_snapshot(self.snapshot)
+        if manifest["context"] != _context_dict(self.context):
+            raise SnapshotError("Snapshot does not match the expected source context")
+        step = self.context.step_info
+        if step["global_step"] != (
+            step["epoch"] * step["steps_per_epoch"] + step["epoch_step"]
+        ):
+            raise SnapshotError("Snapshot training progress is inconsistent")
+        self.next_step = step["global_step"] + 1
+        self.attempted = False
+        self.released = False
+        self.result: RestoreResult | None = None
+
+    def restore(
+        self,
+        trainer: Any,
+        *,
+        workflow: Any,
+        workflow_kwargs: dict[str, Any] | None,
+        should_accept_fn: Any,
+        max_steps: int,
+    ) -> RestoreResult:
+        if self.attempted:
+            raise SnapshotError(
+                "Snapshot restore already attempted; create a new trainer"
+            )
+        self.attempted = True
+        if len(trainer.train_dataloader) != self.context.step_info["steps_per_epoch"]:
+            raise SnapshotError("Snapshot steps_per_epoch differs from the dataloader")
+        checkpoints, statefuls = trainer._reconfiguration_components()
+        rollout = trainer.rollout
+        gconfig = trainer.config.gconfig
+        input_spec = dict(
+            workflow=rollout._resolve_workflow_str(workflow),
+            workflow_kwargs={} if workflow_kwargs is None else workflow_kwargs,
+            should_accept_fn=rollout._resolve_should_accept_fn(should_accept_fn),
+            group_size=gconfig.n_samples,
+            reward_normalization=gconfig.reward_normalization,
+            drop_incomplete_group=gconfig.drop_incomplete_group,
+        )
+        # A fresh dispatcher has no running work; this also establishes the
+        # fence required by rollout.load_state_dict. Never release on failure.
+        rollout.freeze_and_drain(timeout=60.0)
+        rollout.pause()
+        if trainer.eval_rollout is not None:
+            trainer.eval_rollout.pause()
+        awex = trainer._is_v1_awex_colocate(trainer.config)
+        if awex:
+            rollout.pause_generation_sync()
+            rollout.offload(tags=["kv_cache"])
+            rollout.offload(tags=["weights"])
+
+        def synchronize(context: SnapshotContext) -> None:
+            version = context.policy_version
+            engines = [trainer.actor, trainer.critic, rollout, trainer.eval_rollout]
+            # Disk rendezvous uses live versions, not WeightUpdateMeta.version.
+            # A transfer under saved V would leave a marker that the first
+            # resumed training update (also starting at V) could reuse. Reserve
+            # a unique negative int64 while the fresh runtime is fenced; normal
+            # policy versions are nonnegative. Keep the metadata's actual policy
+            # version for the checkpoint path and inference adapter naming.
+            transfer_version = version
+            if trainer.weight_update_meta.type == "disk":
+                transfer_version = -((uuid.uuid4().int & ((1 << 63) - 1)) + 1)
+            trainer.actor.set_version(transfer_version)
+            rollout.set_version(transfer_version)
+            if awex:
+                trainer.actor.onload()
+            trainer.actor.update_weights(
+                trainer.weight_update_meta.with_version(version)
+            )
+            for engine in engines:
+                if engine is not None:
+                    engine.set_version(version)
+            # Eval shares inference servers with rollout: one weight transfer.
+            if trainer._should_offload_actor:
+                trainer._offload_model(trainer.actor, role="actor")
+            if trainer._should_offload_critic:
+                trainer._offload_model(trainer.critic, role="critic")
+            if trainer._should_offload_rollout and self.next_step < max_steps:
+                # Finish onload/generation setup BEFORE RNG finalizers. This
+                # may resume the dispatcher, but its snapshot fence stays shut.
+                trainer._onload_rollout()
+            for engine in engines:
+                if engine is not None and engine.get_version() != version:
+                    raise SnapshotError("Restored policy version was not installed")
+
+        manager = ReconfigurationManager(
+            checkpoints=checkpoints,
+            statefuls=dict(statefuls, rollout=_RestoreRollout(rollout, input_spec)),
+        )
+        self.result = manager.restore_snapshot(
+            self.snapshot, expected_context=self.context, after_checkpoints=synchronize
+        )
+        return self.result
+
+    def resume(self, trainer: Any) -> None:
+        """Open restored admission only after all restore stages succeeded."""
+        if self.result is None or self.released:
+            raise SnapshotError("No newly restored snapshot to resume")
+        if trainer.eval_rollout is not None:
+            trainer.eval_rollout.resume()
+        trainer.rollout.resume()
+        trainer.rollout.release_snapshot()
+        self.released = True
 
 
 class _PreparedSnapshot:

@@ -49,8 +49,11 @@ from areal.infra.reconfiguration import (
     CheckpointParticipant,
     EngineRuntimeState,
     ProcessRngState,
+    RestoreResult,
+    SnapshotRestoreRequest,
     SnapshotStopResult,
     TrainerReconfiguration,
+    TrainerSnapshotRestore,
 )
 from areal.infra.utils.concurrent import call_maybe_async
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
@@ -116,7 +119,20 @@ class PPOTrainer:
         config: PPOConfig,
         train_dataset: Dataset | None = None,
         valid_dataset: Dataset | None = None,
+        *,
+        restore: SnapshotRestoreRequest | None = None,
     ):
+        # Preflight before resource creation (and partial-construction cleanup).
+        if restore is not None and (
+            not is_single_controller() or config.actor._version != "v1"
+        ):
+            raise NotImplementedError(
+                "Explicit snapshot restore requires v1 single-controller mode"
+            )
+        self._snapshot_restore = (
+            None if restore is None else TrainerSnapshotRestore(restore)
+        )
+        self.snapshot_restore_result: RestoreResult | None = None
         try:
             self._init_impl(config, train_dataset, valid_dataset)
         except Exception:
@@ -468,19 +484,21 @@ class PPOTrainer:
         # Set up statistics logging (wandb, tensoboard, etc.)
         self.stats_logger = StatsLogger(config, ft_spec)
 
-        # Set up checkpointing for recover
-        self.recover_info = self.recover_handler.load(
-            self.actor,
-            self.saver,
-            self.evaluator,
-            self.stats_logger,
-            self.train_dataloader,
-            inference_engine=self.rollout,
-            weight_update_meta=self.weight_update_meta,
-            # Recompute placement instead of reusing _should_offload_rollout:
-            # AWEX clears that flag because it drives the handover itself.
-            colocated_rollout=self._is_actor_rollout_colocated(config),
-        )
+        # An explicit snapshot owns all restore stages, including exact
+        # staleness counters. Do not also load an ordinary recovery checkpoint.
+        self.recover_info = None
+        if self._snapshot_restore is None:
+            self.recover_info = self.recover_handler.load(
+                self.actor,
+                self.saver,
+                self.evaluator,
+                self.stats_logger,
+                self.train_dataloader,
+                inference_engine=self.rollout,
+                weight_update_meta=self.weight_update_meta,
+                # AWEX clears the offload flag; recompute actual placement.
+                colocated_rollout=self._is_actor_rollout_colocated(config),
+            )
 
         # After recovery, sync the staleness manager so its capacity formula
         # stays bounded despite the version jumping from 0 to recovery_version.
@@ -661,7 +679,11 @@ class PPOTrainer:
         state. A stop-after-save request returns SnapshotStopResult without
         resuming rollout or entering another step. Leave the trainer context
         (or call close()) to clean up runtime resources. This result does not
-        confirm worker process exit; startup restoration is a separate step.
+        confirm worker process exit. To resume in a fresh trainer, pass
+        restore=SnapshotRestoreRequest(result.snapshot, result.context) to its
+        constructor, then call train() with the same workflow bindings. Restore
+        runs after proxy initialization, before the first batch. The optional
+        snapshot_restore_result confirms component restoration, not config apply.
         Use one channel per train() call.
         """
         if getattr(self, "_train_running", False):
@@ -672,6 +694,11 @@ class PPOTrainer:
             if getattr(self, "_reconfiguration_stopped", False):
                 raise RuntimeError(
                     "Trainer stopped for reconfiguration; create a new trainer"
+                )
+            restore = getattr(self, "_snapshot_restore", None)
+            if restore is not None and restore.attempted:
+                raise RuntimeError(
+                    "Snapshot restore already attempted; create a new trainer"
                 )
             if reconfiguration is not None:
                 self._bind_reconfiguration(reconfiguration)
@@ -695,6 +722,11 @@ class PPOTrainer:
                 self._train_running = False
 
     def _bind_reconfiguration(self, channel: TrainerReconfiguration) -> None:
+        checkpoints, statefuls = self._reconfiguration_components()
+        channel.bind(checkpoints=checkpoints, statefuls=statefuls, rollout=self.rollout)
+
+    def _reconfiguration_components(self) -> tuple[dict, dict]:
+        """Register the same checkpoint and state owners for saving and startup."""
         if not is_single_controller():
             raise NotImplementedError(
                 "Trainer snapshots currently require v1 single-controller mode; "
@@ -718,9 +750,9 @@ class PPOTrainer:
                 "Trainer snapshots require the v1 rollout controller"
             )
         self.rollout.bind_snapshot_dataloader(self.train_dataloader)
-        channel.bind(
-            checkpoints=checkpoints,
-            statefuls={
+        return (
+            checkpoints,
+            {
                 **{
                     f"{role}_runtime": EngineRuntimeState(engine)
                     for role, (engine, _, _) in engines.items()
@@ -731,7 +763,6 @@ class PPOTrainer:
                 "recover_frequency": self.recover_handler.freq_ctl,
                 "host_rng": ProcessRngState(),
             },
-            rollout=self.rollout,
         )
 
     def _train_impl(
@@ -773,6 +804,22 @@ class PPOTrainer:
         elif self._requires_proxy_workflow(workflow):
             self._ensure_proxy_started()
 
+        restore = getattr(self, "_snapshot_restore", None)
+        version_offset = 0
+        if restore is not None:
+            remaining_limit = max_steps
+            if config.total_train_steps is not None:
+                remaining_limit = min(remaining_limit, config.total_train_steps)
+            self.snapshot_restore_result = restore.restore(
+                self,
+                workflow=workflow,
+                workflow_kwargs=workflow_kwargs,
+                should_accept_fn=dynamic_filter_fn,
+                max_steps=remaining_limit,
+            )
+            start_step = restore.next_step
+            version_offset = restore.context.policy_version - start_step
+
         for global_step in range(start_step, max_steps):
             if (
                 config.total_train_steps is not None
@@ -782,7 +829,10 @@ class PPOTrainer:
             epoch = global_step // steps_per_epoch
             step = global_step % steps_per_epoch
 
-            if self._should_offload_rollout:
+            if restore is not None and not restore.released:
+                # Initial onload happened under the fence, before RNG restore.
+                restore.resume(self)
+            elif self._should_offload_rollout:
                 self._onload_rollout()
             with (
                 stats_tracker.record_timing("rollout"),
@@ -994,7 +1044,7 @@ class PPOTrainer:
                 ),
             ):
                 # Use versioned path for weight updates
-                new_version = global_step + 1
+                new_version = global_step + 1 + version_offset
                 versioned_meta = self.weight_update_meta.with_version(new_version)
                 self.actor.update_weights(versioned_meta)
 
