@@ -8,6 +8,7 @@ from typing import Any
 
 import torch
 from megatron.core import parallel_state as mpu
+from megatron.core.utils import get_model_config
 
 from tests.fp8.engine_utils import (
     extract_gemm_kernels,
@@ -124,7 +125,7 @@ def collect_gradients_after_train_batch(
     mb_list = engine._prepare_mb_list(input_).to(engine.device)
 
     # Step 2: Define loss functions
-    def sft_loss_fn(logprobs, entropy, input_):
+    def sft_loss_fn(logprobs, entropy, input_, **kwargs):
         """SFT loss function based on compute_packed_sft_loss."""
         del entropy  # SFT does not use entropy
 
@@ -152,22 +153,26 @@ def collect_gradients_after_train_batch(
 
     # Step 3: Compute total loss weight
     total_loss_weight = compute_total_loss_weight(
-        mb_list, loss_weight_fn, mpu.get_data_parallel_group()
+        mb_list, loss_weight_fn, mpu.get_data_parallel_group(with_context_parallel=True)
     )
 
     # Step 4: Forward-backward using Megatron's pipeline function
+    per_token_loss = get_model_config(engine.model[0]).calculate_per_token_loss
     loss_multiplier = (
-        mpu.get_data_parallel_world_size() * engine.optimizer.get_loss_scale().item()
+        1.0 if per_token_loss else mpu.get_data_parallel_world_size() * len(mb_list)
     )
 
-    def process_output(output: torch.Tensor, inputs: dict[str, Any]) -> torch.Tensor:
+    def process_output(
+        output: torch.Tensor, inputs: dict[str, Any]
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         return engine._compute_logprobs_and_loss(
             output,
             inputs,
             loss_fn=sft_loss_fn,
             loss_weight_fn=loss_weight_fn,
-            total_loss_weight=total_loss_weight,
+            total_loss_weight=None if per_token_loss else total_loss_weight,
             loss_multiplier=loss_multiplier,
+            per_token_loss=per_token_loss,
         )
 
     # Profile GEMM kernels if requested

@@ -79,6 +79,12 @@ def test_train_gradient_matches_global_mean(
             compute = _load_function(
                 ENGINE_SOURCE, "_compute_logprobs_and_loss", namespace
             )
+            build_output = _load_function(
+                ENGINE_SOURCE, "_build_per_token_loss_output", namespace
+            )
+            set_scale = _load_function(
+                ENGINE_SOURCE, "_set_optimizer_grad_scale_func", namespace
+            )
             engine = SimpleNamespace(
                 _ensure_ready=lambda: None,
                 optimizer_zero_grad=lambda: None,
@@ -99,22 +105,26 @@ def test_train_gradient_matches_global_mean(
             engine._compute_logprobs_and_loss = lambda *a, **kw: compute(
                 engine, *a, **kw
             )
+            engine._build_per_token_loss_output = lambda *a: build_output(engine, *a)
+            set_scale(engine)
 
             def forward_backward(mbs, process_output, forward_only):
                 assert not forward_only
                 for mb in mbs:
                     result = process_output(parameter.reshape(1), mb)
+                    assert all(c.grad_scale_func is not None for c in configs)
                     if per_token:
                         loss, count = result
                         assert count.dtype == torch.int64
                         counts.append(count)
-                        assert all(c.grad_scale_func is not None for c in configs)
                         scheduled_losses.append(configs[0].grad_scale_func(loss))
                     else:
-                        assert all(c.grad_scale_func is None for c in configs)
                         # MCore two-value callback and DDP averaging.
                         scheduled_losses.append(
-                            result * cp_size / n_mbs / (dp_size * cp_size)
+                            configs[0].grad_scale_func(result)
+                            * cp_size
+                            / n_mbs
+                            / (dp_size * cp_size)
                         )
 
             engine.forward_backward_batch = forward_backward
@@ -132,6 +142,161 @@ def test_train_gradient_matches_global_mean(
         loss = loss / count
     gradient = torch.autograd.grad(loss / loss_scale, parameter)[0]
     torch.testing.assert_close(gradient, reference_grad, rtol=1e-6, atol=1e-7)
+
+
+@pytest.mark.parametrize("weight", [0, 1, 7, 8, 10, 16011])
+@pytest.mark.parametrize("cp_size", [1, 8])
+@pytest.mark.parametrize("dtype", [torch.int64, torch.float32])
+def test_per_token_output_preserves_weight_and_gradient(weight, cp_size, dtype):
+    """Integer partitioning preserves odd counts, including fewer tokens than ranks."""
+    loss = torch.tensor(2.5, dtype=torch.float64, requires_grad=True)
+    build_output = _load_function(
+        ENGINE_SOURCE,
+        "_build_per_token_loss_output",
+        {
+            "torch": torch,
+            "mpu": SimpleNamespace(
+                get_context_parallel_world_size=lambda: cp_size,
+                get_context_parallel_rank=lambda: rank,
+            ),
+        },
+    )
+    outputs = []
+    for rank in range(cp_size):
+        outputs.append(build_output(None, loss, torch.tensor(weight, dtype=dtype), 1.0))
+    numerators, counts = zip(*outputs)
+    assert all(count.dtype == torch.int64 for count in counts)
+    assert sum(counts) == weight
+    assert max(counts) - min(counts) <= 1
+    torch.testing.assert_close(sum(numerators), loss * weight, rtol=0, atol=0)
+    sum(numerators).backward()
+    torch.testing.assert_close(
+        loss.grad, torch.tensor(float(weight), dtype=loss.dtype), rtol=0, atol=0
+    )
+
+
+def test_optimizer_scale_hook_handles_shared_configs_and_dynamic_scale():
+    """All model chunks use the current optimizer scale without duplicate setup."""
+
+    class ModelConfig:
+        def __init__(self):
+            self.assignments = 0
+
+        @property
+        def grad_scale_func(self):
+            return self._scale
+
+        @grad_scale_func.setter
+        def grad_scale_func(self, value):
+            self.assignments += 1
+            self._scale = value
+
+    configs = [ModelConfig(), ModelConfig()]
+    scale = torch.tensor(128.0)
+    optimizer = SimpleNamespace(scale_loss=lambda loss: loss * scale)
+    engine = SimpleNamespace(
+        optimizer=optimizer,
+        model=[SimpleNamespace(config=c) for c in [configs[0], configs[1], configs[0]]],
+    )
+    set_scale = _load_function(
+        ENGINE_SOURCE,
+        "_set_optimizer_grad_scale_func",
+        {"get_model_config": lambda model: model.config},
+    )
+    set_scale(engine)
+    assert all(config.assignments == 1 for config in configs)
+    scale.fill_(256)
+    for config in configs:
+        torch.testing.assert_close(
+            config.grad_scale_func(torch.tensor(2.0)),
+            torch.tensor(512.0),
+            rtol=0,
+            atol=0,
+        )
+
+
+def test_optimizer_scale_hook_without_optimizer_is_noop():
+    """Reference engines can initialize without training or loss scaling."""
+    set_scale = _load_function(ENGINE_SOURCE, "_set_optimizer_grad_scale_func", {})
+    set_scale(SimpleNamespace(optimizer=None, model=None))
+
+
+class _AuxiliaryLoss(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, main_loss, aux_loss, scale):
+        ctx.save_for_backward(aux_loss, scale)
+        return main_loss
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        aux_loss, scale = ctx.saved_tensors
+        return grad_output, torch.ones_like(aux_loss) * scale, None
+
+
+@pytest.mark.parametrize("per_token", [False, True])
+@pytest.mark.parametrize("loss_scale", [1.0, 128.0])
+def test_main_and_auxiliary_gradients_share_optimizer_scale(per_token, loss_scale):
+    """MCore seeds auxiliary gradients independently of the main-loss backward."""
+    config = SimpleNamespace(grad_scale_func=None)
+    engine = SimpleNamespace(
+        optimizer=SimpleNamespace(scale_loss=lambda loss: loss * loss_scale),
+        model=[SimpleNamespace(config=config)],
+    )
+    set_scale = _load_function(
+        ENGINE_SOURCE,
+        "_set_optimizer_grad_scale_func",
+        {"get_model_config": lambda model: model.config},
+    )
+    set_scale(engine)
+    main = torch.tensor(2.0, requires_grad=True)
+    aux = torch.tensor(3.0, requires_grad=True)
+    tokens = 5 if per_token else 1
+    loss = _AuxiliaryLoss.apply(
+        main.square() * tokens,
+        0.25 * aux.square() * tokens,
+        config.grad_scale_func(torch.tensor(1.0)),
+    )
+    config.grad_scale_func(loss).backward()
+    torch.testing.assert_close(
+        main.grad / (loss_scale * tokens), 2 * main.detach(), rtol=0, atol=0
+    )
+    torch.testing.assert_close(
+        aux.grad / (loss_scale * tokens), 0.5 * aux.detach(), rtol=0, atol=0
+    )
+
+
+@pytest.mark.parametrize("per_token", [False, True])
+def test_train_all_zero_weight_batch_is_rejected(per_token):
+    """Retain the positive global-weight guard before any forward/backward work."""
+    compute_weight = _load_function(
+        "areal/engine/core/train_engine.py",
+        "compute_total_loss_weight",
+        {"torch": torch, "dist": SimpleNamespace(all_reduce=lambda *a, **kw: None)},
+    )
+    train = _load_function(
+        ENGINE_SOURCE,
+        "train_batch",
+        {
+            "torch": torch,
+            "mpu": SimpleNamespace(get_data_parallel_group=lambda **kw: None),
+            "compute_total_loss_weight": compute_weight,
+            "get_model_config": lambda model: model.config,
+        },
+    )
+    engine = SimpleNamespace(
+        _ensure_ready=lambda: None,
+        optimizer_zero_grad=lambda: None,
+        _normalize_batch_input=lambda inputs: (inputs, None),
+        _prepare_mb_list=lambda inputs: _MicroBatches([{"weight": torch.tensor(0)}]),
+        model=[
+            SimpleNamespace(config=SimpleNamespace(calculate_per_token_loss=per_token))
+        ],
+        device="cpu",
+    )
+    with pytest.raises(
+        AssertionError, match="Global total loss weight must be positive"
+    ):
+        train(engine, {}, None, lambda mb: mb["weight"])
 
 
 @pytest.mark.parametrize("with_count", [False, True])
