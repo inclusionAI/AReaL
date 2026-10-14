@@ -930,6 +930,8 @@ def _trainer_fixture(monkeypatch, *, awex=False, critic=False, single=True):
     """Exercise the actual trainer loop against fake engines and state owners."""
     events = []
 
+    monkeypatch.setattr(M, "capture_rng_state", lambda **kwargs: {"host_seed": 3})
+
     class Loader(Owner):
         def __len__(self):
             return 2
@@ -990,6 +992,16 @@ def _trainer_fixture(monkeypatch, *, awex=False, critic=False, single=True):
         def load(self, meta):
             super().load(Path(meta.path))
 
+        def runtime_state_dict(self):
+            events.append(f"{self.name}.runtime")
+            return f"runtime-{self.name}"
+
+        def load_runtime_state_dict(self, state):
+            assert state == f"runtime-{self.name}"
+
+        def restore_runtime_rng(self, state):
+            assert state == f"runtime-{self.name}"
+
     @dataclasses.dataclass
     class Meta:
         path: str
@@ -1002,6 +1014,8 @@ def _trainer_fixture(monkeypatch, *, awex=False, critic=False, single=True):
     namespace = {
         "is_single_controller": lambda: single,
         "CheckpointParticipant": M.CheckpointParticipant,
+        "EngineRuntimeState": M.EngineRuntimeState,
+        "ProcessRngState": M.ProcessRngState,
         "ModelAllocation": types.SimpleNamespace(
             from_str=lambda spec: types.SimpleNamespace(backend=spec.split(":")[0])
         ),
@@ -1146,6 +1160,7 @@ def test_trainer_snapshot_preserves_native_order_and_final_state(
     assert events.index("actor.lr") < events.index("actor.save")
     assert (
         events.index("stats")
+        < events.index("actor.runtime")
         < events.index("published")
         < events.index("rollout.resume")
     )
@@ -1161,6 +1176,9 @@ def test_trainer_snapshot_preserves_native_order_and_final_state(
     with (root / "state.pkl").open("rb") as stream:
         states = pickle.load(stream)
     assert states == {
+        "actor_runtime": "runtime-actor",
+        **({"critic_runtime": "runtime-critic"} if critic else {}),
+        "host_rng": {"host_seed": 3},
         "rollout": {"dataloader": {"position": 2}},
         "saver": {"count": 1},
         "evaluator": {"count": 1},

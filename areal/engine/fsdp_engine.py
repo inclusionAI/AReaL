@@ -87,6 +87,13 @@ from areal.engine.fsdp_utils.optimizer import AnyPrecisionAdamW, PerLayerOptimWr
 from areal.engine.fsdp_utils.parallel import ParallelHelper, parallelize_model
 from areal.infra.dist_rollout import DistRolloutCoordinator
 from areal.infra.platforms import current_platform
+from areal.infra.reconfiguration import (
+    capture_rng_state,
+    collect_runtime_state,
+    load_runtime_scheduler,
+    restore_rng_state,
+    select_runtime_state,
+)
 from areal.models.fsdp.ulysses import (
     set_ulysses_sequence_parallel_group,
     ulysses_pad,
@@ -649,6 +656,29 @@ class FSDPEngine(TrainEngine):
     def wait_for_checkpoint(self) -> None:
         """FSDP saves are synchronous; successful save() already completed I/O."""
         return None
+
+    def _runtime_state_identity(self) -> dict[str, Any]:
+        return {
+            "backend": "fsdp",
+            "device_type": current_platform.device_type,
+            "parallelism": dataclasses.asdict(self.parallel_helper._ps),
+            "schedule": self._runtime_schedule,
+        }
+
+    def runtime_state_dict(self) -> str:
+        """Collect end-of-step scheduler/RNG state on all ranks, even offloaded."""
+        return collect_runtime_state(
+            self, identity=self._runtime_state_identity, capture_rng=capture_rng_state
+        )
+
+    def load_runtime_state_dict(self, state: str) -> None:
+        load_runtime_scheduler(self, state, identity=self._runtime_state_identity())
+
+    def restore_runtime_rng(self, state: str) -> None:
+        local = select_runtime_state(
+            self, state, identity=self._runtime_state_identity()
+        )
+        restore_rng_state(local["rng"])
 
     def load(self, meta: SaveLoadMeta):
         with self._offload_aware_context():
@@ -1226,6 +1256,13 @@ class FSDPEngine(TrainEngine):
             self.optimizer_config,
             total_train_steps,
         )
+        # LambdaLR state does not contain the schedule closure. Bind snapshots
+        # to its definition until an explicit schedule mapping is implemented.
+        self._runtime_schedule = {
+            "optimizer": dataclasses.asdict(self.optimizer_config),
+            "total_train_steps": total_train_steps,
+            "warmup_steps": num_warmup_steps,
+        }
 
         if self.optimizer_config.lr_scheduler_type == "cosine":
             self.lr_scheduler = get_cosine_schedule_with_warmup(

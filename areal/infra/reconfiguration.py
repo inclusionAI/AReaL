@@ -4,10 +4,12 @@
 This first layer saves and restores *registered components*, not a complete
 configuration transition. The caller must establish a quiescent trainer boundary
 and register every required state owner (including scheduler/RNG state where the
-backend does not save it). The trainer channel also drains registered rollout
-work. Weight synchronization for restore, process
-restart, layout conversion and Validator integration are separate integration
-steps. A successful restore does not authorize resuming training.
+backend does not save it). The trainer channel drains registered rollout work
+and registers FSDP/Megatron scheduler and per-rank RNG state. Restoration offers
+a weight-synchronization callback before loading owners, then restores RNGs last.
+Process restart, trainer startup wiring, layout conversion and Validator
+integration remain separate steps. A successful component restore does not
+authorize resuming training.
 
 Use one coordinator per snapshot. Checkpoint callbacks must dispatch any required
 collectives to ALL participating ranks; this module never runs rank-local save
@@ -21,6 +23,7 @@ detect corruption, not an untrusted snapshot author's intent.
 
 from __future__ import annotations
 
+import base64
 import copy
 import hashlib
 import inspect
@@ -28,6 +31,7 @@ import json
 import math
 import os
 import pickle
+import random
 import re
 import stat
 import threading
@@ -55,6 +59,197 @@ class Stateful(Protocol):
     def state_dict(self) -> Any: ...
 
     def load_state_dict(self, state: Any) -> None: ...
+
+
+def capture_rng_state(*, include_device: bool = True) -> dict[str, Any]:
+    """Capture global RNGs; custom generators must be registered separately."""
+    import numpy as np
+    import torch
+
+    state = {
+        "python": random.getstate(),
+        "numpy": copy.deepcopy(np.random.get_state()),
+        "torch": torch.get_rng_state().cpu().clone(),
+        "device_type": None,
+        "device": None,
+    }
+    if include_device:
+        from areal.infra.platforms import current_platform
+
+        if current_platform.device_type != "cpu":
+            state["device_type"] = current_platform.device_type
+            state["device"] = current_platform.get_rng_state().cpu().clone()
+    return state
+
+
+def restore_rng_state(state: Mapping[str, Any]) -> None:
+    """Restore the assigned device only; do not initialize other accelerators."""
+    import numpy as np
+    import torch
+
+    if state["device_type"] is not None:
+        from areal.infra.platforms import current_platform
+
+        if state["device_type"] != current_platform.device_type:
+            raise SnapshotError("Runtime RNG device type does not match")
+        current_platform.set_rng_state(state["device"])
+    random.setstate(state["python"])
+    np.random.set_state(state["numpy"])
+    torch.set_rng_state(state["torch"])
+
+
+def _encode_runtime_state(state: Any) -> str:
+    # Ordinary RPCs reinterpret tensors as batch shards/remote references and
+    # convert tuples to lists. An opaque string preserves RNG state exactly.
+    return base64.b64encode(pickle.dumps(state, protocol=5)).decode("ascii")
+
+
+def _decode_runtime_state(state: str) -> Any:
+    if not isinstance(state, str):
+        raise SnapshotError("Runtime state must be an encoded string")
+    return pickle.loads(base64.b64decode(state, validate=True))
+
+
+def collect_runtime_state(
+    engine: Any,
+    *,
+    identity: Callable[[], dict[str, Any]],
+    capture_rng: Callable[[], Any],
+) -> str:
+    """Collect one independent packet per rank over the engine's CPU group.
+
+    Every rank must enter this call once, while quiescent. All DP heads return
+    the same complete packet, so the controller may select any head's result.
+    Capture/serialization errors still participate in the collective.
+    """
+    import torch.distributed as dist
+
+    group = engine.cpu_group
+    world_size = dist.get_world_size(group)
+    rank = dist.get_rank(group)
+    try:
+        if (engine.rank, engine.world_size) != (rank, world_size):
+            raise SnapshotError("Engine rank mapping does not match its CPU group")
+        local = {
+            "rank": rank,
+            "identity": identity(),
+            "scheduler": engine.lr_scheduler.state_dict(),
+            "lrs": [group["lr"] for group in engine.optimizer.param_groups],
+            "rng": capture_rng(),
+        }
+        packet = {"state": _encode_runtime_state(local)}
+    except Exception as exc:
+        packet = {"error": f"rank {rank}: {type(exc).__name__}: {exc}"}
+    gathered = [None] * world_size
+    dist.all_gather_object(gathered, packet, group=group)
+    errors = [item["error"] for item in gathered if "error" in item]
+    if errors:
+        raise SnapshotError("Runtime state capture failed: " + "; ".join(errors))
+    states = [_decode_runtime_state(item["state"]) for item in gathered]
+    if any(
+        item["rank"] != index or item["identity"] != states[0]["identity"]
+        for index, item in enumerate(states)
+    ):
+        raise SnapshotError("Runtime rank identities are inconsistent")
+    # Reuse the original encoded packets: re-pickling deserialized torch
+    # storages can embed process-local identifiers and differ across heads.
+    return _encode_runtime_state(
+        {"version": 1, "ranks": [item["state"] for item in gathered]}
+    )
+
+
+def select_runtime_state(
+    engine: Any, state: str, *, identity: dict[str, Any]
+) -> dict[str, Any]:
+    """Select this logical rank; changed layouts need a future explicit mapping."""
+    decoded = _decode_runtime_state(state)
+    ranks = [_decode_runtime_state(item) for item in decoded["ranks"]]
+    if (
+        decoded["version"] != 1
+        or len(ranks) != engine.world_size
+        or not 0 <= engine.rank < len(ranks)
+        or any(
+            item["rank"] != index or item["identity"] != identity
+            for index, item in enumerate(ranks)
+        )
+    ):
+        raise SnapshotError("Runtime topology or scheduler definition does not match")
+    return ranks[engine.rank]
+
+
+def load_runtime_scheduler(
+    engine: Any,
+    state: str,
+    *,
+    identity: dict[str, Any],
+    reset_steps: bool = False,
+) -> None:
+    """Restore scheduler progress after DCP, without taking an extra LR step."""
+    local = select_runtime_state(engine, state, identity=identity)
+    groups = engine.optimizer.param_groups
+    if len(groups) != len(local["lrs"]):
+        raise SnapshotError("Runtime optimizer parameter groups do not match")
+    if reset_steps:
+        # Megatron's load_state_dict adds the saved count to num_steps. Native
+        # DCP may already have loaded it; make this explicit restore absolute.
+        engine.lr_scheduler.num_steps = 0
+    engine.lr_scheduler.load_state_dict(local["scheduler"])
+    # LambdaLR.load_state_dict does not update optimizer LRs. Restore these
+    # explicitly; Megatron's scheduler may have updated them while loading.
+    for group, lr in zip(groups, local["lrs"], strict=True):
+        group["lr"] = lr
+
+
+class EngineRuntimeState:
+    """Supplement native model/optimizer DCP with scheduler and per-rank RNGs."""
+
+    def __init__(self, engine: Any):
+        for name in (
+            "runtime_state_dict",
+            "load_runtime_state_dict",
+            "restore_runtime_rng",
+        ):
+            callback = getattr(engine, name, None)
+            if not callable(callback) or inspect.iscoroutinefunction(callback):
+                raise TypeError(f"Engine must provide blocking {name}()")
+        self.engine = engine
+        self._pending = None
+
+    def state_dict(self) -> str:
+        return self.engine.runtime_state_dict()
+
+    def load_state_dict(self, state: str) -> None:
+        _call(self.engine.load_runtime_state_dict, state)
+        self._pending = state
+
+    def finalize_restore(self) -> None:
+        if self._pending is None:
+            raise SnapshotError("Engine RNG restore was not staged")
+        _call(self.engine.restore_runtime_rng, self._pending)
+        self._pending = None
+
+
+class ProcessRngState:
+    """Host global RNGs, finalized after rollout and all other state loads.
+
+    The controller process does not own a training accelerator. Register this
+    after engine runtime owners so its RNGs are finalized after their RPCs.
+    """
+
+    def __init__(self):
+        self._pending = None
+
+    def state_dict(self) -> dict[str, Any]:
+        return capture_rng_state(include_device=False)
+
+    def load_state_dict(self, state: dict[str, Any]) -> None:
+        self._pending = copy.deepcopy(state)
+
+    def finalize_restore(self) -> None:
+        if self._pending is None:
+            raise SnapshotError("Host RNG restore was not staged")
+        restore_rng_state(self._pending)
+        self._pending = None
 
 
 class RolloutStateful(Stateful, Protocol):
@@ -431,6 +626,10 @@ class ReconfigurationManager:
                 callback = getattr(owner, operation, None)
                 if not callable(callback) or inspect.iscoroutinefunction(callback):
                     raise TypeError(f"{name} must provide blocking {operation}()")
+            if hasattr(owner, "finalize_restore"):
+                callback = owner.finalize_restore
+                if not callable(callback) or inspect.iscoroutinefunction(callback):
+                    raise TypeError(f"{name} must provide blocking finalize_restore()")
         self._checkpoints = dict(checkpoints)
         self._statefuls = dict(statefuls)
         self._lock = threading.Lock()
@@ -535,13 +734,20 @@ class ReconfigurationManager:
             self._lock.release()
 
     def restore_snapshot(
-        self, snapshot: SnapshotRef, *, expected_context: SnapshotContext
+        self,
+        snapshot: SnapshotRef,
+        *,
+        expected_context: SnapshotContext,
+        after_checkpoints: Callable[[SnapshotContext], None] | None = None,
     ) -> RestoreResult:
         """Strictly restore registered components from this exact snapshot.
 
         Verify every file, source binding and component BEFORE loading any role.
         Backend/layout admissibility is the Validator's responsibility. All
         components must already exist and remain quiescent through restoration.
+        ``after_checkpoints`` synchronizes weights/versions before owner loads.
+        Owner ``finalize_restore()`` hooks run last, in registration order, so
+        initialization and synchronization cannot advance restored RNGs.
         The caller must perform runtime/weight-version confirmation before it
         resumes training; this method does not mark a target config as applied.
         """
@@ -551,6 +757,11 @@ class ReconfigurationManager:
         try:
             if self._restore_failed:
                 raise SnapshotError("Recreate participants after a failed restore")
+            if after_checkpoints is not None and (
+                not callable(after_checkpoints)
+                or inspect.iscoroutinefunction(after_checkpoints)
+            ):
+                raise TypeError("after_checkpoints must be a blocking callback")
             manifest = inspect_snapshot(snapshot)
             if manifest["context"] != _context_dict(expected_context):
                 raise SnapshotError(
@@ -571,8 +782,13 @@ class ReconfigurationManager:
             loading = True
             for role, participant in self._checkpoints.items():
                 _call(participant.load, root / "checkpoints" / role)
+            if after_checkpoints is not None:
+                _call(after_checkpoints, SnapshotContext(**manifest["context"]))
             for name, owner in self._statefuls.items():
                 _call(owner.load_state_dict, state[name])
+            for owner in self._statefuls.values():
+                if hasattr(owner, "finalize_restore"):
+                    _call(owner.finalize_restore)
             return RestoreResult(
                 snapshot,
                 SnapshotContext(**manifest["context"]),

@@ -90,6 +90,11 @@ from areal.engine.megatron_utils.pipeline_parallel import (
 )
 from areal.infra.dist_rollout import DistRolloutCoordinator
 from areal.infra.platforms import current_platform, is_npu_available
+from areal.infra.reconfiguration import (
+    collect_runtime_state,
+    load_runtime_scheduler,
+    select_runtime_state,
+)
 from areal.models.mcore.hf_load import load_weights_from_hf_with_mbridge_fast
 from areal.models.mcore.hf_save import (
     save_critic_value_head,
@@ -1050,6 +1055,36 @@ class MegatronEngine(TrainEngine):
         # Every rank must participate, even if its local queue appears empty.
         self.checkpointer.wait_async_saves()
 
+    def _runtime_state_identity(self) -> dict[str, Any]:
+        return {
+            "backend": "megatron",
+            "device_type": current_platform.device_type,
+            "parallelism": dataclasses.asdict(self.parallel_strategy),
+            "schedule": self._runtime_schedule,
+        }
+
+    def runtime_state_dict(self) -> str:
+        # Native DCP identifies RNG replicas by PP/TP. Preserve EVERY logical
+        # rank here, including independent DP/CP streams and TP RNG trackers.
+        return collect_runtime_state(
+            self,
+            identity=self._runtime_state_identity,
+            capture_rng=lambda: self.checkpointer.get_rng_state(use_dist_ckpt=False)[0],
+        )
+
+    def load_runtime_state_dict(self, state: str) -> None:
+        # An explicit snapshot always restores its schedule, independently of
+        # the optional scheduler flag used by ordinary checkpoint recovery.
+        load_runtime_scheduler(
+            self, state, identity=self._runtime_state_identity(), reset_steps=True
+        )
+
+    def restore_runtime_rng(self, state: str) -> None:
+        local = select_runtime_state(
+            self, state, identity=self._runtime_state_identity()
+        )
+        self.checkpointer.load_rng_states([local["rng"]])
+
     def load(self, meta: SaveLoadMeta):
         with self._offload_aware_context():
             if meta.weight_format == "hf":
@@ -1834,6 +1869,11 @@ class MegatronEngine(TrainEngine):
             self.optimizer_config,
             total_train_steps,
         )
+        self._runtime_schedule = {
+            "optimizer": dataclasses.asdict(self.optimizer_config),
+            "total_train_steps": total_train_steps,
+            "warmup_steps": warmup_steps,
+        }
         if total_train_steps <= 0:
             raise ValueError(
                 "Megatron Core OptimizerParamScheduler requires "

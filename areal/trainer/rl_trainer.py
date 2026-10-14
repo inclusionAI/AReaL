@@ -45,7 +45,12 @@ from areal.infra import (
 from areal.infra.data_service import DataController
 from areal.infra.data_service.controller.config import DataServiceConfig
 from areal.infra.data_service.rdataset import RDataset
-from areal.infra.reconfiguration import CheckpointParticipant, TrainerReconfiguration
+from areal.infra.reconfiguration import (
+    CheckpointParticipant,
+    EngineRuntimeState,
+    ProcessRngState,
+    TrainerReconfiguration,
+)
 from areal.infra.utils.concurrent import call_maybe_async
 from areal.utils import logging, perf_tracer, seeding, stats_tracker
 from areal.utils.dataloader import create_dataloader
@@ -701,10 +706,15 @@ class PPOTrainer:
         channel.bind(
             checkpoints=checkpoints,
             statefuls={
+                **{
+                    f"{role}_runtime": EngineRuntimeState(engine)
+                    for role, (engine, _, _) in engines.items()
+                },
                 "saver": self.saver,
                 "evaluator": self.evaluator,
                 "stats_logger": self.stats_logger,
                 "recover_frequency": self.recover_handler.freq_ctl,
+                "host_rng": ProcessRngState(),
             },
             rollout=self.rollout,
         )

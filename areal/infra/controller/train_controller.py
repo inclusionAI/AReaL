@@ -750,6 +750,77 @@ class TrainController:
                 f"Checkpoint completion was not confirmed: {details}"
             ) from failures[0][1]
 
+    def _runtime_state_call(
+        self, method: str, *args: str, timeout: float = 7200.0
+    ) -> str | None:
+        """Call quiescent runtime-state participants once and await EVERY rank.
+
+        A failed/timed-out collective must never be retried on a single worker.
+        Send the same opaque payload directly to every worker. Bypass the usual
+        MP broadcast: offloaded FSDP workers cannot use its NCCL group here.
+        """
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("Runtime state timeout must be finite and positive")
+        workers = tuple(self.workers)
+        heads = tuple(self.workers_is_dp_head)
+        if not workers or len(workers) != len(heads) or not any(heads):
+            raise RuntimeError(
+                "Runtime state requires initialized workers and DP heads"
+            )
+
+        async def call_all():
+            tasks = [
+                asyncio.wait_for(
+                    self.scheduler.async_call_engine(
+                        worker.id,
+                        method,
+                        self._engine_name(rank),
+                        *args,
+                        rpc_meta={"broadcast": False},
+                        http_timeout=timeout,
+                        max_retries=1,
+                    ),
+                    timeout=timeout,
+                )
+                for rank, worker in enumerate(workers)
+            ]
+            return await asyncio.gather(*tasks, return_exceptions=True)
+
+        results = run_async_task(call_all)
+        failures = [
+            (worker.id, result)
+            for worker, result in zip(workers, results, strict=True)
+            if isinstance(result, BaseException)
+        ]
+        if failures:
+            details = "; ".join(
+                f"{worker_id}: {type(error).__name__}: {error}"
+                for worker_id, error in failures
+            )
+            raise RuntimeError(f"{method} failed: {details}") from failures[0][1]
+        if method == "runtime_state_dict":
+            packets = [result for head, result in zip(heads, results) if head]
+            if not all(isinstance(packet, str) for packet in packets) or any(
+                packet != packets[0] for packet in packets
+            ):
+                raise RuntimeError("DP heads returned inconsistent runtime state")
+            return packets[0]
+        if any(result is not None for result in results):
+            raise RuntimeError(f"{method} must return None on every worker")
+        return None
+
+    def runtime_state_dict(self) -> str:
+        """Collect an opaque scheduler/RNG packet containing every logical rank."""
+        return self._runtime_state_call("runtime_state_dict")
+
+    def load_runtime_state_dict(self, state: str) -> None:
+        """Load scheduler state after native model/optimizer restoration."""
+        self._runtime_state_call("load_runtime_state_dict", state)
+
+    def restore_runtime_rng(self, state: str) -> None:
+        """Restore per-rank RNGs after all other initialization and loading."""
+        self._runtime_state_call("restore_runtime_rng", state)
+
     def load(self, meta: SaveLoadMeta):
         """Load model weights and optimizer states from a file.
 
