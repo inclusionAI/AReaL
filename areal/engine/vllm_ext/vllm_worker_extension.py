@@ -5,7 +5,6 @@ from contextlib import contextmanager
 
 import torch
 import torch.distributed as dist
-from vllm.distributed.parallel_state import get_world_group
 from vllm.logger import init_logger
 from vllm.lora.lora_model import LoRAModel
 from vllm.lora.peft_helper import PEFTHelper
@@ -397,11 +396,15 @@ class VLLMWorkerExtension:
             ] = {}
 
         try:
+            parallel_config = self.model_runner.vllm_config.parallel_config
+            replica_size = parallel_config.world_size
+            dp_rank = parallel_config.data_parallel_index
+            rank = dp_rank * replica_size + self.rank
             group = init_custom_process_group(
                 backend=backend,
                 world_size=world_size,
                 init_method=f"tcp://{master_address}:{master_port}",
-                rank=get_world_group().rank + rank_offset,
+                rank=rank + rank_offset,
                 group_name=group_name,
                 timeout=DIST_GROUP_DEFAULT_TIMEOUT,
             )
