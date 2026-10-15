@@ -625,6 +625,7 @@ class TestPreparePromptIntegration:
             chat_template_type="hf",
             tools=[WEATHER_TOOL],
             extra_body={},
+            incremental_prompt_rendering=True,
             interaction=inter1,
         )
         assert inter1.prompt_token_ids == p1.input_ids
@@ -665,6 +666,7 @@ class TestPreparePromptIntegration:
             chat_template_type="hf",
             tools=[WEATHER_TOOL],
             extra_body={},
+            incremental_prompt_rendering=True,
             interaction=inter2,
         )
 
@@ -723,6 +725,7 @@ class TestPreparePromptIntegration:
             chat_template_type="hf",
             tools=[WEATHER_TOOL],
             extra_body={},
+            incremental_prompt_rendering=True,
             interaction=inter2,
         )
 
@@ -758,6 +761,7 @@ class TestPreparePromptIntegration:
             chat_template_type="hf",
             tools=[WEATHER_TOOL],
             extra_body={},
+            incremental_prompt_rendering=True,
             interaction=inter1,
         )
 
@@ -778,6 +782,7 @@ class TestPreparePromptIntegration:
             chat_template_type="hf",
             tools=[WEATHER_TOOL],
             extra_body={},
+            incremental_prompt_rendering=True,
             interaction=inter2,
         )
 
@@ -789,3 +794,108 @@ class TestPreparePromptIntegration:
             tokenize=True,
         )
         assert p2.input_ids == canonical
+
+
+@pytest.mark.asyncio
+class TestIncrementalRenderingIsOptIn:
+    async def test_prepare_prompt_default_renders_full_history(
+        self, qwen3_tokenizer, monkeypatch
+    ):
+        """Without opting in, no prefix is cached and every turn renders fully."""
+
+        def fail(*args, **kwargs):
+            raise AssertionError("incremental renderer used without opt-in")
+
+        monkeypatch.setattr(IncrementalPromptRenderer, "render_initial", fail)
+        monkeypatch.setattr(IncrementalPromptRenderer, "render_incremental", fail)
+
+        messages = [{"role": "user", "content": "Query 1"}]
+        inter1 = InteractionWithTokenLogpReward(
+            messages=list(messages), chat_template_type="hf"
+        )
+        await _prepare_prompt(
+            tokenizer=qwen3_tokenizer,
+            processor=None,
+            tokenizer_messages=messages,
+            concat_messages=messages,
+            image_data=[],
+            parent=None,
+            chat_template_type="hf",
+            tools=[WEATHER_TOOL],
+            extra_body={},
+            interaction=inter1,
+        )
+        assert inter1.prompt_base_token_ids is None
+
+        messages.extend(
+            [
+                {"role": "assistant", "content": "Response 1"},
+                {"role": "user", "content": "Query 2"},
+            ]
+        )
+        inter2 = InteractionWithTokenLogpReward(
+            messages=list(messages), chat_template_type="hf", parent=inter1
+        )
+        p2 = await _prepare_prompt(
+            tokenizer=qwen3_tokenizer,
+            processor=None,
+            tokenizer_messages=messages,
+            concat_messages=messages[-1:],
+            image_data=[],
+            parent=inter1,
+            chat_template_type="hf",
+            tools=[WEATHER_TOOL],
+            extra_body={},
+            interaction=inter2,
+        )
+
+        assert p2.input_ids == apply_chat_template(
+            qwen3_tokenizer,
+            messages,
+            tools=[WEATHER_TOOL],
+            add_generation_prompt=True,
+            tokenize=True,
+        )
+        assert inter2.prompt_base_token_ids is None
+
+
+class TestIncrementalConcatRenderingIsOptIn:
+    def test_concat_default_does_not_use_incremental_renderer(
+        self, qwen3_tokenizer, monkeypatch
+    ):
+        """The concat path also renders full history unless explicitly enabled."""
+        monkeypatch.setattr(
+            IncrementalPromptRenderer,
+            "render_concat_child_tokens",
+            lambda *args, **kwargs: (_ for _ in ()).throw(
+                AssertionError("incremental renderer used without opt-in")
+            ),
+        )
+        msg1 = [{"role": "user", "content": "Hi"}]
+        t1 = apply_chat_template(
+            qwen3_tokenizer, msg1, add_generation_prompt=True, tokenize=True
+        )
+        out_tokens = qwen3_tokenizer.encode("Hello", add_special_tokens=False) + [
+            qwen3_tokenizer.eos_token_id
+        ]
+        parent = InteractionWithTokenLogpReward(
+            messages=msg1,
+            output_message_list=[{"role": "assistant", "content": "Hello"}],
+            model_response=ModelResponse(
+                input_tokens=t1,
+                output_tokens=out_tokens,
+                output_logprobs=[0.0] * len(out_tokens),
+                output_versions=[0] * len(out_tokens),
+                stop_reason="stop",
+                tokenizer=qwen3_tokenizer,
+            ),
+            chat_template_type="concat",
+        )
+
+        tokens, _, _ = _concat_prompt_token_ids_with_parent(
+            message_list=[{"role": "user", "content": "Again"}],
+            parent=parent,
+            tokenizer=qwen3_tokenizer,
+        )
+
+        assert tokens[: len(t1)] == t1
