@@ -43,6 +43,7 @@ def test_recipe_required_recovery_checks_loaded_state_before_training(
         else None
     )
     config = SimpleNamespace(
+        experiment_name="arena-recovery-test",
         econfig=_ArenaConfig(),
         train_dataset=_DatasetConfig(),
         gconfig=SimpleNamespace(
