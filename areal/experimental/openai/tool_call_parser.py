@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
 
-import html
 import json
 import re
 import traceback
@@ -60,13 +59,23 @@ _QWEN3_CODER_TOOL_CALL_RE = re.compile(
     re.DOTALL,
 )
 _QWEN3_CODER_FUNCTION_RE = re.compile(
-    r"<function=(?P<name>[^/>\s]+)(?:/\s*>|>\s*(?P<body>.*?)\s*</function>)",
+    r"<function=(?P<name>[^/>\s]+)(?:\s*/\s*>|>\s*(?P<body>.*?)\s*</function>)",
     re.DOTALL,
 )
 _QWEN3_CODER_PARAMETER_RE = re.compile(
     r"<parameter=(?P<name>[^>\s]+)>(?P<value>.*?)</parameter>",
     re.DOTALL,
 )
+# Only the five predefined XML entities are decoded. HTML5 named entities are
+# deliberately left untouched so literal command or file content survives.
+_QWEN3_CODER_XML_ENTITIES = {
+    "&lt;": "<",
+    "&gt;": ">",
+    "&amp;": "&",
+    "&quot;": '"',
+    "&apos;": "'",
+}
+_QWEN3_CODER_XML_ENTITY_RE = re.compile("|".join(_QWEN3_CODER_XML_ENTITIES))
 _QWEN3_CODER_MISLABELED_FUNCTION_OPEN_RE = re.compile(
     r"\A(?P<leading>\s*)<parameter=(?P<name>[^>\s]+)>",
     re.DOTALL,
@@ -193,7 +202,9 @@ def _clean_qwen3_coder_parameter(raw_value: str) -> str:
         raw_value = raw_value[1:]
     if raw_value.endswith("\n"):
         raw_value = raw_value[:-1]
-    return html.unescape(raw_value)
+    return _QWEN3_CODER_XML_ENTITY_RE.sub(
+        lambda m: _QWEN3_CODER_XML_ENTITIES[m.group(0)], raw_value
+    )
 
 
 def _coerce_qwen3_coder_parameter(
@@ -308,7 +319,7 @@ def _process_tool_calls_qwen3_coder_xml(
                     # value that contains its own "<parameter=...>...</parameter>".
                     # The non-greedy regex truncates the outer value at the inner
                     # closing tag, so treat any parameter marker inside the value as
-                    # ambiguous and fall back to the backend parser.
+                    # ambiguous and delegate the complete response to the backend.
                     if (
                         "<parameter=" in raw_param_value
                         or "</parameter>" in raw_param_value
@@ -319,27 +330,30 @@ def _process_tool_calls_qwen3_coder_xml(
                         param_value,
                         arg_schemas.get(tool_name, {}).get(param_name),
                     )
-            else:
-                stripped_body = fn_body.strip()
-                if stripped_body.startswith("{") and stripped_body.endswith("}"):
-                    try:
-                        decoded = json.loads(stripped_body)
-                        if isinstance(decoded, dict):
-                            args = decoded
-                    except (ValueError, json.JSONDecodeError):
-                        pass
+                if not args:
+                    return None, text, finish_reason
+            elif fn_body.strip():
+                # Only a genuinely empty body is a zero-argument call. A
+                # non-empty body must decode to a JSON object; anything else
+                # is malformed and is delegated with the complete response so
+                # optional arguments are never silently discarded.
+                try:
+                    decoded = json.loads(fn_body.strip())
+                except (TypeError, ValueError):
+                    return None, text, finish_reason
+                if not isinstance(decoded, dict):
+                    return None, text, finish_reason
+                args = decoded
 
-            # Validate whether parsed arguments satisfy the tool schema.
-            # If the tool requires specific parameters that are missing, skip it
-            # so process_tool_calls falls back to the backend parser.
-            # If the tool requires no parameters (or has no schema), an empty
-            # args dict is a valid invocation of a zero-argument tool.
-            if tool_name in required_params:
-                missing_required = required_params[tool_name] - set(args.keys())
-                if missing_required:
-                    continue
-            elif not args:
-                continue
+            # Delegate the complete response when the call is not valid for its
+            # tool, so a valid sibling call in the same block cannot cause the
+            # incomplete one to be dropped. An empty args dict is accepted only
+            # for a declared tool that requires no parameters.
+            if tool_name not in required_params:
+                if not args:
+                    return None, text, finish_reason
+            elif required_params[tool_name] - set(args.keys()):
+                return None, text, finish_reason
 
             arguments = json.dumps(args, ensure_ascii=False)
             block_calls.append(_build_tool_call(tool_name, arguments, use_responses))

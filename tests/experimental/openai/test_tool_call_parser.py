@@ -448,6 +448,112 @@ def test_qwen3_coder_xml_missing_required_params_rejected():
     assert finish_reason == "stop"
 
 
+_ZERO_ARG_TOOLS: list[ChatCompletionToolParam] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "git_status",
+            "description": "Check git repository status",
+            "parameters": {
+                "type": "object",
+                "properties": {"verbose": {"type": "boolean"}},
+            },
+        },
+    }
+]
+
+
+@pytest.mark.parametrize(
+    "fn_body",
+    [
+        "not json at all",
+        '{"verbose": true',
+        "[1, 2]",
+        '"verbose"',
+        "null",
+    ],
+)
+def test_qwen3_coder_xml_non_object_body_delegates_to_backend(fn_body):
+    """A non-empty body that is not a JSON object is never a zero-argument call."""
+    text = f"<tool_call>\n<function=git_status>{fn_body}</function>\n</tool_call>"
+
+    tool_calls, new_text, finish_reason = (
+        parser_module._process_tool_calls_qwen3_coder_xml(
+            text=text,
+            tools=_ZERO_ARG_TOOLS,
+            finish_reason="stop",
+        )
+    )
+
+    assert tool_calls is None
+    assert new_text == text
+    assert finish_reason == "stop"
+
+
+def test_qwen3_coder_xml_self_closing_function_tag_with_space_before_slash():
+    text = "<tool_call>\n<function=git_status />\n</tool_call>"
+
+    tool_calls, _, finish_reason = parser_module._process_tool_calls_qwen3_coder_xml(
+        text=text,
+        tools=_ZERO_ARG_TOOLS,
+        finish_reason="stop",
+    )
+
+    assert finish_reason == "tool_calls"
+    assert tool_calls is not None
+    assert tool_calls[0].function.name == "git_status"
+    assert tool_calls[0].function.arguments == "{}"
+
+
+def test_qwen3_coder_xml_leaves_non_xml_entities_unchanged():
+    """Only the predefined XML entities are decoded, each exactly once."""
+    text = (
+        "<tool_call>\n<function=Bash>\n"
+        "<parameter=command>\n"
+        "echo &nbsp;&copy;&#65; &amp;lt;tag&amp;gt;\n"
+        "</parameter>\n"
+        "</function>\n</tool_call>"
+    )
+
+    tool_calls, _, _ = parser_module._process_tool_calls_qwen3_coder_xml(
+        text=text,
+        tools=QWEN3_CODER_TOOLS,
+        finish_reason="stop",
+    )
+
+    assert tool_calls is not None
+    assert (
+        json.loads(tool_calls[0].function.arguments)["command"]
+        == "echo &nbsp;&copy;&#65; &lt;tag&gt;"
+    )
+
+
+def test_qwen3_coder_xml_valid_call_with_missing_required_call_delegates():
+    """A call missing required arguments is not dropped beside a valid one."""
+    text = (
+        "<tool_call>\n"
+        "<function=Bash>\n"
+        "<parameter=command>\npwd\n</parameter>\n"
+        "</function>\n"
+        "<function=Write>\n"
+        "<parameter=file_path>\na.py\n</parameter>\n"
+        "</function>\n"
+        "</tool_call>"
+    )
+
+    tool_calls, new_text, finish_reason = (
+        parser_module._process_tool_calls_qwen3_coder_xml(
+            text=text,
+            tools=QWEN3_CODER_TOOLS,
+            finish_reason="stop",
+        )
+    )
+
+    assert tool_calls is None
+    assert new_text == text
+    assert finish_reason == "stop"
+
+
 @pytest.mark.sglang
 @pytest.mark.parametrize("finish_reason", ["stop", "length"])
 @pytest.mark.parametrize("use_responses", [False, True])
