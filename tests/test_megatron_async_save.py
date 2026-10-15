@@ -7,6 +7,7 @@ that the manager correctly:
 - skips queue creation when async_save is False
 - routes the AsyncRequest to AsyncCallsQueue.schedule_async_request when True
 - finalizes completed saves non-blockingly on each new save call
+- appends recovery publication after MCore's existing finalize callbacks
 - blocks on load_checkpoint / close
 - treats close as idempotent
 - emits the async-only metric (queue_depth on schedule)
@@ -89,6 +90,10 @@ def _import_checkpointer():
     import pathlib
 
     repo_root = pathlib.Path(__file__).resolve().parents[1]
+    # load_checkpoint imports its lightweight optimizer-state helper lazily.
+    sys.modules["areal.engine.megatron_utils"].__path__ = [
+        str(repo_root / "areal" / "engine" / "megatron_utils")
+    ]
     spec = importlib.util.spec_from_file_location(
         "areal.engine.megatron_utils.checkpointer",
         repo_root / "areal" / "engine" / "megatron_utils" / "checkpointer.py",
@@ -160,6 +165,72 @@ def test_save_schedules_async_request(patched_checkpointer, tmp_path):
     inspect_fn.assert_called_once_with(fake_request)
     queue.schedule_async_request.assert_called_once_with(fake_request)
     release_fn.assert_called_once_with(tensor_lists)
+
+
+def test_async_save_publishes_only_from_finalize(patched_checkpointer, tmp_path):
+    mod, manager, queue = patched_checkpointer
+    fake_request = MagicMock()
+    publish = MagicMock()
+
+    with (
+        patch.object(manager, "generate_state_dict", return_value={"model": {}}),
+        patch.object(mod, "save_dist_checkpointing", return_value=fake_request),
+        patch.object(mod, "_inspect_retained_payload", return_value=[]),
+        patch("torch.cuda.empty_cache"),
+        patch("torch.distributed.barrier"),
+    ):
+        manager.save_checkpoint(str(tmp_path / "step0"), finalize_fn=publish)
+
+    publish.assert_not_called()
+    fake_request.add_finalize_fn.assert_called_once()
+    queue.schedule_async_request.assert_called_once_with(fake_request)
+
+    appended_finalize = fake_request.add_finalize_fn.call_args.args[0]
+    appended_finalize()
+
+    publish.assert_called_once_with()
+
+
+def test_publication_failure_is_broadcast_before_all_ranks_raise(
+    patched_checkpointer,
+):
+    mod, _, _ = patched_checkpointer
+    publish = MagicMock(side_effect=OSError("disk unavailable"))
+
+    with (
+        patch("torch.distributed.is_initialized", return_value=True),
+        patch("torch.distributed.get_world_size", return_value=2),
+        patch("torch.distributed.broadcast_object_list") as broadcast,
+        pytest.raises(RuntimeError, match="disk unavailable"),
+    ):
+        mod._run_checkpoint_publication(0, publish)
+
+    status = broadcast.call_args.args[0]
+    assert status == [("OSError", "disk unavailable")]
+
+
+def test_nonzero_rank_raises_publication_failure_received_from_rank0(
+    patched_checkpointer,
+):
+    mod, _, _ = patched_checkpointer
+    publish = MagicMock()
+
+    def broadcast_rank0_failure(status, src):
+        assert src == 0
+        status[0] = ("OSError", "disk unavailable")
+
+    with (
+        patch("torch.distributed.is_initialized", return_value=True),
+        patch("torch.distributed.get_world_size", return_value=2),
+        patch(
+            "torch.distributed.broadcast_object_list",
+            side_effect=broadcast_rank0_failure,
+        ),
+        pytest.raises(RuntimeError, match="disk unavailable"),
+    ):
+        mod._run_checkpoint_publication(1, publish)
+
+    publish.assert_not_called()
 
 
 def test_save_reaps_before_scheduling_next(patched_checkpointer, tmp_path):
@@ -385,3 +456,148 @@ def test_save_unknown_payload_layout_fails_before_scheduling(
 
     queue.schedule_async_request.assert_not_called()
     assert buckets == ["opaque-bucket"]
+
+
+def test_sync_save_releases_state_before_host_cleanup(
+    patched_checkpointer, monkeypatch, tmp_path
+):
+    mod, manager, _ = patched_checkpointer
+    manager.async_save = False
+    manager._async_queue = None
+    references = []
+    events = []
+
+    class Payload:
+        pass
+
+    def generate(*args):
+        payload = Payload()
+        references.append(weakref.ref(payload))
+        return {"model": payload}
+
+    def save(**kwargs):
+        assert kwargs["sharded_state_dict"]["model"] is references[0]()
+        events.append("saved")
+
+    def cleanup(rank):
+        assert rank == manager.rank
+        assert references[0]() is None
+        events.append("cleaned")
+
+    monkeypatch.setattr(manager, "generate_state_dict", generate)
+    monkeypatch.setattr(mod, "save_dist_checkpointing", save)
+    monkeypatch.setattr(mod, "_release_cached_host_memory", cleanup)
+    monkeypatch.setattr(mod.torch.distributed, "barrier", lambda: None)
+
+    manager.save_checkpoint(
+        str(tmp_path / "step0"), finalize_fn=lambda: events.append("published")
+    )
+
+    assert events == ["saved", "published", "cleaned"]
+
+
+@pytest.mark.parametrize("blocking", [False, True])
+def test_async_host_cleanup_preserves_pending_and_follows_completed_payload(
+    patched_checkpointer, monkeypatch, tmp_path, blocking
+):
+    mod, manager, queue = patched_checkpointer
+    holder = []
+    references = []
+    cleanup_liveness = []
+    completed = False
+
+    class Payload:
+        pass
+
+    def schedule(request):
+        payload = Payload()
+        holder.append(payload)
+        references.append(weakref.ref(payload))
+        return 0
+
+    def finalize(*, blocking):
+        if not completed:
+            return []
+        holder.clear()
+        return [0]
+
+    monkeypatch.setattr(manager, "generate_state_dict", lambda *args: {})
+    monkeypatch.setattr(
+        mod,
+        "save_dist_checkpointing",
+        lambda **kwargs: _request_with_pending_payload([]),
+    )
+    monkeypatch.setattr(queue, "schedule_async_request", schedule)
+    monkeypatch.setattr(queue, "maybe_finalize_async_calls", finalize)
+    monkeypatch.setattr(
+        mod,
+        "_release_cached_host_memory",
+        lambda rank: cleanup_liveness.append(references[0]() is not None),
+    )
+
+    manager.save_checkpoint(str(tmp_path / "step0"))
+    # Scheduling must not wait for the writer or clear its CPU holder.
+    assert cleanup_liveness == [True]
+    manager._reap_finished_async_saves()
+    assert cleanup_liveness == [True]
+    assert len(holder) == 1
+
+    completed = True
+    if blocking:
+        manager.wait_async_saves()
+    else:
+        manager._reap_finished_async_saves()
+
+    assert cleanup_liveness == [True, False]
+    assert references[0]() is None
+
+
+@pytest.mark.parametrize("device", ["cpu", "npu", "cuda"])
+def test_host_cleanup_requires_cuda_and_callable_binding(monkeypatch, device):
+    mod = _import_checkpointer()
+    empty_cache = MagicMock()
+    monkeypatch.setattr(mod, "get_device_name", lambda: device)
+    monkeypatch.setattr(mod.torch._C, "_host_emptyCache", empty_cache, raising=False)
+    mod._release_cached_host_memory(0)
+    assert empty_cache.call_count == int(device == "cuda")
+    monkeypatch.delattr(mod.torch._C, "_host_emptyCache")
+    mod._release_cached_host_memory(0)
+    monkeypatch.setattr(mod.torch._C, "_host_emptyCache", None, raising=False)
+    mod._release_cached_host_memory(0)
+
+
+def test_host_cleanup_stats_failure_does_not_prevent_reclamation(monkeypatch):
+    mod = _import_checkpointer()
+    empty_cache = MagicMock()
+    monkeypatch.setattr(mod, "get_device_name", lambda: "cuda")
+    monkeypatch.setattr(mod.torch._C, "_host_emptyCache", empty_cache, raising=False)
+    monkeypatch.setattr(
+        mod.torch.cuda,
+        "host_memory_stats",
+        MagicMock(side_effect=RuntimeError("stats unavailable")),
+        raising=False,
+    )
+
+    mod._release_cached_host_memory(0)
+
+    empty_cache.assert_called_once_with()
+
+
+def test_host_cleanup_failure_preserves_published_save(
+    patched_checkpointer, monkeypatch, tmp_path
+):
+    mod, manager, _ = patched_checkpointer
+    manager.async_save = False
+    manager._async_queue = None
+    publish = MagicMock()
+    empty_cache = MagicMock(side_effect=RuntimeError("cleanup unavailable"))
+    monkeypatch.setattr(mod, "get_device_name", lambda: "cuda")
+    monkeypatch.setattr(mod.torch._C, "_host_emptyCache", empty_cache, raising=False)
+    monkeypatch.setattr(manager, "generate_state_dict", lambda *args: {})
+    monkeypatch.setattr(mod, "save_dist_checkpointing", lambda **kwargs: None)
+    monkeypatch.setattr(mod.torch.distributed, "barrier", lambda: None)
+
+    manager.save_checkpoint(str(tmp_path / "step0"), finalize_fn=publish)
+
+    publish.assert_called_once_with()
+    empty_cache.assert_called_once_with()

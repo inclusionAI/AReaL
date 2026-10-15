@@ -171,8 +171,19 @@ def _init_engine_thread() -> None:
                     try:
                         result = func(*args, **kwargs)
                         future.set_result(result)
-                    except Exception as e:
-                        future.set_exception(e)
+                    except BaseException as e:
+                        # CheckpointException inherits BaseException in PyTorch.
+                        # Complete the Future with an Exception that HTTP handlers
+                        # can report instead of terminating this worker thread.
+                        if isinstance(e, Exception):
+                            future.set_exception(e)
+                        else:
+                            error = RuntimeError(
+                                f"Engine task '{func_name}' raised "
+                                f"{type(e).__name__}: {e}"
+                            )
+                            error.__cause__ = e
+                            future.set_exception(error)
                     finally:
                         _engine_work_queue.task_done()
                 except Exception as e:
@@ -492,9 +503,16 @@ def call_engine_method():
         # Deserialize data
         raw_args = deserialize_value(raw_args)
         raw_kwargs = deserialize_value(raw_kwargs)
-        # Fetch remote tensors
-        args = RTensor.localize(raw_args)
-        kwargs = RTensor.localize(raw_kwargs)
+        # CPU-staged engines (currently Megatron) can preserve shared rollout
+        # tensors until microbatch construction. Other v1 engines retain the
+        # existing per-reference localization behavior.
+        preserve_input_tensor_aliases = _should_stage_rpc_payload_on_cpu(
+            engine, method_name
+        )
+        args, kwargs = RTensor.localize(
+            (raw_args, raw_kwargs),
+            preserve_tensor_aliases=preserve_input_tensor_aliases,
+        )
 
         def execute_in_engine_thread():
             try:
@@ -508,17 +526,25 @@ def call_engine_method():
                     bcast_group, bcast_device = resolve_broadcast_target(
                         engine, current_platform.current_device(), method_name
                     )
+                    # Model capability is identical on every rank; inspecting
+                    # the local payload would disagree on non-source ranks.
+                    preserve_broadcast_aliases = (
+                        preserve_input_tensor_aliases
+                        and getattr(engine, "is_vision_model", False)
+                    )
                     args_bcast = tensor_container_to(args, bcast_device)
                     args_bcast = broadcast_tensor_container(
                         args_bcast,
                         src_rank=engine.current_data_parallel_head(),
                         group=bcast_group,
+                        preserve_tensor_aliases=preserve_broadcast_aliases,
                     )
                     kwargs_bcast = tensor_container_to(kwargs, bcast_device)
                     kwargs_bcast = broadcast_tensor_container(
                         kwargs_bcast,
                         src_rank=engine.current_data_parallel_head(),
                         group=bcast_group,
+                        preserve_tensor_aliases=preserve_broadcast_aliases,
                     )
                     logger.debug("Broadcasting RPC payload done.")
 
@@ -626,7 +652,18 @@ def call_engine_method():
         is_init = is_train and engine.initialized
         if not is_train or not is_init or engine.is_data_parallel_head():
             state = get_state()
-            result = RTensor.remotize(result, node_addr=state.node_addr)
+            # These v1 rollout boundaries return the grouped
+            # trajectory. Preserve its shared image tensors as RTensor shards;
+            # unrelated engine results keep the existing behavior.
+            preserve_output_tensor_aliases = method_name in {
+                "wait_for_task",
+                "_wait_for_task_result",
+            }
+            result = RTensor.remotize(
+                result,
+                node_addr=state.node_addr,
+                preserve_tensor_aliases=preserve_output_tensor_aliases,
+            )
             serialized_result = serialize_value(result)
         else:
             # Non-DP-head: result is discarded by controller. Skip remotize

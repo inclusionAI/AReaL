@@ -91,8 +91,6 @@ class SGLangBridgeBackend:
         response: dict[str, Any],
     ) -> HttpGenerationResult:
         """Parse SGLang ``/generate`` JSON into :class:`HttpGenerationResult`."""
-        import pybase64
-
         meta_info = response["meta_info"]
         finish_reason = meta_info["finish_reason"]
         stop_reason: str = finish_reason["type"]
@@ -102,13 +100,14 @@ class SGLangBridgeBackend:
         routed_experts: np.ndarray | None = None
         raw_experts = meta_info.get("routed_experts", None)
         if raw_experts is not None:
-            num_sgl_token = (
-                meta_info["prompt_tokens"] + meta_info["completion_tokens"] - 1
+            from areal.engine.r3.preprocess import decode_sglang_routed_experts
+
+            routed_experts = decode_sglang_routed_experts(
+                raw_experts,
+                prompt_tokens=meta_info["prompt_tokens"],
+                completion_tokens=meta_info["completion_tokens"],
+                source="v2 SGLangBridge",
             )
-            routed_experts = np.frombuffer(
-                pybase64.b64decode(raw_experts.encode("utf-8")),
-                dtype=np.int32,
-            ).reshape(num_sgl_token, -1)
 
         if stop_reason == "abort" and stop_message.startswith("Abort before prefill"):
             return HttpGenerationResult(
@@ -127,11 +126,18 @@ class SGLangBridgeBackend:
         output_tokens = [x[1] for x in output_token_logprobs]
         output_logprobs = [x[0] for x in output_token_logprobs]
 
+        # Speculative-decoding acceptance metrics (present only when SGLang is
+        # launched with a speculative_algorithm; None otherwise).
+        spec_accept_rate = meta_info.get("spec_accept_rate")
+        spec_accept_length = meta_info.get("spec_accept_length")
+
         return HttpGenerationResult(
             output_tokens=output_tokens,
             output_logprobs=output_logprobs,
             stop_reason=stop_reason,
             routed_experts=routed_experts,
+            spec_accept_rate=spec_accept_rate,
+            spec_accept_length=spec_accept_length,
         )
 
     # -- pause / resume -----------------------------------------------------

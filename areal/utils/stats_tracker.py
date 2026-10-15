@@ -24,6 +24,7 @@ class ReduceType(Enum):
     MIN = auto()
     MAX = auto()
     SCALAR = auto()
+    WEIGHTED_AVG = auto()
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,7 @@ class _StatMetadata:
     reduce_type: ReduceType
     denominator: str | None
     has_reduce_group: bool
+    compact: bool = False
 
 
 MOE_AUX_LOSSES = {}
@@ -49,6 +51,7 @@ class DistributedStatsTracker:
         # e.g., to make CP-local SFT stats (loss/entropy/vocab_*) reduce across
         # DP + CP so the reported numbers are CP-invariant (#1242 follow-up).
         self.reduce_groups = {}  # key -> dist.ProcessGroup
+        self.compact_keys = set()
 
         self.stats = defaultdict(list)
 
@@ -156,7 +159,11 @@ class DistributedStatsTracker:
                     raise ValueError(f"`{key}` should be non-empty")
                 if reduce_type == ReduceType.SCALAR:
                     raise ValueError("Cannot use the scalar reduce type for a tensor")
+                if reduce_type == ReduceType.WEIGHTED_AVG:
+                    raise ValueError("Use weighted_mean() for weighted averages")
                 full_key = self._get_full_key(key)
+                if full_key in self.compact_keys:
+                    raise ValueError(f"`{full_key}` already uses compact stats")
 
                 denorm = self._get_full_key(denominator)
                 if denorm not in self.stats or not self.stats[denorm]:
@@ -169,6 +176,103 @@ class DistributedStatsTracker:
                     reduce_type = ReduceType.AVG_MIN_MAX
                 self._set_reduce_type(full_key, reduce_type)
                 self.stats[full_key].append(value.detach().clone())
+                if reduce_group is not None:
+                    self.reduce_groups[full_key] = reduce_group
+
+    def weighted_mean(
+        self,
+        key: str,
+        value: torch.Tensor,
+        weight: torch.Tensor,
+        *,
+        reduce_group: dist.ProcessGroup | None = None,
+    ) -> None:
+        """Record a scalar mean with its finite, nonnegative scalar weight.
+
+        Inputs must be scalar tensors on the same device. Fractional weights
+        are supported; zero-weight observations contribute nothing, even when
+        their value is nonfinite. Accumulation uses detached float32 tensors
+        without synchronizing the device. Export divides the globally summed
+        weighted values by the globally summed weights, omitting zero totals.
+        """
+        for name, tensor in (("value", value), ("weight", weight)):
+            if not isinstance(tensor, torch.Tensor) or tensor.ndim != 0:
+                raise ValueError(f"`{name}` must be a scalar tensor")
+            if tensor.is_complex():
+                raise ValueError(f"`{name}` must be real-valued")
+        if value.device != weight.device:
+            raise ValueError("`value` and `weight` must be on the same device")
+        value = value.detach().float()
+        weight = weight.detach().float()
+        pair = torch.stack((torch.where(weight > 0, value * weight, 0.0), weight))
+        with self.lock:
+            full_key = self._get_full_key(key)
+            if full_key in self.compact_keys:
+                raise ValueError(f"`{full_key}` already uses compact stats")
+            self._set_reduce_type(full_key, ReduceType.WEIGHTED_AVG)
+            self.stats[full_key].append(pair)
+            if reduce_group is not None:
+                self.reduce_groups[full_key] = reduce_group
+
+    def stat_compact(
+        self,
+        mask: torch.Tensor,
+        reduce_type: ReduceType,
+        *,
+        reduce_group=None,
+        **kwargs,
+    ):
+        """Retain only masked sufficient statistics for large diagnostic tensors.
+
+        Unlike ``stat``, this API does not store a copy of each input tensor.
+        The four per-call scalars are sum, count, minimum, and maximum; export
+        reduces them across ranks using the usual reduce group.
+        """
+        if mask.dtype != torch.bool or mask.numel() == 0:
+            raise ValueError("mask must be a nonempty bool tensor")
+        if reduce_type not in {
+            ReduceType.AVG_MIN_MAX,
+            ReduceType.AVG,
+            ReduceType.SUM,
+            ReduceType.MIN,
+            ReduceType.MAX,
+        }:
+            raise ValueError("stat_compact requires a tensor reduction type")
+        with self.lock:
+            count = mask.sum(dtype=torch.float64)
+            for key, value in kwargs.items():
+                if not isinstance(value, torch.Tensor) or value.shape != mask.shape:
+                    raise ValueError(f"`{key}` must match the mask shape")
+                if value.dtype not in (torch.float32, torch.float64):
+                    raise ValueError(f"`{key}` must be a float32 or float64 tensor")
+                full_key = self._get_full_key(key)
+                if full_key in self.stats and full_key not in self.compact_keys:
+                    raise ValueError(f"`{full_key}` already uses non-compact stats")
+                total = (
+                    torch.where(mask, value.detach(), 0.0).sum(dtype=torch.float64)
+                    if reduce_type
+                    in (
+                        ReduceType.AVG_MIN_MAX,
+                        ReduceType.AVG,
+                        ReduceType.SUM,
+                    )
+                    else count.new_zeros(())
+                )
+                minimum = (
+                    torch.where(mask, value.detach(), float("inf")).min().double()
+                    if reduce_type in (ReduceType.AVG_MIN_MAX, ReduceType.MIN)
+                    else count.new_full((), float("inf"))
+                )
+                maximum = (
+                    torch.where(mask, value.detach(), float("-inf")).max().double()
+                    if reduce_type in (ReduceType.AVG_MIN_MAX, ReduceType.MAX)
+                    else count.new_full((), float("-inf"))
+                )
+                self._set_reduce_type(full_key, reduce_type)
+                self.compact_keys.add(full_key)
+                self.stats[full_key].append(
+                    torch.stack((total, count, minimum, maximum))
+                )
                 if reduce_group is not None:
                     self.reduce_groups[full_key] = reduce_group
 
@@ -270,6 +374,7 @@ class DistributedStatsTracker:
                 reduce_type=self.reduce_types.get(key, ReduceType.SCALAR),
                 denominator=self.denominators.get(key),
                 has_reduce_group=key in self.reduce_groups,
+                compact=key in self.compact_keys,
             )
             for key in keys
         }
@@ -309,6 +414,7 @@ class DistributedStatsTracker:
                         self.reduce_types.pop(full_key)
                     if full_key in self.reduce_groups:
                         self.reduce_groups.pop(full_key)
+                    self.compact_keys.discard(full_key)
                     self.stats.pop(full_key)
                 return result
 
@@ -367,6 +473,7 @@ class DistributedStatsTracker:
                 self.denominators = {}
                 self.reduce_types = {}
                 self.reduce_groups = {}
+                self.compact_keys = set()
                 self.stats = defaultdict(list)
             results = {
                 k: v.cpu().item() if torch.is_tensor(v) else v
@@ -387,6 +494,11 @@ class DistributedStatsTracker:
             metadata.reduce_type if metadata is not None else ReduceType.SCALAR,
         )
 
+        if key in self.compact_keys or (metadata is not None and metadata.compact):
+            return self._aggregate_compact(
+                key, reduce_type, reduce_group, sync_metadata, key_sync_group
+            )
+
         result = {}
         if reduce_type == ReduceType.AVG_MIN_MAX:
             result["/".join([key, "avg"])] = self._avg_of(
@@ -400,6 +512,10 @@ class DistributedStatsTracker:
             )
         elif reduce_type == ReduceType.AVG:
             result[key] = self._avg_of(key, reduce_group, sync_metadata, key_sync_group)
+        elif reduce_type == ReduceType.WEIGHTED_AVG:
+            result[key] = self._weighted_avg_of(
+                key, reduce_group, sync_metadata, key_sync_group
+            )
         elif reduce_type == ReduceType.SUM:
             result[key] = self._sum_of(key, reduce_group, sync_metadata, key_sync_group)
         elif reduce_type == ReduceType.MIN:
@@ -431,6 +547,77 @@ class DistributedStatsTracker:
         for k in keys_to_pop:
             result.pop(k)
         return result
+
+    def _weighted_avg_of(
+        self,
+        key,
+        reduce_group,
+        sync_metadata: dict[str, _StatMetadata] | None = None,
+        key_sync_group=None,
+    ):
+        effective_group = self._effective_reduce_group(
+            key, reduce_group, sync_metadata, key_sync_group
+        )
+        values = self.stats.get(key, [])
+        totals = (
+            torch.stack(values).sum(dim=0)
+            if values
+            else self._placeholder_scalar(group=effective_group).new_zeros(2)
+        )
+        if effective_group is not None:
+            totals = self._all_reduce(totals, group=effective_group)
+        numerator, weight = totals.unbind()
+        if weight == 0:
+            return None
+        return numerator / weight
+
+    def _aggregate_compact(
+        self, key, reduce_type, reduce_group, sync_metadata, key_sync_group
+    ):
+        values = self.stats.get(key, [])
+        group = self._effective_reduce_group(
+            key, reduce_group, sync_metadata, key_sync_group
+        )
+        if values:
+            local = torch.stack(values)
+            total = local[:, 0].sum()
+            count = local[:, 1].sum()
+            minimum = local[:, 2].min()
+            maximum = local[:, 3].max()
+        else:
+            total = self._placeholder_scalar(group=group).double()
+            count = self._placeholder_scalar(group=group).double()
+            minimum = self._placeholder_scalar(fill=float("inf"), group=group).double()
+            maximum = self._placeholder_scalar(fill=float("-inf"), group=group).double()
+        if group is not None:
+            if reduce_type in (ReduceType.AVG_MIN_MAX, ReduceType.AVG):
+                both = self._all_reduce(torch.stack((total, count)), group=group)
+                total, count = both.unbind()
+            elif reduce_type == ReduceType.SUM:
+                total = self._all_reduce(total, group=group)
+            else:
+                count = self._all_reduce(count, group=group)
+            if reduce_type in (ReduceType.AVG_MIN_MAX, ReduceType.MIN):
+                minimum = self._all_reduce(minimum, group=group, op=dist.ReduceOp.MIN)
+            if reduce_type in (ReduceType.AVG_MIN_MAX, ReduceType.MAX):
+                maximum = self._all_reduce(maximum, group=group, op=dist.ReduceOp.MAX)
+        if reduce_type == ReduceType.SUM:
+            return {key: float(total)}
+        if count == 0:
+            return {}
+        if reduce_type == ReduceType.AVG_MIN_MAX:
+            return {
+                f"{key}/avg": float(total / count),
+                f"{key}/min": float(minimum),
+                f"{key}/max": float(maximum),
+            }
+        if reduce_type == ReduceType.AVG:
+            return {key: float(total / count)}
+        if reduce_type == ReduceType.MIN:
+            return {key: float(minimum)}
+        if reduce_type == ReduceType.MAX:
+            return {key: float(maximum)}
+        raise ValueError(f"Unknown compact reduce type: {reduce_type}")
 
     def _sum_of(
         self,
@@ -597,6 +784,8 @@ class DistributedStatsTracker:
 
 DEFAULT_TRACKER = DistributedStatsTracker()
 stat = DEFAULT_TRACKER.stat
+weighted_mean = DEFAULT_TRACKER.weighted_mean
+stat_compact = DEFAULT_TRACKER.stat_compact
 denominator = DEFAULT_TRACKER.denominator
 export = DEFAULT_TRACKER.export
 scope = DEFAULT_TRACKER.scope

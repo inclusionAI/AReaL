@@ -2,9 +2,12 @@
 
 from contextlib import nullcontext
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
+import torch
 
+from areal.api.cli_args import InferenceEngineConfig
 from areal.trainer import dpo_trainer, rl_trainer, rw_trainer, sft_trainer
 from areal.trainer.dpo_trainer import DPOTrainer
 from areal.trainer.rl_trainer import PPOTrainer
@@ -21,6 +24,10 @@ class _StopAfterFirstUpdate(Exception):
 class _FakeSaver:
     def maybe_wait_for_staging(self) -> None:
         pass
+
+
+class _FakeDataLoader(list):
+    sampler = None
 
 
 class _FakeLastStepInfo:
@@ -79,6 +86,8 @@ class _FailingUpdateActor:
 
 
 class _FailingPPOActor:
+    parallel_strategy = SimpleNamespace(dp_size=1)
+
     def __init__(self, events: list[tuple]):
         self.events = events
 
@@ -134,7 +143,7 @@ def _build_supervised_trainer(
     trainer.recover_info = (
         SimpleNamespace(last_step_info=_FakeLastStepInfo()) if recovered else None
     )
-    trainer.train_dataloader = [[{}], [{}]] if recovered else [[{}]]
+    trainer.train_dataloader = _FakeDataLoader([[{}], [{}]] if recovered else [[{}]])
     trainer.saver = _FakeSaver()
     trainer.actor = _FailingUpdateActor(update_method, events)
     trainer._load_bcast_from = lambda data_generator: next(data_generator)
@@ -150,16 +159,20 @@ def _build_ppo_trainer(events: list[tuple], *, recovered: bool = False):
     trainer.config = SimpleNamespace(
         total_train_epochs=1,
         total_train_steps=None,
-        rollout=SimpleNamespace(agent=None),
+        rollout=InferenceEngineConfig(agent=None, _version="v1"),
+        teacher=None,
         gconfig=SimpleNamespace(
             n_samples=1,
             reward_normalization=False,
+            reward_normalization_use_std=True,
             drop_incomplete_group=False,
         ),
         dynamic_bs=False,
         actor=SimpleNamespace(
             _version="v1",
             weight_update_mode="xccl",
+            min_usable_group_size=None,
+            resolve_min_usable_group_size=lambda _: 1,
             should_compute_prox_logp=lambda: False,
         ),
         memory_profiler=None,
@@ -173,6 +186,8 @@ def _build_ppo_trainer(events: list[tuple], *, recovered: bool = False):
     trainer.critic = None
     trainer.ref = None
     trainer.teacher = None
+    trainer.mopd_execution_plan = None
+    trainer.mopd_teacher_phase = None
     trainer._should_offload_rollout = False
     trainer._should_offload_actor = False
     trainer._requires_proxy_workflow = lambda _workflow: False
@@ -243,6 +258,200 @@ def test_ppo_trainer_orders_initial_eval_around_recovery(monkeypatch, recovered:
             "epoch_step": -1,
             "global_step": -1,
         }
+
+
+@pytest.mark.parametrize("role", ["ref", "critic", "teacher", None])
+@pytest.mark.parametrize(
+    ("version", "mode"), [("v1", "awex"), ("v1", "disk"), ("v2", "awex")]
+)
+def test_ppo_train_colocated_auxiliary_scoring_releases_rollout_first(
+    monkeypatch, role, version, mode
+):
+    """Auxiliary scoring must not overlap rollout memory or load the actor early."""
+    _disable_timing_contexts(monkeypatch, rl_trainer)
+    trainer = _build_ppo_trainer([])
+    trainer.config.actor._version = version
+    trainer.config.actor.weight_update_mode = mode
+    trainer.config.rollout._version = version
+    awex_colocate = version == "v1" and mode == "awex"
+    trainer._should_offload_rollout = not awex_colocate
+    trainer._should_offload_actor = not awex_colocate
+    trainer.rollout = Mock()
+    released = set()
+    memory_tags = {"kv_cache", "weights", "cuda_graph"}
+
+    def release_rollout(*, tags=None):
+        trainer.rollout.pause.assert_called_once()
+        pause = (
+            trainer.rollout.pause_generation_sync
+            if awex_colocate
+            else trainer.rollout.pause_generation
+        )
+        pause.assert_called_once()
+        released.update(memory_tags if tags is None else tags)
+
+    trainer.rollout.offload.side_effect = release_rollout
+    trainer.actor.onload = Mock()
+    auxiliary = Mock(parallel_strategy=SimpleNamespace(dp_size=1))
+
+    def check_auxiliary_memory():
+        assert released == memory_tags, "rollout memory is still resident"
+        trainer.actor.onload.assert_not_called()
+
+    def score(batch):
+        check_auxiliary_memory()
+        return [object() for _ in batch]
+
+    auxiliary.onload.side_effect = check_auxiliary_memory
+    auxiliary.compute_logp.side_effect = score
+    auxiliary.compute_values.side_effect = score
+    if role is not None:
+        setattr(trainer, role, auxiliary)
+        setattr(trainer, f"_should_offload_{role}", True)
+    if role == "teacher":
+        trainer.config.teacher = SimpleNamespace(
+            engine_type="train", rl_loss_weight=1.0, distill_loss_weight=1.0
+        )
+
+    def check_actor_memory():
+        assert released == memory_tags
+        if role is not None:
+            scorer = (
+                auxiliary.compute_values if role == "critic" else auxiliary.compute_logp
+            )
+            scorer.assert_called_once()
+            if role != "critic":
+                auxiliary.offload.assert_called_once()
+
+    trainer.actor.onload.side_effect = check_actor_memory
+
+    with pytest.raises(_StopAfterFirstUpdate):
+        trainer.train(workflow=object())
+
+    trainer.actor.onload.assert_called_once()
+    assert trainer.rollout.offload.call_count == (3 if awex_colocate else 1)
+
+
+@pytest.mark.parametrize("role", ["ref", "teacher", "critic"])
+def test_ppo_train_auxiliary_models_use_live_routes_and_preserve_actor_batch(
+    monkeypatch, role
+):
+    """Auxiliary scoring/updates exclude actor routing without cloning tensors."""
+    _disable_timing_contexts(monkeypatch, rl_trainer)
+    trainer = _build_ppo_trainer([])
+    routed = torch.ones(1, 3, 2, 2, dtype=torch.int32)
+    valid = torch.tensor([True])
+    tokens = torch.ones(1, 3, dtype=torch.long)
+    rollout = [
+        {"input_ids": tokens, "routed_experts": routed, "r3_routing_valid": valid}
+    ]
+    trainer.actor.prepare_batch = lambda *args, **kwargs: rollout
+    trainer.actor.compute_advantages = lambda batch: batch
+    trainer.config.actor.should_compute_prox_logp = lambda: True
+    actor_calls = []
+
+    def actor_batch(batch):
+        assert batch[0]["routed_experts"] is routed
+        assert batch[0]["r3_routing_valid"] is valid
+        assert batch[0]["input_ids"] is tokens
+
+    def actor_score(batch):
+        actor_batch(batch)
+        actor_calls.append("score")
+        return [torch.zeros(1, 3)]
+
+    def actor_update(batch):
+        actor_batch(batch)
+        actor_calls.append("update")
+        if role != "critic":
+            raise _StopAfterFirstUpdate
+
+    trainer.actor.compute_logp = actor_score
+    trainer.actor.ppo_update = actor_update
+    trainer.actor.step_lr_scheduler = Mock()
+    auxiliary = Mock(parallel_strategy=SimpleNamespace(dp_size=1))
+    setattr(trainer, role, auxiliary)
+    setattr(trainer, f"_should_offload_{role}", False)
+
+    def auxiliary_batch(batch):
+        assert batch[0] is not rollout[0]
+        assert "routed_experts" not in batch[0]
+        assert "r3_routing_valid" not in batch[0]
+        assert batch[0]["input_ids"] is tokens
+
+    def score(batch):
+        auxiliary_batch(batch)
+        # Mutating the view must not affect the actor's trajectory dictionary.
+        batch[0].pop("input_ids")
+        return [torch.zeros(1, 3)]
+
+    auxiliary.compute_logp.side_effect = score
+    auxiliary.compute_values.side_effect = score
+    if role == "teacher":
+        trainer.config.teacher = SimpleNamespace(
+            engine_type="train", rl_loss_weight=1.0, distill_loss_weight=1.0
+        )
+    if role == "critic":
+
+        def critic_update(batch):
+            auxiliary_batch(batch)
+            raise _StopAfterFirstUpdate
+
+        auxiliary.ppo_update.side_effect = critic_update
+
+    with pytest.raises(_StopAfterFirstUpdate):
+        trainer.train(workflow=object())
+
+    assert actor_calls == ["score", "update"]
+    actor_batch(rollout)
+    if role == "critic":
+        auxiliary.compute_values.assert_called_once()
+        auxiliary.ppo_update.assert_called_once()
+    else:
+        auxiliary.compute_logp.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("requires_rl", "explicit_minimum", "expected"),
+    [(False, None, 1), (False, 3, 3), (True, None, 2)],
+)
+@pytest.mark.parametrize("version", ["v1", "v2"])
+def test_rollout_minimum_uses_only_active_rl_estimator(
+    monkeypatch, requires_rl, explicit_minimum, expected, version
+):
+    from areal.api.cli_args import NormConfig, PPOActorConfig
+
+    _disable_timing_contexts(monkeypatch, rl_trainer)
+    trainer = _build_ppo_trainer([])
+    trainer.config.actor = PPOActorConfig(
+        reward_norm=NormConfig(mean_level="group", std_level="group", group_size=4),
+        min_usable_group_size=explicit_minimum,
+    )
+    trainer.config.gconfig.n_samples = 4
+    trainer.config.rollout._version = version
+    trainer.mopd_execution_plan = SimpleNamespace(requires_rl=requires_rl)
+
+    def prepare_batch(*args, **kwargs):
+        assert kwargs["min_usable_group_size"] == expected
+        assert ("reward_normalization_use_std" in kwargs) == (version == "v1")
+        raise _StopAfterFirstUpdate
+
+    trainer.actor.prepare_batch = prepare_batch
+    with pytest.raises(_StopAfterFirstUpdate):
+        trainer.train(workflow=object())
+
+
+def test_v2_mean_only_rollout_normalization_fails_before_sampling():
+    trainer = _build_ppo_trainer([])
+    trainer.config.rollout._version = "v2"
+    trainer.config.gconfig.reward_normalization = True
+    trainer.config.gconfig.reward_normalization_use_std = False
+    trainer.actor.prepare_batch = Mock()
+
+    with pytest.raises(ValueError, match="requires a v1 rollout backend"):
+        trainer.train(workflow=object())
+
+    trainer.actor.prepare_batch.assert_not_called()
 
 
 def test_ppo_initial_eval_offloads_rollout_when_evaluation_fails(monkeypatch):

@@ -11,6 +11,7 @@ from megatron.core.packed_seq_params import PackedSeqParams
 
 from areal.engine.core.model import SequencePackingMode
 from areal.utils.data import (
+    MicroBatchItem,
     MicroBatchList,
     align_mb_list_sequences,
     is_multi_modal_key,
@@ -134,8 +135,11 @@ def split_packed_seqs_for_context_parallel(
     tensor: torch.Tensor,
     cu_seqlens: torch.Tensor,
 ) -> torch.Tensor:
-    """Split a 1D packed tensor using the same interleaved pattern as
-    preprocess_packed_seqs_context_parallel."""
+    """Split a packed tensor using the same interleaved pattern as CP preprocess.
+
+    The first dimension is the packed token dimension. Any trailing dimensions are
+    preserved, e.g. routing tensors shaped ``[tokens, layers, topk]``.
+    """
     cp_size = mpu.get_context_parallel_world_size()
     cp_rank = mpu.get_context_parallel_rank()
     if cp_size <= 1:
@@ -145,7 +149,8 @@ def split_packed_seqs_for_context_parallel(
     batch_size = input_lens.shape[0]
     output_len = input_lens.sum().item() // cp_size
 
-    splitted = torch.zeros(output_len, dtype=tensor.dtype, device=tensor.device)
+    output_shape = (output_len, *tensor.shape[1:])
+    splitted = torch.zeros(output_shape, dtype=tensor.dtype, device=tensor.device)
     for i in range(batch_size):
         seqlen = input_lens[i] // cp_size
         half_seqlen = seqlen // 2
@@ -303,7 +308,12 @@ def postprocess_packed_seqs_context_parallel(
     return output_new
 
 
-_VLM_FORWARD_KEYS = ("pixel_values", "image_grid_thw", "video_grid_thw")
+_VLM_FORWARD_KEYS = (
+    "pixel_values",
+    "pixel_values_videos",
+    "image_grid_thw",
+    "video_grid_thw",
+)
 
 
 def _is_multi_modal_payload_key(key: str) -> bool:
@@ -319,7 +329,7 @@ def _drop_multi_modal_payload(data: dict[str, Any]) -> None:
 def extract_vision_from_multi_modal(
     mb: dict[str, Any], padded_mb: dict[str, Any]
 ) -> None:
-    """Extract pixel_values / image_grid_thw / video_grid_thw from multi_modal_input.
+    """Extract image/video pixels and grids from multi_modal_input.
 
     Mirrors FSDPEngine's `_prepare_multimodal_forward_inputs` (#1272): vision
     tensors are placed only on ``padded_mb`` (forward side); ``mb`` is the
@@ -340,6 +350,14 @@ def extract_vision_from_multi_modal(
                 padded_mb[key] = torch.cat(items, dim=0)
 
     _drop_multi_modal_payload(mb)
+
+
+def prepare_vision_microbatch(source: MicroBatchItem) -> MicroBatchItem:
+    """Assemble current vision inputs without mutating reusable CPU sources."""
+    orig_mb = dict(source.orig_mb)
+    padded_mb = dict(source.padded_mb)
+    extract_vision_from_multi_modal(orig_mb, padded_mb)
+    return source._replace(orig_mb=orig_mb, padded_mb=padded_mb)
 
 
 def _reconstruct_padded_2d(
@@ -382,6 +400,108 @@ def _build_thd_packed_seq_params(
     )
 
 
+def _prepare_mtp_loss_mask(
+    loss_mask: torch.Tensor,
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor | None,
+    *,
+    cu_seqlens: torch.Tensor | None,
+    packed_num_tokens: int,
+    uses_padded_form: bool,
+    uses_model_packed_seq: bool,
+) -> torch.Tensor:
+    """Align MTP supervision with the model's execution layout.
+
+    MCore 0.19 derives MTP labels from the layout-aligned ``input_ids`` and
+    accepts ``loss_mask`` directly. AReaL therefore only needs to apply the
+    same padding or context-parallel partition to the mask.
+    """
+    if cu_seqlens is None:
+        if loss_mask.numel() != input_ids.numel():
+            raise ValueError(
+                "MTP loss mask must contain one value per input token, got "
+                f"{loss_mask.numel()} values for {input_ids.numel()} tokens."
+            )
+        return loss_mask.reshape(input_ids.shape).contiguous()
+
+    if loss_mask.ndim != 1:
+        raise ValueError(
+            "MTP loss mask must enter packed sequence-layout conversion as a "
+            f"1-D tensor, got {loss_mask.shape=}."
+        )
+
+    if loss_mask.numel() != packed_num_tokens:
+        raise ValueError(
+            "MTP loss mask must match the packed sequence length, got "
+            f"{loss_mask.numel()} values for {packed_num_tokens} tokens."
+        )
+
+    if uses_padded_form and not uses_model_packed_seq:
+        if attention_mask is None:
+            raise ValueError("Padded MTP training requires a 2-D validity mask.")
+        padded_loss_mask = torch.zeros(
+            input_ids.shape,
+            dtype=loss_mask.dtype,
+            device=loss_mask.device,
+        )
+        padded_loss_mask[attention_mask] = loss_mask
+        return padded_loss_mask
+
+    # Packed context parallelism assigns each rank two zigzag chunks per
+    # sequence. Apply the exact same mapping used for input_ids so every local
+    # hidden state keeps its token-aligned MTP target and validity mask. MCore's
+    # roll_tensor subsequently uses cp_group and packed_seq_params to exchange
+    # future-token boundaries across CP ranks.
+    loss_mask = split_packed_seqs_for_context_parallel(loss_mask, cu_seqlens)
+    return loss_mask.unsqueeze(0).contiguous()
+
+
+def _prepare_wrapper_packed_positions(
+    position_ids: torch.Tensor | None,
+    input_ids: torch.Tensor,
+    cu_seqlens: torch.Tensor,
+) -> torch.Tensor:
+    """Match text or three-axis mRoPE positions to the wrapper's CP partition."""
+    if (
+        position_ids is not None
+        and position_ids.ndim == 2
+        and position_ids.shape == (input_ids.numel(), 3)
+    ):
+        position_ids = position_ids.to(device=input_ids.device, dtype=torch.long)
+        return (
+            torch.stack(
+                [
+                    split_packed_seqs_for_context_parallel(axis, cu_seqlens)
+                    for axis in position_ids.unbind(-1)
+                ]
+            )
+            .unsqueeze(1)
+            .contiguous()
+        )
+    if position_ids is None:
+        lengths = cu_seqlens[1:] - cu_seqlens[:-1]
+        starts = torch.repeat_interleave(
+            cu_seqlens[:-1], lengths, output_size=input_ids.numel()
+        )
+        position_ids = (
+            torch.arange(input_ids.numel(), device=input_ids.device, dtype=torch.long)
+            - starts
+        )
+    elif position_ids.ndim == 2 and position_ids.shape[0] == 1:
+        position_ids = position_ids.squeeze(0)
+    if position_ids.ndim != 1 or position_ids.numel() != input_ids.numel():
+        raise ValueError(
+            "Wrapper-packed text position_ids must contain one position per "
+            "full packed token, before context parallel partitioning."
+        )
+    position_ids = position_ids.to(device=input_ids.device, dtype=torch.long)
+    return (
+        split_packed_seqs_for_context_parallel(position_ids, cu_seqlens)
+        .unsqueeze(0)
+        .contiguous()
+    )
+
+
 def packed_context_parallel_forward(
     model: torch.nn.Module,
     input_: dict[str, Any],
@@ -391,8 +511,15 @@ def packed_context_parallel_forward(
     use_model_packed_seq: bool = False,
     fp32_output: bool | None = None,
     return_hidden_states: bool = False,
+    use_wrapper_packed_seq: bool = False,
+    language_model_only: bool = False,
 ):
+    if use_model_packed_seq and use_wrapper_packed_seq:
+        raise ValueError(
+            "Model-owned and wrapper-owned packing are mutually exclusive."
+        )
     input_ids = input_["input_ids"]
+    packed_num_tokens = input_ids.numel()
     position_ids = input_.get("position_ids", None)
     cu_seqlens = input_.get("cu_seqlens", None)
     # `attention_mask`: dense torch.Tensor (flex attention with Megatron) or None.
@@ -406,7 +533,9 @@ def packed_context_parallel_forward(
     # the vision kwargs and the dense-mask exception below — never the
     # padded-vs-packed routing.
     has_vision_inputs = is_vision_model and any(
-        key in input_ for key in _VLM_FORWARD_KEYS
+        input_.get(key) is not None
+        and (not torch.is_tensor(input_[key]) or input_[key].numel() > 0)
+        for key in _VLM_FORWARD_KEYS
     )
     # Padded-vs-packed routing is keyed on the MODEL type:
     # - VLM models cannot consume the wrapper-packed [1, total_len] layout
@@ -417,6 +546,25 @@ def packed_context_parallel_forward(
     # - Architectures whose attention/SSM kernels reject packed sequences
     #   (use_padded_seq, e.g. Qwen3.5 GDN) must run on [B, S] padded input.
     needs_padded_form = is_vision_model or use_padded_seq
+    if has_vision_inputs and language_model_only:
+        raise ValueError(
+            "language_model_only=True cannot consume image or video inputs."
+        )
+    if (
+        has_vision_inputs
+        and use_wrapper_packed_seq
+        and (
+            position_ids is None
+            or position_ids.ndim != 2
+            or position_ids.shape != (input_ids.numel(), 3)
+        )
+    ):
+        raise ValueError(
+            "Wrapper-packed multimodal inputs require model-specific mRoPE "
+            "position_ids with shape [T, 3], computed before packing."
+        )
+    if use_wrapper_packed_seq and cu_seqlens is None:
+        raise ValueError("Wrapper-packed forward requires cu_seqlens.")
 
     # Track shape metadata so the output can be repacked back to packed
     # [total_len, ...] form on the last PP stage.
@@ -429,19 +577,25 @@ def packed_context_parallel_forward(
                     "Attention mask and tree attention are not supported with "
                     "the model-packed THD forward."
                 )
-            if mpu.get_context_parallel_world_size() > 1:
-                raise NotImplementedError(
-                    "The model-packed THD forward does not support CP > 1 yet."
-                )
+            # Keep the full BSHD inputs on every CP rank. The bridge first fuses
+            # vision embeddings and computes multimodal RoPE, then partitions
+            # the resulting THD sequence with its model-owned CP layout.
             input_ids, attention_mask, _, max_seqlen = _reconstruct_padded_2d(
                 input_ids, cu_seqlens, input_.get("max_seqlen")
             )
             packed_seq_params = _build_thd_packed_seq_params(cu_seqlens, max_seqlen)
             position_ids = None
-        elif not needs_padded_form:
+        elif use_wrapper_packed_seq or not needs_padded_form:
             if attention_mask is not None or tree_triton_data is not None:
                 raise ValueError(
                     "Attention mask should be None when using packed sequences."
+                )
+            if use_wrapper_packed_seq:
+                # ModelScope reconstructs these local ids for vision embedding,
+                # then partitions embeddings once. Local positions prevent its
+                # legacy full-id/local-position path from splitting ids again.
+                position_ids = _prepare_wrapper_packed_positions(
+                    position_ids, input_ids, cu_seqlens
                 )
             input_ids, packed_seq_params = preprocess_packed_seqs_context_parallel(
                 input_ids, cu_seqlens
@@ -465,20 +619,35 @@ def packed_context_parallel_forward(
     dense_mask_text_forward = use_padded_seq and not has_vision_inputs
     if use_model_packed_seq:
         final_attention_mask = attention_mask
-    elif is_vision_model and not dense_mask_text_forward:
+    elif is_vision_model and not dense_mask_text_forward and not use_wrapper_packed_seq:
         final_attention_mask = None
     else:
         final_attention_mask = (
             tree_triton_data if tree_triton_data is not None else attention_mask
         )
 
-    # VLM: pass vision inputs through to model forward. The VLM model computes
-    # mRoPE position_ids internally, so position_ids remains None for VLM.
+    # Models with their own mRoPE contract receive the original vision tensors.
     vlm_kwargs: dict[str, Any] = {}
     if has_vision_inputs:
         for key in _VLM_FORWARD_KEYS:
             if key in input_:
                 vlm_kwargs[key] = input_[key]
+
+    if is_vision_model and input_.get("mm_token_type_ids") is not None:
+        token_types = input_["mm_token_type_ids"]
+        if token_types.shape != input_["input_ids"].shape:
+            raise ValueError("mm_token_type_ids must match input_ids before packing.")
+        if cu_seqlens is not None:
+            if use_wrapper_packed_seq:
+                # Bridge reconstructs full ids before vision embedding, then
+                # partitions embeddings for CP. Its kwargs are not gathered, so
+                # modality types must stay in that full embedding-domain layout.
+                token_types = token_types.unsqueeze(0)
+            elif needs_padded_form or use_model_packed_seq:
+                token_types, _, _, _ = _reconstruct_padded_2d(
+                    token_types, cu_seqlens, input_.get("max_seqlen")
+                )
+        vlm_kwargs["mm_token_type_ids"] = token_types.to(dtype=torch.long)
 
     # For BSHD text-only, drop the packed-form position_ids (a 1D tensor of
     # length total_len) — they don't match the 2D [B, S] input. Let mcore
@@ -487,12 +656,30 @@ def packed_context_parallel_forward(
     if dense_mask_text_forward:
         position_ids = None
 
+    # MTP training: convert the supervision mask to the exact layout used by
+    # this forward. MCore 0.19 derives targets from input_ids and performs the
+    # boundary-safe rolls internally.
+    extra_forward_kwargs: dict[str, Any] = {}
+    mtp_loss_mask = input_.get("mtp_loss_mask", None)
+    if mtp_loss_mask is not None:
+        extra_forward_kwargs["loss_mask"] = _prepare_mtp_loss_mask(
+            mtp_loss_mask,
+            input_ids,
+            attention_mask,
+            cu_seqlens=cu_seqlens,
+            packed_num_tokens=packed_num_tokens,
+            uses_padded_form=needs_padded_form
+            and not (use_model_packed_seq or use_wrapper_packed_seq),
+            uses_model_packed_seq=use_model_packed_seq,
+        )
+
     try:
         model_kwargs = {
             "input_ids": input_ids,
             "attention_mask": final_attention_mask,
             "position_ids": position_ids,
             "packed_seq_params": packed_seq_params,
+            **extra_forward_kwargs,
             **vlm_kwargs,
         }
         if fp32_output is not None:

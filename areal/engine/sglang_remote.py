@@ -8,8 +8,6 @@ from collections.abc import Callable, Mapping
 from concurrent.futures import Future
 from typing import Any
 
-import numpy as np
-import pybase64
 import torch
 from torchdata.stateful_dataloader import StatefulDataLoader
 
@@ -31,9 +29,11 @@ from areal.api.io_struct import (
     WeightUpdateRequests,
     get_versioned_lora_name,
 )
+from areal.engine.r3.preprocess import decode_sglang_routed_experts
 from areal.infra import RemoteInfEngine, RolloutController, WorkflowExecutor
 from areal.infra.platforms import current_platform
 from areal.infra.utils.launcher import TRITON_CACHE_PATH
+from areal.infra.workflow_executor import WorkflowTaskResult
 from areal.utils import perf_tracer, stats_tracker
 from areal.utils.logging import getLogger
 from areal.utils.network import format_host_for_url
@@ -41,8 +41,41 @@ from areal.utils.network import format_host_for_url
 logger = getLogger("SGLangRemote")
 
 
+def _compact_image_tokens(req: ModelRequest) -> list[int]:
+    """Use one placeholder per image on the wire, preserving training token IDs.
+
+    HF processors expand an image placeholder into patch tokens. SGLang expands
+    placeholders again while processing image_data; sending expanded tokens can
+    force it to decode and retokenize the entire prompt, changing generated token
+    IDs and invalidating the context budget. Only compact when image-token runs
+    match the supplied images, leaving unknown processor formats unchanged.
+    """
+    image_token_id = getattr(req.processor, "image_token_id", None)
+    if not req.image_data or not isinstance(image_token_id, int):
+        return req.input_ids.copy()
+
+    compact_ids: list[int] = []
+    image_count = 0
+    previous_is_image = False
+    for token in req.input_ids:
+        is_image = token == image_token_id
+        if is_image and previous_is_image:
+            continue
+        if is_image:
+            image_count += 1
+        compact_ids.append(token)
+        previous_is_image = is_image
+
+    if image_count != len(req.image_data):
+        return req.input_ids.copy()
+    return compact_ids
+
+
 class SGLangBackend:
     """SGLang-specific backend implementation for remote inference."""
+
+    def __init__(self) -> None:
+        self._readiness_endpoint = "/health"
 
     @staticmethod
     def build_server_env(env: Mapping[str, str]) -> dict[str, str]:
@@ -80,7 +113,7 @@ class SGLangBackend:
             sample_params["sampling_seed"] = gconfig.seed
 
         payload = {
-            "input_ids": req.input_ids.copy(),
+            "input_ids": _compact_image_tokens(req),
             "image_data": req.image_data,  # ImageObject or str
             "sampling_params": sample_params,
             "return_logprob": True,
@@ -113,13 +146,17 @@ class SGLangBackend:
         # Extract routed_experts information if available
         routed_experts = meta_info.get("routed_experts", None)
         if routed_experts is not None:
-            num_sgl_token = (
-                meta_info["prompt_tokens"] + meta_info["completion_tokens"] - 1
+            routed_experts = decode_sglang_routed_experts(
+                routed_experts,
+                prompt_tokens=meta_info["prompt_tokens"],
+                completion_tokens=meta_info["completion_tokens"],
+                source="v1 SGLangBackend",
             )
-            # Extract expert_id and reshape to (num_sgl_token, num_layers*expert_top_k)
-            routed_experts = np.frombuffer(
-                pybase64.b64decode(routed_experts.encode("utf-8")), dtype=np.int32
-            ).reshape(num_sgl_token, -1)
+
+        # Speculative-decoding acceptance metrics (present only when SGLang is
+        # launched with a speculative_algorithm; None otherwise).
+        spec_accept_rate = meta_info.get("spec_accept_rate")
+        spec_accept_length = meta_info.get("spec_accept_length")
 
         if stop_reason == "abort" and stop_message.startswith("Abort before prefill"):
             return HttpGenerationResult(
@@ -127,6 +164,8 @@ class SGLangBackend:
                 output_logprobs=[],
                 stop_reason=stop_reason,
                 routed_experts=routed_experts,
+                spec_accept_rate=spec_accept_rate,
+                spec_accept_length=spec_accept_length,
             )
 
         output_tokens = [x[1] for x in meta_info["output_token_logprobs"]]
@@ -137,6 +176,8 @@ class SGLangBackend:
             output_logprobs=output_logprobs,
             stop_reason=stop_reason,
             routed_experts=routed_experts,
+            spec_accept_rate=spec_accept_rate,
+            spec_accept_length=spec_accept_length,
         )
 
     def build_score_request(
@@ -276,6 +317,16 @@ class SGLangBackend:
         assert meta.gen_allocation is not None
         gen_parallel = meta.gen_allocation.parallel
         group_name = meta.nccl_group_name
+        theta_native = (
+            os.environ.get("AREAL_SGLANG_FORK", "").strip().lower() == "theta"
+        )
+        if theta_native and gen_parallel.pp_size != 1:
+            # Theta's native update group identifies workers by TP rank only;
+            # it has no pp_rank request field or per-PP-stage dispatch.
+            raise ValueError(
+                "Theta SGLang native NCCL weight updates require rollout pp_size=1. "
+                "Training pipeline parallelism can still be used."
+            )
 
         # Determine if training side uses per-PP-rank groups.
         # Per-PP-rank groups are identified by group names ending with _{digit}
@@ -334,6 +385,10 @@ class SGLangBackend:
                 "group_name": group_name,
             }
 
+        if theta_native:
+            # Native Theta validates this field as an integer with msgspec.
+            payload["master_port"] = int(meta.nccl_master_port)
+
         return HttpRequest(endpoint="/init_weights_update_group", payload=payload)
 
     def get_pause_request(self, mode: str | None = None) -> HttpRequest:
@@ -372,8 +427,8 @@ class SGLangBackend:
         return HttpRequest(endpoint="/abort_request", payload={"abort_all": True})
 
     def get_health_check_request(self) -> HttpRequest:
-        """Get SGLang health check request."""
-        return HttpRequest(endpoint="/health", payload={}, method="GET")
+        """Get SGLang readiness check request."""
+        return HttpRequest(endpoint=self._readiness_endpoint, payload={}, method="GET")
 
     def get_offload_request(self, tags: list[str] | None = None) -> HttpRequest:
         """Get SGLang offload request."""
@@ -386,7 +441,7 @@ class SGLangBackend:
         Parameters:
         ----------
         tags: list[str], optional
-            Available tags for multi-stage resume: weights, kv_cache
+            Available tags for multi-stage resume: weights, kv_cache, cuda_graph
         """
         payload = {"tags": tags} if tags is not None else {}
         return HttpRequest(endpoint="/resume_memory_occupation", payload=payload)
@@ -402,8 +457,34 @@ class SGLangBackend:
                 "input IDs together with image data may be processed again by the "
                 "server. Set skip_tokenizer_init=True for VLM rollout recipes."
             )
-        awex_meta_addr = server_args.pop("awex_meta_server_addr", None)
+        awex_meta_addr = server_args.pop(
+            "awex_meta_server_addr", None
+        ) or os.environ.get("AWEX_META_SERVER_ADDR")
         awex_colocate = server_args.pop("awex_colocate_mode", False)
+        theta_native = os.environ.get(
+            "AREAL_SGLANG_FORK", ""
+        ).strip().lower() == "theta" and not (awex_colocate or awex_meta_addr)
+        if theta_native:
+            if server_args.get("pp_size", 1) != 1:
+                raise ValueError(
+                    "Theta SGLang native NCCL weight updates require rollout pp_size=1."
+                )
+            if server_args.get("dp_size", 1) != 1 and not server_args.get(
+                "enable_dp_attention", False
+            ):
+                raise ValueError(
+                    "Theta SGLang native NCCL weight updates require server dp_size=1 "
+                    "unless enable_dp_attention=True. Use separate rollout replicas "
+                    "for data parallelism."
+                )
+            if server_args.get("speculative_algorithm"):
+                raise ValueError(
+                    "Theta SGLang native NCCL weight updates do not update the draft "
+                    "model. Disable speculative decoding for this rollout path."
+                )
+        self._readiness_endpoint = (
+            "/model_info" if awex_colocate or awex_meta_addr else "/health"
+        )
         # Colocate placement: derive base_gpu_id from SLURM_LOCALID so two SGLang
         # servers sharing a node never claim the same GPU range. The controller
         # cannot do this reliably because its global rank -> node-slot mapping is
@@ -428,9 +509,40 @@ class SGLangBackend:
                 )
         cmd = SGLangConfig.build_cmd_from_args(server_args)
         _env = self.build_server_env(os.environ)
+        _env.setdefault("PYTHONFAULTHANDLER", "1")
 
-        if not awex_meta_addr:
-            awex_meta_addr = os.environ.get("AWEX_META_SERVER_ADDR")
+        awex_graph_memory_saver = bool(
+            (awex_colocate or awex_meta_addr)
+            and server_args.get("enable_memory_saver", False)
+        )
+        if awex_graph_memory_saver:
+            # SGLang 0.5.10 gates CUDA-graph region registration separately
+            # from --enable-memory-saver. This must be set before graph capture.
+            _env.setdefault("SGLANG_MEMORY_SAVER_CUDA_GRAPH", "1")
+
+        drop_ld_preload_default = "1" if (awex_colocate or awex_meta_addr) else "0"
+        if _env.get(
+            "AREAL_SGLANG_DROP_LD_PRELOAD", drop_ld_preload_default
+        ).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "y",
+            "on",
+        }:
+            dropped = _env.pop("LD_PRELOAD", "")
+            dropped_tms = {
+                key: _env.pop(key)
+                for key in ("TMS_INIT_ENABLE", "TMS_INIT_ENABLE_CPU_BACKUP")
+                if key in _env
+            }
+            logger.info(
+                "Dropping training TMS environment for SGLang child: "
+                "LD_PRELOAD=%s, TMS=%s",
+                dropped,
+                dropped_tms,
+            )
+
         if awex_colocate or awex_meta_addr:
             sglang_entrypoints = (
                 "sglang.launch_server",
@@ -443,9 +555,22 @@ class SGLangBackend:
             if awex_meta_addr:
                 _env["AWEX_META_SERVER_ADDR"] = awex_meta_addr
             logger.info("AWEX mode: using awex_sglang_plugin entry, cmd=%s", cmd[:4])
+        elif theta_native:
+            # The pinned Theta fork exposes the native distributed-update API.
+            # AReaL's v2 scheduler wrapper targets a different SGLang API and
+            # must not be imported for this opt-in, non-AWEX rollout path.
+            cmd = [
+                "sglang.launch_server"
+                if c == "areal.v2.inference_service.sglang.launch_server"
+                else c
+                for c in cmd
+            ]
+            logger.info("Theta mode: using native SGLang entry, cmd=%s", cmd[:4])
+
+        from areal.engine.sglang_model_patches import wrap_server_command
 
         return subprocess.Popen(
-            cmd,
+            wrap_server_command(cmd),
             env=_env,
             stdout=sys.stdout,
             stderr=sys.stdout,
@@ -580,6 +705,8 @@ class RemoteSGLangEngine(InferenceEngine):
         proxy_addr: str | None = None,
         reward_normalization: bool = False,
         drop_incomplete_group: bool = False,
+        min_usable_group_size: int = 1,
+        reward_normalization_use_std: bool = True,
     ) -> int:
         """Submit a request to the inference engine."""
         return self._engine.submit(
@@ -588,11 +715,13 @@ class RemoteSGLangEngine(InferenceEngine):
             workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
             group_size=group_size,
+            min_usable_group_size=min_usable_group_size,
             task_id=task_id,
             callback_addr=callback_addr,
             is_eval=is_eval,
             proxy_addr=proxy_addr,
             reward_normalization=reward_normalization,
+            reward_normalization_use_std=reward_normalization_use_std,
             drop_incomplete_group=drop_incomplete_group,
         )
 
@@ -608,6 +737,11 @@ class RemoteSGLangEngine(InferenceEngine):
         """Wait for a specific task to complete by task_id."""
         return self._engine.wait_for_task(task_id, timeout, raise_timeout)
 
+    def _wait_for_task_result(
+        self, task_id: int, timeout: float | None = None, raise_timeout: bool = True
+    ) -> WorkflowTaskResult | None:
+        return self._engine._wait_for_task_result(task_id, timeout, raise_timeout)
+
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
@@ -616,6 +750,8 @@ class RemoteSGLangEngine(InferenceEngine):
         group_size: int = 1,
         reward_normalization: bool = False,
         drop_incomplete_group: bool = False,
+        min_usable_group_size: int = 1,
+        reward_normalization_use_std: bool = True,
     ) -> dict[str, Any]:
         """Submit a batch of requests and wait for results.
 
@@ -627,7 +763,9 @@ class RemoteSGLangEngine(InferenceEngine):
             workflow=workflow,
             workflow_kwargs=workflow_kwargs,
             group_size=group_size,
+            min_usable_group_size=min_usable_group_size,
             reward_normalization=reward_normalization,
+            reward_normalization_use_std=reward_normalization_use_std,
             drop_incomplete_group=drop_incomplete_group,
         )
 
@@ -641,6 +779,8 @@ class RemoteSGLangEngine(InferenceEngine):
         dynamic_bs: bool = False,
         reward_normalization: bool = False,
         drop_incomplete_group: bool = False,
+        min_usable_group_size: int = 1,
+        reward_normalization_use_std: bool = True,
     ):
         """Asynchronously submit and wait until a full batch is ready."""
         return self._engine.prepare_batch(
@@ -649,8 +789,10 @@ class RemoteSGLangEngine(InferenceEngine):
             workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
             group_size=group_size,
+            min_usable_group_size=min_usable_group_size,
             dynamic_bs=dynamic_bs,
             reward_normalization=reward_normalization,
+            reward_normalization_use_std=reward_normalization_use_std,
             drop_incomplete_group=drop_incomplete_group,
         )
 

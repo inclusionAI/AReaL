@@ -221,13 +221,15 @@ class TestBalancedGreedyPartition:
         for g in groups:
             assert len(g) == expected_size
 
-    def test_raises_on_non_divisible(self):
-        """Test error when n is not divisible by K."""
+    def test_non_divisible_uses_nearly_equal_group_sizes(self):
+        """Test ragged partition cardinalities differ by at most one."""
         nums = [1, 2, 3, 4, 5]
         K = 2
 
-        with pytest.raises(ValueError, match="must be divisible by K"):
-            balanced_greedy_partition(nums, K)
+        groups = balanced_greedy_partition(nums, K)
+
+        assert sorted(len(group) for group in groups) == [2, 3]
+        assert sorted(index for group in groups for index in group) == list(range(5))
 
     def test_raises_on_too_few_items(self):
         """Test error when n < K."""
@@ -974,6 +976,35 @@ class TestSplitAndUnpadTensor:
     def test_split_passthrough(self):
         """Non-tensor/dict/None input is returned as-is."""
         assert split_and_unpad_tensor(42, n_trajs=2) == 42
+
+    @pytest.mark.parametrize("explicit_lengths", [False, True])
+    def test_routing_roundtrip_trims_sequence_and_preserves_topk(
+        self, explicit_lengths
+    ):
+        """Short grouped routes unpad along S even when S is smaller than K."""
+        trajectories = []
+        for batch_size, seq_len in [(2, 1), (1, 5)]:
+            trajectories.append(
+                {
+                    "input_ids": torch.ones(batch_size, seq_len, dtype=torch.long),
+                    "attention_mask": torch.ones(batch_size, seq_len, dtype=torch.bool),
+                    "routed_experts": torch.arange(
+                        batch_size * seq_len * 3 * 10, dtype=torch.int32
+                    ).reshape(batch_size, seq_len, 3, 10),
+                    "r3_routing_valid": torch.ones(batch_size, dtype=torch.bool),
+                }
+            )
+        batched = concat_padded_tensors(trajectories)
+        restored = split_and_unpad_tensor(
+            batched,
+            n_trajs=2,
+            traj_group_sizes=[2, 1],
+            traj_seqlens=[1, 5] if explicit_lengths else None,
+        )
+        for original, result in zip(trajectories, restored, strict=True):
+            assert result["routed_experts"].shape == original["routed_experts"].shape
+            for key in original:
+                torch.testing.assert_close(result[key], original[key], rtol=0, atol=0)
 
 
 # =============================================================================

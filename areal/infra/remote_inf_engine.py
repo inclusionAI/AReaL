@@ -46,8 +46,8 @@ from areal.infra.utils.concurrent import get_executor
 from areal.infra.utils.http import arequest_with_retry, get_default_connector
 from areal.infra.utils.launcher import wait_llm_server_addrs
 from areal.infra.utils.proc import kill_process_tree
-from areal.utils import logging, name_resolve, names
-from areal.utils.data import concat_padded_tensors
+from areal.utils import logging, name_resolve, names, stats_tracker
+from areal.utils.data import RolloutGroup, concat_padded_tensors, get_batch_size
 from areal.utils.dynamic_import import import_from_string
 from areal.utils.network import (
     find_free_ports,
@@ -57,7 +57,12 @@ from areal.utils.network import (
 )
 from areal.utils.perf_tracer import trace_perf
 
-from .workflow_executor import WorkflowExecutor
+from .workflow_executor import (
+    WorkflowContractError,
+    WorkflowContractFailure,
+    WorkflowExecutor,
+    validate_rollout_group_sizes,
+)
 
 if TYPE_CHECKING:
     from areal.experimental.openai import InteractionWithTokenLogpReward
@@ -75,55 +80,146 @@ class GroupedRolloutWorkflow(RolloutWorkflow):
         logger: Logger,
         reward_normalization: bool = False,
         drop_incomplete_group: bool = False,
+        min_usable_group_size: int = 1,
+        reward_normalization_use_std: bool = True,
     ):
-        if group_size < 1:
-            raise ValueError(f"group_size must be >= 1, got {group_size}")
+        validate_rollout_group_sizes(group_size, min_usable_group_size)
         self.workflow = workflow
         self.group_size = group_size
+        self.min_usable_group_size = min_usable_group_size
         self.logger = logger
+        self.reward_normalization_use_std = reward_normalization_use_std
         self.reward_normalization = reward_normalization
         self.drop_incomplete_group = drop_incomplete_group
+
+    def _record_group_stats(self, usable_slot_count: int, *, trainable: bool) -> None:
+        trainable_slot_count = usable_slot_count if trainable else 0
+        stats_tracker.get(workflow_context.stat_scope()).scalar(
+            target_slot_count=self.group_size,
+            usable_slot_count=usable_slot_count,
+            trainable_slot_count=trainable_slot_count,
+            fully_masked_group=usable_slot_count == 0,
+            singleton_slot_group=usable_slot_count == 1,
+            pre_filter_usable_slot_yield=usable_slot_count / self.group_size,
+            pre_filter_trainable_slot_yield=trainable_slot_count / self.group_size,
+        )
 
     async def arun_episode(
         self, engine: InferenceEngine, data: dict[str, Any]
     ) -> dict[str, Any] | None:
         from areal.experimental.openai import InteractionWithTokenLogpReward
+        from areal.infra import workflow_context
+        from areal.infra.processor_cache import ProcessorCallCache
+        from areal.infra.workflow_context import WorkflowContext
+
+        parent = workflow_context.get()
+        shared_processor_cache = ProcessorCallCache()
+        group_context = WorkflowContext(
+            is_eval=parent.is_eval,
+            task_id=parent.task_id,
+            group_size=self.group_size,
+            processor_cache=shared_processor_cache,
+        )
+
+        completed_results: list[Any] = [None] * self.group_size
+        group_error: Exception | None = None
 
         async def run_sample(sample_idx: int) -> tuple[int, Any]:
-            from areal.infra import workflow_context
-            from areal.infra.workflow_context import WorkflowContext
-
-            parent = workflow_context.get()
             workflow_context.set(
                 WorkflowContext(
-                    is_eval=parent.is_eval,
-                    task_id=parent.task_id,
+                    is_eval=group_context.is_eval,
+                    task_id=group_context.task_id,
                     sample_idx=sample_idx,
+                    group_size=group_context.group_size,
+                    processor_cache=shared_processor_cache,
                 )
             )
             result = await self.workflow.arun_episode(engine, data)
+            completed_results[sample_idx] = result
             return sample_idx, result
 
-        indexed_results = await asyncio.gather(
-            *[run_sample(sample_idx) for sample_idx in range(self.group_size)]
-        )
-        indexed_results.sort(key=lambda item: item[0])
-        sample_indices = [sample_idx for sample_idx, _ in indexed_results]
-        if sample_indices != list(range(self.group_size)):
-            raise RuntimeError(
-                "Grouped rollout returned invalid sample indices: "
-                f"expected {list(range(self.group_size))}, got {sample_indices}"
-            )
-        results = [result for _, result in indexed_results]
-
+        group_tasks = [
+            asyncio.create_task(run_sample(sample_idx))
+            for sample_idx in range(self.group_size)
+        ]
+        try:
+            indexed_results = await asyncio.gather(*group_tasks)
+        except BaseException as exc:
+            # gather does not cancel siblings when a child fails or is cancelled.
+            for task in group_tasks:
+                if not task.done():
+                    task.cancel()
+            if not isinstance(exc, Exception):
+                raise
+            group_error = exc
+        finally:
+            try:
+                # Drain cancellation handlers before releasing shared resources.
+                await asyncio.gather(*group_tasks, return_exceptions=True)
+            finally:
+                finalizer = getattr(
+                    self.workflow, "_afinalize_processor_cache_group", None
+                )
+                if finalizer is not None:
+                    try:
+                        await finalizer(group_context)
+                    except Exception as exc:
+                        self.logger.warning(
+                            "Failed to finalize rollout group resources (%s: %s).",
+                            type(exc).__name__,
+                            exc,
+                        )
+        if group_error is None:
+            indexed_results.sort(key=lambda item: item[0])
+            sample_indices = [sample_idx for sample_idx, _ in indexed_results]
+            if sample_indices != list(range(self.group_size)):
+                raise RuntimeError(
+                    "Grouped rollout returned invalid sample indices: "
+                    f"expected {list(range(self.group_size))}, got {sample_indices}"
+                )
+        results = [result if result else None for result in completed_results]
         valid_results = [r for r in results if r is not None]
+        usable_slot_count = len(valid_results)
 
-        # All results None -> return None
+        interaction_group = not valid_results or all(
+            isinstance(result, dict)
+            and all(
+                isinstance(v, InteractionWithTokenLogpReward) for v in result.values()
+            )
+            for result in valid_results
+        )
+        if interaction_group:
+            record_group_metrics = getattr(self.workflow, "record_group_metrics", None)
+            if callable(record_group_metrics):
+                rewards = [
+                    result[next(reversed(result))].reward if result else None
+                    for result in results
+                ]
+                record_group_metrics(data, rewards, self.group_size)
+        if group_error is not None:
+            raise group_error
+
+        if interaction_group and self.reward_normalization and self.group_size > 1:
+            # An unscored branch invalidates its logical rollout, not scored
+            # siblings. Keep episode metrics above independent of training
+            # eligibility, and apply the usual group-size checks below.
+            for sample_idx, result in enumerate(results):
+                if result and any(v.reward is None for v in result.values()):
+                    unscored = sum(v.reward is None for v in result.values())
+                    self.logger.warning(
+                        "reward_normalization: rejecting rollout "
+                        f"sample_idx={sample_idx} with {unscored}/{len(result)} "
+                        "unscored interactions"
+                    )
+                    results[sample_idx] = None
+            valid_results = [r for r in results if r is not None]
+            usable_slot_count = len(valid_results)
+
         if not valid_results:
+            self._record_group_stats(usable_slot_count, trainable=False)
             return None
 
-        # Some results None -> drop entire group if requested. Reward
-        # normalization also requires a complete group and will log/drop below.
+        # Some results None -> drop entire group if requested.
         if len(valid_results) < len(results):
             n_failed = len(results) - len(valid_results)
             if self.drop_incomplete_group:
@@ -133,12 +229,22 @@ class GroupedRolloutWorkflow(RolloutWorkflow):
                     "(drop_incomplete_group=True). prepare_batch will retry "
                     "with a new prompt from the dataloader."
                 )
+                self._record_group_stats(usable_slot_count, trainable=False)
                 return None
             if not self.reward_normalization:
+                action = (
+                    "dropping group below min_usable_group_size"
+                    if usable_slot_count < self.min_usable_group_size
+                    else "using remaining results"
+                )
                 self.logger.warning(
                     f"GroupedRolloutWorkflow: {n_failed}/{len(results)} "
-                    "trajectories returned None, using remaining results"
+                    f"trajectories returned None, {action}"
                 )
+
+        if usable_slot_count < self.min_usable_group_size:
+            self._record_group_stats(usable_slot_count, trainable=False)
+            return None
 
         # Check if results are InteractionWithTokenLogpReward dicts
         first = valid_results[0]
@@ -150,42 +256,66 @@ class GroupedRolloutWorkflow(RolloutWorkflow):
             )
         ):
             if self.reward_normalization and self.group_size > 1:
-                if not self._normalize_group_rewards(results):
+                if not self._normalize_group_rewards(valid_results):
+                    self._record_group_stats(usable_slot_count, trainable=False)
                     return None
             # Merge dicts - each result is {completion_id: InteractionWithTokenLogpReward}
             merged: dict[str, InteractionWithTokenLogpReward] = {}
-            for result in valid_results:
+            for index, result in enumerate(valid_results):
+                if merged.keys() & result.keys():
+                    raise WorkflowContractError(
+                        "Rollout interaction IDs must be unique"
+                    )
+                for interaction in result.values():
+                    interaction.rollout_index = index
                 merged.update(result)
+            self._record_group_stats(usable_slot_count, trainable=bool(merged))
             return merged if merged else None
 
         # Otherwise, tensor dicts - concatenate
-        concatenated = concat_padded_tensors(valid_results)
+        try:
+            group = RolloutGroup(
+                tuple(get_batch_size(result) for result in valid_results),
+                tuple(result.get("rollout_reward") for result in valid_results),
+            )
+        except (TypeError, ValueError) as exc:
+            raise WorkflowContractError(str(exc)) from exc
+        tensors = [
+            {k: v for k, v in result.items() if k != "rollout_reward"}
+            for result in valid_results
+        ]
+        concatenated = concat_padded_tensors(tensors)
+        concatenated["rollout_group"] = group
+        self._record_group_stats(usable_slot_count, trainable=bool(concatenated))
         return concatenated if concatenated else None
 
     def _normalize_group_rewards(
         self,
-        results: list[dict[str, InteractionWithTokenLogpReward] | None],
+        results: list[dict[str, InteractionWithTokenLogpReward]],
     ) -> bool:
-        """Apply per-prompt reward normalization across the n_samples rollouts.
+        """Apply per-prompt reward normalization across the usable rollouts.
 
-        One scalar reward per rollout is taken from the last interaction in
-        each result. If any rollout failed or has no reward, the whole group is
-        dropped so the normalization base always matches the configured group
-        size.
+        References come from explicit rollout_reward or equal row rewards.
+        Missing row rewards drop the group; ambiguous references are a contract error.
         """
-        from areal.experimental.openai.types import normalize_group_rewards
+        from areal.experimental.openai.types import normalize_logical_rollout_rewards
 
-        if normalize_group_rewards(results):
-            return True
+        try:
+            if normalize_logical_rollout_rewards(
+                results, use_std=self.reward_normalization_use_std
+            ):
+                return True
+        except (ValueError, RuntimeError) as exc:
+            raise WorkflowContractError(str(exc)) from exc
         invalid_count = sum(
             1
             for result in results
-            if not result or result[next(reversed(result))].reward is None
+            if not result or any(v.reward is None for v in result.values())
         )
         if invalid_count > 0:
             self.logger.warning(
                 f"reward_normalization: dropping group ({invalid_count}/"
-                f"{self.group_size} rollouts have None reward)"
+                f"{len(results)} usable rollouts have None reward)"
             )
         return False
 
@@ -445,6 +575,8 @@ class RemoteInfEngine(InferenceEngine):
 
         self._workflow_executor: WorkflowExecutor | None = None
         self._initialized = False
+        self._destroy_callbacks: dict[str, Callable[[], None]] = {}
+        self._destroy_callbacks_lock = Lock()
         self._proxy_gateway_addr: str | None = None
         self.local_server_processes: list[LocalInfServerInfo] = []
 
@@ -577,10 +709,38 @@ class RemoteInfEngine(InferenceEngine):
     def destroy(self):
         """Destroy the engine and clean up resources."""
         self._initialized = False
-        if self._workflow_executor is not None:
-            self._workflow_executor.destroy()
-        if len(self.local_server_processes) > 0:
-            self.teardown_server()
+        try:
+            if self._workflow_executor is not None:
+                self._workflow_executor.destroy()
+        finally:
+            self._run_destroy_callbacks()
+            if len(self.local_server_processes) > 0:
+                self.teardown_server()
+
+    def register_destroy_callback(self, key: str, callback: Callable[[], None]) -> None:
+        """Register one idempotent worker-lifetime cleanup callback.
+
+        Agent workflows are reconstructed for every submitted prompt, while a
+        ``RemoteInfEngine`` instance lives for the whole rollout worker. This
+        hook lets agents retain bounded worker-scoped resources without leaking
+        them when the worker is destroyed.
+        """
+
+        if not key:
+            raise ValueError("destroy callback key must not be empty")
+        with self._destroy_callbacks_lock:
+            self._destroy_callbacks.setdefault(key, callback)
+
+    def _run_destroy_callbacks(self) -> None:
+        with self._destroy_callbacks_lock:
+            callbacks = list(self._destroy_callbacks.items())
+            self._destroy_callbacks.clear()
+        for key, callback in reversed(callbacks):
+            try:
+                callback()
+            except Exception:
+                callback_logger = getattr(self, "logger", logger)
+                callback_logger.exception("Destroy callback %s failed", key)
 
     @property
     def workflow_executor(self) -> WorkflowExecutor:
@@ -702,7 +862,10 @@ class RemoteInfEngine(InferenceEngine):
         proxy_addr: str | None = None,
         reward_normalization: bool = False,
         drop_incomplete_group: bool = False,
+        min_usable_group_size: int = 1,
+        reward_normalization_use_std: bool = True,
     ) -> RolloutWorkflow:
+        validate_rollout_group_sizes(group_size, min_usable_group_size)
         resolved: RolloutWorkflow
 
         # 0. None workflow = online mode (config-driven)
@@ -722,7 +885,9 @@ class RemoteInfEngine(InferenceEngine):
                     group_size,
                     self.logger,
                     reward_normalization=reward_normalization,
+                    reward_normalization_use_std=reward_normalization_use_std,
                     drop_incomplete_group=drop_incomplete_group,
+                    min_usable_group_size=min_usable_group_size,
                 )
             return resolved
 
@@ -819,7 +984,9 @@ class RemoteInfEngine(InferenceEngine):
                 group_size,
                 self.logger,
                 reward_normalization=reward_normalization,
+                reward_normalization_use_std=reward_normalization_use_std,
                 drop_incomplete_group=drop_incomplete_group,
+                min_usable_group_size=min_usable_group_size,
             )
 
         return resolved
@@ -934,7 +1101,7 @@ class RemoteInfEngine(InferenceEngine):
         accumulated_output_tokens = []
         accumulated_output_logprobs = []
         accumulated_versions = []
-        accumulated_routed_experts: list[np.ndarray] = []
+        final_routed_experts: np.ndarray | None = None
 
         # A single "rid" shares the same server to allow KV cache reuse
         if req.rid in self.rid_to_address:
@@ -1014,9 +1181,40 @@ class RemoteInfEngine(InferenceEngine):
             accumulated_versions.extend(
                 [request_version] * len(gen_result.output_tokens)
             )
-            # Accumulate routed_experts for MoE models
+            # Accumulate routed_experts for MoE models. SGLang returns routing
+            # for the full request prefix on abort/resubmit, so keep already
+            # accepted rows and append only the newly covered suffix.
             if gen_result.routed_experts is not None:
-                accumulated_routed_experts.append(gen_result.routed_experts)
+                if final_routed_experts is None:
+                    final_routed_experts = gen_result.routed_experts
+                else:
+                    consumed_rows = final_routed_experts.shape[0]
+                    if gen_result.routed_experts.shape[0] < consumed_rows:
+                        raise RuntimeError(
+                            "SGLang routed_experts for a resubmitted request is "
+                            "shorter than the previously accumulated routing rows: "
+                            f"new_shape={gen_result.routed_experts.shape}, "
+                            f"accumulated_shape={final_routed_experts.shape}."
+                        )
+                    final_routed_experts = np.concatenate(
+                        [
+                            final_routed_experts,
+                            gen_result.routed_experts[consumed_rows:],
+                        ],
+                        axis=0,
+                    )
+
+            # Record speculative-decoding acceptance metrics from SGLang
+            # meta_info. Recorded per generation segment (partial rollout may
+            # issue multiple /generate calls); exported as a segment-level mean.
+            if gen_result.spec_accept_rate is not None:
+                stats_tracker.get("rollout").scalar(
+                    spec_accept_rate=gen_result.spec_accept_rate
+                )
+            if gen_result.spec_accept_length is not None:
+                stats_tracker.get("rollout").scalar(
+                    spec_accept_length=gen_result.spec_accept_length
+                )
 
             # Update request for next iteration
             req.input_ids += gen_result.output_tokens
@@ -1036,11 +1234,17 @@ class RemoteInfEngine(InferenceEngine):
 
         latency = time.perf_counter() - start_time
 
-        accumulated_routed_experts = (
-            np.concatenate(accumulated_routed_experts)
-            if accumulated_routed_experts
-            else None
-        )
+        if (
+            req.metadata.get("return_routed_experts", False)
+            and accumulated_output_tokens
+            and final_routed_experts is None
+        ):
+            raise RuntimeError(
+                "Requested return_routed_experts=True but no routed_experts were "
+                "received after abort/resubmit. This usually means the SGLang "
+                "server was not launched with enable_return_routed_experts=True "
+                "or the model is not a MoE model."
+            )
 
         response = ModelResponse(
             input_tokens=req.input_ids[
@@ -1055,7 +1259,7 @@ class RemoteInfEngine(InferenceEngine):
             ttft=latency,  # Simplified for non-streaming
             tokenizer=req.tokenizer,
             processor=req.processor,
-            routed_experts=accumulated_routed_experts,
+            routed_experts=final_routed_experts,
         )
         return response
 
@@ -1209,6 +1413,8 @@ class RemoteInfEngine(InferenceEngine):
         proxy_addr: str | None = None,
         reward_normalization: bool = False,
         drop_incomplete_group: bool = False,
+        min_usable_group_size: int = 1,
+        reward_normalization_use_std: bool = True,
     ) -> int:
         """Submit a request to the inference engine and return immediately.
 
@@ -1225,6 +1431,9 @@ class RemoteInfEngine(InferenceEngine):
         group_size : int
             Number of times to run the workflow per input and concatenate results.
             Default is 1 (no grouping).
+        min_usable_group_size : int
+            Estimator-owned minimum number of usable logical rollout slots. Must be
+            between 1 and ``group_size``. Default is 1.
         task_id : int, optional
             The task ID to use. If None, a new task ID will be generated internally.
         is_eval : bool, optional
@@ -1248,8 +1457,10 @@ class RemoteInfEngine(InferenceEngine):
             workflow,
             workflow_kwargs,
             group_size,
+            min_usable_group_size=min_usable_group_size,
             proxy_addr=proxy_addr,
             reward_normalization=reward_normalization,
+            reward_normalization_use_std=reward_normalization_use_std,
             drop_incomplete_group=drop_incomplete_group,
         )
         resolved_should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
@@ -1292,6 +1503,17 @@ class RemoteInfEngine(InferenceEngine):
         """Wait for a specific submitted task to complete."""
         return self.workflow_executor.wait_for_task(task_id, timeout, raise_timeout)
 
+    def _wait_for_task_result(
+        self, task_id: int, timeout: float | None = None, raise_timeout: bool = True
+    ) -> dict[str, Any] | WorkflowContractFailure | None:
+        result = self.workflow_executor._wait_for_task_result(
+            task_id, timeout, raise_timeout
+        )
+        # Keep successful payloads visible to the RPC guard's RTensor traversal.
+        if result is None or isinstance(result, WorkflowContractFailure):
+            return result
+        return result.trajectory
+
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
@@ -1300,6 +1522,8 @@ class RemoteInfEngine(InferenceEngine):
         group_size: int = 1,
         reward_normalization: bool = False,
         drop_incomplete_group: bool = False,
+        min_usable_group_size: int = 1,
+        reward_normalization_use_std: bool = True,
     ) -> list[dict[str, Any]]:
         """Submit a batch of requests and wait for results.
 
@@ -1332,7 +1556,9 @@ class RemoteInfEngine(InferenceEngine):
             workflow,
             workflow_kwargs,
             group_size,
+            min_usable_group_size=min_usable_group_size,
             reward_normalization=reward_normalization,
+            reward_normalization_use_std=reward_normalization_use_std,
             drop_incomplete_group=drop_incomplete_group,
         )
 
@@ -1351,6 +1577,8 @@ class RemoteInfEngine(InferenceEngine):
         dynamic_bs: bool = False,
         reward_normalization: bool = False,
         drop_incomplete_group: bool = False,
+        min_usable_group_size: int = 1,
+        reward_normalization_use_std: bool = True,
     ) -> list[dict[str, Any]]:
         """Asynchronously submit and wait until a full batch is ready.
 
@@ -1369,6 +1597,9 @@ class RemoteInfEngine(InferenceEngine):
             Default is 1 (no grouping).
         dynamic_bs : bool, optional
             If True, enables dynamic batch sizing. Default is False.
+        min_usable_group_size : int
+            Estimator-owned minimum number of usable logical rollout slots. Must be
+            between 1 and ``group_size``. Default is 1.
 
         Returns
         -------
@@ -1384,7 +1615,9 @@ class RemoteInfEngine(InferenceEngine):
             workflow,
             workflow_kwargs,
             group_size,
+            min_usable_group_size=min_usable_group_size,
             reward_normalization=reward_normalization,
+            reward_normalization_use_std=reward_normalization_use_std,
             drop_incomplete_group=drop_incomplete_group,
         )
         resolved_should_accept_fn = self._resolve_should_accept_fn(should_accept_fn)
@@ -1399,14 +1632,44 @@ class RemoteInfEngine(InferenceEngine):
     @trace_perf("remote_inf_engine.pause_generation", category="misc")
     def pause_generation(self):
         """Pause request submission for async rollout."""
+        # SGLang needs a two-stage pause before colocated memory can be
+        # released: ``abort`` closes admission and waits for in-flight work to
+        # drain, then ``retract`` puts the now-idle scheduler into its paused
+        # state. Other backends keep their existing single-request protocol.
         get_pause_requests = getattr(self.backend, "get_pause_requests", None)
         pause_requests = (
             get_pause_requests()
             if get_pause_requests is not None
             else [self.backend.get_pause_request()]
         )
-        for pause_req in pause_requests:
-            self._run_request_on_all_servers(pause_req)
+        pause_logger = getattr(self, "logger", logger)
+        for stage, pause_req in enumerate(pause_requests, start=1):
+            started = time.monotonic()
+            mode = (pause_req.payload or {}).get("mode", "default")
+            pause_logger.info(
+                "Inference pause stage %d/%d (%s) started",
+                stage,
+                len(pause_requests),
+                mode,
+            )
+            try:
+                self._run_request_on_all_servers(pause_req)
+            except Exception:
+                pause_logger.exception(
+                    "Inference pause stage %d/%d (%s) failed after %.1fs",
+                    stage,
+                    len(pause_requests),
+                    mode,
+                    time.monotonic() - started,
+                )
+                raise
+            pause_logger.info(
+                "Inference pause stage %d/%d (%s) completed in %.1fs",
+                stage,
+                len(pause_requests),
+                mode,
+                time.monotonic() - started,
+            )
 
         # The above http request may require some time to be scheduled and executed.
         # The following line waits until all requests are indeed dropped.

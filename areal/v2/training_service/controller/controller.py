@@ -359,6 +359,8 @@ class GatewayTrainController:
                 "areal.v2.training_service.data_proxy",
                 "--worker-addrs",
                 ",".join(self._worker_addrs),
+                "--request-timeout",
+                str(cfg.request_timeout),
                 "--admin-api-key",
                 cfg.admin_api_key,
                 "--log-level",
@@ -523,7 +525,11 @@ class GatewayTrainController:
     ) -> tuple[str, int]:
         import requests
 
-        resp = requests.post(f"{guard_addr}/alloc_ports", json={"count": 1}, timeout=30)
+        resp = requests.post(
+            f"{guard_addr}/alloc_ports",
+            json={"count": 1, "role": role, "worker_index": worker_index},
+            timeout=30,
+        )
         resp.raise_for_status()
         port_data = resp.json()
         host = port_data["host"]
@@ -539,13 +545,23 @@ class GatewayTrainController:
         if env:
             fork_payload["env"] = env
 
-        resp = requests.post(f"{guard_addr}/fork", json=fork_payload, timeout=30)
-        resp.raise_for_status()
-
-        self._forked_services.append((guard_addr, role, worker_index))
-
-        addr = f"http://{format_hostport(host, port)}"
-        self._wait_for_service(f"{addr}{health_path}", role)
+        try:
+            resp = requests.post(f"{guard_addr}/fork", json=fork_payload, timeout=30)
+            resp.raise_for_status()
+            self._forked_services.append((guard_addr, role, worker_index))
+            addr = f"http://{format_hostport(host, port)}"
+            self._wait_for_service(f"{addr}{health_path}", role)
+        except BaseException:
+            for endpoint in ("kill_forked_worker", "release_ports"):
+                try:
+                    requests.post(
+                        f"{guard_addr}/{endpoint}",
+                        json={"role": role, "worker_index": worker_index},
+                        timeout=10,
+                    )
+                except Exception:
+                    pass
+            raise
 
         return host, port
 
@@ -560,7 +576,9 @@ class GatewayTrainController:
     ) -> tuple[str, int]:
         client = await self._get_async_client()
         resp = await client.post(
-            f"{guard_addr}/alloc_ports", json={"count": 1}, timeout=30.0
+            f"{guard_addr}/alloc_ports",
+            json={"count": 1, "role": role, "worker_index": worker_index},
+            timeout=30.0,
         )
         resp.raise_for_status()
         port_data = resp.json()
@@ -576,13 +594,25 @@ class GatewayTrainController:
         if env:
             fork_payload["env"] = env
 
-        resp = await client.post(f"{guard_addr}/fork", json=fork_payload, timeout=30.0)
-        resp.raise_for_status()
-
-        self._forked_services.append((guard_addr, role, worker_index))
-
-        addr = f"http://{format_hostport(host, port)}"
-        await self._async_wait_for_service(f"{addr}{health_path}", role)
+        try:
+            resp = await client.post(
+                f"{guard_addr}/fork", json=fork_payload, timeout=30.0
+            )
+            resp.raise_for_status()
+            self._forked_services.append((guard_addr, role, worker_index))
+            addr = f"http://{format_hostport(host, port)}"
+            await self._async_wait_for_service(f"{addr}{health_path}", role)
+        except BaseException:
+            for endpoint in ("kill_forked_worker", "release_ports"):
+                try:
+                    await client.post(
+                        f"{guard_addr}/{endpoint}",
+                        json={"role": role, "worker_index": worker_index},
+                        timeout=10.0,
+                    )
+                except Exception:
+                    pass
+            raise
 
         return host, port
 
@@ -1144,6 +1174,7 @@ class GatewayTrainController:
         dynamic_bs: bool = False,
         reward_normalization: bool = False,
         drop_incomplete_group: bool = False,
+        min_usable_group_size: int = 1,
     ) -> list[dict[str, Any]]:
         if self.rollout is None:
             raise RuntimeError("connect_engine() must be called before prepare_batch()")
@@ -1156,6 +1187,7 @@ class GatewayTrainController:
             dynamic_bs=dynamic_bs,
             reward_normalization=reward_normalization,
             drop_incomplete_group=drop_incomplete_group,
+            min_usable_group_size=min_usable_group_size,
         )
 
     def rollout_batch(
@@ -1167,6 +1199,7 @@ class GatewayTrainController:
         group_size: int = 1,
         reward_normalization: bool = False,
         drop_incomplete_group: bool = False,
+        min_usable_group_size: int = 1,
     ) -> list[dict[str, Any]]:
         if self.rollout is None:
             raise RuntimeError("connect_engine() must be called before rollout_batch()")
@@ -1178,6 +1211,7 @@ class GatewayTrainController:
             group_size=group_size,
             reward_normalization=reward_normalization,
             drop_incomplete_group=drop_incomplete_group,
+            min_usable_group_size=min_usable_group_size,
         )
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):

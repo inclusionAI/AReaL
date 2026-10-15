@@ -161,6 +161,70 @@ class TestTrainerDataServicePath:
 
         assert dataset is sentinel
 
+    def test_get_custom_dataset_forwards_kwargs_to_remote_dataset(self, monkeypatch):
+        from areal.api.cli_args import TrainDatasetConfig
+        from areal.dataset import get_custom_dataset
+
+        monkeypatch.setenv("AREAL_SPMD_MODE", "0")
+        configured_kwargs = {
+            "num_proc": 4,
+            "filter_errors": False,
+            "configured_only": "preserved",
+        }
+        cfg = TrainDatasetConfig(
+            path="swe-data.jsonl",
+            type="sft",
+            dataset_kwargs=configured_kwargs,
+        )
+
+        dataset = get_custom_dataset(
+            split="train",
+            dataset_config=cfg,
+            split_mode="trajectory",
+            filter_errors=True,
+            cache_dir="/tmp/swe-cache",
+        )
+
+        assert dataset._dataset_kwargs == {
+            "num_proc": 4,
+            "filter_errors": True,
+            "configured_only": "preserved",
+            "split_mode": "trajectory",
+            "cache_dir": "/tmp/swe-cache",
+        }
+        assert cfg.dataset_kwargs == configured_kwargs
+
+    @pytest.mark.parametrize(
+        ("spmd_mode", "spec_kwargs"),
+        [("1", {}), ("0", {"scheduling_spec": None})],
+        ids=["spmd", "no-scheduling-spec"],
+    )
+    def test_get_custom_dataset_forwards_kwargs_to_local_loader(
+        self, monkeypatch, spmd_mode, spec_kwargs
+    ):
+        from areal.api.cli_args import TrainDatasetConfig
+        from areal.dataset import get_custom_dataset
+
+        captured = {}
+
+        def _fake_custom_dataset(**kwargs):
+            captured.update(kwargs)
+            return object()
+
+        monkeypatch.setenv("AREAL_SPMD_MODE", spmd_mode)
+        monkeypatch.setattr("areal.dataset._get_custom_dataset", _fake_custom_dataset)
+        cfg = TrainDatasetConfig(
+            path="swe-data.jsonl",
+            type="sft",
+            dataset_kwargs={"num_proc": 4, "filter_errors": False},
+            **spec_kwargs,
+        )
+
+        get_custom_dataset(split="train", dataset_config=cfg, filter_errors=True)
+
+        assert captured["num_proc"] == 4
+        assert captured["filter_errors"] is True
+
 
 class TestGenericDatasetFallback:
     def test_none_split_uses_first_available_split(self, tmp_path: Path):
