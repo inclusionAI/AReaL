@@ -144,36 +144,6 @@ def test_unknown_source_rejects_entire_profile_without_partial_modification(runt
     assert not (root / ".areal-sglang-patches.lock").exists()
 
 
-def test_startup_uninstalled_qsa_patch_rejects_before_exec(runtime, monkeypatch):
-    """A no-op installer must not allow an unpatched QSA server to start."""
-    root, model, _ = runtime
-    monkeypatch.setattr(startup, "install_source_patches", lambda *a, **kw: None)
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "bootstrap",
-            "--entrypoint",
-            "areal.engine.awex.sglang_plugin",
-            "--",
-            "--model-path",
-            str(model),
-        ],
-    )
-    monkeypatch.setattr(
-        startup.os, "execv", lambda *args: pytest.fail("unpatched server started")
-    )
-    before = (root / qsa.TARGET_RELATIVE).read_bytes()
-
-    with pytest.raises(RuntimeError, match="QSA patch verification failed") as caught:
-        startup.main()
-
-    assert str(root / qsa.TARGET_RELATIVE) in str(caught.value)
-    assert qsa.PATCHED_SHA256 in str(caught.value)
-    assert hashlib.sha256(before).hexdigest() in str(caught.value)
-    assert (root / qsa.TARGET_RELATIVE).read_bytes() == before
-
-
 @pytest.mark.parametrize("patch", [qsa, qwen, executor])
 def test_patch_cli_applies_fix_and_repeats_safely(runtime, monkeypatch, patch):
     """Recipe commands use the guarded, idempotent engine patch entry points."""

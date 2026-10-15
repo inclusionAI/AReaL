@@ -69,7 +69,6 @@ LOGGER_COLORS_EXACT = {
     "HttpRTensor": "white",
     # Inference wrappers - white
     "SGLangWrapper": "white",
-    "SGLangModelPatches": "white",
     "SGLangMTPBridge": "white",
     "VLLMWrapper": "white",
     "RemoteInfEngine": "white",

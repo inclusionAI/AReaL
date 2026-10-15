@@ -126,11 +126,10 @@ and token masks; the image embedding replacement must not change the captured ro
 token domain. Generic VisionRLVRWorkflow is not supported.
 
 The validated SGLang `0.5.19.dev125+g119b5ffe4` rollout image still requires the QSA
-compress-gather fix. Automatic model patching reads back the installed `qsa_indexer.py`
-and requires its SHA256 to equal `sglang_qsa_compress_gather.PATCHED_SHA256` before the
-selected SGLang/AWEX server entry point executes. The version string alone does not
-prove the fix is active. Recipes applying patches explicitly should use
-`python -m areal.engine.sglang_qsa_compress_gather`,
+compress-gather fix. The model patch bootstrap applies it before the selected
+SGLang/AWEX server entry point executes. The shared installer validates the source and
+transformed content against the supported SHA256 hashes. Recipes applying patches
+explicitly should use `python -m areal.engine.sglang_qsa_compress_gather`,
 `python -m areal.engine.sglang_qwen4_vl` and
 `python -m areal.engine.sglang_mm_executor`. These modules apply the guarded, idempotent
 source patches directly.
