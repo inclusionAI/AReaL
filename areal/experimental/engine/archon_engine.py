@@ -35,6 +35,7 @@ from areal.api import (
 )
 from areal.api.cli_args import MicroBatchSpec
 from areal.api.io_struct import DeviceRuntimeInfo
+from areal.api.loss import LossFunction, LossNormalizer, LossValue
 from areal.engine.core.distributed import (
     patch_dist_group_timeout,
     warmup_process_groups,
@@ -43,6 +44,7 @@ from areal.engine.core.train_engine import (
     aggregate_eval_losses,
     compute_microbatch_loss_weight,
     compute_total_loss_weight,
+    normalize_loss,
     reorder_and_pad_outputs,
 )
 from areal.engine.fsdp_utils.grad import fsdp2_clip_grad_norm
@@ -93,6 +95,7 @@ from areal.models.tree_attn.tree import TrieNode, build_packed_tree_batch
 from areal.utils import logging, perf_tracer, stats_tracker
 from areal.utils.constants import DEFAULT_PAGE_SIZE_BYTES, DIST_GROUP_DEFAULT_TIMEOUT
 from areal.utils.data import (
+    TRANSPORT_DUMMY_KEY,
     MicroBatchItem,
     MicroBatchList,
     amend_position_ids,
@@ -541,8 +544,8 @@ class ArchonEngine(TrainEngine):
     def train_batch(
         self,
         input_: list[dict[str, Any]] | dict[str, Any],
-        loss_fn: Callable[..., torch.Tensor],
-        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
+        loss_fn: LossFunction,
+        loss_weight_fn: LossNormalizer,
     ) -> dict[str, float]:
         """Train on a batch of data."""
         assert self._initialized
@@ -581,8 +584,8 @@ class ArchonEngine(TrainEngine):
     def eval_batch(
         self,
         input_: list[dict[str, Any]] | dict[str, Any],
-        loss_fn: Callable[..., torch.Tensor],
-        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
+        loss_fn: LossFunction,
+        loss_weight_fn: LossNormalizer,
     ) -> torch.Tensor | None:
         """Evaluate on a batch of data."""
         assert self._initialized
@@ -1321,14 +1324,16 @@ class ArchonEngine(TrainEngine):
         self,
         logits: torch.Tensor,
         ctx: ArchonTrainContext,
-        loss_fn: Callable[..., torch.Tensor],
-        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
-        total_loss_weight: torch.Tensor,
+        loss_fn: LossFunction,
+        loss_weight_fn: LossNormalizer,
+        total_loss_weight: LossValue,
         loss_multiplier: float = 1.0,
     ) -> torch.Tensor:
         """Compute logprobs/entropy and return scaled loss."""
+        if ctx.mb_input.get(TRANSPORT_DUMMY_KEY) is True:
+            return logits.float().mean() * 0.0
         local_weight = compute_microbatch_loss_weight(ctx.mb_input, loss_weight_fn)
-        if local_weight == 0:
+        if isinstance(local_weight, torch.Tensor) and local_weight == 0:
             return logits.mean() * 0.0
 
         if not self.config.is_critic:
@@ -1347,8 +1352,7 @@ class ArchonEngine(TrainEngine):
             values = self._gather_critic_output(logits, ctx)
             loss = loss_fn(values, ctx.mb_input)
 
-        loss_scale = local_weight / total_loss_weight * loss_multiplier
-        return loss * loss_scale
+        return normalize_loss(loss, local_weight, total_loss_weight, loss_multiplier)
 
     def _compute_forward_result(
         self,

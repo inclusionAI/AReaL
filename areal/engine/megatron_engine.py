@@ -48,10 +48,17 @@ from areal.api import (
 )
 from areal.api.cli_args import MicroBatchSpec, PerfTracerConfig, TrainEngineConfig
 from areal.api.io_struct import DeviceRuntimeInfo
+from areal.api.loss import (
+    LossFunction,
+    LossNormalizer,
+    LossValue,
+    is_named_loss_normalizer,
+)
 from areal.engine.core import (
     aggregate_eval_losses,
     compute_microbatch_loss_weight,
     compute_total_loss_weight,
+    normalize_loss,
     reorder_and_pad_outputs,
 )
 from areal.engine.core.distributed import (
@@ -79,6 +86,10 @@ from areal.engine.megatron_utils.fp8 import FP8BlockwiseTensorHelper
 from areal.engine.megatron_utils.gpu_staged_optimizer import (
     GPUStagedAdamWConfig,
     get_megatron_optimizer_with_gpu_staged_adamw,
+)
+from areal.engine.megatron_utils.loss import (
+    compute_global_token_count,
+    scale_named_loss_for_native,
 )
 from areal.engine.megatron_utils.megatron import (
     all_gather_param,
@@ -1746,8 +1757,8 @@ class MegatronEngine(TrainEngine):
     def train_batch(
         self,
         input_: list[dict[str, Any]] | dict[str, Any],
-        loss_fn: Callable[..., torch.Tensor],
-        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
+        loss_fn: LossFunction,
+        loss_weight_fn: LossNormalizer,
     ) -> dict[str, float]:
         self._ensure_ready()
         if self._weight_residency is not None:
@@ -1769,7 +1780,20 @@ class MegatronEngine(TrainEngine):
             # that does not explicitly enable calculate_per_token_loss.
             model_config = get_model_config(self.model[0])
             per_token_loss = model_config.calculate_per_token_loss
-            if per_token_loss:
+            total_token_count = None
+            if per_token_loss and is_named_loss_normalizer(loss_weight_fn):
+                # Every PP stage resolves the same per-term masses before scheduling.
+                total_loss_weight = compute_total_loss_weight(
+                    mb_list,
+                    loss_weight_fn,
+                    mpu.get_data_parallel_group(with_context_parallel=True),
+                    device=self.device,
+                )
+                total_token_count = compute_global_token_count(
+                    mb_list.mbs, mpu.get_data_parallel_group(), self.device
+                )
+                loss_multiplier = 1.0
+            elif per_token_loss:
                 # MCore normalizes auxiliary gradients by original tokens. Convert
                 # the external objective's weight units to that same denominator.
                 total_loss_weight = None
@@ -1800,6 +1824,7 @@ class MegatronEngine(TrainEngine):
                     total_loss_weight,
                     loss_multiplier=loss_multiplier,
                     per_token_loss=per_token_loss,
+                    total_token_count=total_token_count,
                 )
 
             self.forward_backward_batch(
@@ -1821,7 +1846,7 @@ class MegatronEngine(TrainEngine):
     def _per_token_loss_multiplier(
         self,
         mb_list: MicroBatchList,
-        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
+        loss_weight_fn: LossNormalizer,
     ) -> torch.Tensor:
         local_totals = []
         for mb in mb_list.mbs:
@@ -1876,8 +1901,8 @@ class MegatronEngine(TrainEngine):
     def eval_batch(
         self,
         input_: list[dict[str, Any]] | dict[str, Any],
-        loss_fn: Callable[..., torch.Tensor],
-        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
+        loss_fn: LossFunction,
+        loss_weight_fn: LossNormalizer,
     ) -> torch.Tensor | None:
         self._ensure_ready()
 
@@ -1905,7 +1930,9 @@ class MegatronEngine(TrainEngine):
             loss = self._compute_logprobs_and_loss(
                 output, inputs, loss_fn, loss_weight_fn, total_loss_weight
             )
-            losses.append(loss.detach())
+            # MCore scales its callback tensor in-place, even during evaluation.
+            # Keep the already normalized metric independent of that storage.
+            losses.append(loss.detach().clone())
             return loss
 
         self.forward_backward_batch(mb_list, process_output, forward_only=True)
@@ -3512,20 +3539,44 @@ class MegatronEngine(TrainEngine):
         self,
         output: torch.Tensor | ChunkedLMHeadOutput,
         inputs: dict[str, Any],
-        loss_fn: Callable[..., torch.Tensor],
-        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
-        total_loss_weight: torch.Tensor | None,
+        loss_fn: LossFunction,
+        loss_weight_fn: LossNormalizer,
+        total_loss_weight: LossValue | None,
         loss_multiplier: float | torch.Tensor = 1.0,
         per_token_loss: bool = False,
+        total_token_count: torch.Tensor | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         local_weight = compute_microbatch_loss_weight(inputs, loss_weight_fn)
+        native_named = per_token_loss and isinstance(local_weight, dict)
+        if native_named and total_token_count is None:
+            raise ValueError("Native named losses require prepared total token counts")
         if per_token_loss:
-            token_count = self._per_token_count(inputs, local_weight)
-        if local_weight == 0:
+            if native_named:
+                if inputs.get(TRANSPORT_DUMMY_KEY) is True:
+                    token_count = total_token_count.new_zeros(())
+                elif "loss_mask" not in inputs:
+                    raise ValueError(
+                        "Native named losses require an explicit loss_mask"
+                    )
+                else:
+                    token_count = inputs["loss_mask"].count_nonzero()
+            else:
+                token_count = self._per_token_count(inputs, local_weight)
+        if inputs.get(TRANSPORT_DUMMY_KEY) is True or (
+            isinstance(local_weight, torch.Tensor) and local_weight == 0
+        ):
             connected_output = (
                 output.logprobs if isinstance(output, ChunkedLMHeadOutput) else output
             )
-            loss = connected_output.mean() * 0.0
+            loss = connected_output.float().mean() * 0.0
+            if native_named:
+                return scale_named_loss_for_native(
+                    loss,
+                    token_count,
+                    total_token_count,
+                    mpu.get_context_parallel_world_size(),
+                    mpu.get_context_parallel_rank(),
+                )
             if per_token_loss:
                 return self._build_per_token_loss_output(
                     loss, local_weight, loss_multiplier, token_count=token_count
@@ -3544,7 +3595,15 @@ class MegatronEngine(TrainEngine):
                 if trie_node is None or not trie_node.all_sequence_ids:
                     # Return zero loss that maintains gradient connection to output
                     # This ensures backward() works correctly for distributed synchronization
-                    loss = output.mean() * 0.0
+                    loss = output.float().mean() * 0.0
+                    if native_named:
+                        return scale_named_loss_for_native(
+                            loss,
+                            token_count,
+                            total_token_count,
+                            mpu.get_context_parallel_world_size(),
+                            mpu.get_context_parallel_rank(),
+                        )
                     if per_token_loss:
                         return self._build_per_token_loss_output(
                             loss, local_weight, loss_multiplier, token_count=token_count
@@ -3684,13 +3743,21 @@ class MegatronEngine(TrainEngine):
             values = output.squeeze(-1)
             loss = loss_fn(values, inputs)
 
+        if native_named:
+            assert total_loss_weight is not None
+            return scale_named_loss_for_native(
+                normalize_loss(loss, local_weight, total_loss_weight),
+                token_count,
+                total_token_count,
+                mpu.get_context_parallel_world_size(),
+                mpu.get_context_parallel_rank(),
+            )
         if per_token_loss:
             return self._build_per_token_loss_output(
                 loss, local_weight, loss_multiplier, token_count=token_count
             )
         assert total_loss_weight is not None
-        loss_scale = local_weight / total_loss_weight * loss_multiplier
-        return loss * loss_scale
+        return normalize_loss(loss, local_weight, total_loss_weight, loss_multiplier)
 
     def _build_per_token_loss_output(
         self,
