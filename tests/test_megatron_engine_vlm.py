@@ -48,6 +48,9 @@ def test_chunked_model_thd_forward_accepts_qwen35_text_only(
     )
     engine = module.MegatronEngine.__new__(module.MegatronEngine)
     engine._ensure_ready = lambda: None
+    engine._r3_enabled = False
+    engine._r3_pending_routed_experts = None
+    engine._r3_pending_valid = None
     engine.tf_config = SimpleNamespace(num_moe_experts=None)
     engine.mcore_config = SimpleNamespace(
         enable_mtp_training=False, enable_chunked_logits=True, lm_head_loss_chunk_size=2
@@ -207,6 +210,9 @@ def test_text_forward_keeps_original_microbatch_staging(
     )
     engine = module.MegatronEngine.__new__(module.MegatronEngine)
     engine._ensure_ready = lambda: None
+    engine._r3_enabled = False
+    engine._r3_pending_routed_experts = None
+    engine._r3_pending_valid = None
     engine.tf_config = SimpleNamespace(num_moe_experts=None)
     engine.mcore_config = SimpleNamespace(enable_mtp_training=False)
     engine.process_group_initialized = True
