@@ -129,9 +129,11 @@ The validated SGLang `0.5.19.dev125+g119b5ffe4` rollout image still requires the
 compress-gather fix. Automatic model patching reads back the installed `qsa_indexer.py`
 and requires its SHA256 to equal `sglang_qsa_compress_gather.PATCHED_SHA256` before the
 selected SGLang/AWEX server entry point executes. The version string alone does not
-prove the fix is active. Existing launch recipes may retain the three
-`examples.swe.qwen38_flash_next.patch_sglang_*` commands; these compatibility entry
-points delegate to the current guarded, idempotent patch modules.
+prove the fix is active. Recipes applying patches explicitly should use
+`python -m areal.engine.sglang_qsa_compress_gather`,
+`python -m areal.engine.sglang_qwen4_vl` and
+`python -m areal.engine.sglang_mm_executor`. These modules apply the guarded, idempotent
+source patches directly.
 
 Enable capture with `rollout.return_routed_experts=true`, replay with
 `actor.megatron.enable_router_replay=true`, and disable `moe_router_fusion`. The

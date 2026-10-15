@@ -2,7 +2,6 @@
 
 import hashlib
 import json
-import runpy
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -175,26 +174,17 @@ def test_startup_uninstalled_qsa_patch_rejects_before_exec(runtime, monkeypatch)
     assert (root / qsa.TARGET_RELATIVE).read_bytes() == before
 
 
-@pytest.mark.parametrize(
-    ("legacy", "patch"),
-    [
-        ("patch_sglang_qsa_compress_gather", qsa),
-        ("patch_sglang_qwen4_vl", qwen),
-        ("patch_sglang_mm_executor", executor),
-    ],
-)
-def test_legacy_patch_cli_applies_canonical_fix_and_repeats_safely(
-    runtime, monkeypatch, legacy, patch
-):
-    """External YAML commands keep the current guarded, idempotent transforms."""
+@pytest.mark.parametrize("patch", [qsa, qwen, executor])
+def test_patch_cli_applies_fix_and_repeats_safely(runtime, monkeypatch, patch):
+    """Recipe commands use the guarded, idempotent engine patch entry points."""
     root, _, sources = runtime
     target = root / patch.TARGET_RELATIVE
-    monkeypatch.setattr(sys, "argv", [legacy, "--target", str(target)])
+    monkeypatch.setattr(sys, "argv", [patch.__name__, "--target", str(target)])
 
-    runpy.run_module(f"examples.swe.qwen38_flash_next.{legacy}", run_name="__main__")
+    patch.main()
     assert target.read_bytes() == patch.patched_source(sources[patch])
     mtime = target.stat().st_mtime_ns
-    runpy.run_module(f"examples.swe.qwen38_flash_next.{legacy}", run_name="__main__")
+    patch.main()
 
     assert target.stat().st_mtime_ns == mtime
     assert target.read_bytes() == patch.patched_source(sources[patch])
