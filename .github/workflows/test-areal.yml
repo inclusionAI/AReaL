@@ -74,12 +74,12 @@ jobs:
         variant: ${{ fromJson(needs.determine-variants.outputs.matrix) }}
     env:
       CONTAINER_IMAGE: ghcr.io/areal-project/areal-runtime:${{ inputs.image_tag || 'dev' }}-${{ matrix.variant }}
-      RUNNER_LABELS: gcp-a2-highgpu-2g-run-${{ github.run_id }}-${{ github.run_attempt }},variant-${{ matrix.variant }}
+      RUNNER_LABELS: gcp-a2-highgpu-2g,variant-${{ matrix.variant }}
     steps:
       - name: Set instance variables
         id: vars
         run: |
-          echo "instance_name=gcp-runner-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.variant }}" >> "$GITHUB_OUTPUT"
+          echo "instance_name=gcp-runner-${{ github.run_id }}-${{ matrix.variant }}" >> "$GITHUB_OUTPUT"
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
@@ -89,9 +89,36 @@ jobs:
       - name: Set up Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v3
 
-      - name: Render startup script
+      - name: Fetch GitHub runner token
+        id: runner-token
+        uses: actions/github-script@v8
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        with:
+          github-token: ${{ secrets.GH_PAT }}
+          script: |
+            const pat = process.env.GH_PAT;
+            if (!pat) {
+              core.setFailed('GH_PAT secret is not configured.');
+              return;
+            }
+
+            const tokenResponse = await github.rest.actions.createRegistrationTokenForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              request: {
+                headers: {
+                  authorization: `token ${pat}`,
+                },
+              },
+            });
+
+            core.setOutput('token', tokenResponse.data.token);
+
+      - name: Render startup script and metadata files
         env:
           RUNNER_VERSION: ${{ env.RUNNER_VERSION }}
+          TOKEN: ${{ steps.runner-token.outputs.token }}
         run: |
           cat <<'EOF' > startup-script.template
           #!/bin/bash
@@ -163,14 +190,14 @@ jobs:
           sed -e "s/__RUNNER_VERSION__/${RUNNER_VERSION}/g" -e "s#__CONTAINER_IMAGE__#${CONTAINER_IMAGE}#g" startup-script.template > startup-script.sh
           rm startup-script.template
 
+          printf '%s' "$TOKEN" > runner-token.txt
+
       - name: Create runner instance
         id: create-instance
         env:
           INSTANCE_NAME: ${{ steps.vars.outputs.instance_name }}
-          GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           set -euo pipefail
-          umask 077
           zones=$(gcloud compute zones list --project "$GCP_PROJECT_ID" --filter="status=UP" --format="value(name)")
           if [ -z "$zones" ]; then
             echo "No available zones found." >&2
@@ -178,13 +205,6 @@ jobs:
           fi
 
           for zone in $zones; do
-            # Capacity retries can outlast the registration token's one-hour TTL.
-            registration_token=$(gh api --method POST \
-              "repos/$GITHUB_REPOSITORY/actions/runners/registration-token" \
-              --jq .token)
-            echo "::add-mask::$registration_token"
-            printf '%s' "$registration_token" > runner-token.txt
-            unset registration_token
             echo "Attempting to create instance in $zone..."
             if gcloud compute instances create "$INSTANCE_NAME" \
               --project "$GCP_PROJECT_ID" \
@@ -277,7 +297,7 @@ jobs:
       contents: read
     runs-on:
       - self-hosted
-      - "gcp-a2-highgpu-2g-run-${{ github.run_id }}-${{ github.run_attempt }}"
+      - gcp-a2-highgpu-2g
       - "variant-${{ matrix.variant }}"
     timeout-minutes: 120
     env:
@@ -327,7 +347,7 @@ jobs:
 
       - name: Delete runner instance
         env:
-          INSTANCE_NAME: gcp-runner-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.variant }}
+          INSTANCE_NAME: gcp-runner-${{ github.run_id }}-${{ matrix.variant }}
         run: |
           # Look up instance zone dynamically since matrix job outputs
           # cannot be consumed per-element by downstream matrix jobs.
