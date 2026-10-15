@@ -28,6 +28,7 @@ def test_training_tracks_activation_storage_only_for_awex(monkeypatch, awex_resi
     engine._normalize_batch_input = lambda batch: (batch, None)
     engine.optimizer_zero_grad = lambda: None
     engine._prepare_mb_list = lambda *args, **kwargs: SimpleNamespace(mbs=[{}])
+    engine._per_token_loss_multiplier = lambda *args: 1.0
     engine._collect_mtp_loss = lambda count: None
     calls = []
     engine.forward_backward_batch = lambda *args, **kwargs: calls.append("backward")

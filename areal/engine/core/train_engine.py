@@ -12,6 +12,7 @@ from typing import Any
 import torch
 import torch.distributed as dist
 
+from areal.api.loss import LossNormalizer, LossValue, get_named_loss_names
 from areal.infra.platforms import current_platform
 from areal.utils.data import (
     TRANSPORT_DUMMY_KEY,
@@ -25,6 +26,7 @@ from areal.utils.data import (
 __all__ = [
     "compute_microbatch_loss_weight",
     "compute_total_loss_weight",
+    "normalize_loss",
     "aggregate_eval_losses",
     "reorder_and_pad_outputs",
     "stage_batch_for_engine",
@@ -33,57 +35,121 @@ __all__ = [
 
 def compute_microbatch_loss_weight(
     microbatch: dict[str, Any],
-    loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
-) -> torch.Tensor:
-    """Return zero without invoking an objective on transport-only data."""
-    if microbatch.get(TRANSPORT_DUMMY_KEY) is not True:
-        return loss_weight_fn(microbatch)
-    reference = next(
-        (value for value in microbatch.values() if isinstance(value, torch.Tensor)),
-        None,
-    )
-    if reference is None:
-        raise ValueError("Transport micro-batch does not contain a tensor")
-    return torch.zeros((), dtype=torch.float32, device=reference.device)
+    loss_weight_fn: LossNormalizer,
+) -> LossValue:
+    """Validate real masses or construct schema-shaped zeros for transport data."""
+    names = get_named_loss_names(loss_weight_fn)
+    if microbatch.get(TRANSPORT_DUMMY_KEY) is True:
+        reference = next(
+            (value for value in microbatch.values() if isinstance(value, torch.Tensor)),
+            None,
+        )
+        if reference is None:
+            raise ValueError("Transport micro-batch does not contain a tensor")
+        zero = torch.zeros((), dtype=torch.float32, device=reference.device)
+        return {name: zero.clone() for name in names} if names is not None else zero
+    weight = loss_weight_fn(microbatch)
+    if names is not None:
+        if not isinstance(weight, dict) or tuple(sorted(weight)) != names:
+            raise ValueError("Loss normalizer keys must match its declared names")
+        for mass in weight.values():
+            _validate_mass(mass)
+    elif isinstance(weight, dict):
+        raise ValueError("Named losses require @named_loss_normalizer(names=...)")
+    return weight
 
 
 def compute_total_loss_weight(
     mb_list: MicroBatchList,
-    loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
+    loss_weight_fn: LossNormalizer,
     dp_group: dist.ProcessGroup,
     device: torch.device | str | int | None = None,
-) -> torch.Tensor:
-    """Compute total loss weight and all_reduce across data parallel group.
+) -> LossValue:
+    """Reduce optimizer-batch masses over DP (or the engine's DP+CP group).
 
-    This aggregates the loss weights from all micro-batches and reduces
-    them across the data parallel group to get a global normalization factor.
-
-    Parameters
-    ----------
-    mb_list : MicroBatchList
-        The list of micro-batches.
-    loss_weight_fn : Callable[[dict[str, Any]], torch.Tensor]
-        Function to compute loss weight for each micro-batch.
-    dp_group : dist.ProcessGroup
-        The data parallel process group for all_reduce.
-    device : torch.device | str | int | None
-        Optional device for the reduced scalar. Megatron uses this to keep
-        microbatches on CPU while reducing the weight through NCCL/HCCL.
-
-    Returns
-    -------
-    torch.Tensor
-        The total loss weight (scalar tensor) after all_reduce.
+    Named terms use one vector collective in declared name order. Names must
+    match across ranks; static schemas also cover ranks with only transport
+    data. Globally empty named terms retain zero mass. Scalar behavior is
+    unchanged, including the requirement of a positive global weight.
     """
-    total_weight = torch.stack(
-        [compute_microbatch_loss_weight(mb, loss_weight_fn) for mb in mb_list.mbs]
-    ).sum()
+    weights = [compute_microbatch_loss_weight(mb, loss_weight_fn) for mb in mb_list.mbs]
+    names = get_named_loss_names(loss_weight_fn)
+    if names is not None:
+        total = torch.stack(
+            [
+                torch.stack([weight[name].float() for name in names])
+                for weight in weights
+            ]
+        ).sum(dim=0)
+        total = total.detach().to(device=device, dtype=torch.float32)
+        dist.all_reduce(total, group=dp_group)
+        torch._assert_async(
+            torch.all(torch.isfinite(total) & (total >= 0)),
+            "Global loss normalizers must be finite and nonnegative",
+        )
+        return dict(zip(names, total.unbind(), strict=True))
+    total_weight = torch.stack(weights).sum()
     total_weight = total_weight.detach().clone().to(device=device, dtype=torch.float32)
     dist.all_reduce(total_weight, group=dp_group)
     assert total_weight > 0, (
         "Global total loss weight must be positive after all_reduce"
     )
     return total_weight
+
+
+def _validate_mass(value: torch.Tensor) -> None:
+    if not isinstance(value, torch.Tensor) or value.ndim != 0:
+        raise ValueError("Each loss normalizer must be a scalar tensor")
+    if value.requires_grad:
+        raise ValueError("Loss normalizers must be batch-derived, without gradients")
+    torch._assert_async(
+        torch.isfinite(value) & (value >= 0),
+        "Loss normalizers must be finite and nonnegative",
+    )
+
+
+def normalize_loss(
+    loss: LossValue,
+    local_weight: LossValue,
+    total_weight: LossValue,
+    multiplier: float = 1.0,
+) -> torch.Tensor:
+    """Combine named numerators, or rescale a legacy microbatch mean.
+
+    Each named term is independently normalized over the optimizer batch and
+    the engine's existing data-parallel group. Fractional masses must not be
+    clamped to one. A globally empty term contributes a graph-connected zero.
+    Normalizers must already be validated by compute_microbatch_loss_weight
+    and compute_total_loss_weight; only numerators are validated here.
+    """
+    if isinstance(loss, dict):
+        if not isinstance(local_weight, dict) or not isinstance(total_weight, dict):
+            raise TypeError("Named loss numerators require named normalizers")
+        if (
+            not loss
+            or loss.keys() != local_weight.keys()
+            or loss.keys() != total_weight.keys()
+        ):
+            raise ValueError("Loss numerator and normalizer names must match")
+        normalized = []
+        for name in sorted(loss):
+            numerator = loss[name]
+            if not isinstance(numerator, torch.Tensor) or numerator.ndim != 0:
+                raise ValueError(f"Loss numerator {name!r} must be a scalar tensor")
+            numerator = numerator.float()
+            torch._assert_async(
+                torch.isfinite(numerator),
+                f"Loss numerator {name!r} must be finite, including empty terms",
+            )
+            mass = total_weight[name].to(device=numerator.device, dtype=torch.float32)
+            denominator = torch.where(mass > 0, mass, 1.0)
+            normalized.append(
+                torch.where(mass > 0, numerator.float() / denominator, numerator * 0)
+            )
+        return torch.stack(normalized).sum() * multiplier
+    if isinstance(local_weight, dict) or isinstance(total_weight, dict):
+        raise TypeError("Scalar losses require scalar normalizers")
+    return loss * (local_weight / total_weight * multiplier)
 
 
 def stage_batch_for_engine(data: dict[str, Any], engine: Any) -> dict[str, Any]:

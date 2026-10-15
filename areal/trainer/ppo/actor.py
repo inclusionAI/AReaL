@@ -2,6 +2,7 @@
 
 import functools
 import math
+from contextlib import contextmanager
 from typing import Any
 
 import torch
@@ -9,6 +10,12 @@ import torch
 from areal.api import TrainEngine
 from areal.api.cli_args import MOPDLossConfig, PPOActorConfig, RejectionSamplingConfig
 from areal.engine.core import stage_batch_for_engine
+from areal.engine.r3.transport import (
+    clear_engine_r3_side_channel,
+    localize_r3_tensor,
+    pop_r3_tensors,
+    set_engine_r3_side_channel,
+)
 from areal.infra import TrainController
 from areal.infra.rpc.serialization import serialize_value
 from areal.trainer.mopd.loss import compose_mopd_loss
@@ -19,6 +26,10 @@ from areal.trainer.ppo.gae import (
     _compute_turn_level_gae,
 )
 from areal.trainer.ppo.lambda_fn import resolve_gae_lambda_fn
+from areal.trainer.ppo.loss_reduction import (
+    PreparedLossStep,
+    prepare_policy_gradient_batch,
+)
 from areal.trainer.ppo.stats import infer_token_denominator, log_train_inference_stats
 from areal.utils import logging, stats_tracker
 from areal.utils.constants import (
@@ -36,6 +47,7 @@ from areal.utils.data import (
     Normalization,
     TrajBatchMeta,
     batched_call,
+    concat_batch,
     is_multi_modal_key,
     normalize_rollout_rewards,
     split_training_batch_into_microbatches,
@@ -46,6 +58,10 @@ from areal.utils.functional import (
     ppo_actor_loss_fn,
     reward_overlong_penalty,
     sapo_loss_fn,
+)
+from areal.utils.functional.loss_aggregation import (
+    LossAggregationMode,
+    TokenMean,
 )
 from areal.utils.perf_tracer import trace_perf
 from areal.utils.stats_tracker import ReduceType
@@ -60,6 +76,7 @@ def _group_training_metrics(
     loss_mask: torch.Tensor,
     group_sizes: list[int],
     logical_group_sizes: list[int] | None = None,
+    loss_aggregation: LossAggregationMode = "token_mean",
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     batch_size = loss_mask.shape[0]
     if any(size < 1 for size in group_sizes) or sum(group_sizes) != batch_size:
@@ -77,7 +94,10 @@ def _group_training_metrics(
     ends = sizes.cumsum(0)
     starts = ends - sizes
     token_counts = loss_mask.reshape(batch_size, -1).sum(1, dtype=torch.float32)
-    cumulative_tokens = torch.nn.functional.pad(token_counts.cumsum(0), (1, 0))
+    unit_counts = (
+        token_counts if loss_aggregation == "token_mean" else (token_counts > 0).float()
+    )
+    cumulative_units = torch.nn.functional.pad(unit_counts.cumsum(0), (1, 0))
 
     group_starts[starts] = True
     usable_group_sizes[starts] = torch.tensor(
@@ -85,7 +105,10 @@ def _group_training_metrics(
         dtype=usable_group_sizes.dtype,
         device=loss_mask.device,
     )
-    group_loss_weights[starts] = cumulative_tokens[ends] - cumulative_tokens[starts]
+    weights = cumulative_units[ends] - cumulative_units[starts]
+    if loss_aggregation == "prompt_mean":
+        weights = (weights > 0).float()
+    group_loss_weights[starts] = weights
     return group_starts, usable_group_sizes, group_loss_weights
 
 
@@ -214,6 +237,14 @@ class PPOActor:
 
     def configure_mopd_loss(self, config: MOPDLossConfig) -> None:
         """Bind static MOPD loss settings once on each actor worker."""
+        if (
+            config.distillation_coefficient != 0
+            and self.config.loss_aggregation != "token_mean"
+        ):
+            raise ValueError(
+                "MOPD distillation is only supported with "
+                "loss_aggregation='token_mean'."
+            )
         if self._mopd_loss_config is not None and self._mopd_loss_config != config:
             raise RuntimeError("MOPD loss configuration is already bound")
         self._mopd_loss_config = config
@@ -283,13 +314,113 @@ class PPOActor:
     def compute_logp(self, data: list[dict[str, Any]]) -> list[torch.Tensor] | None:
         return batched_call(self._compute_logp, data)
 
+    def _engine_r3_enabled(self) -> bool:
+        return bool(getattr(self.engine, "_r3_enabled", False))
+
+    @contextmanager
+    def _r3_side_channel(
+        self,
+        routed_experts: Any | None,
+        routing_valid: Any | None,
+    ):
+        has_r3_data = routed_experts is not None or routing_valid is not None
+        if has_r3_data:
+            if not self._engine_r3_enabled():
+                raise ValueError(
+                    "Received routed_experts but actor engine R3 replay is not enabled."
+                )
+            if routed_experts is None or routing_valid is None:
+                raise ValueError(
+                    "Both routed_experts and r3_routing_valid are required for R3."
+                )
+            set_engine_r3_side_channel(self.engine, routed_experts, routing_valid)
+        try:
+            yield
+        finally:
+            if has_r3_data:
+                clear_engine_r3_side_channel(self.engine)
+
     def _compute_logp(self, data: dict[str, Any]) -> torch.Tensor | None:
-        self.engine.eval()
         stage_batch_for_engine(data, self.engine)
-        return self.engine.forward(
-            input_=data,
-            aggregate_fn=lambda xs: torch.cat(xs, dim=-1),
+        routed_experts, routing_valid = pop_r3_tensors(data)
+        r3_enabled = routed_experts is not None and routing_valid is not None
+        self.engine.eval()
+        try:
+            with self._r3_side_channel(routed_experts, routing_valid):
+                logp = self.engine.forward(
+                    input_=data,
+                    aggregate_fn=lambda xs: torch.cat(xs, dim=-1),
+                )
+                self._log_r3_rollout_train_logp_stats(
+                    train_logp=logp,
+                    data=data,
+                    r3_enabled=r3_enabled,
+                )
+                return logp
+        finally:
+            if routed_experts is not None:
+                data["routed_experts"] = routed_experts
+            if routing_valid is not None:
+                data["r3_routing_valid"] = routing_valid
+
+    def _log_r3_rollout_train_logp_stats(
+        self,
+        *,
+        train_logp: torch.Tensor | None,
+        data: dict[str, Any],
+        r3_enabled: bool,
+    ) -> None:
+        if (
+            train_logp is None
+            or "logprobs" not in data
+            or "loss_mask" not in data
+            or not torch.is_tensor(data["logprobs"])
+            or not torch.is_tensor(data["loss_mask"])
+        ):
+            return
+
+        rollout_logp = torch.roll(data["logprobs"], shifts=-1, dims=-1).to(
+            train_logp.device
         )
+        loss_mask = torch.roll(data["loss_mask"].bool(), shifts=-1, dims=-1).to(
+            train_logp.device
+        )
+        if loss_mask.shape[-1] > 0:
+            loss_mask[..., -1] = False
+        if (
+            train_logp.shape != rollout_logp.shape
+            or train_logp.shape != loss_mask.shape
+        ):
+            logger.warning(
+                "Skipping R3 rollout/train logp metrics due to shape mismatch: "
+                f"train_logp={tuple(train_logp.shape)}, "
+                f"rollout_logp={tuple(rollout_logp.shape)}, "
+                f"loss_mask={tuple(loss_mask.shape)}."
+            )
+            return
+
+        delta = (train_logp.detach().float() - rollout_logp.detach().float()).detach()
+        with stats_tracker.scope("compute_logp"):
+            with stats_tracker.scope("r3"):
+                stats_tracker.scalar(enabled=float(r3_enabled))
+                stats_tracker.stat_compact(
+                    loss_mask,
+                    ReduceType.SUM,
+                    n_valid_tokens=torch.ones_like(delta),
+                )
+                stats_tracker.stat_compact(
+                    loss_mask,
+                    ReduceType.AVG_MIN_MAX,
+                    rollout_train_k3_kl=torch.expm1(delta) - delta,
+                    rollout_train_extreme_frac_tau2=(
+                        delta.abs() > math.log(2.0)
+                    ).float(),
+                    rollout_train_extreme_frac_tau5=(
+                        delta.abs() > math.log(5.0)
+                    ).float(),
+                    rollout_train_logp_abs_diff=delta.abs(),
+                    rollout_train_logp_sq_diff=delta.square(),
+                )
 
     def aggregate_mopd_targets(
         self,
@@ -672,11 +803,23 @@ class PPOActor:
     @trace_perf("ppo_actor.ppo_update", category="compute")
     @stats_tracker.scope_func_wrapper("ppo_actor")
     def ppo_update(self, data: list[dict[str, Any]]) -> None:
-        batched_call(self._ppo_update, data, unpack=False, pass_meta=True)
+        batched, meta = concat_batch(data)
+        self._ppo_update(batched, meta)
 
     def _ppo_update(
         self, data: dict[str, Any], meta: TrajBatchMeta | None = None
     ) -> None:
+        if self.config.loss_aggregation != "token_mean" and (
+            data.get("teacher_logp") is not None
+            or data.get("mopd_teacher_logp_sum") is not None
+            or (
+                self._mopd_loss_config is not None
+                and self._mopd_loss_config.distillation_coefficient != 0
+            )
+        ):
+            raise ValueError(
+                "Distillation is only supported with loss_aggregation='token_mean'."
+            )
         attn_mask = data["attention_mask"]
         loss_mask = data["loss_mask"]
         reward_score = data["rewards"]
@@ -712,7 +855,10 @@ class PPOActor:
         group_metrics = None
         if meta is not None:
             group_metrics = _group_training_metrics(
-                loss_mask, meta.traj_group_sizes, meta.logical_group_sizes
+                loss_mask,
+                meta.traj_group_sizes,
+                meta.logical_group_sizes,
+                self.config.loss_aggregation,
             )
             global_denominators["n_groups"] = group_metrics[0]
         stats_tracker.denominator(**global_denominators)
@@ -813,42 +959,110 @@ class PPOActor:
         # Megatron keeps the full batch on CPU and streams only the current
         # microbatch to the accelerator. Stage before the outer PPO split so
         # that split does not retain every optimizer minibatch on GPU.
+        prepared_loss = prepare_policy_gradient_batch(
+            data,
+            mode=self.config.loss_aggregation,
+            divisor=self.config.loss_aggregation_divisor,
+            group_sizes=meta.traj_group_sizes if meta is not None else None,
+        )
         stage_batch_for_engine(data, self.engine)
         # NOTE: calling engine.train() is critical to enabling gradient checkpointing
         self.engine.train()
+        routed_experts, routing_valid = pop_r3_tensors(data)
+        if routed_experts is not None:
+            batch_size, seq_len = data["input_ids"].shape
+            data["_r3_row_indices"] = (
+                torch.arange(
+                    batch_size,
+                    device=data["input_ids"].device,
+                    dtype=torch.long,
+                )
+                .unsqueeze(1)
+                .expand(-1, seq_len)
+            )
         mb_inputs = split_training_batch_into_microbatches(
             data,
             n_mbs=self.config.ppo_n_minibatches,
             group=self.engine.data_parallel_group,
         )
+        data.pop("_r3_row_indices", None)
+        r3_mb_inputs = self._split_r3_minibatches(
+            routed_experts, routing_valid, mb_inputs
+        )
+
+        loss_steps = prepared_loss.for_steps(
+            mb_inputs,
+            dp_group=self.engine.data_parallel_group,
+            device=self.engine.device,
+        )
 
         with stats_tracker.scope("update"):
             # Get current version for proximal approximation metrics
             current_version = self.engine.get_version()
-
-            for mb in mb_inputs:
-                train_stat = self.engine.train_batch(
-                    mb,
-                    loss_fn=functools.partial(
-                        grpo_loss_fn,
-                        eps_clip=self.config.eps_clip,
-                        eps_clip_higher=self.config.eps_clip_higher,
-                        c_clip=self.config.c_clip,
-                        rejection_sampling=self.config.rejection_sampling,
-                        m2_threshold=self.m2_threshold,
-                        importance_sampling_level=self.config.importance_sampling_level,
-                        current_version=current_version,
-                        prox_logp_method=self.config.prox_logp_method,
-                        use_sapo_loss=self.config.use_sapo_loss,
-                        sapo_tau_pos=self.config.sapo_tau_pos,
-                        sapo_tau_neg=self.config.sapo_tau_neg,
-                        use_cispo_loss=self.config.use_cispo_loss,
-                        use_decoupled_loss=self.config.use_decoupled_loss,
-                        mopd_loss_config=self._mopd_loss_config,
-                    ),
-                    loss_weight_fn=lambda x: x["loss_mask"].count_nonzero(),
+            for mb, r3_mb, loss_step in zip(
+                mb_inputs, r3_mb_inputs, loss_steps, strict=True
+            ):
+                loss_fn = functools.partial(
+                    grpo_loss_fn,
+                    eps_clip=self.config.eps_clip,
+                    eps_clip_higher=self.config.eps_clip_higher,
+                    c_clip=self.config.c_clip,
+                    rejection_sampling=self.config.rejection_sampling,
+                    m2_threshold=self.m2_threshold,
+                    importance_sampling_level=self.config.importance_sampling_level,
+                    current_version=current_version,
+                    prox_logp_method=self.config.prox_logp_method,
+                    use_sapo_loss=self.config.use_sapo_loss,
+                    sapo_tau_pos=self.config.sapo_tau_pos,
+                    sapo_tau_neg=self.config.sapo_tau_neg,
+                    use_cispo_loss=self.config.use_cispo_loss,
+                    use_decoupled_loss=self.config.use_decoupled_loss,
+                    loss_step=loss_step,
+                    mopd_loss_config=self._mopd_loss_config,
                 )
+                with self._r3_side_channel(*r3_mb):
+                    train_stat = self.engine.train_batch(
+                        mb,
+                        loss_fn=loss_fn,
+                        loss_weight_fn=loss_step.loss_weight,
+                    )
                 stats_tracker.scalar(**train_stat)
+
+    def _split_r3_minibatches(
+        self,
+        routed_experts: Any | None,
+        routing_valid: Any | None,
+        mb_inputs: list[dict[str, Any]],
+    ) -> list[tuple[Any | None, Any | None]]:
+        if routed_experts is None and routing_valid is None:
+            return [(None, None) for _ in mb_inputs]
+        if routed_experts is None or routing_valid is None:
+            raise ValueError(
+                "Both routed_experts and r3_routing_valid are required for R3."
+            )
+        if not self._engine_r3_enabled():
+            raise ValueError(
+                "Received routed_experts but actor engine R3 replay is not enabled."
+            )
+
+        routed_experts = localize_r3_tensor(routed_experts)
+        routing_valid = localize_r3_tensor(routing_valid)
+        r3_mbs = []
+        for mb in mb_inputs:
+            row_indices = mb.pop("_r3_row_indices", None)
+            if mb.get("_transport_dummy") is True:
+                r3_mbs.append((None, None))
+                continue
+            if row_indices is None:
+                raise RuntimeError("R3 minibatch is missing source row indices")
+            indices = row_indices[:, 0]
+            r3_mbs.append(
+                (
+                    routed_experts[indices.to(routed_experts.device)],
+                    routing_valid[indices.to(routing_valid.device)],
+                )
+            )
+        return r3_mbs
 
 
 class PPOActorController(TrainController):
@@ -1050,15 +1264,19 @@ def grpo_loss_fn(
     sapo_tau_neg: float = 1.05,
     use_cispo_loss: bool = False,
     use_decoupled_loss: bool = False,
+    loss_step: PreparedLossStep | None = None,
     mopd_loss_config: MOPDLossConfig | None = None,
     vocab_min_logits: torch.Tensor | None = None,
     vocab_max_logits: torch.Tensor | None = None,
     vocab_mean_logits: torch.Tensor | None = None,
     vocab_norm_logits: torch.Tensor | None = None,
 ):
-    """Loss function for actor step, all inputs should be splitted into
-    pipeline micro batches, returns loss and logging stats."""
-    loss_mask = input_data["loss_mask"].bool()
+    """Compute loss and logging stats using the actor's assembled reduction."""
+    denominator_mask = input_data["loss_mask"].bool()
+    pg_reduction = (
+        TokenMean(denominator_mask) if loss_step is None else loss_step.bind(input_data)
+    )
+    loss_mask = denominator_mask
     if mopd_loss_config is not None and mopd_loss_config.rl_coefficient == 0:
         teacher_logp_sum = input_data.get("mopd_teacher_logp_sum")
         teacher_weight_sum = input_data.get("mopd_teacher_weight_sum")
@@ -1084,7 +1302,6 @@ def grpo_loss_fn(
                 loss_mask = _apply_m2po_masking(
                     input_data["logprobs"], prox_logp, loss_mask, m2_threshold
                 )
-                normalization_mask = loss_mask
             if rejection_sampling is not None:
                 loss_mask = apply_rejection_sampling(
                     proximal_logprobs=prox_logp,
@@ -1117,6 +1334,11 @@ def grpo_loss_fn(
             old_logp=behavior_logp,
             entropy=entropy.detach().float(),
             denominator="n_mopd_tokens",
+        )
+        stats_tracker.weighted_mean(
+            "actor_loss/avg",
+            loss,
+            pg_reduction.normalizer(),
         )
         return loss
 
@@ -1165,6 +1387,7 @@ def grpo_loss_fn(
             old_logprobs=old_logp,
             rejection_sampling=rejection_sampling,
             cu_seqlens=input_data.get("cu_seqlens"),
+            pg_reduction=pg_reduction,
         )
     elif use_sapo_loss:
         if use_decoupled_loss:
@@ -1181,6 +1404,7 @@ def grpo_loss_fn(
             loss_mask=loss_mask,
             importance_sampling_level=importance_sampling_level,
             cu_seqlens=input_data.get("cu_seqlens"),
+            pg_reduction=pg_reduction,
         )
     else:
         loss, stat = ppo_actor_loss_fn(
@@ -1195,16 +1419,16 @@ def grpo_loss_fn(
             rejection_sampling=rejection_sampling,
             importance_sampling_level=importance_sampling_level,
             cu_seqlens=input_data.get("cu_seqlens"),
+            pg_reduction=pg_reduction,
         )
 
-    # M2 is part of the shared training-validity contract. Behavioral
-    # rejection may narrow the MOPD numerator further, while its denominator
-    # stays at the pre-rejection count to avoid amplifying accepted tokens.
-    mopd_normalization_mask = loss_mask
+    # M2 and rejection narrow both numerators while the engine weight remains
+    # the original valid-token count. Keep both objectives on that denominator.
+    mopd_normalization_mask = denominator_mask
     mopd_loss_mask = stat.get("behave_mask", loss_mask).bool()
 
-    # Multi-teacher on-policy distillation. The deprecated single-teacher
-    # fields retain their original joint-loss semantics for compatibility.
+    # Multi-teacher on-policy distillation. Legacy single-teacher numerators
+    # retain their post-M2, pre-rejection mask; both use the original denominator.
     teacher_logp = input_data.get("teacher_logp")
     mopd_teacher_logp_sum = input_data.get("mopd_teacher_logp_sum")
     rkl_stat = None
@@ -1251,14 +1475,23 @@ def grpo_loss_fn(
             loss = (
                 -distill_loss_weight
                 * rkl_weighted_term.sum()
-                / loss_mask.sum().clamp(min=1)
+                / denominator_mask.sum().clamp(min=1)
             )
             rkl_stat = -rkl_weighted_term
         else:
             rkl_penalty_per_token = (logprobs - teacher_logp) * loss_mask
-            rkl_penalty = rkl_penalty_per_token.sum() / loss_mask.sum().clamp(min=1)
+            rkl_penalty = rkl_penalty_per_token.sum() / denominator_mask.sum().clamp(
+                min=1
+            )
             loss = rl_loss_weight * loss + distill_loss_weight * rkl_penalty
             rkl_stat = rkl_penalty_per_token
+
+    # Match the engine's aggregation across microbatches and data-parallel ranks.
+    stats_tracker.weighted_mean(
+        "actor_loss/avg",
+        loss,
+        pg_reduction.normalizer(),
+    )
 
     # Log training statistics
     stats_tracker.denominator(
@@ -1291,7 +1524,7 @@ def grpo_loss_fn(
         new_logp=logprobs.detach(),
         old_logp=old_logp,
         entropy=entropy.float(),
-        actor_loss=stat["loss"],
+        actor_loss_token_mean=stat["loss"].float(),
         clip_ratio=stat["clip_mask"].float(),
         dual_clip_ratio=stat["dual_clip_mask"].float(),
         logp_diff=logp_diff,

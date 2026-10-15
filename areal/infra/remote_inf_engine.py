@@ -199,6 +199,22 @@ class GroupedRolloutWorkflow(RolloutWorkflow):
         if group_error is not None:
             raise group_error
 
+        if interaction_group and self.reward_normalization and self.group_size > 1:
+            # An unscored branch invalidates its logical rollout, not scored
+            # siblings. Keep episode metrics above independent of training
+            # eligibility, and apply the usual group-size checks below.
+            for sample_idx, result in enumerate(results):
+                if result and any(v.reward is None for v in result.values()):
+                    unscored = sum(v.reward is None for v in result.values())
+                    self.logger.warning(
+                        "reward_normalization: rejecting rollout "
+                        f"sample_idx={sample_idx} with {unscored}/{len(result)} "
+                        "unscored interactions"
+                    )
+                    results[sample_idx] = None
+            valid_results = [r for r in results if r is not None]
+            usable_slot_count = len(valid_results)
+
         if not valid_results:
             self._record_group_stats(usable_slot_count, trainable=False)
             return None
@@ -1085,7 +1101,7 @@ class RemoteInfEngine(InferenceEngine):
         accumulated_output_tokens = []
         accumulated_output_logprobs = []
         accumulated_versions = []
-        accumulated_routed_experts: list[np.ndarray] = []
+        final_routed_experts: np.ndarray | None = None
 
         # A single "rid" shares the same server to allow KV cache reuse
         if req.rid in self.rid_to_address:
@@ -1165,9 +1181,28 @@ class RemoteInfEngine(InferenceEngine):
             accumulated_versions.extend(
                 [request_version] * len(gen_result.output_tokens)
             )
-            # Accumulate routed_experts for MoE models
+            # Accumulate routed_experts for MoE models. SGLang returns routing
+            # for the full request prefix on abort/resubmit, so keep already
+            # accepted rows and append only the newly covered suffix.
             if gen_result.routed_experts is not None:
-                accumulated_routed_experts.append(gen_result.routed_experts)
+                if final_routed_experts is None:
+                    final_routed_experts = gen_result.routed_experts
+                else:
+                    consumed_rows = final_routed_experts.shape[0]
+                    if gen_result.routed_experts.shape[0] < consumed_rows:
+                        raise RuntimeError(
+                            "SGLang routed_experts for a resubmitted request is "
+                            "shorter than the previously accumulated routing rows: "
+                            f"new_shape={gen_result.routed_experts.shape}, "
+                            f"accumulated_shape={final_routed_experts.shape}."
+                        )
+                    final_routed_experts = np.concatenate(
+                        [
+                            final_routed_experts,
+                            gen_result.routed_experts[consumed_rows:],
+                        ],
+                        axis=0,
+                    )
 
             # Record speculative-decoding acceptance metrics from SGLang
             # meta_info. Recorded per generation segment (partial rollout may
@@ -1199,11 +1234,17 @@ class RemoteInfEngine(InferenceEngine):
 
         latency = time.perf_counter() - start_time
 
-        accumulated_routed_experts = (
-            np.concatenate(accumulated_routed_experts)
-            if accumulated_routed_experts
-            else None
-        )
+        if (
+            req.metadata.get("return_routed_experts", False)
+            and accumulated_output_tokens
+            and final_routed_experts is None
+        ):
+            raise RuntimeError(
+                "Requested return_routed_experts=True but no routed_experts were "
+                "received after abort/resubmit. This usually means the SGLang "
+                "server was not launched with enable_return_routed_experts=True "
+                "or the model is not a MoE model."
+            )
 
         response = ModelResponse(
             input_tokens=req.input_ids[
@@ -1218,7 +1259,7 @@ class RemoteInfEngine(InferenceEngine):
             ttft=latency,  # Simplified for non-streaming
             tokenizer=req.tokenizer,
             processor=req.processor,
-            routed_experts=accumulated_routed_experts,
+            routed_experts=final_routed_experts,
         )
         return response
 
@@ -1601,8 +1642,34 @@ class RemoteInfEngine(InferenceEngine):
             if get_pause_requests is not None
             else [self.backend.get_pause_request()]
         )
-        for pause_req in pause_requests:
-            self._run_request_on_all_servers(pause_req)
+        pause_logger = getattr(self, "logger", logger)
+        for stage, pause_req in enumerate(pause_requests, start=1):
+            started = time.monotonic()
+            mode = (pause_req.payload or {}).get("mode", "default")
+            pause_logger.info(
+                "Inference pause stage %d/%d (%s) started",
+                stage,
+                len(pause_requests),
+                mode,
+            )
+            try:
+                self._run_request_on_all_servers(pause_req)
+            except Exception:
+                pause_logger.exception(
+                    "Inference pause stage %d/%d (%s) failed after %.1fs",
+                    stage,
+                    len(pause_requests),
+                    mode,
+                    time.monotonic() - started,
+                )
+                raise
+            pause_logger.info(
+                "Inference pause stage %d/%d (%s) completed in %.1fs",
+                stage,
+                len(pause_requests),
+                mode,
+                time.monotonic() - started,
+            )
 
         # The above http request may require some time to be scheduled and executed.
         # The following line waits until all requests are indeed dropped.
