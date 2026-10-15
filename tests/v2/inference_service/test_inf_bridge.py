@@ -342,6 +342,39 @@ class TestInfBridge:
 
         assert resp.output_versions == [7]
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("backend_name", ["sglang", "vllm"])
+    @pytest.mark.parametrize("interrupted", [False, True])
+    async def test_output_versions_pinned_before_request(
+        self, backend_name, interrupted
+    ):
+        """Each segment retains its dispatch version across an in-flight update."""
+        backend = (
+            SGLangBridgeBackend() if backend_name == "sglang" else VLLMBridgeBackend()
+        )
+        bridge = _make_bridge(version=10, backend=backend)
+        responses = [([100, 101], [-0.5, -0.3], "abort" if interrupted else "stop")]
+        if interrupted:
+            responses.append(([102], [-0.2], "stop"))
+
+        async def send_request(http_req):
+            tokens, logprobs, reason = responses.pop(0)
+            # A weight update completes while the HTTP response is in flight.
+            await asyncio.sleep(0)
+            bridge.set_version(bridge.get_version() + 1)
+            if backend_name == "sglang":
+                return _make_sglang_response(list(zip(logprobs, tokens)), reason)
+            return _make_vllm_response(tokens, logprobs, reason)
+
+        bridge._send_request = AsyncMock(side_effect=send_request)
+        try:
+            resp = await bridge.agenerate(_make_request())
+        finally:
+            await bridge.aclose()
+
+        assert resp.output_tokens == ([100, 101, 102] if interrupted else [100, 101])
+        assert resp.output_versions == ([10, 10, 11] if interrupted else [10, 10])
+
     # -- 10. n_samples validation ------------------------------------------------
 
     @pytest.mark.asyncio
