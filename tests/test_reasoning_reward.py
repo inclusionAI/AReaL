@@ -2,6 +2,8 @@
 
 import math
 
+import pytest
+
 from areal.reward import (
     CompositeReward,
     FormatReward,
@@ -19,34 +21,20 @@ from areal.reward import (
 def test_extract_boxed_content():
     assert extract_boxed_content(r"The result is \boxed{42}.") == "42"
     assert extract_boxed_content(r"\boxed{\frac{1}{2}}") == r"\frac{1}{2}"
-    assert (
-        extract_boxed_content(r"\boxed{\sqrt{\frac{a}{b}}}")
-        == r"\sqrt{\frac{a}{b}}"
-    )
-    assert (
-        extract_boxed_content(r"First \boxed{10}, then finally \boxed{20}")
-        == "20"
-    )
+    assert extract_boxed_content(r"\boxed{\sqrt{\frac{a}{b}}}") == r"\sqrt{\frac{a}{b}}"
+    assert extract_boxed_content(r"First \boxed{10}, then finally \boxed{20}") == "20"
     assert extract_boxed_content("No boxed here") is None
     assert extract_boxed_content(r"\boxed{unclosed brace") is None
 
 
 def test_extract_tag_content():
+    assert extract_tag_content("<answer>42</answer>", tag="answer") == "42"
     assert (
-        extract_tag_content("<answer>42</answer>", tag="answer")
-        == "42"
-    )
-    assert (
-        extract_tag_content(
-            "<answer>\nline 1\nline 2\n</answer>", tag="answer"
-        )
+        extract_tag_content("<answer>\nline 1\nline 2\n</answer>", tag="answer")
         == "line 1\nline 2"
     )
     assert (
-        extract_tag_content(
-            "<custom>my answer</custom>", tag="custom"
-        )
-        == "my answer"
+        extract_tag_content("<custom>my answer</custom>", tag="custom") == "my answer"
     )
     assert extract_tag_content("No tag here", tag="answer") is None
 
@@ -96,7 +84,9 @@ def test_format_reward_valid_boxed():
             malformed_penalty=-0.5,
         )
     )
-    completion = "<think>\nStep by step reasoning.\n</think>\nThe answer is \\boxed{42}."
+    completion = (
+        "<think>\nStep by step reasoning.\n</think>\nThe answer is \\boxed{42}."
+    )
     detail = formatter.evaluate_detailed(completion)
     assert detail["valid_think"] is True
     assert detail["valid_answer_format"] is True
@@ -114,19 +104,11 @@ def test_format_reward_unclosed_or_missing_think():
         )
     )
     # Missing tags entirely
-    assert (
-        formatter.evaluate("Direct answer \\boxed{42}") == -0.5
-    )
+    assert formatter.evaluate("Direct answer \\boxed{42}") == -0.5
     # Unclosed think tag
-    assert (
-        formatter.evaluate("<think>Let's think \\boxed{42}")
-        == -0.5
-    )
+    assert formatter.evaluate("<think>Let's think \\boxed{42}") == -0.5
     # Multiple start tags
-    assert (
-        formatter.evaluate("<think>A</think><think>B</think> \\boxed{42}")
-        == -0.5
-    )
+    assert formatter.evaluate("<think>A</think><think>B</think> \\boxed{42}") == -0.5
 
 
 def test_format_reward_empty_think_rejected():
@@ -137,13 +119,8 @@ def test_format_reward_empty_think_rejected():
             malformed_penalty=-0.5,
         )
     )
-    assert (
-        formatter.evaluate("<think></think> \\boxed{42}") == -0.5
-    )
-    assert (
-        formatter.evaluate("<think>   \n  </think> \\boxed{42}")
-        == -0.5
-    )
+    assert formatter.evaluate("<think></think> \\boxed{42}") == -0.5
+    assert formatter.evaluate("<think>   \n  </think> \\boxed{42}") == -0.5
 
 
 def test_format_reward_xml_and_hash_formats():
@@ -284,3 +261,88 @@ def test_get_deepseek_r1_math_reward_factory():
     val = r1_reward("Q", comp, completion_ids=[1] * 50)
     # acc (1.0 * 1.0) + format (1.0 * 0.5) - length (0) = 1.5
     assert math.isclose(val, 1.5)
+
+
+def test_format_reward_answer_inside_think_only_not_rewarded():
+    """Test that an answer appearing only inside <think> earns no answer reward."""
+    format_r = FormatReward(FormatRewardConfig())
+
+    result = format_r.evaluate_detailed("<think>so it is \\boxed{42}</think>")
+
+    assert result["valid_answer_format"] is False
+    assert result["extracted_answer"] is None
+    assert math.isclose(result["reward"], 0.5)
+
+
+@pytest.mark.parametrize(
+    "answer_format,completion",
+    [
+        ("boxed", "<think>r</think> \\boxed{}"),
+        ("boxed", "<think>r</think> \\boxed{   }"),
+        ("xml", "<think>r</think> <answer> </answer>"),
+        ("hash", "<think>r</think> ####"),
+        ("any", "<think>r</think>"),
+    ],
+)
+def test_format_reward_empty_answer_rejected(answer_format, completion):
+    """Test that an empty answer delimiter earns no answer reward."""
+    format_r = FormatReward(FormatRewardConfig(answer_format=answer_format))
+
+    result = format_r.evaluate_detailed(completion)
+
+    assert result["valid_answer_format"] is False
+    assert math.isclose(result["reward"], 0.5)
+
+
+def _failing_accuracy(prompt, completions, *args, **kwargs):
+    raise RuntimeError("scorer is broken")
+
+
+def test_composite_reward_accuracy_error_propagates_by_default():
+    """Test that a scorer exception is not converted into a format-only reward."""
+    composite = CompositeReward(
+        accuracy_fn=_failing_accuracy,
+        format_reward=FormatReward(),
+        log_stats=False,
+    )
+
+    with pytest.raises(RuntimeError, match="scorer is broken"):
+        composite("Q", "<think>ok</think> \\boxed{42}")
+
+
+def test_composite_reward_accuracy_error_caught_when_opted_in(monkeypatch):
+    """Test that opting in scores a scorer failure as zero and reports it."""
+    recorded = {}
+    monkeypatch.setattr(
+        "areal.reward.reasoning.stats_tracker.scalar",
+        lambda **kw: recorded.update(kw),
+    )
+    composite = CompositeReward(
+        accuracy_fn=_failing_accuracy,
+        format_reward=FormatReward(),
+        catch_accuracy_errors=True,
+    )
+
+    score = composite("Q", "<think>ok</think> \\boxed{42}")
+
+    assert math.isclose(score, 1.0)
+    assert recorded["reward_accuracy"] == 0.0
+    assert recorded["reward_accuracy_error"] == 1.0
+
+
+def test_composite_reward_records_no_accuracy_error_on_wrong_answer(monkeypatch):
+    """Test that an incorrect answer is not reported as a scorer failure."""
+    recorded = {}
+    monkeypatch.setattr(
+        "areal.reward.reasoning.stats_tracker.scalar",
+        lambda **kw: recorded.update(kw),
+    )
+    composite = CompositeReward(
+        accuracy_fn=lambda *args, **kwargs: 0.0,
+        catch_accuracy_errors=True,
+    )
+
+    composite("Q", "<think>ok</think> \\boxed{99}")
+
+    assert recorded["reward_accuracy"] == 0.0
+    assert recorded["reward_accuracy_error"] == 0.0

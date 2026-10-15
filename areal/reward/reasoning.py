@@ -236,24 +236,20 @@ class FormatReward:
                     "error": "reversed_tags",
                 }
 
-        # Validate answer format
-        extracted_ans: str | None = None
-        valid_ans = False
-
+        # Validate answer format. Only the visible answer outside the thinking
+        # block is searched, so an answer that appears solely inside <think>
+        # does not count, and an empty delimiter (e.g. \\boxed{}) is rejected.
         if cfg.answer_format == "boxed":
-            extracted_ans = extract_boxed_content(answer or text)
-            valid_ans = extracted_ans is not None
+            extracted_ans = extract_boxed_content(answer)
         elif cfg.answer_format == "xml":
-            extracted_ans = extract_tag_content(answer or text, cfg.answer_tag)
-            valid_ans = extracted_ans is not None
+            extracted_ans = extract_tag_content(answer, cfg.answer_tag)
         elif cfg.answer_format == "hash":
-            extracted_ans = extract_hash_answer(answer or text)
-            valid_ans = extracted_ans is not None
+            extracted_ans = extract_hash_answer(answer)
         elif cfg.answer_format == "any":
-            extracted_ans = answer if answer else text
-            valid_ans = bool(extracted_ans.strip())
+            extracted_ans = answer
         else:
             raise ValueError(f"Unknown answer_format: {cfg.answer_format!r}")
+        valid_ans = bool(extracted_ans)
 
         reward = 0.0
         if not cfg.require_think_tags or (start_count == 1 and end_count == 1):
@@ -352,6 +348,19 @@ class CompositeReward:
         R = w_acc * R_acc + w_format * R_format + w_length * R_length
 
     Automatically reports sub-reward components to stats_tracker.
+
+    Exceptions raised by ``accuracy_fn`` propagate by default, so a broken scorer
+    stops training instead of silently degrading to format-only rewards. Pass
+    ``catch_accuracy_errors=True`` to score such samples as zero accuracy instead;
+    each failure is then reported as ``reward_accuracy_error`` so it can be told
+    apart from an incorrect answer.
+
+    Note:
+        The composite reward is a shaped training signal, not a task-success
+        indicator: a well-formatted but incorrect answer can score above zero.
+        It is therefore not suitable for ``MultiTurnWorkflow``, which retries
+        only while the reward is exactly zero and would stop retrying after an
+        incorrect but well-formatted attempt.
     """
 
     def __init__(
@@ -363,6 +372,7 @@ class CompositeReward:
         format_weight: float = 1.0,
         length_weight: float = 1.0,
         log_stats: bool = True,
+        catch_accuracy_errors: bool = False,
     ):
         self.accuracy_fn = accuracy_fn
         self.format_reward = format_reward
@@ -371,6 +381,7 @@ class CompositeReward:
         self.format_weight = format_weight
         self.length_weight = length_weight
         self.log_stats = log_stats
+        self.catch_accuracy_errors = catch_accuracy_errors
 
     def __call__(
         self,
@@ -381,21 +392,19 @@ class CompositeReward:
         **kwargs: Any,
     ) -> float:
         acc_reward = 0.0
+        acc_error = False
         if self.accuracy_fn is not None:
-            try:
-                sig = inspect.signature(self.accuracy_fn)
-                # Filter kwargs matching the accuracy_fn signature if not **kwargs
-                has_var_keyword = any(
-                    p.kind == inspect.Parameter.VAR_KEYWORD
-                    for p in sig.parameters.values()
-                )
-                if has_var_keyword:
-                    call_kwargs = kwargs
-                else:
-                    call_kwargs = {
-                        k: v for k, v in kwargs.items() if k in sig.parameters
-                    }
+            sig = inspect.signature(self.accuracy_fn)
+            # Filter kwargs matching the accuracy_fn signature if not **kwargs
+            has_var_keyword = any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+            )
+            if has_var_keyword:
+                call_kwargs = kwargs
+            else:
+                call_kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
 
+            try:
                 acc_result = self.accuracy_fn(
                     prompt,
                     completions,
@@ -405,8 +414,11 @@ class CompositeReward:
                 )
                 acc_reward = float(acc_result)
             except Exception:
+                if not self.catch_accuracy_errors:
+                    raise
                 logger.warning("Exception in accuracy_fn", exc_info=True)
                 acc_reward = 0.0
+                acc_error = True
 
         format_reward_val = 0.0
         if self.format_reward is not None:
@@ -441,6 +453,7 @@ class CompositeReward:
                     reward_format=float(format_reward_val),
                     reward_length_penalty=float(length_penalty_val),
                     reward_composite=float(total_reward),
+                    reward_accuracy_error=float(acc_error),
                 )
             except Exception:
                 pass
