@@ -2,7 +2,9 @@
 
 MOPD 将 on-policy 强化学习与一个或多个 teacher checkpoint 的 token 级目标结合。每个
 dataset source 必须选择一个 teacher group，group 可以为任意数量的 teacher 指定非负权重。
-权重按配置值直接使用，不会自动归一化。
+权重按配置值直接使用，不会自动归一化：权重同时决定各 teacher 的相对贡献和整体蒸馏强度。
+建议每个 group 的权重之和为 1，以便不同 group 的 reward 尺度可比；权重之和不为 1 的
+group 仍会被接受，但会产生配置警告。
 
 MOPD 当前运行于 single-controller 模式，使用 Megatron actor 和 teacher engine、SGLang
 rollout engine 及 AWEX 共卡权重传输。actor、rollout 和常驻的 teacher companion 共用同一组

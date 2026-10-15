@@ -3601,12 +3601,6 @@ class MOPDLossConfig:
         default=None,
         metadata={"help": "Optional upper bound applied to the MOPD score reward."},
     )
-    normalize_teacher_weights: bool = field(
-        default=False,
-        metadata={
-            "help": "Normalize teacher log-probabilities by teacher weight sum across heterogeneous routes."
-        },
-    )
 
     def __post_init__(self):
         for name in ("rl_coefficient", "distillation_coefficient"):
@@ -3648,8 +3642,6 @@ class MOPDLossConfig:
                 f"mopd.loss.score_reward_min ({self.score_reward_min}) cannot exceed "
                 f"mopd.loss.score_reward_max ({self.score_reward_max})"
             )
-        if not isinstance(self.normalize_teacher_weights, bool):
-            raise ValueError("mopd.loss.normalize_teacher_weights must be a boolean")
 
 
 @dataclass
@@ -3737,6 +3729,19 @@ class MOPDConfig:
                 raise ValueError(
                     f"mopd.teacher_groups[{teacher_group!r}] must contain at least "
                     "one positive weight"
+                )
+
+            # Weights are used as configured: they set both the relative teacher
+            # contributions and the overall distillation strength. A sum other
+            # than 1 may be intentional, but it changes the reward scale relative
+            # to other groups, so surface it.
+            weight_sum = sum(weights.values())
+            if not math.isclose(weight_sum, 1.0, rel_tol=1e-6, abs_tol=1e-6):
+                warnings.warn(
+                    f"mopd.teacher_groups[{teacher_group!r}] weights sum to "
+                    f"{weight_sum}, not 1. Teacher weights are not normalized, so "
+                    "this group's distillation strength is scaled accordingly.",
+                    stacklevel=2,
                 )
 
 

@@ -3,7 +3,10 @@
 MOPD combines on-policy reinforcement learning with token-level targets from one or
 more teacher checkpoints. Each dataset source selects one required teacher group,
 which assigns non-negative weights to any number of teachers. The weights are applied
-directly and are not normalized.
+directly and are not normalized: they set both the relative teacher contributions and
+the overall distillation strength. Weights summing to 1 keep reward scales comparable
+across groups; a group whose weights sum to another value is accepted but emits a
+configuration warning.
 
 MOPD currently runs in single-controller mode with Megatron actor and teacher engines,
 an SGLang rollout engine, and AWEX colocated weight transfer. Actor, rollout, and a

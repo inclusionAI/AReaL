@@ -531,44 +531,51 @@ def test_mopd_loss_score_reward_clipping():
     assert logprobs.grad[0, 2] != 0
 
 
-def test_mopd_loss_teacher_weight_normalization():
-    """Normalizing teacher weights makes loss invariant to teacher weight scale."""
-    logprobs1 = torch.tensor([[-1.0, -2.0]], dtype=torch.float64, requires_grad=True)
-    logprobs2 = torch.tensor([[-1.0, -2.0]], dtype=torch.float64, requires_grad=True)
-    old_logp = torch.tensor([[-1.0, -2.0]], dtype=torch.float64)
-    loss_mask = torch.tensor([[True, True]])
+def test_mopd_loss_score_reward_clipping_excluding_zero_keeps_masked_tokens_out():
+    """Test that masked tokens contribute nothing when the clip interval excludes 0."""
 
-    # Route 1 has 1 teacher of weight 1.0
-    teacher_logp_base = torch.tensor([[-0.8, -1.5]], dtype=torch.float64)
-    w1 = 1.0
-    loss1, stats1 = mopd_loss_fn(
-        logprobs=logprobs1,
-        old_logprobs=old_logp,
-        teacher_logp_sum=teacher_logp_base * w1,
-        teacher_weight_sum=torch.full_like(teacher_logp_base, w1),
-        loss_mask=loss_mask,
-        normalize_teacher_weights=True,
-    )
+    def loss_and_stats(seq_len, loss_mask):
+        logprobs = torch.full(
+            (1, seq_len), -1.0, dtype=torch.float64, requires_grad=True
+        )
+        return mopd_loss_fn(
+            logprobs=logprobs,
+            old_logprobs=torch.full((1, seq_len), -1.0, dtype=torch.float64),
+            teacher_logp_sum=torch.full((1, seq_len), -2.0, dtype=torch.float64),
+            teacher_weight_sum=torch.ones(1, seq_len, dtype=torch.float64),
+            loss_mask=loss_mask,
+            score_reward_max=-1.5,
+        )
 
-    # Route 2 has 3 teachers of total weight 3.0 with same average target
-    w2 = 3.0
-    loss2, stats2 = mopd_loss_fn(
-        logprobs=logprobs2,
-        old_logprobs=old_logp,
-        teacher_logp_sum=teacher_logp_base * w2,
-        teacher_weight_sum=torch.full_like(teacher_logp_base, w2),
-        loss_mask=loss_mask,
-        normalize_teacher_weights=True,
-    )
+    single, _ = loss_and_stats(1, torch.tensor([[True]]))
+    padded, stats = loss_and_stats(3, torch.tensor([[True, False, False]]))
 
-    torch.testing.assert_close(loss1.detach(), loss2.detach(), rtol=1e-12, atol=1e-12)
     torch.testing.assert_close(
-        stats1["score_reward"], stats2["score_reward"], rtol=1e-12, atol=1e-12
+        stats["score_reward"],
+        torch.tensor([[-1.5, 0.0, 0.0]], dtype=torch.float64),
+    )
+    # Adding masked tokens must not change the loss value.
+    torch.testing.assert_close(padded.detach(), single.detach(), rtol=0, atol=0)
+
+
+def test_mopd_loss_score_reward_clipping_fully_masked_input_is_zero():
+    """Test that a fully masked input yields zero loss and reward under clipping."""
+    logprobs = torch.tensor([[-1.0, -1.0]], dtype=torch.float64, requires_grad=True)
+
+    loss, stats = mopd_loss_fn(
+        logprobs=logprobs,
+        old_logprobs=torch.tensor([[-1.0, -1.0]], dtype=torch.float64),
+        teacher_logp_sum=torch.tensor([[-2.0, -2.0]], dtype=torch.float64),
+        teacher_weight_sum=torch.ones(1, 2, dtype=torch.float64),
+        loss_mask=torch.tensor([[False, False]]),
+        score_reward_min=1.0,
+        score_reward_max=2.0,
     )
 
-    loss1.backward()
-    loss2.backward()
-    torch.testing.assert_close(logprobs1.grad, logprobs2.grad, rtol=1e-12, atol=1e-12)
+    torch.testing.assert_close(
+        stats["score_reward"], torch.zeros(1, 2, dtype=torch.float64)
+    )
+    torch.testing.assert_close(loss.detach(), torch.zeros((), dtype=torch.float64))
 
 
 def test_mopd_loss_fn_bounds_validation():
@@ -601,18 +608,8 @@ def test_mopd_loss_fn_bounds_validation():
             score_reward_min=float("nan"),
         )
 
-    with pytest.raises(ValueError, match="normalize_teacher_weights must be a boolean"):
-        mopd_loss_fn(
-            logprobs=logprobs,
-            old_logprobs=old_logprobs,
-            teacher_logp_sum=teacher_logp_sum,
-            teacher_weight_sum=teacher_weight_sum,
-            loss_mask=loss_mask,
-            normalize_teacher_weights=1,  # type: ignore[arg-type]
-        )
 
-
-def test_compose_mopd_loss_propagates_clipping_and_normalization():
+def test_compose_mopd_loss_propagates_clipping():
     (
         logprobs,
         old_logprobs,
@@ -624,7 +621,6 @@ def test_compose_mopd_loss_propagates_clipping_and_normalization():
     config = MOPDLossConfig(
         score_reward_min=-1.0,
         score_reward_max=1.0,
-        normalize_teacher_weights=True,
     )
 
     total_loss, stats = compose_mopd_loss(

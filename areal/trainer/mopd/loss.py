@@ -41,17 +41,16 @@ def mopd_loss_fn(
     importance_ratio_cap: float = DEFAULT_MOPD_IMPORTANCE_RATIO_CAP,
     score_reward_min: float | None = None,
     score_reward_max: float | None = None,
-    normalize_teacher_weights: bool = False,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     """Compute a truncated-IS multi-teacher reverse-KL surrogate.
 
     ``teacher_logp_sum`` is ``sum_j(w_j * log pi_Tj)`` and
-    ``teacher_weight_sum`` is ``sum_j(w_j)`` at every response token.
-    If ``normalize_teacher_weights`` is True, teacher log-probabilities are
-    normalized by the teacher weight sum to keep reward scales invariant across
-    heterogeneous routes. The behavior-policy importance ratio is capped with
-    a stop-gradient weight to prevent exponential overflow while retaining the
-    score-function gradient.
+    ``teacher_weight_sum`` is ``sum_j(w_j)`` at every response token. Teacher
+    weights are deliberately not normalized. The behavior-policy importance
+    ratio is capped with a stop-gradient weight to prevent exponential
+    overflow while retaining the score-function gradient. Optional score
+    reward bounds are applied before the loss mask is re-applied, so masked
+    tokens always contribute zero.
     """
     if (
         not isinstance(importance_ratio_cap, (int, float))
@@ -82,8 +81,6 @@ def mopd_loss_fn(
         raise ValueError(
             f"score_reward_min ({score_reward_min}) cannot exceed score_reward_max ({score_reward_max})"
         )
-    if not isinstance(normalize_teacher_weights, bool):
-        raise ValueError("normalize_teacher_weights must be a boolean")
     _validate_mopd_tensor_shapes(
         logprobs,
         old_logprobs,
@@ -125,23 +122,11 @@ def mopd_loss_fn(
     bounded_importance_weight = torch.exp(
         detached_log_ratio.clamp(max=math.log(importance_ratio_cap))
     )
-    if normalize_teacher_weights:
-        effective_teacher_weight = torch.where(
-            mask,
-            detached_teacher_weight.clamp_min(1e-8),
-            torch.ones_like(detached_teacher_weight),
-        )
-        score_reward = torch.where(
-            mask,
-            (detached_teacher_logp / effective_teacher_weight) - safe_logprobs.detach(),
-            torch.zeros_like(logprobs),
-        )
-    else:
-        score_reward = torch.where(
-            mask,
-            detached_teacher_logp - (detached_teacher_weight * safe_logprobs.detach()),
-            torch.zeros_like(logprobs),
-        )
+    score_reward = torch.where(
+        mask,
+        detached_teacher_logp - (detached_teacher_weight * safe_logprobs.detach()),
+        torch.zeros_like(logprobs),
+    )
 
     score_reward_min_clipped = (
         (score_reward < score_reward_min) & mask
@@ -157,6 +142,9 @@ def mopd_loss_fn(
         score_reward = torch.clamp(
             score_reward, min=score_reward_min, max=score_reward_max
         )
+        # Clipping to an interval that excludes zero would otherwise give
+        # masked tokens a nonzero reward and leak them into the loss value.
+        score_reward = torch.where(mask, score_reward, torch.zeros_like(score_reward))
 
     # At forward time the carrier is exactly one. Its derivative is
     # d log pi_theta, preserving the score-function gradient even when
@@ -230,7 +218,6 @@ def compose_mopd_loss(
         importance_ratio_cap=config.importance_ratio_cap,
         score_reward_min=config.score_reward_min,
         score_reward_max=config.score_reward_max,
-        normalize_teacher_weights=config.normalize_teacher_weights,
     )
 
     if config.rl_coefficient == 0:

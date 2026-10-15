@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import math
+import warnings
 
 import pytest
 from omegaconf import OmegaConf
@@ -464,16 +465,11 @@ def test_mopd_and_legacy_teacher_are_mutually_exclusive():
         _ppo_config(_mopd_config(), teacher=legacy_teacher)
 
 
-def test_mopd_loss_config_score_reward_bounds_and_normalization():
-    # Valid bounds and normalization
-    cfg = MOPDLossConfig(
-        score_reward_min=-10.0,
-        score_reward_max=10.0,
-        normalize_teacher_weights=True,
-    )
+def test_mopd_loss_config_score_reward_bounds():
+    # Valid bounds
+    cfg = MOPDLossConfig(score_reward_min=-10.0, score_reward_max=10.0)
     assert cfg.score_reward_min == -10.0
     assert cfg.score_reward_max == 10.0
-    assert cfg.normalize_teacher_weights is True
 
     # Inverted bounds raise ValueError
     with pytest.raises(
@@ -488,6 +484,29 @@ def test_mopd_loss_config_score_reward_bounds_and_normalization():
     with pytest.raises(ValueError, match="must be a finite number"):
         MOPDLossConfig(score_reward_max=float("nan"))
 
-    # Invalid normalize_teacher_weights raises ValueError
-    with pytest.raises(ValueError, match="must be a boolean"):
-        MOPDLossConfig(normalize_teacher_weights="true")  # type: ignore[arg-type]
+
+def test_mopd_config_warns_when_teacher_group_weights_do_not_sum_to_one():
+    """Test that an unnormalized group warns but keeps its configured weights."""
+    with pytest.warns(
+        UserWarning, match=r"teacher_groups\['ensemble'\] weights sum to 2"
+    ):
+        config = _mopd_config(
+            teacher_groups={
+                "single": {"agriculture": 1.0},
+                "ensemble": {"agriculture": 1.0, "swe_agent": 1.0},
+            }
+        )
+
+    assert config.teacher_groups["ensemble"] == {"agriculture": 1.0, "swe_agent": 1.0}
+
+
+def test_mopd_config_does_not_warn_when_teacher_group_weights_sum_to_one():
+    """Test that groups summing to one (within tolerance) do not warn."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        _mopd_config(
+            teacher_groups={
+                "single": {"agriculture": 1.0},
+                "ensemble": {"agriculture": 0.1, "swe_agent": 0.9},
+            }
+        )
