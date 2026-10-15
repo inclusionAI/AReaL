@@ -38,8 +38,8 @@ def _make_dummy_response(input_tokens, output_tokens) -> ModelResponse:
 
 
 class TestNormalizeGroupRewards:
-    def test_outcome_only_multi_turn_broadcast_is_default(self):
-        """Default policy reproduces the pre-existing behavior for outcome-only rollouts.
+    def test_outcome_only_multi_turn_broadcasts_normalized_reward(self):
+        """Outcome-only multi-turn rollouts keep the existing broadcast behavior.
 
         ``apply_reward_discount`` has already propagated the single outcome
         reward backward, so every interaction holds a discounted return, not an
@@ -91,80 +91,6 @@ class TestNormalizeGroupRewards:
         # Raw rewards are still recorded per interaction.
         assert pytest.approx(i1_1.original_reward) == 0.5
         assert pytest.approx(i1_2.original_reward) == 1.0
-
-    def test_invalid_policy_rejected(self):
-        i = InteractionWithTokenLogpReward(
-            completion=_make_dummy_completion("c1"),
-            reward=1.0,
-            model_response=_make_dummy_response([1], [2]),
-        )
-        with pytest.raises(ValueError, match="step_reward_normalization"):
-            normalize_group_rewards([{"c1": i}], step_reward_normalization="nope")
-
-    def test_terminal_policy_preserves_intermediate_step_rewards(self):
-        # Rollout 1: Turn 1 (-0.2 step reward), Turn 2 (+1.0 outcome reward)
-        i1_1 = InteractionWithTokenLogpReward(
-            completion=_make_dummy_completion("r1_t1"),
-            reward=-0.2,
-            model_response=_make_dummy_response([1, 2], [3]),
-        )
-        i1_2 = InteractionWithTokenLogpReward(
-            completion=_make_dummy_completion("r1_t2"),
-            reward=1.0,
-            parent=i1_1,
-            model_response=_make_dummy_response([1, 2, 3, 4], [5]),
-        )
-        r1 = {"r1_t1": i1_1, "r1_t2": i1_2}
-
-        # Rollout 2: Turn 1 (+0.1 step reward), Turn 2 (0.0 outcome reward)
-        i2_1 = InteractionWithTokenLogpReward(
-            completion=_make_dummy_completion("r2_t1"),
-            reward=0.1,
-            model_response=_make_dummy_response([1, 2], [3]),
-        )
-        i2_2 = InteractionWithTokenLogpReward(
-            completion=_make_dummy_completion("r2_t2"),
-            reward=0.0,
-            parent=i2_1,
-            model_response=_make_dummy_response([1, 2, 3, 4], [5]),
-        )
-        r2 = {"r2_t1": i2_1, "r2_t2": i2_2}
-
-        # Call to_tensor_dict before normalization to populate _cache
-        i1_1.to_tensor_dict()
-        i1_2.to_tensor_dict()
-        i2_1.to_tensor_dict()
-        i2_2.to_tensor_dict()
-
-        success = normalize_group_rewards(
-            [r1, r2], step_reward_normalization="terminal"
-        )
-        assert success is True
-
-        # Rollout 1:
-        # Intermediate turn r1_t1 must preserve its step reward (-0.2)
-        assert pytest.approx(i1_1.reward) == -0.2
-        assert pytest.approx(i1_1.original_reward) == -0.2
-        assert pytest.approx(float(i1_1._cache["rewards"].item())) == -0.2
-        assert pytest.approx(float(i1_1._cache["original_rewards"].item())) == -0.2
-
-        # Terminal turn r1_t2 was normalized: mean=0.5, std=0.5 -> +1.0
-        assert pytest.approx(i1_2.reward) == 1.0
-        assert pytest.approx(i1_2.original_reward) == 1.0
-        assert pytest.approx(float(i1_2._cache["rewards"].item())) == 1.0
-        assert pytest.approx(float(i1_2._cache["original_rewards"].item())) == 1.0
-
-        # Rollout 2:
-        # Intermediate turn r2_t1 must preserve its step reward (+0.1)
-        assert pytest.approx(i2_1.reward) == 0.1
-        assert pytest.approx(i2_1.original_reward) == 0.1
-        assert pytest.approx(float(i2_1._cache["rewards"].item())) == 0.1
-
-        # Terminal turn r2_t2 was normalized: mean=0.5, std=0.5 -> -1.0
-        assert pytest.approx(i2_2.reward) == -1.0
-        assert pytest.approx(i2_2.original_reward) == 0.0
-        assert pytest.approx(float(i2_2._cache["rewards"].item())) == -1.0
-        assert pytest.approx(float(i2_2._cache["original_rewards"].item())) == 0.0
 
     def test_existing_original_reward_not_overwritten(self):
         # Suppose turn already has an original_reward set (e.g. from prior discounting)
