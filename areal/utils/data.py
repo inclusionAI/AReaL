@@ -1614,8 +1614,8 @@ class Normalization:
                 group_mean_slice = mean[s]  # already computed and expanded
                 group_sz = s.stop - s.start
 
-                # Special case: with group_size=1, std should be 1 for numerical stability
-                if group_sz == 1:
+                # Special case: with group_size=1 and std_unbiased=True, std should be 1 for numerical stability
+                if group_sz == 1 and self.std_unbiased:
                     dtype = torch.float64 if high_precision else torch.float32
                     group_std = torch.ones(
                         (1, *xx.shape[1:]), dtype=dtype, device=xx.device

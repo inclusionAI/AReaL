@@ -258,3 +258,23 @@ def test_invalid_group_size_raises():
     """Non-positive group_size raises ValueError when group normalization is used."""
     with pytest.raises(ValueError, match="positive integer"):
         NormConfig(mean_level="group", std_level="group", group_size=0)
+
+
+def test_biased_singleton_group_with_multiple_tokens_uses_token_std():
+    """A biased-std singleton group still normalizes by the std over its tokens."""
+    cfg = NormConfig(
+        mean_level="group",
+        std_level="group",
+        group_size=1,
+        mean_leave1out=False,
+        std_unbiased=False,
+        eps=1e-5,
+    )
+    norm = Normalization(cfg)
+    x = torch.tensor([[1.0, 5.0]], dtype=torch.float32)
+    loss_mask = torch.ones_like(x)
+
+    out = norm(x, loss_mask)
+
+    # mean=3, biased std=2 -> approximately [-1, 1], not [-2, 2] from forcing std=1.
+    torch.testing.assert_close(out, torch.tensor([[-1.0, 1.0]]), atol=1e-4, rtol=1e-4)
