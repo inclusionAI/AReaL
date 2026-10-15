@@ -33,6 +33,8 @@ from typing import Any
 import torch
 
 from areal.engine.awex.memory_saver import patch_tms_hook_mode
+from areal.engine.awex.metadata import serialize_metadata_gc
+from areal.engine.awex.parallel import resolve_scheduler_parallel_attr
 
 # Must run before any awex import: awex.models.registry auto-imports model
 # modules at module load, and the BailingMoe module's transitive megatron import
@@ -43,11 +45,46 @@ from awex.meta.infer_meta_resolver import InferParamMetaResolver  # noqa: E402
 from awex.meta.meta_resolver import ParamMetaResolver  # noqa: E402
 from awex.reader.nccl_reader import NCCLWorkerWeightsReader  # noqa: E402
 from awex.sharding import get_sharding_strategy_builder  # noqa: E402
-from awex.util.common import simple_hf_config  # noqa: E402
+from awex.util.common import AttrDict, simple_hf_config  # noqa: E402
 
 from areal.utils.logging import getLogger  # noqa: E402
 
 logger = getLogger("AwexColocateReader")
+
+
+class _DeviceBoundWeightsReader(NCCLWorkerWeightsReader):
+    """Bind communication to the model's logical CUDA device, not a rank id."""
+
+    def __init__(self, *args, model: torch.nn.Module, **kwargs):
+        device = next(model.parameters()).device
+        if device.type != "cuda" or device.index is None:
+            raise RuntimeError("AWEX reader requires model weights resumed on CUDA")
+        self._model_device = device
+        super().__init__(*args, model=model, **kwargs)
+
+    def create_colocate_transport(self):
+        from awex.transfer.nccl_bounded_stream import (
+            BoundedMemoryNcclColocateStreamBatchTransport,
+        )
+
+        return BoundedMemoryNcclColocateStreamBatchTransport(
+            self.transfer_rank, self.infer_world_size
+        )
+
+    def _set_device(self) -> None:
+        # TODO(agent): This adapter is CUDA-only; physical ids remain metadata
+        # identities and must not be used as CUDA_VISIBLE_DEVICES indices.
+        torch.cuda.set_device(self._model_device)
+        self.barrier_device = self._model_device.index
+        self.backend = "nccl"
+        self.ready_tensor = torch.tensor(
+            1, dtype=torch.int64, device=self._model_device
+        )
+        logger.info(
+            "Bound AWEX reader rank %s to model device %s",
+            self.transfer_rank,
+            self._model_device,
+        )
 
 
 class _PhysicalDeviceMetaServerClient:
@@ -91,6 +128,17 @@ class _PhysicalDeviceMetaServerClient:
         )
 
 
+def _to_awex_attr_dict(value: Any) -> Any:
+    """Restore recursive attribute access missing from AWEX 0.8.1 configs."""
+    if isinstance(value, dict):
+        return AttrDict({key: _to_awex_attr_dict(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return [_to_awex_attr_dict(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_to_awex_attr_dict(item) for item in value)
+    return value
+
+
 def _get_router_dtype(config):
     """Read router dtype from a flat or multimodal Hugging Face config."""
     router_dtype = getattr(config, "router_dtype", None)
@@ -109,7 +157,7 @@ def _get_awex_infer_hf_config(model, model_runner=None):
     config = getattr(model_config, "hf_config", None)
     if config is None:
         config = model.config
-    serialized_config = simple_hf_config(config)
+    serialized_config = _to_awex_attr_dict(simple_hf_config(config))
     if not getattr(serialized_config, "architectures", None):
         serialized_config.architectures = [type(model).__name__]
     return serialized_config
@@ -193,6 +241,7 @@ class _SingleInstanceMetaResolver(ParamMetaResolver):
     def get_model_arch_name(self) -> str:
         return self._model_arch_name
 
+    @serialize_metadata_gc
     def get_parameters_meta(self):
         return self._build_params_meta()
 
@@ -232,6 +281,9 @@ class AwexColocateReader:
         self._infer_params_meta = None
         self._infer_conf: dict | None = None
         self._initialized = False
+        self._qwen4_frozen_contract = None
+        self._qwen4_frozen_binder = None
+        self._qwen4_parameter_identity = None
 
     # ── model / context helpers ───────────────────────────────────────
 
@@ -253,29 +305,50 @@ class AwexColocateReader:
         tp_size = int(getattr(server_args, "tp_size", 1))
         pp_size = int(getattr(server_args, "pp_size", 1))
         dp_size = int(getattr(server_args, "dp_size", 1))
-        tp_rank = int(getattr(scheduler, "tp_rank", 0))
+
+        def rank_attr(name: str) -> int | None:
+            return resolve_scheduler_parallel_attr(scheduler, name)
+
+        tp_rank = rank_attr("tp_rank")
+        if tp_rank is None and self._instance_local_rank is not None:
+            tp_rank = self._instance_local_rank % tp_size
+        if tp_rank is None or not 0 <= tp_rank < tp_size:
+            raise RuntimeError("Cannot resolve a valid AWEX inference TP rank")
+        pp_rank = rank_attr("pp_rank")
+        if pp_rank is None:
+            pp_rank = (
+                self._instance_local_rank // tp_size
+                if self._instance_local_rank is not None
+                else (0 if pp_size == 1 else None)
+            )
+        if pp_rank is None or not 0 <= pp_rank < pp_size:
+            raise RuntimeError("Cannot resolve a valid AWEX inference PP rank")
 
         if self._infer_instance_world_size is not None:
             world_size = self._infer_instance_world_size
             global_rank = self._instance_local_rank
         else:
             world_size = tp_size * pp_size
-            global_rank = tp_rank
+            global_rank = pp_rank * tp_size + tp_rank
+
+        attn_tp_rank = rank_attr("attn_tp_rank")
+        attn_tp_size = rank_attr("attn_tp_size")
+        attn_dp_rank = rank_attr("attn_dp_rank")
 
         return {
             "scheduler": scheduler,
             "infer_engine_config": server_args,
             "tp_rank": tp_rank,
             "tp_size": tp_size,
-            "pp_rank": int(getattr(scheduler, "pp_rank", 0)),
+            "pp_rank": pp_rank,
             "pp_size": pp_size,
             "dp_size": dp_size,
             "world_size": world_size,
             "global_rank": global_rank,
             "local_rank": tp_rank,
-            "attn_tp_rank": int(getattr(scheduler, "attn_tp_rank", tp_rank)),
-            "attn_tp_size": int(getattr(scheduler, "attn_tp_size", tp_size)),
-            "attn_dp_rank": int(getattr(scheduler, "attn_dp_rank", 0)),
+            "attn_tp_rank": tp_rank if attn_tp_rank is None else attn_tp_rank,
+            "attn_tp_size": tp_size if attn_tp_size is None else attn_tp_size,
+            "attn_dp_rank": 0 if attn_dp_rank is None else attn_dp_rank,
         }
 
     def get_parallelism(self) -> dict:
@@ -354,12 +427,72 @@ class AwexColocateReader:
         )
         return resolver.get_parameters_meta()
 
+    def prepare_frozen_weights(self, meta_server_addr: str) -> None:
+        """Verify before the scheduler can accept its first offload request."""
+        from awex.meta.meta_server import MetaServerClient
+
+        from areal.engine.awex.colocate_writer import awex_colocate_timeout_s
+
+        host, port = meta_server_addr.rsplit(":", 1)
+        self._meta_server_client = MetaServerClient(host, int(port))
+        info = self._meta_server_client.get_object(
+            "awex_train_info", timeout=awex_colocate_timeout_s()
+        )
+        self._train_world_size = info["train_world_size"]
+        self._bind_qwen4_frozen_contract(awex_colocate_timeout_s())
+
+    def _bind_qwen4_frozen_contract(self, timeout_s: float) -> None:
+        from pathlib import Path
+
+        from awex.models.qwen4_exp import register_qwen4_exp_awex
+        from sglang.srt.managers.scheduler_components import weight_updater
+
+        from areal.models.mcore.qwen4_exp_awex_binding import SglangFrozenBinder
+        from areal.models.mcore.qwen4_exp_awex_contract import FrozenCheckpoint
+
+        train_info = self._meta_server_client.get_object(
+            "awex_train_info", timeout=timeout_s
+        )
+        description = train_info["qwen4_exp_frozen_contract"]
+        checkpoint = FrozenCheckpoint(
+            Path(self._scheduler.server_args.model_path),
+            description["language_model_only"],
+        )
+        contract = checkpoint.contract
+        if (
+            train_info.get("train_world_size") != self._train_world_size
+            or train_info.get("qwen4_exp_frozen_contract") != contract.to_dict()
+        ):
+            raise ValueError("Training and inference frozen contracts differ")
+        proof = train_info["qwen4_exp_frozen_proof"]
+        if proof.keys() != checkpoint.source_names:
+            raise ValueError("Incomplete training frozen-weight proof")
+        if self._qwen4_frozen_binder is not None:
+            if (
+                self._qwen4_frozen_contract != contract
+                or self._qwen4_frozen_binder.expected_proof != proof
+            ):
+                raise ValueError("Frozen initialization evidence changed")
+            return
+        binder = SglangFrozenBinder(
+            self._get_model, contract, weight_updater, checkpoint, proof
+        )
+        binder.verify_loaded()
+        register_qwen4_exp_awex(sglang_binder=binder)
+        self._qwen4_frozen_contract = contract
+        self._qwen4_frozen_binder = binder
+
     def get_weight_metadata(self):
         """Inference-side parameters_meta for ONE engine instance."""
         if self._engine_rank is None:
             raise RuntimeError(
                 "AwexColocateReader must be initialized before getting weight metadata"
             )
+        if (
+            type(self._get_model()).__name__ == "Qwen4ExpForConditionalGeneration"
+            and self._qwen4_frozen_binder is None
+        ):
+            raise RuntimeError("Qwen4Exp metadata requires matching frozen contracts")
         if self._infer_params_meta is None:
             self._infer_params_meta = self._build_instance_params_meta()
         return self._infer_params_meta
@@ -423,6 +556,8 @@ class AwexColocateReader:
 
         host, port = meta_server_addr.rsplit(":", 1)
         self._meta_server_client = MetaServerClient(host, int(port))
+        if type(self._get_model()).__name__ == "Qwen4ExpForConditionalGeneration":
+            self._bind_qwen4_frozen_contract(timeout_s)
 
         # Compute single-instance parameters_meta (also reused as the native
         # reader's constructor arg later).
@@ -445,8 +580,12 @@ class AwexColocateReader:
             # papers over any such mismatch generically, but keep the
             # semantic path whole so new models behave identically to native
             # awex.
-            "router_dtype": _get_router_dtype(self._get_model().config),
+            "router_dtype": _get_router_dtype(awex_hf_config),
         }
+        if self._qwen4_frozen_contract is not None:
+            infer_conf["qwen4_exp_frozen_contract"] = (
+                self._qwen4_frozen_contract.to_dict()
+            )
         self._infer_conf = infer_conf
 
         # Only one rank publishes the engine-instance-wide info the writer waits
@@ -483,7 +622,7 @@ class AwexColocateReader:
         logger.info("Got training_params_meta from MetaServer")
 
         model_context = self._build_model_context()
-        reader = NCCLWorkerWeightsReader(
+        reader = _DeviceBoundWeightsReader(
             engine_name="sglang",
             model=self._get_model(),
             model_context=model_context,
@@ -505,6 +644,11 @@ class AwexColocateReader:
             reader.meta_server_client, self._local_gpu_id
         )
         reader.initialize()
+        if self._qwen4_frozen_contract is not None:
+            self._qwen4_parameter_identity = tuple(
+                (name, id(parameter))
+                for name, parameter in self._get_model().named_parameters()
+            )
         self._reader = reader
         logger.info(
             "Constructed native NCCLWorkerWeightsReader (transfer_rank=%d, "
@@ -527,6 +671,16 @@ class AwexColocateReader:
         if not self._initialized:
             raise RuntimeError("AwexColocateReader not initialized")
         reader = self._ensure_reader()
+        if self._qwen4_frozen_contract is not None:
+            identity = tuple(
+                (name, id(parameter))
+                for name, parameter in self._get_model().named_parameters()
+            )
+            if identity != self._qwen4_parameter_identity:
+                raise RuntimeError(
+                    "Qwen4Exp Parameters changed; reconstruct the AWEX reader after recovery"
+                )
+            reader.weight_converter.refresh_frozen_contract()
         reader.update_weights(step_id=version)
         self._rebuild_derived_weights()
         logger.info("Colocate weight update completed: version=%d", version)

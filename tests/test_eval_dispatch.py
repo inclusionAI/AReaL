@@ -140,10 +140,15 @@ class TestEvalBatchPadding:
         assert len(padded) == expected_size
         assert all(len(split) % 8 == 0 for split in splits)
 
-    def test_dispatch_tensors_raises_when_not_divisible(self):
+    def test_dispatch_tensors_accepts_non_divisible_count(self):
         items = [_make_item(i) for i in range(7)]
-        with pytest.raises(ValueError, match="divisible"):
-            _dispatch_tensors(items, dp_size=4)
+        splits, _ = _dispatch_tensors(items, dp_size=4)
+
+        assert sorted(len(group) for group in splits) == [1, 2, 2, 2]
+
+    def test_dispatch_tensors_rejects_fewer_groups_than_ranks(self):
+        with pytest.raises(ValueError, match="item group count \\(2\\)"):
+            _dispatch_tensors([_make_item(0), _make_item(1)], dp_size=4)
 
     def test_pad_then_dispatch_end_to_end(self):
         items = [_make_item(i) for i in range(7)]

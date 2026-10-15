@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import os
+import time
 from collections.abc import Callable
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, cast
@@ -36,6 +37,8 @@ from areal.api.cli_args import (
 )
 from areal.dataset.mopd import RoutedDataset, is_remote_dataset
 from areal.engine import RemoteSGLangEngine, RemotevLLMEngine
+from areal.engine.r3.config import R3MoEConfig, resolve_r3_moe_config
+from areal.engine.r3.transport import without_r3_tensors
 from areal.infra import (
     LocalScheduler,
     RayScheduler,
@@ -47,6 +50,10 @@ from areal.infra.data_service import DataController
 from areal.infra.data_service.controller.config import DataServiceConfig
 from areal.infra.data_service.rdataset import RDataset
 from areal.infra.utils.concurrent import call_maybe_async
+from areal.infra.workflow_executor import (
+    MAX_CONSECUTIVE_EMPTY_ROLLOUT_ROUNDS,
+    ROLLOUT_COLLECTION_STALL_TIMEOUT_SECONDS,
+)
 from areal.trainer.mopd.compatibility import validate_mopd_model_compatibility
 from areal.trainer.mopd.execution import MOPDExecutionPlan
 from areal.trainer.mopd.teacher_manager import (
@@ -82,6 +89,85 @@ if TYPE_CHECKING:
     from areal.trainer.ppo.critic import PPOCriticController
 
 logger = logging.getLogger("RLTrainer")
+
+
+def _collect_trainable_rollout_batch(
+    prepare_batch: Callable[[], list[dict[str, Any]]],
+    *,
+    dynamic_bs: bool,
+    min_batch_size: int = 1,
+    max_empty_rounds: int = MAX_CONSECUTIVE_EMPTY_ROLLOUT_ROUNDS,
+    stall_timeout: float = ROLLOUT_COLLECTION_STALL_TIMEOUT_SECONDS,
+) -> list[dict[str, Any]]:
+    """Collect until every local DP consumer can receive a trajectory group.
+
+    ``None`` results are objective-level rejections, so dynamic collection keeps
+    polling the ready queue. A streak of at least ``max_empty_rounds`` rounds
+    that add no trainable group AND lasts at least ``stall_timeout`` seconds
+    aborts the run instead of letting it spin silently; fast legitimate
+    all-reject bursts (e.g. a staleness flush after a weight update) stay
+    alive. Non-retryable workflow contract errors propagate through
+    ``prepare_batch`` without reaching this loop.
+    """
+    if min_batch_size < 1:
+        raise ValueError(f"min_batch_size must be positive, got {min_batch_size}")
+
+    batch: list[dict[str, Any]] = []
+    empty_rounds = 0
+    stall_started_at: float | None = None
+    last_warned_at = float("-inf")
+    while len(batch) < min_batch_size:
+        prepared = prepare_batch()
+        batch.extend(prepared)
+        if len(batch) >= min_batch_size:
+            break
+        if not dynamic_bs:
+            raise RuntimeError(
+                "Fixed rollout preparation produced only "
+                f"{len(batch)} trainable groups; at least {min_batch_size} are required"
+            )
+        now = time.monotonic()
+        if prepared:
+            empty_rounds = 0
+            stall_started_at = None
+        else:
+            empty_rounds += 1
+            if stall_started_at is None:
+                stall_started_at = now
+            if (
+                empty_rounds >= max_empty_rounds
+                and now - stall_started_at >= stall_timeout
+            ):
+                raise RuntimeError(
+                    f"Dynamic rollout collection added no trainable group for "
+                    f"{empty_rounds} consecutive rounds over "
+                    f"{now - stall_started_at:.0f}s "
+                    f"({len(batch)}/{min_batch_size} collected). Every group "
+                    "was rejected or masked; check the reward function and "
+                    "should_accept_fn, and the usable_slot_count / "
+                    "fully_masked_group rollout statistics."
+                )
+        if now - last_warned_at >= 60.0:
+            last_warned_at = now
+            logger.warning(
+                "Dynamic rollout batch has %d/%d trainable groups; collecting "
+                "from the ready queue again",
+                len(batch),
+                min_batch_size,
+            )
+    return batch
+
+
+def _minimum_consumer_batch_size(*consumers: Any | None) -> int:
+    """Return the largest DP degree among train engines consuming a rollout."""
+    return max(
+        (
+            consumer.parallel_strategy.dp_size
+            for consumer in consumers
+            if consumer is not None
+        ),
+        default=1,
+    )
 
 
 class _EmptyDataLoader:
@@ -141,6 +227,7 @@ class PPOTrainer:
             logging.setup_file_logging(StatsLogger.get_log_path(config.stats_logger))
 
         self.config = config
+        self._r3_moe_config: R3MoEConfig | None = None
         self.mopd_execution_plan = MOPDExecutionPlan.from_config(config)
         self._apply_dte_config_envvars()
         self.processor, self.tokenizer = load_hf_processor_and_tokenizer(
@@ -384,7 +471,7 @@ class PPOTrainer:
         )
 
         self.eval_rollout = None
-        if not self._online_mode:
+        if self._should_initialize_eval_rollout():
             self.eval_rollout = self._init_rollout(
                 config.rollout, is_eval=True, lora_path=initial_lora_path
             )
@@ -511,7 +598,7 @@ class PPOTrainer:
 
         # Set up checkpointing for recover
         self.recover_info = self.recover_handler.load(
-            self.actor,
+            self._recover_engines(),
             self.saver,
             self.evaluator,
             self.stats_logger,
@@ -536,6 +623,10 @@ class PPOTrainer:
 
         self._config_perf_tracer()
         self._apply_initial_offload_policy()
+
+    def _should_initialize_eval_rollout(self) -> bool:
+        """Return whether this trainer has evaluation data to serve."""
+        return not self._online_mode and self.valid_dataloader is not None
 
     @staticmethod
     def _is_colocation(strategy: SchedulingStrategy | None) -> bool:
@@ -596,7 +687,7 @@ class PPOTrainer:
     def _update_weights_and_publish_version(
         self, meta: WeightUpdateMeta, new_version: int
     ) -> None:
-        """Update weights, publish their version, then restore AWEX rollout."""
+        """Update weights, publish their version, and discard stale AWEX requests."""
         self.actor.update_weights(meta)
 
         self.actor.set_version(new_version)
@@ -610,14 +701,49 @@ class PPOTrainer:
             return
 
         # The AWEX reader flushes all old cache entries while installing the
-        # new weights. Reallocate an empty KV pool only after every actor worker
-        # has returned, then let SGLang serve requests again. This must remain a
-        # controller-side call: invoking rollout RPCs from an actor worker creates
-        # a nested controller call while its update_weights collective is active.
+        # new weights. Discard paused requests before restoring the KV pool so
+        # none can continue with a mixture of old request state and new weights.
         self.rollout.abort_all_requests()
+
+    def _restore_awex_rollout_after_stats(self) -> None:
+        """Restore AWEX KV memory after GPU-backed training stats are exported."""
+        if not self._is_v1_awex_colocate(self.config):
+            return
+        # Stats reductions still need GPU memory while the KV pool is offloaded.
         self.rollout.onload(tags=["cuda_graph"])
         self.rollout.onload(tags=["kv_cache"])
         call_maybe_async(self.rollout.continue_generation)
+
+    def _prepare_awex_evaluation(self) -> dict[str, Any] | None:
+        """Reduce GPU training stats before restoring shared evaluation servers."""
+        if not self._is_v1_awex_colocate(self.config):
+            return None
+        stats = self.actor.export_stats()
+        stats.update(self.rollout.export_stats())
+        self._restore_awex_rollout_after_stats()
+        return stats
+
+    def _export_stats_then_restore_awex_rollout(
+        self,
+        epoch: int,
+        epoch_step: int,
+        global_step: int,
+        prepared_stats: dict[str, Any] | None = None,
+    ) -> None:
+        """Commit prepared evaluation stats, or export then restore AWEX KV."""
+        if prepared_stats is not None:
+            if self.eval_rollout is not None:
+                prepared_stats.update(self.eval_rollout.export_stats())
+            # Eval and clear-batch timings were recorded after the early actor
+            # export. Drain only local CPU statistics, not another GPU RPC.
+            prepared_stats.update(stats_tracker.export_all())
+            self._commit_stats(epoch, epoch_step, global_step, prepared_stats)
+            return
+        self._export_and_commit_stats(
+            epoch=epoch, epoch_step=epoch_step, global_step=global_step
+        )
+        if self.eval_rollout is None:
+            self._restore_awex_rollout_after_stats()
 
     def _offload_rollout(self, is_eval: bool = False):
         rollout = self.rollout if not is_eval else self.eval_rollout
@@ -721,6 +847,36 @@ class PPOTrainer:
         total_epochs: int | None = None,
     ):
         config = self.config
+        is_v1_rollout = config.rollout._version == "v1"
+        if (
+            not is_v1_rollout
+            and config.gconfig.reward_normalization
+            and not config.gconfig.reward_normalization_use_std
+        ):
+            raise ValueError(
+                "Mean-only rollout reward normalization requires a v1 rollout backend."
+            )
+        min_usable_group_size = (
+            config.actor.resolve_min_usable_group_size(config.gconfig.n_samples)
+            if (
+                self.mopd_execution_plan is None
+                or self.mopd_execution_plan.requires_rl
+                or config.actor.min_usable_group_size is not None
+            )
+            else 1
+        )
+        train_teacher = (
+            self.teacher
+            if config.teacher is not None and config.teacher.engine_type == "train"
+            else None
+        )
+        min_consumer_batch_size = (
+            _minimum_consumer_batch_size(
+                self.actor, self.critic, self.ref, train_teacher
+            )
+            if is_single_controller()
+            else 1
+        )
         start_step = (
             self.recover_info.last_step_info.next().global_step
             if self.recover_info is not None
@@ -733,6 +889,12 @@ class PPOTrainer:
             raise ValueError(f"Total epochs must be positive: {total_epochs}")
         steps_per_epoch = len(self.train_dataloader)
         max_steps = total_epochs * steps_per_epoch
+        workflow_kwargs = self._maybe_inject_r3_workflow_kwargs(
+            workflow, workflow_kwargs
+        )
+        eval_workflow_kwargs = self._maybe_inject_r3_workflow_kwargs(
+            eval_workflow, eval_workflow_kwargs
+        )
 
         # Initialize proxy workers if not using RolloutWorkflow
         if workflow is None:
@@ -780,18 +942,43 @@ class PPOTrainer:
                     },
                 ),
             ):
-                rollout_batch = self.actor.prepare_batch(
-                    self.train_dataloader,
+                prepare_kwargs = dict(
                     workflow=workflow,
                     workflow_kwargs=workflow_kwargs,
                     should_accept_fn=dynamic_filter_fn,
                     group_size=config.gconfig.n_samples,
-                    dynamic_bs=self.config.dynamic_bs,
+                    dynamic_bs=config.dynamic_bs,
                     reward_normalization=config.gconfig.reward_normalization,
                     drop_incomplete_group=config.gconfig.drop_incomplete_group,
+                    min_usable_group_size=min_usable_group_size,
+                )
+                if is_v1_rollout:
+                    prepare_kwargs["reward_normalization_use_std"] = (
+                        config.gconfig.reward_normalization_use_std
+                    )
+                rollout_batch = _collect_trainable_rollout_batch(
+                    functools.partial(
+                        self.actor.prepare_batch,
+                        self.train_dataloader,
+                        **prepare_kwargs,
+                    ),
+                    dynamic_bs=config.dynamic_bs,
+                    min_batch_size=min_consumer_batch_size,
                 )
             if self._should_offload_rollout:
                 self._offload_rollout()
+            elif self._is_v1_awex_colocate(self.config):
+                # Auxiliary models may share the rollout GPUs too.
+                logger.info("[AWEX] colocate: pausing rollout...")
+                self.rollout.pause()
+                logger.info("[AWEX] colocate: pause_generation_sync...")
+                self.rollout.pause_generation_sync()
+                logger.info("[AWEX] colocate: offload kv_cache...")
+                self.rollout.offload(tags=["kv_cache"])
+                logger.info("[AWEX] colocate: offload weights...")
+                self.rollout.offload(tags=["weights"])
+                logger.info("[AWEX] colocate: offload cuda_graph...")
+                self.rollout.offload(tags=["cuda_graph"])
 
             if self.critic is not None:
                 if self._should_offload_critic:
@@ -804,7 +991,9 @@ class PPOTrainer:
                         args={"global_step": global_step},
                     ),
                 ):
-                    values = self.critic.compute_values(rollout_batch)
+                    values = self.critic.compute_values(
+                        [without_r3_tensors(traj) for traj in rollout_batch]
+                    )
                     for traj, v in zip(rollout_batch, values):
                         traj["values"] = v
                     self.critic.get_device_stats().log("critic values")
@@ -821,7 +1010,9 @@ class PPOTrainer:
                         args={"global_step": global_step},
                     ),
                 ):
-                    ref_logps = self.ref.compute_logp(rollout_batch)
+                    ref_logps = self.ref.compute_logp(
+                        [without_r3_tensors(traj) for traj in rollout_batch]
+                    )
                     for traj, logp in zip(rollout_batch, ref_logps):
                         traj["ref_logp"] = logp
                     self.ref.get_device_stats().log("ref logp")
@@ -839,7 +1030,9 @@ class PPOTrainer:
                         args={"global_step": global_step},
                     ),
                 ):
-                    teacher_logps = self.teacher.compute_logp(rollout_batch)
+                    teacher_logps = self.teacher.compute_logp(
+                        [without_r3_tensors(traj) for traj in rollout_batch]
+                    )
                     for traj, logp in zip(rollout_batch, teacher_logps):
                         traj["teacher_logp"] = logp
                         traj["rl_loss_weight"] = self.config.teacher.rl_loss_weight
@@ -849,19 +1042,8 @@ class PPOTrainer:
                 if self._should_offload_teacher:
                     self._offload_model(self.teacher, role="teacher")
 
-            # In colocate (awex) mode: switch GPU from inference to training.
-            # Release SGLang KV cache + weights to free GPU for actor.
+            # TODO(agent): Keep actor onload after auxiliary scoring on shared GPUs.
             if self._is_v1_awex_colocate(self.config):
-                logger.info("[AWEX] colocate: pausing rollout...")
-                self.rollout.pause()
-                logger.info("[AWEX] colocate: pause_generation_sync...")
-                self.rollout.pause_generation_sync()
-                logger.info("[AWEX] colocate: offload kv_cache...")
-                self.rollout.offload(tags=["kv_cache"])
-                logger.info("[AWEX] colocate: offload weights...")
-                self.rollout.offload(tags=["weights"])
-                logger.info("[AWEX] colocate: offload cuda_graph...")
-                self.rollout.offload(tags=["cuda_graph"])
                 try:
                     if self.mopd_teacher_phase is not None:
                         rollout_batch = self.mopd_teacher_phase.materialize(
@@ -931,7 +1113,20 @@ class PPOTrainer:
                     adv_batch = self.actor.prepare_mopd_batch(rollout_batch)
                     self.actor.get_device_stats().log("prepare MOPD batch")
                 else:
-                    adv_batch = self.actor.compute_advantages(rollout_batch)
+                    advantage_kwargs: dict[str, Any] = {}
+                    agent_config = config.rollout.agent
+                    prm_config = agent_config.prm if agent_config is not None else None
+                    if prm_config is not None and prm_config.enabled:
+                        shaping = prm_config.advantage_shaping
+                        advantage_kwargs.update(
+                            advantage_shaping_mode=shaping.mode,
+                            gvpo_negative_scale=shaping.negative_scale,
+                            gvpo_zero_penalty=shaping.zero_penalty,
+                            gvpo_zero_eps=shaping.zero_eps,
+                        )
+                    adv_batch = self.actor.compute_advantages(
+                        rollout_batch, **advantage_kwargs
+                    )
                     self.actor.get_device_stats().log("compute advantages")
 
             # Wait for async checkpoint staging to complete before modifying parameters
@@ -976,7 +1171,9 @@ class PPOTrainer:
                         args={"global_step": global_step},
                     ),
                 ):
-                    self.critic.ppo_update(adv_batch)
+                    self.critic.ppo_update(
+                        [without_r3_tensors(traj) for traj in adv_batch]
+                    )
                     self.critic.step_lr_scheduler()
                     self.critic.get_device_stats().log("ppo critic update")
                 if self._should_offload_critic:
@@ -1028,26 +1225,6 @@ class PPOTrainer:
             if self._should_offload_actor:
                 self._offload_model(self.actor, role="actor")
 
-            if self._should_offload_rollout:
-                self._onload_rollout(is_eval=True)
-            with (
-                stats_tracker.record_timing("eval"),
-                perf_tracer.trace_scope(
-                    "train.eval",
-                    category=Category.COMPUTE,
-                    args={"global_step": global_step},
-                ),
-            ):
-                self._evaluate(
-                    eval_workflow=eval_workflow,
-                    eval_workflow_kwargs=eval_workflow_kwargs,
-                    epoch=epoch,
-                    epoch_step=step,
-                    global_step=global_step,
-                )
-            if self._should_offload_rollout:
-                self._offload_rollout(is_eval=True)
-
             with (
                 stats_tracker.record_timing("clear_batches"),
                 perf_tracer.trace_scope(
@@ -1089,13 +1266,39 @@ class PPOTrainer:
                         )
                     run_batch_cleanups(cleanups)
 
+            # Evaluation shares the paused AWEX inference servers. Reduce GPU
+            # stats before restoring their KV pool, but commit only after eval.
+            prepared_stats = self._prepare_awex_evaluation()
+            if self._should_offload_rollout:
+                self._onload_rollout(is_eval=True)
+            with (
+                stats_tracker.record_timing("eval"),
+                perf_tracer.trace_scope(
+                    "train.eval",
+                    category=Category.COMPUTE,
+                    args={"global_step": global_step},
+                ),
+            ):
+                self._evaluate(
+                    eval_workflow=eval_workflow,
+                    eval_workflow_kwargs=eval_workflow_kwargs,
+                    epoch=epoch,
+                    epoch_step=step,
+                    global_step=global_step,
+                )
+            if self._should_offload_rollout:
+                self._offload_rollout(is_eval=True)
+
             with perf_tracer.trace_scope(
                 "train.log_stats",
                 category=Category.INSTR,
                 args={"global_step": global_step},
             ):
-                self._export_and_commit_stats(
-                    epoch=epoch, epoch_step=step, global_step=global_step
+                self._export_stats_then_restore_awex_rollout(
+                    epoch=epoch,
+                    epoch_step=step,
+                    global_step=global_step,
+                    prepared_stats=prepared_stats,
                 )
 
             # Resume rollout only when another train step will consume it.
@@ -1433,6 +1636,7 @@ class PPOTrainer:
         if rollout_backend == "sglang":
             if self.config.rollout.return_routed_experts:
                 self.config.sglang.enable_return_routed_experts = True
+                self.config.actor.megatron.enable_router_replay = True
             if lora_path is not None and self.config.actor.use_lora:
                 self.config.sglang.lora_paths = [
                     f"{self.config.gconfig.lora_name}-v0={lora_path}"
@@ -1499,6 +1703,10 @@ class PPOTrainer:
             role="rollout",
             server_args=server_args,
         )
+        if config._version == "v2" and self.config.rollout.return_routed_experts:
+            r3_config = self._resolve_actor_r3_moe_config()
+            init_kwargs["r3_num_moe_layers"] = r3_config.num_moe_layers
+            init_kwargs["r3_topk"] = r3_config.topk
         if is_eval:
             assert len(self.rollout.server_infos) > 0
             init_kwargs["server_infos"] = self.rollout.server_infos
@@ -1615,9 +1823,6 @@ class PPOTrainer:
 
     def _save_recover_checkpoint(self, epoch: int, epoch_step: int, global_step: int):
         # Save recoverable checkpoints
-        to_save: dict = dict(default=self.actor)
-        if self.critic is not None:
-            to_save["critic"] = self.critic
         step_info = StepInfo(
             global_step=global_step,
             epoch=epoch,
@@ -1625,7 +1830,7 @@ class PPOTrainer:
             steps_per_epoch=len(self.train_dataloader),
         )
         self.recover_handler.dump(
-            to_save,
+            self._recover_engines(),
             step_info,
             self.saver,
             self.evaluator,
@@ -1638,6 +1843,12 @@ class PPOTrainer:
         if not is_single_controller():
             dist.barrier(group=self.actor.cpu_group)
             current_platform.synchronize()
+
+    def _recover_engines(self) -> dict[str, Any]:
+        engines = {"default": self.actor}
+        if self.critic is not None:
+            engines["critic"] = self.critic
+        return engines
 
     def _evaluate_fn(
         self,
@@ -1658,7 +1869,11 @@ class PPOTrainer:
                         drop_incomplete_group=False,
                     )
                     cnt += 1
-            self.eval_rollout.wait(cnt, timeout=None)
+            if cnt:
+                results = self.eval_rollout.wait(cnt, timeout=None)
+                if is_single_controller():
+                    # Evaluation has no training step to release the rollout RTensors.
+                    self.actor.clear_batches(results)
 
         if not is_single_controller():
             dist.barrier(group=self.actor.cpu_group)
@@ -1736,11 +1951,85 @@ class PPOTrainer:
         stats.update(self.rollout.export_stats())
         if self.eval_rollout is not None:
             stats.update(self.eval_rollout.export_stats())
+        self._commit_stats(epoch, epoch_step, global_step, stats)
+
+    def _commit_stats(
+        self, epoch: int, epoch_step: int, global_step: int, stats: dict[str, Any]
+    ) -> None:
         self.stats_logger.commit(epoch, epoch_step, global_step, stats)
 
         if not is_single_controller():
             dist.barrier(group=self.actor.cpu_group)
             current_platform.synchronize()
+
+    def _resolve_actor_r3_moe_config(self) -> R3MoEConfig:
+        if self._r3_moe_config is None:
+            from transformers import AutoConfig
+
+            hf_config = AutoConfig.from_pretrained(
+                self.config.actor.path,
+                trust_remote_code=True,
+            )
+            self._r3_moe_config = resolve_r3_moe_config(hf_config)
+        return self._r3_moe_config
+
+    def _supports_r3_workflow_shape(self, workflow: WorkflowLike | None) -> bool:
+        if workflow is None:
+            return False
+        if self._is_unsupported_r3_vision_workflow(workflow):
+            return False
+        if isinstance(workflow, str):
+            return workflow in {
+                "areal.workflow.rlvr.RLVRWorkflow",
+                "areal.experimental.openai.proxy.workflow.OpenAIProxyWorkflow",
+            }
+
+        from areal.experimental.openai.proxy.workflow import OpenAIProxyWorkflow
+        from areal.workflow.rlvr import RLVRWorkflow
+
+        supported_types = (RLVRWorkflow, OpenAIProxyWorkflow)
+        if isinstance(workflow, type):
+            return issubclass(workflow, supported_types)
+        return isinstance(workflow, supported_types)
+
+    def _is_unsupported_r3_vision_workflow(self, workflow: WorkflowLike | None) -> bool:
+        if isinstance(workflow, str):
+            return workflow == "areal.workflow.vision_rlvr.VisionRLVRWorkflow"
+        if workflow is None:
+            return False
+
+        from areal.workflow.vision_rlvr import VisionRLVRWorkflow
+
+        if isinstance(workflow, type):
+            return issubclass(workflow, VisionRLVRWorkflow)
+        return isinstance(workflow, VisionRLVRWorkflow)
+
+    def _maybe_inject_r3_workflow_kwargs(
+        self,
+        workflow: WorkflowLike | None,
+        workflow_kwargs: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if not self.config.rollout.return_routed_experts:
+            return workflow_kwargs
+        if self._is_unsupported_r3_vision_workflow(workflow):
+            raise ValueError(
+                "return_routed_experts/R3 router replay currently supports packed "
+                "text RLVR and OpenAI proxy workflows only; VisionRLVRWorkflow is "
+                "not supported."
+            )
+        if not self._supports_r3_workflow_shape(workflow):
+            return workflow_kwargs
+
+        r3_config = self._resolve_actor_r3_moe_config()
+        if not isinstance(workflow, (str, type)):
+            setattr(workflow, "r3_num_moe_layers", r3_config.num_moe_layers)
+            setattr(workflow, "r3_topk", r3_config.topk)
+            return workflow_kwargs
+
+        updated = dict(workflow_kwargs or {})
+        updated.setdefault("r3_num_moe_layers", r3_config.num_moe_layers)
+        updated.setdefault("r3_topk", r3_config.topk)
+        return updated
 
     def _validate_cfg(self):
         """validate config for incompatible settings before weight initialization, to avoid wasted resources on spawning workers and loading models."""
@@ -1787,6 +2076,11 @@ class PPOTrainer:
             raise ValueError(
                 "return_routed_experts is only supported with SGLang backend. "
                 "Please disable return_routed_experts or switch to SGLang backend."
+            )
+        if self.config.rollout.return_routed_experts and actor_backend != "megatron":
+            raise ValueError(
+                "return_routed_experts requires actor.backend='megatron' because "
+                "R3 training replay is only supported by Megatron actors."
             )
         if (
             actor_backend == "megatron"

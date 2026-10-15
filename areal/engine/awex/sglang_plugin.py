@@ -30,11 +30,14 @@ import queue
 import threading
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from copy import copy
 from dataclasses import dataclass, field
 from typing import Any
 
 from areal.engine.awex.memory_saver import patch_tms_hook_mode
+from areal.engine.awex.metadata import serialize_metadata_gc
+from areal.engine.awex.parallel import resolve_scheduler_parallel_attr
 
 # Must run before importing SGLang. Its scheduler may import Megatron while
 # initializing the model, and Megatron otherwise switches torch-memory-saver
@@ -56,15 +59,63 @@ def assert_alloc_conf_supports_memory_saver(conf: str) -> None:
 assert_alloc_conf_supports_memory_saver(os.environ.get("PYTORCH_CUDA_ALLOC_CONF", ""))
 
 from areal.utils import pkg_version  # noqa: E402
-from areal.utils.environ import (  # noqa: E402
-    get_bool_env_var,
-    get_float_env_var,
-    get_int_env_var,
-)
+from areal.utils.environ import get_float_env_var  # noqa: E402
 from areal.utils.logging import getLogger  # noqa: E402
 
 logger = getLogger("AwexSGLangPlugin")
-SUPPORTED_SGLANG_VERSIONS = ("0.5.9", "0.5.10.post1")
+SUPPORTED_SGLANG_VERSIONS = (
+    "0.5.9",
+    "0.5.10.post1",
+    "0.5.18.dev10+g85b539146",
+    "0.5.19.dev125+g119b5ffe4",
+)
+
+
+@contextmanager
+def _retract_memory_idle(scheduler: Any, owner: Any):
+    """Ignore only parked requests while retaining the native execution checks."""
+    original_idle = getattr(scheduler, "is_fully_idle", None)
+    if (
+        not callable(original_idle)
+        or not getattr(scheduler, "_engine_paused", False)
+        or original_idle()
+        or not hasattr(scheduler, "waiting_queue")
+    ):
+        yield
+        return
+
+    def drained_idle(*args, **kwargs):
+        # This scope runs synchronously on the scheduler thread. Do not weaken
+        # checks for running/overlap/chunked/grammar/disaggregation work.
+        waiting = scheduler.waiting_queue
+        scheduler.waiting_queue = []
+        try:
+            return original_idle(*args, **kwargs)
+        finally:
+            scheduler.waiting_queue = waiting
+
+    if not drained_idle():
+        yield
+        return
+    targets = [scheduler] if owner is scheduler else [scheduler, owner]
+    saved = [
+        (
+            target,
+            getattr(target, "is_fully_idle"),
+            not hasattr(target, "__dict__") or "is_fully_idle" in vars(target),
+        )
+        for target in targets
+    ]
+    try:
+        for target in targets:
+            target.is_fully_idle = drained_idle
+        yield
+    finally:
+        for target, previous, existed in reversed(saved):
+            if existed:
+                target.is_fully_idle = previous
+            else:
+                del target.is_fully_idle
 
 
 def assert_supported_sglang_version() -> None:
@@ -181,32 +232,21 @@ class AwexSchedulerPlugin:
         self._scheduler = scheduler
         self._receiver = None
         self._bg_thread: threading.Thread | None = None
+        self._initialization_error: Exception | None = None
         self._weight_queue: queue.Queue = queue.Queue()
         self._version = 0
         self._paused_poll_interval_s = max(
             0.0, get_float_env_var("AWEX_PAUSED_POLL_INTERVAL_S", 0.01)
         )
-        self._process_queue_when_idle = get_bool_env_var(
-            "AREAL_AWEX_PROCESS_QUEUE_WHEN_IDLE", "true"
-        )
-        # Idle-poll throttle in *loop iterations*, not wall-clock time: TP
-        # ranks run the scheduler loop in lockstep, so a loop-count gate is
-        # deterministic across ranks (a time-based gate deadlocks, see
-        # _maybe_process_awex_queue_when_idle).
-        self._idle_poll_loops = max(1, get_int_env_var("AWEX_IDLE_POLL_LOOPS", 64))
 
     @staticmethod
     def _int_attr(scheduler: Any, name: str, default: int) -> int:
-        for obj in (
-            scheduler,
-            getattr(scheduler, "ps", None),
-            getattr(scheduler, "server_args", None),
-        ):
-            if obj is None or not hasattr(obj, name):
-                continue
-            value = getattr(obj, name)
-            if value is not None:
-                return int(value)
+        value = resolve_scheduler_parallel_attr(scheduler, name)
+        if value is not None:
+            return value
+        value = getattr(getattr(scheduler, "server_args", None), name, None)
+        if value is not None:
+            return int(value)
         return default
 
     @staticmethod
@@ -271,6 +311,15 @@ class AwexSchedulerPlugin:
 
         meta_server_addr = os.environ.get("AWEX_META_SERVER_ADDR")
         if meta_server_addr:
+            model = getattr(
+                getattr(
+                    getattr(self._scheduler, "tp_worker", None), "model_runner", None
+                ),
+                "model",
+                None,
+            )
+            if type(model).__name__ == "Qwen4ExpForConditionalGeneration":
+                self._require_receiver().prepare_frozen_weights(meta_server_addr)
             self._start_background_worker(meta_server_addr)
             self._patch_event_loop()
 
@@ -282,19 +331,20 @@ class AwexSchedulerPlugin:
         return self._receiver
 
     def _patch_memory_transitions(self) -> None:
-        """Make AWEX release/resume requests idempotent across retries."""
+        """Make explicitly tagged AWEX memory requests idempotent across retries."""
         scheduler = self._scheduler
         if getattr(scheduler, "_areal_awex_memory_transitions_patched", False):
             return
-        original_release = getattr(scheduler, "release_memory_occupation", None)
-        original_resume = getattr(scheduler, "resume_memory_occupation", None)
+        owner = getattr(scheduler, "weight_updater", None) or scheduler
+        original_release = getattr(owner, "release_memory_occupation", None)
+        original_resume = getattr(owner, "resume_memory_occupation", None)
         if original_release is None or original_resume is None:
             return
 
         def _filtered_request(request: Any, *, release: bool) -> Any | None:
             tags = getattr(request, "tags", None)
-            offload_tags = getattr(scheduler, "offload_tags", None)
-            if tags is None or offload_tags is None:
+            offload_tags = getattr(owner, "offload_tags", None)
+            if not tags or offload_tags is None:
                 return request
             effective_tags = [
                 tag
@@ -317,17 +367,47 @@ class AwexSchedulerPlugin:
         def _release(request: Any, *args: Any, **kwargs: Any) -> Any:
             filtered = _filtered_request(request, release=True)
             if filtered is None:
-                return None
-            return original_release(filtered, *args, **kwargs)
+                from sglang.srt.managers.io_struct import (
+                    ReleaseMemoryOccupationReqOutput,
+                )
+
+                return ReleaseMemoryOccupationReqOutput()
+            with _retract_memory_idle(scheduler, owner):
+                return original_release(filtered, *args, **kwargs)
 
         def _resume(request: Any, *args: Any, **kwargs: Any) -> Any:
             filtered = _filtered_request(request, release=False)
             if filtered is None:
-                return None
+                from sglang.srt.managers.io_struct import (
+                    ResumeMemoryOccupationReqOutput,
+                )
+
+                return ResumeMemoryOccupationReqOutput()
             return original_resume(filtered, *args, **kwargs)
 
         scheduler.release_memory_occupation = _release
         scheduler.resume_memory_occupation = _resume
+        original_flush = getattr(scheduler, "flush_cache", None)
+        if callable(original_flush):
+
+            def _flush(*args, **kwargs):
+                with _retract_memory_idle(scheduler, owner):
+                    return original_flush(*args, **kwargs)
+
+            scheduler.flush_cache = _flush
+            if owner is not scheduler and hasattr(owner, "flush_cache"):
+                owner.flush_cache = _flush
+        # Dispatchers cache bound methods before plugin binding.
+        mapping = getattr(
+            getattr(scheduler, "_request_dispatcher", None), "_mapping", {}
+        )
+        for request_type, callback in list(mapping.items()):
+            if callback == original_release:
+                mapping[request_type] = _release
+            elif callback == original_resume:
+                mapping[request_type] = _resume
+            elif original_flush is not None and callback == original_flush:
+                mapping[request_type] = scheduler.flush_cache
         scheduler._areal_awex_memory_transitions_patched = True
 
     def awex_init_receiver(self, **kwargs: Any) -> None:
@@ -347,6 +427,12 @@ class AwexSchedulerPlugin:
 
     def awex_get_parallelism(self) -> dict:
         return self._require_receiver().get_parallelism()
+
+    def _raise_initialization_error(self) -> None:
+        if self._initialization_error is not None:
+            raise RuntimeError(
+                "AWEX receiver initialization failed"
+            ) from self._initialization_error
 
     # ── Main loop hook: process queued weight updates ─────────────────
 
@@ -377,6 +463,8 @@ class AwexSchedulerPlugin:
         """
         import torch
         import torch.distributed
+
+        self._raise_initialization_error()
 
         tp_cpu_group = self._scheduler.tp_cpu_group
         tp_size = self._int_attr(self._scheduler, "tp_size", 1)
@@ -461,6 +549,26 @@ class AwexSchedulerPlugin:
         """
         scheduler = self._scheduler
         plugin = self
+
+        # Recent SGLang loops own WAR barriers and shutdown handling. Run AWEX
+        # at the native request boundary without replacing those invariants.
+        if callable(getattr(scheduler, "_apply_war_barrier", None)):
+            if getattr(scheduler, "_areal_awex_request_hook", False):
+                return
+            original_process_input_requests = scheduler.process_input_requests
+
+            def _process_input_requests_with_awex(recv_reqs):
+                plugin._raise_initialization_error()
+                result = original_process_input_requests(recv_reqs)
+                if getattr(scheduler, "_engine_paused", False):
+                    plugin.process_awex_queue()
+                    time.sleep(plugin._paused_poll_interval_s)
+                return result
+
+            scheduler.process_input_requests = _process_input_requests_with_awex
+            scheduler._areal_awex_request_hook = True
+            logger.info("[AWEX] Preserved native SGLang scheduler loop")
+            return
 
         decode_stats_name = next(
             (
@@ -569,6 +677,7 @@ class AwexSchedulerPlugin:
                 )
 
         def _recv_requests():
+            plugin._raise_initialization_error()
             if hasattr(scheduler, "recv_requests"):
                 return scheduler.recv_requests()
             return scheduler.request_receiver.recv_requests()
@@ -578,56 +687,6 @@ class AwexSchedulerPlugin:
                 scheduler.self_check_during_idle()
             else:
                 scheduler.on_idle()
-
-        def _is_idle_for_awex_update() -> bool:
-            is_fully_idle = getattr(scheduler, "is_fully_idle", None)
-            if callable(is_fully_idle):
-                try:
-                    return bool(is_fully_idle())
-                except TypeError:
-                    return bool(is_fully_idle(for_health_check=False))
-
-            for attr in ("cur_batch", "last_batch"):
-                if getattr(scheduler, attr, None) is not None:
-                    return False
-
-            result_queue = getattr(scheduler, "result_queue", None)
-            if result_queue is not None and len(result_queue) > 0:
-                return False
-
-            running_batch = getattr(scheduler, "running_batch", None)
-            if running_batch is not None:
-                is_empty = getattr(running_batch, "is_empty", None)
-                if callable(is_empty) and not is_empty():
-                    return False
-
-            return True
-
-        def _maybe_process_awex_queue_when_idle(loop_count: int) -> None:
-            if not plugin._process_queue_when_idle:
-                return
-            # DEADLOCK WARNING: everything gating the all_reduce inside
-            # process_awex_queue() MUST be deterministic and identical across
-            # TP ranks. Loop iterations are lockstep (every iteration goes
-            # through the recv_requests broadcast), so a loop-count throttle
-            # is safe. A wall-clock throttle (time.monotonic) is NOT: ranks
-            # hit the window at different times, some skip the all_reduce
-            # while others enter it, and the next recv_requests broadcast
-            # cross-deadlocks against the pending all_reduce (observed as
-            # TP0 stuck in broadcast_pyobj vs TP1-7 stuck in all_reduce).
-            if loop_count % plugin._idle_poll_loops != 0:
-                return
-
-            tp_size = self._int_attr(scheduler, "tp_size", 1)
-            is_idle = _is_idle_for_awex_update()
-            if tp_size == 1:
-                if is_idle and not plugin._weight_queue.empty():
-                    plugin.process_awex_queue()
-                return
-
-            # Rank-local idle state is folded into the collective vote instead
-            # of gating it, so all ranks always enter the all_reduce together.
-            plugin.process_awex_queue(extra_ready=is_idle)
 
         # Patch event_loop_overlap (the one actually used by SGLang)
         _orig_overlap = scheduler.event_loop_overlap
@@ -711,8 +770,6 @@ class AwexSchedulerPlugin:
                 elif batch is None:
                     _on_idle()
 
-                _maybe_process_awex_queue_when_idle(_loop_count)
-
                 if scheduler.is_generation:
                     scheduler.launch_batch_sample_if_needed(batch_result)
 
@@ -727,7 +784,6 @@ class AwexSchedulerPlugin:
             logger.info(
                 f"[AWEX] _patched_normal STARTING (gpu_id={getattr(scheduler, 'gpu_id', '?')})",
             )
-            _loop_count = 0
             while True:
                 recv_reqs = _recv_requests()
                 scheduler.process_input_requests(recv_reqs)
@@ -735,7 +791,6 @@ class AwexSchedulerPlugin:
                     plugin.process_awex_queue()
                     time.sleep(plugin._paused_poll_interval_s)
                     continue
-                _loop_count += 1
                 batch = scheduler.get_next_batch_to_run()
                 scheduler.cur_batch = batch
                 if batch:
@@ -746,7 +801,6 @@ class AwexSchedulerPlugin:
                     )
                 else:
                     _on_idle()
-                _maybe_process_awex_queue_when_idle(_loop_count)
                 scheduler.last_batch = batch
 
         scheduler.event_loop_normal = _patched_normal
@@ -793,7 +847,8 @@ class AwexSchedulerPlugin:
 
         try:
             self._init_receiver_from_meta_server(meta_server_addr)
-        except Exception:
+        except Exception as exc:
+            self._initialization_error = exc
             logger.exception("AWEX background worker initialization failed")
             return
 
@@ -984,6 +1039,31 @@ class ModelWorkerTask:
     kwargs: dict = field(default_factory=dict)
 
 
+def _install_qwen_frozen_hooks(scheduler_type: type) -> None:
+    # Legacy SGLang used by other architectures has no static-state API.
+    # Qwen's binder requires these hooks and fails explicitly on such versions.
+    try:
+        from sglang.srt.managers.scheduler_components import weight_updater
+    except ModuleNotFoundError as exc:
+        if exc.name != "sglang.srt.managers.scheduler_components":
+            raise
+        return
+    if not all(
+        hasattr(weight_updater, name)
+        for name in (
+            "_export_static_state",
+            "_import_static_state",
+            "SchedulerWeightUpdaterManager",
+        )
+    ):
+        return
+    from areal.models.mcore.qwen4_exp_awex_memory import install_kv_residency_hooks
+    from areal.models.mcore.qwen4_exp_frozen_state import install_static_state_hooks
+
+    install_static_state_hooks(weight_updater)
+    install_kv_residency_hooks(weight_updater, scheduler_type)
+
+
 def register_awex_plugin() -> None:
     """Patch Scheduler.__init__ to inject awex plugin after construction.
 
@@ -993,6 +1073,16 @@ def register_awex_plugin() -> None:
     """
     assert_supported_sglang_version()
     from sglang.srt.managers.scheduler import Scheduler
+
+    _install_qwen_frozen_hooks(Scheduler)
+
+    # Install before construction: the scheduler dispatcher captures bound
+    # handlers during __init__. Metadata aggregation runs in our worker thread.
+    freeze_gc = getattr(Scheduler, "handle_freeze_gc", None)
+    if callable(freeze_gc) and not getattr(freeze_gc, "_areal_awex_gc_guard", False):
+        guarded_freeze_gc = serialize_metadata_gc(freeze_gc)
+        guarded_freeze_gc._areal_awex_gc_guard = True
+        Scheduler.handle_freeze_gc = guarded_freeze_gc
 
     _orig_init = Scheduler.__init__
 
@@ -1044,9 +1134,15 @@ def _patch_execute_task_in_model_worker(
     task_cls = _get_model_worker_task_cls()
 
     def execute_task_in_model_worker(task_spec):
+        tp_size = plugin._int_attr(scheduler, "tp_size", 1)
+        tp_rank = resolve_scheduler_parallel_attr(scheduler, "tp_rank")
+        if tp_rank is None and tp_size == 1:
+            tp_rank = 0
+        if tp_rank is None or not 0 <= tp_rank < tp_size:
+            raise RuntimeError("Cannot resolve a valid AWEX inference TP rank")
         model_context = dict(
-            tp_rank=plugin._int_attr(scheduler, "tp_rank", 0),
-            tp_size=plugin._int_attr(scheduler, "tp_size", 1),
+            tp_rank=tp_rank,
+            tp_size=tp_size,
             server_args=scheduler.server_args,
             scheduler=scheduler,
         )

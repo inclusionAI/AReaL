@@ -18,6 +18,43 @@ from areal.utils import logging
 
 logger = logging.getLogger("ToolCallParser")
 
+
+def split_reasoning(
+    text: str,
+    reasoning_parser: str | None,
+    force_reasoning: bool | None = None,
+) -> tuple[str, str]:
+    """Split model reasoning while preserving the generic fallback contract."""
+    if not reasoning_parser or not text:
+        return "", text
+    try:
+        from sglang.srt.parser.reasoning_parser import ReasoningParser
+    except ImportError:
+        start, end = "<think>", "</think>"
+        if force_reasoning:
+            if end in text:
+                return text.split(end, 1)
+            return "", text
+        lead = len(text) - len(text.lstrip("\n"))
+        if text[lead:].startswith(start):
+            body = text[lead + len(start) :]
+            if end in body:
+                return body.split(end, 1)
+            return body, ""
+        return "", text
+    parser = ReasoningParser(
+        model_type=reasoning_parser,
+        stream_reasoning=False,
+        force_reasoning=force_reasoning,
+    )
+    start = getattr(parser.detector, "think_start_token", "<think>")
+    lead = len(text) - len(text.lstrip("\n"))
+    if lead and text[lead:].startswith(start):
+        text = text[lead:]
+    reasoning_text, normal_text = parser.parse_non_stream(text)
+    return reasoning_text or "", normal_text or ""
+
+
 _QWEN3_CODER_TOOL_CALL_RE = re.compile(
     r"<tool_call>\s*(?P<body>.*?)\s*</tool_call>",
     re.DOTALL,
@@ -28,6 +65,10 @@ _QWEN3_CODER_FUNCTION_RE = re.compile(
 )
 _QWEN3_CODER_PARAMETER_RE = re.compile(
     r"<parameter=(?P<name>[^>\s]+)>(?P<value>.*?)</parameter>",
+    re.DOTALL,
+)
+_QWEN3_CODER_MISLABELED_FUNCTION_OPEN_RE = re.compile(
+    r"\A(?P<leading>\s*)<parameter=(?P<name>[^>\s]+)>",
     re.DOTALL,
 )
 
@@ -122,6 +163,31 @@ def _tool_required_parameters(tools: list[Any]) -> dict[str, set[str]]:
     return required_map
 
 
+def _repair_qwen3_coder_mislabeled_function_open(
+    body: str,
+    tool_names: set[str],
+) -> str:
+    """Repair an attested Qwen3.8 outer function tag typo.
+
+    Some Qwen3.8 rollouts emit ``<parameter=ToolName>`` as the first tag in a
+    tool-call block while still closing it with ``</function>``. Only repair
+    this exact shape when the name is one of the request's declared tools;
+    other malformed output remains delegated to the backend parser.
+    """
+    if "<function=" in body or body.count("</function>") != 1:
+        return body
+
+    match = _QWEN3_CODER_MISLABELED_FUNCTION_OPEN_RE.match(body)
+    if match is None or match.group("name") not in tool_names:
+        return body
+
+    return (
+        match.group("leading")
+        + f"<function={match.group('name')}>"
+        + body[match.end() :]
+    )
+
+
 def _clean_qwen3_coder_parameter(raw_value: str) -> str:
     if raw_value.startswith("\n"):
         raw_value = raw_value[1:]
@@ -194,10 +260,11 @@ def _process_tool_calls_qwen3_coder_xml(
 ]:
     """Parse Qwen3-Coder XML tool calls with ``<parameter=...>`` tags.
 
-    SGLang's qwen3_coder parser recognizes the tool name in this format but
-    can return empty arguments for Claude Code style parameters.  That makes
-    Anthropic tool_use.input become ``{}``, so Claude Code rejects calls like
-    Bash/Read/Write as missing required parameters.
+    Well-formed calls are parsed here to preserve their parameter values and
+    apply schema-aware primitive conversion before backend-specific parsing.
+
+    Malformed or argument-less XML is delegated to SGLang so this compatibility
+    layer preserves the backend parser's permissive behavior.
     """
 
     reasoning_text, content_text = _detect_think_and_return_ori_think(
@@ -205,6 +272,11 @@ def _process_tool_calls_qwen3_coder_xml(
     )
     arg_schemas = _tool_argument_schemas(tools)
     required_params = _tool_required_parameters(tools)
+    tool_names = {
+        tool_def["name"]
+        for tool_def in _iter_tool_definitions(tools)
+        if isinstance(tool_def.get("name"), str)
+    }
 
     tool_calls: list[ChatCompletionMessageFunctionToolCall | ResponseFunctionToolCall]
     tool_calls = []
@@ -214,14 +286,17 @@ def _process_tool_calls_qwen3_coder_xml(
         block_calls: list[
             ChatCompletionMessageFunctionToolCall | ResponseFunctionToolCall
         ] = []
-        body = tool_match.group("body")
+        body = _repair_qwen3_coder_mislabeled_function_open(
+            tool_match.group("body"), tool_names
+        )
         for fn_match in _QWEN3_CODER_FUNCTION_RE.finditer(body):
             tool_name = fn_match.group("name")
             fn_body = fn_match.group("body") or ""
             # A parameter value that itself contains a literal "</parameter>"
             # makes the non-greedy regex truncate at the wrong tag, silently
             # producing wrong arguments. When opening/closing tags are unbalanced
-            # the block is ambiguous, so bail out and let the fallback parser run.
+            # the block is ambiguous, so delegate the complete response to the
+            # backend parser rather than returning a partial result.
             if fn_body.count("<parameter=") != fn_body.count("</parameter>"):
                 return None, text, finish_reason
             args: dict[str, Any] = {}
@@ -366,10 +441,10 @@ def _process_tool_calls_sglang(
         reasoning_text, content_text = "", text
 
     if parser_p.has_tool_call(content_text):
-        if finish_reason == "stop":
-            finish_reason = "tool_calls"
         try:
             content_text, call_info_list = parser_p.parse_non_stream(content_text)
+            if not call_info_list:
+                return None, text, finish_reason
 
             if use_responses:
                 tool_calls = [
@@ -395,6 +470,8 @@ def _process_tool_calls_sglang(
                     for call_info in call_info_list
                 ]
 
+            if finish_reason == "stop":
+                finish_reason = "tool_calls"
             return tool_calls, reasoning_text + content_text, finish_reason
         except Exception as e:
             logger.error(f"Tool call parsing error: {e}")

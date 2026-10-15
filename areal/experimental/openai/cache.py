@@ -2,13 +2,15 @@
 
 import hashlib
 import json
+import math
 import os
 import threading
 import time
 from collections import OrderedDict, defaultdict
 from collections.abc import Callable
+from copy import copy, deepcopy
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, Self, runtime_checkable
 
 import torch
 
@@ -103,9 +105,221 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
                 )
             self._total_reward += reward
 
+    @classmethod
+    def from_dict(
+        cls,
+        items: dict[str, InteractionWithTokenLogpReward],
+        *,
+        session_id: str = "unknown",
+    ) -> Self:
+        """Create a cache view over already-linked interaction objects."""
+        cache = cls(session_id=session_id)
+        for key, value in items.items():
+            OrderedDict.__setitem__(cache, key, value)
+        return cache
+
+    @classmethod
+    def clone_chain(
+        cls,
+        leaf: InteractionWithTokenLogpReward,
+        *,
+        session_id: str = "unknown",
+    ) -> tuple[Self, InteractionWithTokenLogpReward]:
+        """Clone one root-to-leaf path into an isolated cache.
+
+        A branched interaction tree shares ancestor objects. Process rewards may
+        depend on branch-local tool results, so scoring those shared objects in
+        place would make branches overwrite or accumulate into each other. This
+        method makes a shallow copy of every interaction on one path, rewires the
+        copied parent chain, isolates mutable scorer inputs, and clears tensor
+        caches so later reward updates are reflected during tensorization. Model
+        response and API response objects remain shared and must be treated as
+        read-only.
+        """
+        reversed_chain: list[tuple[str, InteractionWithTokenLogpReward]] = []
+        seen_objects: set[int] = set()
+        seen_interaction_ids: set[str] = set()
+        current: InteractionWithTokenLogpReward | None = leaf
+        while current is not None:
+            object_id = id(current)
+            if object_id in seen_objects:
+                raise ValueError("Interaction parent chain contains a cycle")
+            seen_objects.add(object_id)
+
+            interaction_id = current.interaction_id
+            if interaction_id is None:
+                raise ValueError("Interaction parent chain contains an ID-less turn")
+            if interaction_id in seen_interaction_ids:
+                raise ValueError(
+                    f"Interaction parent chain contains duplicate ID {interaction_id!r}"
+                )
+            seen_interaction_ids.add(interaction_id)
+            reversed_chain.append((interaction_id, current))
+            current = current.parent
+
+        cache = cls(session_id=session_id)
+        cloned_parent: InteractionWithTokenLogpReward | None = None
+        for interaction_id, source in reversed(reversed_chain):
+            cloned = copy(source)
+            cloned.parent = cloned_parent
+            cloned._cache = None
+            cloned.messages = deepcopy(source.messages)
+            cloned.output_message_list = deepcopy(source.output_message_list)
+            cloned.input_data = deepcopy(source.input_data)
+            if source.token_rewards is not None:
+                cloned.token_rewards = source.token_rewards.detach().clone()
+            OrderedDict.__setitem__(cache, interaction_id, cloned)
+            cloned_parent = cloned
+
+        assert cloned_parent is not None
+        return cache, cloned_parent
+
     def set_last_reward(self, reward: float) -> None:
         """Set reward for the most recent completion/response."""
         self.set_reward(self.last_interaction_id, reward)
+
+    def assign_episode_reward(self, reward: float) -> None:
+        """Score disjoint exported concat segments with one episode return.
+
+        Call only on a view of exported leaves, before tensor serialization.
+        This is an explicit opt-in for agents with episode-level rewards, such
+        as Arena tasks whose context compaction creates independent chains.
+        Shared ancestry or explicit process/branch rewards retain their current
+        semantics: validate every chain before making any changes.
+        """
+        if not math.isfinite(reward):
+            raise ValueError("Episode reward must be finite")
+        if not any(leaf.reward is None for leaf in self.values()):
+            return
+
+        if not self._can_assign_episode_reward(reward):
+            logger.warning(
+                "Session %s has ambiguous or explicitly scored branches; "
+                "leaving missing rewards unchanged.",
+                self._session_id,
+            )
+            return
+
+        restored = sum(leaf.reward is None for leaf in self.values())
+        for interaction_id, leaf in self.items():
+            self.set_reward(interaction_id, reward)
+            leaf.rollout_reward = reward
+        logger.info(
+            "Session %s assigned its episode reward to %d unscored concat "
+            "segments (%d total); retaining one logical rollout.",
+            self._session_id,
+            restored,
+            len(self),
+        )
+
+    def _can_assign_episode_reward(self, reward: float) -> bool:
+        """Check that disjoint concat chains permit episode-level scoring."""
+        seen_ids: set[str] = set()
+        for leaf in self.values():
+            current = leaf
+            while current is not None:
+                interaction_id = current.interaction_id
+                if interaction_id is None or interaction_id in seen_ids:
+                    return False
+                if (
+                    current.output_message_list is None
+                    or current.chat_template_type != "concat"
+                ):
+                    return False
+                if current.token_rewards is not None:
+                    return False
+                if current is not leaf and current.reward is not None:
+                    return False
+                if any(
+                    score is not None and score != reward
+                    for score in (
+                        current.reward,
+                        current.original_reward,
+                        current.rollout_reward,
+                    )
+                ):
+                    return False
+                seen_ids.add(interaction_id)
+                current = current.parent
+        return True
+
+    def _invalidate_tensor_caches_from(
+        self, interaction: InteractionWithTokenLogpReward
+    ) -> None:
+        """Invalidate one interaction and every descendant present in this cache."""
+        children: dict[int, list[InteractionWithTokenLogpReward]] = defaultdict(list)
+        for candidate in self.values():
+            if candidate.parent is not None:
+                children[id(candidate.parent)].append(candidate)
+
+        pending = [interaction]
+        visited: set[int] = set()
+        while pending:
+            candidate = pending.pop()
+            candidate_id = id(candidate)
+            if candidate_id in visited:
+                continue
+            visited.add(candidate_id)
+            candidate._cache = None
+            pending.extend(children.get(candidate_id, ()))
+
+    @staticmethod
+    def _normalize_token_rewards(
+        interaction: InteractionWithTokenLogpReward,
+        token_rewards: torch.Tensor,
+    ) -> torch.Tensor:
+        if not isinstance(token_rewards, torch.Tensor):
+            raise TypeError(
+                "token_rewards must be a torch.Tensor, got "
+                f"{type(token_rewards).__name__}"
+            )
+        normalized = token_rewards.detach().to(device="cpu", dtype=torch.float32)
+        if interaction.model_response is not None:
+            expected_shape = torch.Size((interaction.model_response.output_len,))
+            if normalized.shape != expected_shape:
+                raise ValueError(
+                    "token_rewards shape mismatch: expected "
+                    f"{tuple(expected_shape)}, got {tuple(normalized.shape)}"
+                )
+        if not torch.isfinite(normalized).all().item():
+            raise ValueError("token_rewards must contain only finite values")
+        return normalized
+
+    def set_token_rewards(
+        self, interaction_id: str, token_rewards: torch.Tensor
+    ) -> None:
+        """Replace dense rewards aligned with one turn's output tokens."""
+        with self._lock:
+            interaction = self[interaction_id]
+            interaction.token_rewards = self._normalize_token_rewards(
+                interaction, token_rewards
+            ).clone()
+            self._invalidate_tensor_caches_from(interaction)
+
+    def add_token_rewards(
+        self, interaction_id: str, token_rewards: torch.Tensor
+    ) -> None:
+        """Add a scorer contribution to one turn's dense token rewards."""
+        with self._lock:
+            interaction = self[interaction_id]
+            addend = self._normalize_token_rewards(interaction, token_rewards)
+            if interaction.token_rewards is None:
+                interaction.token_rewards = addend.clone()
+            else:
+                if interaction.token_rewards.shape != addend.shape:
+                    raise ValueError(
+                        "token_rewards shape mismatch: existing "
+                        f"{tuple(interaction.token_rewards.shape)} vs new "
+                        f"{tuple(addend.shape)}"
+                    )
+                existing = interaction.token_rewards.detach().to(
+                    device="cpu", dtype=torch.float32
+                )
+                combined = existing + addend
+                if not torch.isfinite(combined).all().item():
+                    raise ValueError("combined token_rewards must remain finite")
+                interaction.token_rewards = combined
+            self._invalidate_tensor_caches_from(interaction)
 
     def _find_retry_orphan_ids(self) -> set[str]:
         """Identify retry-orphan completions/responses.
@@ -435,6 +649,12 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
         style : str, optional
             The export style, either ``'concat'`` (build tree and return leaves)
             or ``'individual'`` (return all), by default 'concat'.
+        reward_discount : float, optional
+            Backward reward discount for ``'individual'`` export. It is not
+            applied to concat leaves because a global insertion order can cross
+            branch boundaries.
+        drop_retry_orphans : bool, optional
+            Remove unconsumed retry siblings before exporting.
 
         Returns
         -------
@@ -448,9 +668,15 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
         ValueError
             If an unsupported ``style`` is provided.
         """
+        if style not in {"concat", "individual"}:
+            raise ValueError(f"Invalid export interactions style {style}")
         if drop_retry_orphans:
             self.drop_retry_orphans()
-        if reward_discount is not None and not self._apply_reward_discount_called:
+        if (
+            style == "individual"
+            and reward_discount is not None
+            and not self._apply_reward_discount_called
+        ):
             self.apply_reward_discount(turn_discount=reward_discount)
 
         cache = self
@@ -507,5 +733,3 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
             }
         elif style == "individual":
             return dict(**complete_cache)
-        else:
-            raise ValueError(f"Invalid export interactions style {style}")

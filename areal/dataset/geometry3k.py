@@ -102,9 +102,7 @@ def get_geometry3k_sft_dataset(
         multi_modal_input = {}
         multi_modal_input["pixel_values"] = processed_input["pixel_values"]
         if "image_grid_thw" in processed_input:
-            multi_modal_input["image_grid_thw"] = processed_input[
-                "image_grid_thw"
-            ].squeeze(0)
+            multi_modal_input["image_grid_thw"] = processed_input["image_grid_thw"]
         example["multi_modal_input"] = [multi_modal_input]
         example["loss_mask"] = get_multimodal_sft_loss_mask(
             input_ids=example["input_ids"],
@@ -178,13 +176,25 @@ def get_geometry3k_rl_dataset(
             }
         ]
 
+        prompt_without_generation = processor.tokenizer.apply_chat_template(
+            messages, add_generation_prompt=False, tokenize=False
+        )
         messages = processor.tokenizer.apply_chat_template(
             messages, add_generation_prompt=True, tokenize=False
+        )
+        # Inspect only the suffix added by the template, not user content or
+        # model-specific role separators. Non-prefix templates are ambiguous;
+        # do not infer a prefill from their full rendered prompt.
+        generation_prompt = (
+            messages[len(prompt_without_generation) :]
+            if messages.startswith(prompt_without_generation)
+            else ""
         )
         return {
             "messages": messages,
             "messages_chat": messages_chat,
             "images": processed_images,
+            "think_prefilled": generation_prompt.rstrip().endswith("<think>"),
         }
 
     dataset = dataset.map(process).remove_columns(["problem"])
