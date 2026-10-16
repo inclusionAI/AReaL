@@ -96,6 +96,9 @@ class AwexWeightPublisher:
         self._infer_world_size: int | None = None
         self._num_infer_engines: int | None = None
         self._logical_train_rank: int | None = None
+        self._pending_ipc_export: (
+            tuple[list[torch.Tensor], list[torch.Tensor]] | None
+        ) = None
 
     @property
     def residency(self) -> MegatronWeightResidency:
@@ -348,8 +351,8 @@ class AwexWeightPublisher:
           4. Signal all_training_offloaded_weights (reader waits for this)
           5. share_memory_() + cuda_ipc_serialize → put to MetaServer
           6. Wait for weights_update_finished (reader done copying)
-          7. Clean up shared tensors → signal write_finished
-          8. Wait for all infer engines to finish (finished_weights_update_engines)
+          7. Release exported tensors, then signal write_finished
+          8. Wait for all infer engines to finish the update lifecycle
         """
         from awex.util.tensor_util import (
             cuda_ipc_serialize,
@@ -357,9 +360,12 @@ class AwexWeightPublisher:
             release_tensors,
         )
 
-        # Reclaim any IPC-exported blocks from the previous version whose
-        # peer mappings closed after our last collect (belt-and-braces with the
-        # collect in this method's finally block).
+        if self._pending_ipc_export is not None:
+            raise RuntimeError(
+                "Previous CUDA IPC export is still awaiting reader acknowledgement"
+            )
+
+        # Reclaim any legacy IPC-exported blocks from a previous version.
         torch.cuda.ipc_collect()
 
         # Free optimizer states + grad buffers BEFORE reloading the train
@@ -430,6 +436,8 @@ class AwexWeightPublisher:
         release_tensors(owned)
         del tensors, owned
         parameters.clear()
+        gc.collect()
+        torch.cuda.empty_cache()
 
         self._residency.release_memory(tags=["weights"])
 
@@ -446,6 +454,9 @@ class AwexWeightPublisher:
         )
 
         group_shared = [t.share_memory_() for t in group_tensors]
+        # Retain producer storage until the reader acknowledges completion.
+        # On failure or timeout the reader may still hold an IPC mapping.
+        self._pending_ipc_export = (group_tensors, group_shared)
         serialized_weights = cuda_ipc_serialize((group_shared, metadata, names))
         torch.cuda.synchronize()
         logger.info("CUDA IPC serialization complete, putting to MetaServer")
@@ -493,20 +504,28 @@ class AwexWeightPublisher:
             self._meta_server_client.delete_if_exists(serialized_weights_key)
             logger.info("Got done signal from infer side: %s", update_finished_key)
         finally:
-            release_tensors(group_tensors)
-            release_tensors(group_shared)
-            del group_tensors, group_shared
             torch.cuda.synchronize()
-            gc.collect()
-            # Storages exported via cudaIpcGetMemHandle park in PyTorch's
-            # CudaIPCSentDataLimbo when freed and are NOT returned to the
-            # allocator until ipc_collect() confirms the peer closed its
-            # mapping. GiB-scale group tensors are exported every version;
-            # without collection the train-process residual grows by GBs per
-            # version, eating the colocated rollout's prefill headroom until
-            # its logits all-gather OOMs.
-            torch.cuda.ipc_collect()
-            torch.cuda.empty_cache()
+
+        # AWEX drops imported tensor references and synchronizes before ACK.
+        # Release both retained and local references before write_finished,
+        # freeing packed-weight memory before the reader's remaining lifecycle.
+        allocated_before = torch.cuda.memory_allocated()
+        reserved_before = torch.cuda.memory_reserved()
+        self._pending_ipc_export = None
+        del group_tensors, group_shared
+        gc.collect()
+        torch.cuda.ipc_collect()
+        torch.cuda.empty_cache()
+        logger.info(
+            "CUDA IPC cleanup after reader acknowledgement: rank=%d device=%d "
+            "allocated=%.3f->%.3f GiB reserved=%.3f->%.3f GiB",
+            dist.get_rank(self._engine.cpu_group),
+            torch.cuda.current_device(),
+            allocated_before / 1024**3,
+            torch.cuda.memory_allocated() / 1024**3,
+            reserved_before / 1024**3,
+            torch.cuda.memory_reserved() / 1024**3,
+        )
 
         write_finished_key = f"write_finished{key_suffix}"
         self._meta_server_client.put_object(write_finished_key, True)
@@ -578,6 +597,13 @@ class AwexWeightPublisher:
         return converted
 
     # ── Memory management (manual offload) ────────────────────────────────
+
+    def checkpoint_residency(self, *, with_model: bool, with_optimizer: bool):
+        """Temporarily restore only resources required by a checkpoint."""
+        return self._residency.checkpoint_residency(
+            with_model=with_model,
+            with_optimizer=with_optimizer,
+        )
 
     def release_memory(self, tags: list[str] | None = None) -> None:
         """Compatibility delegate for callers of the former combined adapter."""
