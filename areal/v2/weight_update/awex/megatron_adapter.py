@@ -25,6 +25,12 @@ from awex.util.tensor_util import (
     group_tensors_by_shape_and_dtype,
 )
 
+from areal.engine.megatron_utils.optimizer_chain import (
+    OptimizerResidencyEntry,
+    OptimizerResidencyPlan,
+    build_optimizer_residency_plan,
+    checkpoint_awex_residency,
+)
 from areal.utils import logging
 from areal.v2.weight_update.awex import (
     awex_wu_use_group,
@@ -73,9 +79,13 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
         self._separation_delta_transport: NcclColocateStreamBatchTransport | None = None
         self._separation_wire_dtypes: tuple[torch.dtype, ...] | None = None
         self._transfer_rank: int | None = None
-        self._offloaded_optimizer_states: dict = {}
         self._offloaded_weights: dict[str, torch.Tensor] = {}
         self._released_tags: set[str] = set()
+        self._optimizer_residency_plan: OptimizerResidencyPlan | None = None
+        self._ordinary_optimizer_restores: dict[
+            int,
+            list[tuple[dict[str, object], str, torch.Tensor, torch.device]],
+        ] = {}
         self._colocate_lock = threading.Lock()
         self._colocate_admin_api_key: str = "areal-admin-key"
         self._colocate_http_client: httpx.Client | None = None
@@ -735,6 +745,15 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
         if weights_offloaded:
             self.release_memory(tags=["weights"])
 
+    def checkpoint_residency(self, *, with_model: bool, with_optimizer: bool):
+        """Temporarily restore only resources required by a checkpoint."""
+        return checkpoint_awex_residency(
+            self,
+            self._engine.optimizer,
+            with_model=with_model,
+            with_optimizer=with_optimizer,
+        )
+
     def release_memory(self, tags: list[str] | None = None) -> None:
         """Release GPU memory for specified tags by offloading to CPU.
 
@@ -753,7 +772,6 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
         if "optimizer" in tags_to_release:
             self._offload_optimizer_states()
             self._released_tags.add("optimizer")
-
         if "weights" in tags_to_release:
             self._offload_model_weights()
             self._released_tags.add("weights")
@@ -761,6 +779,7 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
         torch.cuda.synchronize()
         gc.collect()
         torch.cuda.empty_cache()
+
         logger.info("release_memory: done for tags=%s", tags_to_release)
 
     def resume_memory(self, tags: list[str] | None = None) -> None:
@@ -781,68 +800,72 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
         if "weights" in tags_to_resume:
             self._reload_model_weights()
             self._released_tags.discard("weights")
-
         if "optimizer" in tags_to_resume:
             self._reload_optimizer_states()
             self._released_tags.discard("optimizer")
-
         torch.cuda.synchronize()
+        if "optimizer" in tags_to_resume:
+            self._optimizer_residency_plan = None
+            self._ordinary_optimizer_restores.clear()
         logger.info("resume_memory: done for tags=%s", tags_to_resume)
 
     def _offload_optimizer_states(self) -> None:
-        """Move optimizer state tensors to CPU, keeping references for reload."""
-        optimizer = self._engine.optimizer
-        if optimizer is None:
-            logger.warning("No optimizer found, skipping optimizer offload")
-            return
-
-        # Megatron's ChainedOptimizer wraps per-model-chunk optimizers;
-        # each in turn wraps a base torch optimizer holding the state dict.
-        if hasattr(optimizer, "optimizers"):
-            inner_optimizers = optimizer.optimizers
-        else:
-            inner_optimizers = [optimizer]
-            logger.warning(
-                "Optimizer does not have 'optimizers' attribute. "
-                "Treating it as a single optimizer; offload may be incomplete "
-                "for non-standard Megatron optimizer structures."
-            )
-        for opt in inner_optimizers:
-            base_opt = getattr(opt, "optimizer", opt)
-            for param, state in base_opt.state.items():
-                cpu_state: dict[str, torch.Tensor] = {}
-                for key, val in state.items():
-                    if isinstance(val, torch.Tensor) and val.is_cuda:
-                        cpu_state[key] = val.detach().to("cpu", non_blocking=True)
-                        state[key] = torch.empty(0, device="cpu")
-                if cpu_state:
-                    self._offloaded_optimizer_states[param] = cpu_state
-
+        """Release managed buffers or migrate ordinary optimizer state to CPU."""
+        plan = build_optimizer_residency_plan(self._engine.optimizer)
+        if self._ordinary_optimizer_restores:
+            raise RuntimeError("stale ordinary optimizer state before AWEX release")
+        ordinary_restores: dict[
+            int,
+            list[tuple[dict[str, object], str, torch.Tensor, torch.device]],
+        ] = {}
+        for index, entry in enumerate(plan.entries):
+            if entry.managed_optimizer is not None:
+                entry.managed_optimizer.offload_to_cpu()
+            else:
+                ordinary_restores[index] = self._release_ordinary_optimizer(entry)
+        self._ordinary_optimizer_restores = ordinary_restores
+        self._optimizer_residency_plan = plan
         logger.info(
-            "Offloaded optimizer states for %d params",
-            len(self._offloaded_optimizer_states),
+            "Released optimizer state for %d managed and %d ordinary leaves",
+            sum(entry.managed_optimizer is not None for entry in plan.entries),
+            sum(entry.managed_optimizer is None for entry in plan.entries),
         )
 
     def _reload_optimizer_states(self) -> None:
-        """Restore optimizer state tensors from CPU back to GPU."""
-        if not self._offloaded_optimizer_states:
+        """Restore managed buffers and ordinary optimizer state to GPU."""
+        plan = self._optimizer_residency_plan
+        if plan is None:
             return
+        for index, entry in enumerate(plan.entries):
+            if entry.managed_optimizer is not None:
+                entry.managed_optimizer.restore_from_cpu()
+                continue
+            for state, key, cpu_value, device in self._ordinary_optimizer_restores.get(
+                index, []
+            ):
+                state[key] = cpu_value.to(device, non_blocking=True)
+        logger.info("Restored managed and ordinary optimizer state")
 
-        optimizer = self._engine.optimizer
-        if optimizer is None:
-            return
-
-        inner_optimizers = getattr(optimizer, "optimizers", [optimizer])
-        for opt in inner_optimizers:
-            base_opt = getattr(opt, "optimizer", opt)
-            for param, state in base_opt.state.items():
-                if param in self._offloaded_optimizer_states:
-                    cpu_state = self._offloaded_optimizer_states[param]
-                    for key, val in cpu_state.items():
-                        state[key] = val.to(param.device, non_blocking=True)
-
-        self._offloaded_optimizer_states.clear()
-        logger.info("Reloaded optimizer states to GPU")
+    def _release_ordinary_optimizer(
+        self, entry: OptimizerResidencyEntry
+    ) -> list[tuple[dict[str, object], str, torch.Tensor, torch.device]]:
+        """Mirror AWEX v2's original ordinary optimizer-state migration."""
+        base_optimizer = entry.base_optimizer
+        if base_optimizer is None:
+            return []
+        optimizer_state = getattr(base_optimizer, "state", None)
+        if optimizer_state is None:
+            return []
+        restores: list[tuple[dict[str, object], str, torch.Tensor, torch.device]] = []
+        for state in optimizer_state.values():
+            for key, value in tuple(state.items()):
+                if not isinstance(value, torch.Tensor) or not value.is_cuda:
+                    continue
+                device = value.device
+                cpu_value = value.detach().to("cpu", non_blocking=True)
+                state[key] = torch.empty(0, device="cpu")
+                restores.append((state, key, cpu_value, device))
+        return restores
 
     def _offload_model_weights(self) -> None:
         """Move model parameters to CPU, keeping references for reload."""

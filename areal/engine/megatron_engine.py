@@ -28,6 +28,8 @@ from megatron.core.optimizer import get_megatron_optimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.transformer import TransformerConfig
+from megatron.core.transformer.transformer_block import get_num_layers_to_build
+from megatron.core.transformer.transformer_layer import get_transformer_layer_offset
 from megatron.core.utils import get_model_config
 from torch import nn
 from torchdata.stateful_dataloader import StatefulDataLoader
@@ -68,6 +70,7 @@ from areal.engine.core.distributed import (
 from areal.engine.core.model import (
     SequencePackingMode,
     disable_dropout_in_model,
+    is_qwen3_5_model,
     is_valid_vision_model,
     lang_config,
     requires_padded_seq,
@@ -82,6 +85,10 @@ from areal.engine.megatron_utils.bailing_v3 import (
 from areal.engine.megatron_utils.checkpointer import MegatronCheckpointManager
 from areal.engine.megatron_utils.deterministic import set_deterministic_algorithms
 from areal.engine.megatron_utils.fp8 import FP8BlockwiseTensorHelper
+from areal.engine.megatron_utils.gpu_staged_optimizer import (
+    GPUStagedAdamWConfig,
+    get_megatron_optimizer_with_gpu_staged_adamw,
+)
 from areal.engine.megatron_utils.loss import (
     compute_global_token_count,
     scale_named_loss_for_native,
@@ -110,6 +117,25 @@ from areal.engine.megatron_utils.transport import (
     nonempty_microbatch_target,
     validate_transport_padding,
 )
+from areal.engine.r3.asserts import r3_error
+from areal.engine.r3.config import (
+    R3MoEConfig,
+    resolve_moe_layer_indices,
+    resolve_r3_moe_config,
+)
+from areal.engine.r3.discovery import (
+    NativeRouterReplayRef,
+    discover_native_router_replay,
+)
+from areal.engine.r3.layout import prepare_native_replay_slabs
+from areal.engine.r3.orchestration import (
+    clear_router_replay_action,
+    clear_router_replay_state,
+    enqueue_recorded_indices,
+    set_router_replay_action,
+    set_target_indices,
+)
+from areal.engine.r3.transport import localize_r3_tensor
 from areal.infra.dist_rollout import DistRolloutCoordinator
 from areal.infra.platforms import current_platform, is_npu_available
 from areal.models.mcore.bailing_v3_bridge import BailingV3Bridge
@@ -431,6 +457,22 @@ class MegatronEngine(TrainEngine):
         self.sequence_packing_mode: SequencePackingMode | None = None
         self.use_model_packed_seq: bool = False
         self.processor = None
+        self._r3_enabled: bool = self.mcore_config.enable_router_replay
+        self._r3_router_groups: dict[int, list[NativeRouterReplayRef]] = {}
+        self._r3_local_moe_indices: dict[int, list[int]] = {}
+        self._r3_moe_config: R3MoEConfig | None = None
+        self._r3_num_moe_experts: int | None = None
+        self._r3_pending_routed_experts: torch.Tensor | None = None
+        self._r3_pending_valid: torch.Tensor | None = None
+
+        if self._r3_enabled and self.mcore_config.enable_mtp:
+            raise ValueError("R3 router replay does not support MTP layers.")
+        if self._r3_enabled and self.mcore_config.moe_router_fusion:
+            raise ValueError(
+                "megatron.enable_router_replay=True is incompatible with "
+                "megatron.moe_router_fusion=True. Disable moe_router_fusion to "
+                "use Megatron-Core native RouterReplay."
+            )
 
     def create_process_group(self, parallel_strategy: ParallelStrategy | None = None):
         if parallel_strategy is None:
@@ -599,6 +641,15 @@ class MegatronEngine(TrainEngine):
             self.use_padded_seq = requires_padded_seq(
                 self.hf_config.model_type, self.bridge_cls
             )
+            if (
+                self._r3_enabled
+                and self.bridge_cls == "mcore-bridge"
+                and not self._supports_r3_qwen4_exp_replay()
+            ):
+                raise ValueError(
+                    "R3 with mcore-bridge requires the Qwen4Exp all-MoE "
+                    "WRAPPER_THD path with zigzag CP and native routing replay."
+                )
             if self.is_vision_model:
                 if (
                     self.parallel_strategy.context_parallel_size > 1
@@ -733,15 +784,32 @@ class MegatronEngine(TrainEngine):
         if self.mcore_config.use_deterministic_algorithms:
             set_deterministic_algorithms(model_config)
 
-        # Set vp_stage for DDP models
+        # Set a stable vp_stage on every local model chunk. R3 discovery and
+        # runtime counters both key off this value, including non-DDP VPP chunks.
         for i, model_chunk in enumerate(self.model):
-            if (
-                isinstance(model_chunk, DDP)
-                and self.mcore_config.virtual_pipeline_parallel_size > 1
-            ):
-                vp_stage = getattr(model_chunk.module, "vp_stage", None)
-                self.logger.info(f"Setting vp_stage {vp_stage} for model chunk {i}.")
-                setattr(model_chunk, "vp_stage", vp_stage)
+            unwrapped = (
+                model_chunk.module if hasattr(model_chunk, "module") else model_chunk
+            )
+            vp_stage = getattr(model_chunk, "vp_stage", None)
+            if vp_stage is None:
+                vp_stage = getattr(unwrapped, "vp_stage", None)
+            if vp_stage is None:
+                vp_stage = getattr(
+                    model_chunk, "virtual_pipeline_model_parallel_rank", None
+                )
+            if vp_stage is None:
+                vp_stage = getattr(
+                    unwrapped, "virtual_pipeline_model_parallel_rank", None
+                )
+            if vp_stage is None:
+                vp_stage = i if len(self.model) > 1 else 0
+            vp_stage = int(vp_stage or 0)
+            self.logger.info(f"Setting vp_stage {vp_stage} for model chunk {i}.")
+            setattr(model_chunk, "vp_stage", vp_stage)
+            if hasattr(model_chunk, "module"):
+                setattr(model_chunk.module, "vp_stage", vp_stage)
+
+        self._initialize_r3_router_replay()
 
         if self.mcore_config.ddp.overlap_grad_reduce and isinstance(primary_model, DDP):
             model_config.no_sync_func = [
@@ -904,6 +972,8 @@ class MegatronEngine(TrainEngine):
                 "moe_permute_fusion": self.mcore_config.moe_permute_fusion,
                 "moe_router_fusion": self.mcore_config.moe_router_fusion,
             }
+            if self._r3_enabled:
+                moe_extra_args["moe_enable_routing_replay"] = True
             if self.mcore_config.moe_shared_expert_overlap is not None:
                 moe_extra_args["moe_shared_expert_overlap"] = (
                     self.mcore_config.moe_shared_expert_overlap
@@ -984,6 +1054,8 @@ class MegatronEngine(TrainEngine):
                 "moe_router_fusion": self.mcore_config.moe_router_fusion,
                 "cross_entropy_loss_fusion": self.mcore_config.cross_entropy_loss_fusion,
             }
+            if self._r3_enabled:
+                transformer_config_overrides["moe_enable_routing_replay"] = True
             for name in (
                 "moe_shared_expert_overlap",
                 "moe_router_bias_update_rate",
@@ -1273,7 +1345,9 @@ class MegatronEngine(TrainEngine):
             self._weight_residency.release_grad_memory()
             gc.collect()
             torch.cuda.empty_cache()
-        with self._offload_aware_context():
+        with self._checkpoint_aware_context(
+            with_model=True, with_optimizer=meta.with_optim
+        ):
             if meta.weight_format == "hf":
                 if meta.with_optim:
                     raise ValueError(
@@ -1339,13 +1413,20 @@ class MegatronEngine(TrainEngine):
         binder = getattr(self, "_qwen4_awex_frozen_binder", None)
         if binder is not None:
             binder.invalidate()
-        with self._offload_aware_context():
+        with self._checkpoint_aware_context(
+            with_model=True, with_optimizer=meta.with_optim
+        ):
             if meta.weight_format == "hf":
                 if meta.with_optim:
                     raise ValueError(
                         "HF format does not support optimizer state loading, please use DCP format instead."
                     )
-                self._load_model_from_hf(meta.path)
+                if self.checkpointer is None:
+                    self._load_model_from_hf(meta.path)
+                else:
+                    self.checkpointer.load_model_weights_only(
+                        functools.partial(self._load_model_from_hf, meta.path)
+                    )
             elif meta.weight_format == "dcp":
                 if self.checkpointer is None:
                     raise NotImplementedError(
@@ -1358,6 +1439,32 @@ class MegatronEngine(TrainEngine):
                 )
             else:
                 raise ValueError(f"Unknown weight format {meta.weight_format}. ")
+
+    @contextmanager
+    def _checkpoint_aware_context(self, *, with_model: bool, with_optimizer: bool):
+        """Lease AWEX-released resources without onloading managed state."""
+        if self._weight_residency is None:
+            with self._offload_aware_context():
+                yield
+            return
+
+        lease = self._weight_residency.checkpoint_residency(
+            with_model=with_model, with_optimizer=with_optimizer
+        )
+        with lease:
+            if with_model:
+                self._assert_checkpoint_model_resident()
+            yield
+
+    def _assert_checkpoint_model_resident(self) -> None:
+        """Reject checkpoint access to AWEX-resized model storage."""
+        for chunk_index, chunk in enumerate(self.model):
+            for name, param in chunk.named_parameters():
+                if param.numel() and param.untyped_storage().nbytes() == 0:
+                    raise RuntimeError(
+                        "AWEX model weights are not resident for checkpoint: "
+                        f"chunk={chunk_index}, parameter={name!r}"
+                    )
 
     @contextmanager
     def _offload_aware_context(self):
@@ -1413,6 +1520,458 @@ class MegatronEngine(TrainEngine):
         assert self.lr_scheduler is not None, "LR Scheduler is not initialized."
         self.lr_scheduler.step(1)
 
+    def _model_vp_stage(self, model: torch.nn.Module) -> int:
+        return int(getattr(model, "vp_stage", 0) or 0)
+
+    def _resolve_r3_num_moe_experts(self) -> int:
+        for field_name in ("num_moe_experts", "num_experts"):
+            value = getattr(self.tf_config, field_name, None)
+            if value is None:
+                continue
+            value = int(value)
+            if value <= 0:
+                raise r3_error(
+                    "Megatron MoE expert count must be positive for R3",
+                    field=field_name,
+                    value=value,
+                )
+            return value
+        raise r3_error(
+            "Unable to resolve Megatron MoE expert count for R3",
+            candidate_fields=("num_moe_experts", "num_experts"),
+        )
+
+    def _supports_r3_qwen4_exp_replay(self) -> bool:
+        """The bridge preserves token rows through this packed multimodal path."""
+        hf_config = getattr(self, "hf_config", None)
+        tf_config = getattr(self, "tf_config", None)
+        if not (
+            self.bridge_cls == "mcore-bridge"
+            and getattr(hf_config, "model_type", None) == "qwen4_exp"
+            and getattr(hf_config, "architectures", None)
+            == ["Qwen4ExpForConditionalGeneration"]
+            and self.sequence_packing_mode == SequencePackingMode.WRAPPER_THD
+            and getattr(tf_config, "cp_partition_mode", "zigzag") == "zigzag"
+            and getattr(tf_config, "moe_enable_routing_replay", False)
+            and not getattr(tf_config, "mtp_num_layers", None)
+        ):
+            return False
+        # This bridge's integer periodic-layer convention differs from native
+        # MCore. Restrict this path to the deployed all-MoE decoder layout.
+        return len(resolve_moe_layer_indices(tf_config)) == tf_config.num_layers
+
+    def _initialize_r3_router_replay(self) -> None:
+        if not self._r3_enabled:
+            return
+        assert self.model is not None, "Model must be initialized before R3 discovery."
+
+        if bool(getattr(self.tf_config, "moe_router_fusion", False)):
+            raise r3_error(
+                "R3 router replay is incompatible with effective "
+                "Megatron moe_router_fusion=True",
+                moe_router_fusion=getattr(self.tf_config, "moe_router_fusion", None),
+            )
+
+        self._r3_moe_config = resolve_r3_moe_config(self.tf_config)
+        self._r3_num_moe_experts = self._resolve_r3_num_moe_experts()
+        if self._r3_moe_config.num_moe_layers <= 0:
+            raise r3_error(
+                "R3 router replay is enabled but Megatron config has no MoE layers",
+                num_layers=self._r3_moe_config.num_layers,
+                moe_layer_indices=self._r3_moe_config.moe_layer_indices,
+            )
+
+        self._r3_router_groups = discover_native_router_replay(self.model)
+        self._r3_local_moe_indices = {}
+        for vp_stage, refs in self._r3_router_groups.items():
+            local_moe_indices = self._resolve_r3_local_moe_indices(vp_stage, refs)
+            self._r3_local_moe_indices[vp_stage] = local_moe_indices
+            if len(refs) != len(local_moe_indices):
+                raise r3_error(
+                    "R3 local router count does not match local MoE layer count",
+                    vp_stage=vp_stage,
+                    router_count=len(refs),
+                    local_moe_count=len(local_moe_indices),
+                )
+
+        total_local_routers = sum(len(refs) for refs in self._r3_router_groups.values())
+        self.logger.info(
+            "Initialized R3 native RouterReplay refs: vp_stages=%s, local_routers=%s.",
+            {
+                vp_stage: [ref.name for ref in refs]
+                for vp_stage, refs in self._r3_router_groups.items()
+            },
+            total_local_routers,
+        )
+
+    def _resolve_r3_local_moe_indices(
+        self,
+        vp_stage: int,
+        refs: list[NativeRouterReplayRef],
+    ) -> list[int]:
+        assert self._r3_moe_config is not None
+        layer_offset = get_transformer_layer_offset(self.tf_config, vp_stage=vp_stage)
+        num_layers_to_build = get_num_layers_to_build(self.tf_config, vp_stage=vp_stage)
+        expected_global_layers = [
+            layer_idx
+            for layer_idx in self._r3_moe_config.moe_layer_indices
+            if layer_offset <= layer_idx < layer_offset + num_layers_to_build
+        ]
+        expected_moe_indices = [
+            self._r3_moe_config.global_to_moe_index[layer_idx]
+            for layer_idx in expected_global_layers
+        ]
+        if len(refs) != len(expected_moe_indices):
+            raise r3_error(
+                "R3 discovered router count does not match PP/VPP local MoE layers",
+                vp_stage=vp_stage,
+                layer_offset=layer_offset,
+                num_layers_to_build=num_layers_to_build,
+                expected_global_layers=expected_global_layers,
+                expected_moe_indices=expected_moe_indices,
+                discovered_router_names=[ref.name for ref in refs],
+                discovered_layer_numbers=[ref.layer_number for ref in refs],
+            )
+
+        local_moe_indices: list[int] = []
+        for idx, ref in enumerate(refs):
+            if ref.layer_number is None:
+                local_moe_indices.append(expected_moe_indices[idx])
+                continue
+
+            candidates = (
+                (ref.layer_number,)
+                if ref.layer_number_is_global
+                else (layer_offset + ref.layer_number, ref.layer_number)
+            )
+            resolved_global = next(
+                (
+                    candidate
+                    for candidate in candidates
+                    if candidate in expected_global_layers
+                    and candidate in self._r3_moe_config.global_to_moe_index
+                ),
+                None,
+            )
+            if resolved_global is None:
+                raise r3_error(
+                    "Unable to map discovered R3 router to a global MoE layer",
+                    vp_stage=vp_stage,
+                    router_name=ref.name,
+                    router_layer_number=ref.layer_number,
+                    layer_offset=layer_offset,
+                    expected_global_layers=expected_global_layers,
+                )
+            local_moe_indices.append(
+                self._r3_moe_config.global_to_moe_index[resolved_global]
+            )
+        return local_moe_indices
+
+    def _all_r3_router_refs(self) -> list[NativeRouterReplayRef]:
+        return [ref for refs in self._r3_router_groups.values() for ref in refs]
+
+    def _prepare_r3_forward_context(
+        self,
+        mb_list: MicroBatchList,
+    ) -> dict[str, Any] | None:
+        routed_experts = self._r3_pending_routed_experts
+        routing_valid = self._r3_pending_valid
+        has_r3_data = routed_experts is not None or routing_valid is not None
+        if not has_r3_data:
+            return None
+        if not self._r3_enabled:
+            raise r3_error("Received R3 routed_experts but router replay is disabled")
+        use_padded_seq = bool(getattr(self, "use_padded_seq", False))
+        supported_vision = self.is_vision_model and self._supports_r3_qwen4_exp_replay()
+        if (
+            self.enable_tree_training
+            or (self.is_vision_model and not supported_vision)
+            or use_padded_seq
+        ):
+            raise r3_error(
+                "R3 requires packed text or the supported Qwen4Exp WRAPPER_THD path",
+                enable_tree_training=self.enable_tree_training,
+                is_vision_model=self.is_vision_model,
+                use_padded_seq=use_padded_seq,
+            )
+        if routed_experts is None or routing_valid is None:
+            raise r3_error("Both routed_experts and r3_routing_valid are required")
+
+        routed_experts = localize_r3_tensor(routed_experts)
+        routing_valid = localize_r3_tensor(routing_valid)
+        if not torch.is_tensor(routed_experts) or not torch.is_tensor(routing_valid):
+            raise r3_error(
+                "R3 side-channel values must be torch tensors after localization",
+                routed_type=type(routed_experts).__name__,
+                valid_type=type(routing_valid).__name__,
+            )
+        if routed_experts.ndim != 4:
+            raise r3_error(
+                "routed_experts must have shape [batch, seq_len, num_moe_layers, topk]",
+                shape=tuple(routed_experts.shape),
+            )
+        if routing_valid.ndim != 1:
+            raise r3_error(
+                "r3_routing_valid must have shape [batch]",
+                shape=tuple(routing_valid.shape),
+            )
+        if routed_experts.shape[0] != routing_valid.shape[0]:
+            raise r3_error(
+                "R3 routed_experts and r3_routing_valid batch size mismatch",
+                routed_batch_size=routed_experts.shape[0],
+                valid_batch_size=routing_valid.shape[0],
+            )
+        if self._r3_moe_config is None or self._r3_num_moe_experts is None:
+            raise r3_error("R3 MoE config is not initialized")
+        expected_shape_tail = (
+            self._r3_moe_config.num_moe_layers,
+            self._r3_moe_config.topk,
+        )
+        if tuple(routed_experts.shape[2:]) != expected_shape_tail:
+            raise r3_error(
+                "R3 routed_experts layer/topk dims do not match Megatron MoE config",
+                routed_shape=tuple(routed_experts.shape),
+                expected_num_moe_layers=self._r3_moe_config.num_moe_layers,
+                expected_topk=self._r3_moe_config.topk,
+            )
+        if routed_experts.numel() > 0:
+            min_expert = int(routed_experts.min().item())
+            max_expert = int(routed_experts.max().item())
+            if min_expert < 0 or max_expert >= self._r3_num_moe_experts:
+                raise r3_error(
+                    "R3 routed_experts contains expert id outside Megatron MoE range",
+                    min_expert=min_expert,
+                    max_expert=max_expert,
+                    num_moe_experts=self._r3_num_moe_experts,
+                )
+
+        # Keep the full routing batch on CPU, like the token microbatches.
+        routed_experts = routed_experts.detach().to(device="cpu")
+        routing_valid = routing_valid.detach().to(device="cpu", dtype=torch.bool)
+
+        # The new scheduler can append transport-only rows before reordering.
+        # Their routing is invalid and must use live/record fallback.
+        dummy_count = getattr(mb_list, "transport_dummy_count", 0)
+        if dummy_count:
+            routed_experts = torch.cat(
+                [
+                    routed_experts,
+                    routed_experts.new_zeros((dummy_count, *routed_experts.shape[1:])),
+                ]
+            )
+            routing_valid = torch.cat(
+                [
+                    routing_valid,
+                    torch.zeros(dummy_count, dtype=torch.bool),
+                ]
+            )
+
+        forward_indices = mb_list.forward_indices
+        if forward_indices is not None:
+            if len(forward_indices) != routed_experts.shape[0]:
+                raise r3_error(
+                    "R3 forward_indices length does not match routed_experts batch",
+                    forward_indices_len=len(forward_indices),
+                    routed_batch_size=routed_experts.shape[0],
+                )
+            routed_experts = routed_experts[forward_indices]
+            routing_valid = routing_valid[forward_indices]
+
+        routed_mbs: list[torch.Tensor] = []
+        valid_mbs: list[torch.Tensor] = []
+        offset = 0
+        for mb in mb_list.mbs:
+            cu_seqlens = mb.get("cu_seqlens")
+            if cu_seqlens is None:
+                raise r3_error("R3 micro-batch split requires packed cu_seqlens")
+            n_seqs = int(cu_seqlens.shape[0] - 1)
+            routed_mbs.append(routed_experts[offset : offset + n_seqs])
+            valid_mbs.append(routing_valid[offset : offset + n_seqs])
+            offset += n_seqs
+        if offset != routed_experts.shape[0]:
+            raise r3_error(
+                "R3 micro-batch split did not consume all routed_experts samples",
+                consumed=offset,
+                routed_batch_size=routed_experts.shape[0],
+            )
+        valid_samples = int(routing_valid.sum().item())
+        total_samples = int(routing_valid.numel())
+        token_padding = (
+            int(sum(mb_list.padding_lengths))
+            if mb_list.padding_lengths is not None
+            else 0
+        )
+        padded_tokens = (
+            int(sum(mb_list.padded_to_lengths))
+            if mb_list.padded_to_lengths is not None
+            else int(sum(mb_list.group_lens))
+        )
+        return {
+            "routed_mbs": routed_mbs,
+            "valid_mbs": valid_mbs,
+            "real_tokens_by_mb": [int(x) for x in mb_list.group_lens],
+            "stats": {
+                "batches_with_side_channel": 1,
+                "logical_microbatches": len(mb_list.mbs),
+                "samples_total": total_samples,
+                "routing_valid_samples": valid_samples,
+                "routing_invalid_samples": total_samples - valid_samples,
+                "routing_valid_fraction": valid_samples / max(total_samples, 1),
+                "tokens_real": int(sum(mb_list.group_lens)),
+                "tokens_padded": padded_tokens,
+                "tokens_padding": token_padding,
+                "replayed_microbatches": 0,
+                "skipped_microbatches": 0,
+                "invalid_samples": 0,
+                "router_stage_microbatches": 0,
+                "mode_replay_microbatches": 0,
+                "mode_record_microbatches": 0,
+                "mode_live_microbatches": 0,
+                "mode_no_router_microbatches": 0,
+                "replay_real_tokens": 0,
+                "record_real_tokens": 0,
+                "live_real_tokens": 0,
+                "no_router_real_tokens": 0,
+            },
+        }
+
+    def _validate_r3_microbatch_counters(
+        self,
+        counters: dict[int, int],
+        expected_microbatches: int,
+    ) -> None:
+        expected_vp_stages = {
+            self._model_vp_stage(model_chunk) for model_chunk in self.model
+        }
+        mismatches = {
+            vp_stage: counters.get(vp_stage, 0)
+            for vp_stage in expected_vp_stages
+            if counters.get(vp_stage, 0) != expected_microbatches
+        }
+        extra = {
+            vp_stage: count
+            for vp_stage, count in counters.items()
+            if vp_stage not in expected_vp_stages
+        }
+        if mismatches or extra:
+            raise r3_error(
+                "R3 micro-batch counters do not match Megatron VP schedule",
+                expected_microbatches=expected_microbatches,
+                expected_vp_stages=sorted(expected_vp_stages),
+                counters=counters,
+                mismatches=mismatches,
+                extra=extra,
+            )
+
+    def _begin_r3_microbatch_replay(
+        self,
+        r3_context: dict[str, Any],
+        *,
+        vp_stage: int,
+        mb_idx: int,
+        mb_input: MicroBatchItem,
+        forward_only: bool,
+        sequence_parallel: bool,
+    ) -> tuple[list[NativeRouterReplayRef], str] | None:
+        routed_mbs = r3_context["routed_mbs"]
+        if mb_idx >= len(routed_mbs):
+            raise r3_error(
+                "R3 micro-batch counter exceeded routed_experts split",
+                vp_stage=vp_stage,
+                mb_idx=mb_idx,
+                num_microbatches=len(routed_mbs),
+            )
+
+        refs = self._r3_router_groups.get(vp_stage, [])
+        stats = r3_context["stats"]
+        real_tokens_by_mb = r3_context["real_tokens_by_mb"]
+        real_tokens = (
+            real_tokens_by_mb[mb_idx] if mb_idx < len(real_tokens_by_mb) else 0
+        )
+        if not refs:
+            stats["mode_no_router_microbatches"] += 1
+            stats["no_router_real_tokens"] += real_tokens
+            return None
+
+        routed_experts = routed_mbs[mb_idx]
+        routing_valid = r3_context["valid_mbs"][mb_idx]
+        stats["router_stage_microbatches"] += 1
+        invalid_samples = int((~routing_valid).sum().item())
+        if invalid_samples:
+            stats["skipped_microbatches"] += 1
+            stats["invalid_samples"] += invalid_samples
+            stats["skip_invalid_sample"] = stats.get("skip_invalid_sample", 0) + 1
+            if forward_only:
+                stats["mode_live_microbatches"] += 1
+                stats["live_real_tokens"] += real_tokens
+                clear_router_replay_action(refs)
+                return refs, "live"
+            stats["mode_record_microbatches"] += 1
+            stats["record_real_tokens"] += real_tokens
+            set_router_replay_action(refs, "RECORD")
+            return refs, "record"
+
+        slabs = prepare_native_replay_slabs(
+            routed_experts,
+            routing_valid,
+            mb_input,
+            self._r3_local_moe_indices.get(vp_stage, []),
+            sequence_parallel=sequence_parallel,
+        )
+        if slabs.skip_replay:
+            stats["skipped_microbatches"] += 1
+            reason = slabs.reason or "unknown"
+            stats[f"skip_{reason}"] = stats.get(f"skip_{reason}", 0) + 1
+            if forward_only:
+                stats["mode_live_microbatches"] += 1
+                stats["live_real_tokens"] += real_tokens
+                clear_router_replay_action(refs)
+                return refs, "live"
+            stats["mode_record_microbatches"] += 1
+            stats["record_real_tokens"] += real_tokens
+            set_router_replay_action(refs, "RECORD")
+            return refs, "record"
+        if len(slabs.slabs) != len(refs):
+            raise r3_error(
+                "R3 layout returned a different number of slabs than local routers",
+                vp_stage=vp_stage,
+                slab_count=len(slabs.slabs),
+                router_count=len(refs),
+                local_moe_indices=self._r3_local_moe_indices.get(vp_stage, []),
+            )
+
+        # Only this rank's PP/CP/SP slabs reach the accelerator. Do not move
+        # the full [batch, sequence, global_layers, topk] routing tensor.
+        targets = []
+        for slab in slabs.slabs:
+            if slab.device.type == "cpu" and self.device.type == "cuda":
+                slab = slab.pin_memory()
+            targets.append(slab.to(self.device, non_blocking=True))
+        set_target_indices(refs, targets)
+        set_router_replay_action(refs, "REPLAY_FORWARD")
+        stats["replayed_microbatches"] += 1
+        stats["mode_replay_microbatches"] += 1
+        stats["replay_real_tokens"] += real_tokens
+        return refs, "replay"
+
+    def _finish_r3_microbatch_replay(
+        self,
+        refs: list[NativeRouterReplayRef],
+        mode: str,
+        *,
+        forward_only: bool,
+    ) -> None:
+        if mode == "live":
+            return
+        if forward_only:
+            # set_target_indices also queues backward replay. No backward will
+            # consume it during compute-logp, so release this microbatch now.
+            clear_router_replay_state(refs)
+            return
+        if mode == "record":
+            enqueue_recorded_indices(refs)
+        set_router_replay_action(refs, "REPLAY_BACKWARD")
+
     def forward_backward_batch(
         self,
         mb_list: MicroBatchList,
@@ -1431,6 +1990,10 @@ class MegatronEngine(TrainEngine):
             cpu_group=self.cpu_group,
         )
 
+        r3_context: dict[str, Any] | None = None
+        r3_mb_counters: dict[int, int] = {}
+        r3_completed = False
+
         def forward_step(batch_iter, model):
             source_mb: MicroBatchItem = next(batch_iter)
             # Keep MicroBatchList CPU-only. The returned accelerator dictionaries
@@ -1446,6 +2009,7 @@ class MegatronEngine(TrainEngine):
                 self.device,
                 non_blocking=True,
             )
+            model_vp_stage = self._model_vp_stage(model)
 
             cu_seqlens = mb_input.padded_mb.get("cu_seqlens", None)
 
@@ -1477,7 +2041,21 @@ class MegatronEngine(TrainEngine):
             # creates the full-vocabulary CP memory spike MOPD must avoid.
             cp_local = cp_size > 1 and not gather_cp_output
 
-            model_vp_stage = getattr(model, "vp_stage", 0)
+            r3_replay: tuple[list[NativeRouterReplayRef], str] | None = None
+            if r3_context is not None:
+                mb_idx = r3_mb_counters.get(model_vp_stage, 0)
+                r3_mb_counters[model_vp_stage] = mb_idx + 1
+                model_config = get_model_config(model)
+                r3_replay = self._begin_r3_microbatch_replay(
+                    r3_context,
+                    vp_stage=model_vp_stage,
+                    mb_idx=mb_idx,
+                    mb_input=source_mb,
+                    forward_only=forward_only,
+                    sequence_parallel=bool(
+                        getattr(model_config, "sequence_parallel", False)
+                    ),
+                )
             is_pipeline_last_stage = mpu.is_pipeline_last_stage(
                 ignore_virtual=False, vp_stage=model_vp_stage
             )
@@ -1496,6 +2074,11 @@ class MegatronEngine(TrainEngine):
                 and self.sequence_packing_mode == SequencePackingMode.WRAPPER_THD
                 and self.hf_config.architectures == ["Qwen4ExpForConditionalGeneration"]
             )
+            qwen35_text_thd = (
+                self.use_model_packed_seq
+                and is_qwen3_5_model(self.hf_config.model_type)
+                and not has_vision_inputs
+            )
             # Qwen4Exp's wrapper retains the visual embedding forward while
             # bypassing only the inner language model's final projection. Its
             # mRoPE and token masks are prepared before the shared THD/CP split.
@@ -1504,13 +2087,17 @@ class MegatronEngine(TrainEngine):
                 and not qwen4_wrapper_thd
                 and (
                     has_vision_inputs
-                    or (self.is_vision_model and not self.use_padded_seq)
+                    or (
+                        self.is_vision_model
+                        and not self.use_padded_seq
+                        and not qwen35_text_thd
+                    )
                 )
             ):
                 raise NotImplementedError(
                     "chunked LM Head vision inputs require the Qwen4Exp "
-                    "mcore-bridge WRAPPER_THD path; padded BSHD is supported "
-                    "only for text-only models such as Qwen3.5"
+                    "mcore-bridge WRAPPER_THD path; text-only Qwen3.5 supports "
+                    "padded BSHD and model-owned THD"
                 )
 
             # MTP training: pass the token loss mask through the model's actual
@@ -1563,6 +2150,12 @@ class MegatronEngine(TrainEngine):
                     and self.mcore_config.language_model_only
                 ),
             )
+            if r3_replay is not None:
+                self._finish_r3_microbatch_replay(
+                    r3_replay[0],
+                    r3_replay[1],
+                    forward_only=forward_only,
+                )
 
             if use_chunked_lm_head:
                 padded_lm_head = self.use_padded_seq and cu_seqlens is not None
@@ -1690,20 +2283,44 @@ class MegatronEngine(TrainEngine):
             return output, functools.partial(_process_output, mb_input.orig_mb)
 
         forward_backward_func = get_forward_backward_func()
-        with trace_scope("megatron_engine.forward_backward"):
-            if len(self.model) > 1:
-                data_iterator = [iter(mb_list) for _ in range(len(self.model))]
-            else:
-                data_iterator = iter(mb_list)
-            forward_backward_func(
-                forward_step_func=forward_step,
-                data_iterator=data_iterator,
-                model=self.model if len(self.model) > 1 else self.model[0],
-                num_microbatches=len(mb_list),
-                seq_length=mb_list.max_seqlen,  # no use when input_shapes was set
-                micro_batch_size=1,  # no use when input_shapes was set
-                forward_only=forward_only,
-            )
+        try:
+            r3_context = self._prepare_r3_forward_context(mb_list)
+            with trace_scope("megatron_engine.forward_backward"):
+                if len(self.model) > 1:
+                    data_iterator = [iter(mb_list) for _ in range(len(self.model))]
+                else:
+                    data_iterator = iter(mb_list)
+                forward_backward_func(
+                    forward_step_func=forward_step,
+                    data_iterator=data_iterator,
+                    model=self.model if len(self.model) > 1 else self.model[0],
+                    num_microbatches=len(mb_list),
+                    seq_length=mb_list.max_seqlen,  # no use when input_shapes was set
+                    micro_batch_size=1,  # no use when input_shapes was set
+                    forward_only=forward_only,
+                )
+            if r3_context is not None:
+                self._validate_r3_microbatch_counters(r3_mb_counters, len(mb_list))
+            r3_completed = True
+        finally:
+            if self._r3_enabled:
+                clear_router_replay_state(self._all_r3_router_refs())
+            self._r3_pending_routed_experts = None
+            self._r3_pending_valid = None
+            if r3_completed and r3_context is not None:
+                r3_stats = r3_context["stats"]
+                active_mbs = r3_stats["router_stage_microbatches"]
+                r3_scalar_stats = {
+                    f"r3/{key}": value for key, value in r3_stats.items()
+                }
+                r3_scalar_stats["r3/enabled"] = 1.0
+                r3_scalar_stats["r3/replay_fraction_active"] = r3_stats[
+                    "mode_replay_microbatches"
+                ] / max(active_mbs, 1)
+                r3_scalar_stats["r3/skip_fraction_active"] = r3_stats[
+                    "skipped_microbatches"
+                ] / max(active_mbs, 1)
+                stats_tracker.scalar(**r3_scalar_stats)
 
     def train_batch(
         self,
@@ -2155,6 +2772,11 @@ class MegatronEngine(TrainEngine):
     def _normalize_adam_bf16_config(self) -> None:
         if self.optimizer_config is None or self.optimizer_config.type != "adam_bf16":
             return
+        if self.mcore_config.cpu_staged_offload.enabled:
+            raise ValueError(
+                "optimizer.type='adam_bf16' is not supported with "
+                "megatron.cpu_staged_offload.enabled=true; use optimizer.type='adam'"
+            )
 
         self.logger.info(
             "Detected 'adam_bf16' optimizer with Megatron Engine. "
@@ -2306,6 +2928,19 @@ class MegatronEngine(TrainEngine):
             return
         assert self.model is not None and len(self.model) > 0
 
+        staged_settings = self.mcore_config.cpu_staged_offload
+        staged = staged_settings.enabled
+        optimizer_type = self.optimizer_config.type
+        if staged and optimizer_type != "adam":
+            raise ValueError(
+                "CPU-staged offload supports optimizer.type='adam', "
+                f"got {optimizer_type!r}"
+            )
+        if staged and not self.mcore_config.ddp.use_distributed_optimizer:
+            raise ValueError(
+                "CPU-staged AdamW requires megatron.ddp.use_distributed_optimizer=true"
+            )
+
         use_distributed_optimizer = (
             False
             if self.config.use_lora
@@ -2315,7 +2950,7 @@ class MegatronEngine(TrainEngine):
         assert self.optimizer_config.type in [
             "adam",
             "sgd",
-        ], "Only AdamW/sgd optimizer is supported in this engine."
+        ], "Only AdamW/SGD optimizer is supported in this engine."
         if self.optimizer_config.type == "sgd":
             self.logger.warning(
                 "Using the 'sgd' optimizer with Megatron may be less stable. Consider using the 'adam' (AdamW) optimizer for improved stability."
@@ -2340,6 +2975,14 @@ class MegatronEngine(TrainEngine):
                 f"total_train_steps={total_train_steps}"
             )
 
+        staged_adamw_config = (
+            GPUStagedAdamWConfig(
+                buffer_count=staged_settings.buffer_count,
+                bucket_size_mb=staged_settings.bucket_size_mb,
+            )
+            if staged and optimizer_type == "adam"
+            else None
+        )
         # Make megatron optimizer config
         mcore_opt_config = MCoreOptimizerConfig(
             optimizer=self.optimizer_config.type,
@@ -2359,14 +3002,28 @@ class MegatronEngine(TrainEngine):
                 self.mcore_config.overlap_param_gather_with_optimizer_step
             ),
             use_precision_aware_optimizer=(
-                self.mcore_config.use_precision_aware_optimizer
+                staged_adamw_config is not None
+                or self.mcore_config.use_precision_aware_optimizer
             ),
             main_grads_dtype=getattr(torch, self.mcore_config.main_grads_dtype),
-            main_params_dtype=getattr(torch, self.mcore_config.main_params_dtype),
-            exp_avg_dtype=getattr(torch, self.mcore_config.exp_avg_dtype),
-            exp_avg_sq_dtype=getattr(torch, self.mcore_config.exp_avg_sq_dtype),
+            main_params_dtype=(
+                torch.float32
+                if staged_adamw_config is not None
+                else getattr(torch, self.mcore_config.main_params_dtype)
+            ),
+            exp_avg_dtype=(
+                torch.float32
+                if staged_adamw_config is not None
+                else getattr(torch, self.mcore_config.exp_avg_dtype)
+            ),
+            exp_avg_sq_dtype=(
+                torch.float32
+                if staged_adamw_config is not None
+                else getattr(torch, self.mcore_config.exp_avg_sq_dtype)
+            ),
         )
 
+        optimizer_kwargs = {}
         if (
             self.bridge_cls == "mcore-bridge"
             and self.hf_config.model_type == "qwen4_exp"
@@ -2375,14 +3032,17 @@ class MegatronEngine(TrainEngine):
                 qwen4_exp_optimizer_overrides,
             )
 
+            optimizer_kwargs["config_overrides"] = qwen4_exp_optimizer_overrides(
+                mcore_opt_config
+            )
+        if staged_adamw_config is None:
             self.optimizer = get_megatron_optimizer(
-                mcore_opt_config,
-                self.model,
-                config_overrides=qwen4_exp_optimizer_overrides(mcore_opt_config),
+                mcore_opt_config, self.model, **optimizer_kwargs
             )
         else:
-            self.optimizer = get_megatron_optimizer(mcore_opt_config, self.model)
-
+            self.optimizer = get_megatron_optimizer_with_gpu_staged_adamw(
+                mcore_opt_config, self.model, staged_adamw_config, **optimizer_kwargs
+            )
         if mcore_opt_config.optimizer_cpu_offload:
             from areal.engine.megatron_utils.hybrid_optimizer import (
                 install_hybrid_optimizer_checkpoint_compat,
@@ -2417,7 +3077,6 @@ class MegatronEngine(TrainEngine):
         )
         self.lr_scheduler = lr_scheduler
 
-        # MegatronCheckpointManager now only support distributed optimizer which lora does not support
         if not self.config.use_lora:
             self.checkpointer = MegatronCheckpointManager(
                 model=self.model,
@@ -3369,10 +4028,21 @@ class MegatronEngine(TrainEngine):
             n_mbs=requested_n_mbs,
             n_mbs_divisor=pp_size,
         )
+        # Account for the per-sequence padding required by context/sequence
+        # parallelism while allocating micro-batches. Otherwise a group that is
+        # within max_tokens_per_mb before alignment can exceed it in the forward.
+        align_to_multiple_of = tp_size * cp_size * 2 if cp_size > 1 else tp_size
+        align_to_multiple_of = (
+            math.lcm(align_to_multiple_of, DEFAULT_VECTORIZED_ALIGNMENT_BYTES)
+            if self.enable_fp8
+            else align_to_multiple_of
+        )
         mb_list = split_padded_tensor_dict_into_mb_list(
             input_,
             mb_spec,
             group=mpu.get_data_parallel_group(),
+            seq_align_to=align_to_multiple_of,
+            padded=self.sequence_packing_mode == SequencePackingMode.PADDED,
             allow_transport_padding=allow_transport_padding,
         )
         mb_list.mbs = [pack_tensor_dict(mb) for mb in mb_list.mbs]
@@ -3381,12 +4051,6 @@ class MegatronEngine(TrainEngine):
         # The default BSHD/model-owned THD path cannot, because reconstruction
         # would turn that segment into a synthetic batch row. Every layout
         # still aligns each real sequence for Megatron parallelism.
-        align_to_multiple_of = tp_size * cp_size * 2 if cp_size > 1 else tp_size
-        align_to_multiple_of = (
-            math.lcm(align_to_multiple_of, DEFAULT_VECTORIZED_ALIGNMENT_BYTES)
-            if self.enable_fp8
-            else align_to_multiple_of
-        )
         assert self.sequence_packing_mode is not None
         mb_list = prepare_microbatches_for_sequence_layout(
             mb_list,
@@ -3699,7 +4363,7 @@ class MegatronEngine(TrainEngine):
             )
         if not self.config.is_critic:
             if isinstance(output, ChunkedLMHeadOutput):
-                return output.logprobs
+                return self._reassemble_cp_forward_scalars(output.logprobs, inputs)
             if self.enable_tree_training:
                 logprobs = _gather_packed_tree_logprobs(
                     output,
