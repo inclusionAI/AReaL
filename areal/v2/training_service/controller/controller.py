@@ -1155,7 +1155,23 @@ class GatewayTrainController:
         assert meta.version is not None and meta.version > 0, (
             f"meta.version must be a positive integer, got {meta.version}"
         )
-        result = self._weight_update_ctrl.update_weights(version=meta.version)
+        routed = getattr(self.rollout.config, "model_router", "disabled") in (
+            "node",
+            "global",
+        )
+        try:
+            result = self._weight_update_ctrl.update_weights(version=meta.version)
+            if routed:
+                if result.status != "ok" or result.version != meta.version:
+                    raise RuntimeError(
+                        f"Weight update did not install v{meta.version}: {result}"
+                    )
+                # Publish the DP and Router version before reopening admission.
+                self.rollout.set_version(meta.version)
+        except BaseException:
+            if routed:
+                self.rollout.fail_model_router()
+            raise
         self.rollout.continue_generation()
         logger.info(
             "Weight update v%d completed (%s, %.0fms)",

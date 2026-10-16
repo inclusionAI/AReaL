@@ -1729,6 +1729,8 @@ class PPOTrainer:
             assert len(self.rollout.server_infos) > 0
             init_kwargs["server_infos"] = self.rollout.server_infos
             init_kwargs["role"] = "eval-rollout"
+            if config.model_router != "disabled":
+                init_kwargs["model_router_owner"] = self.rollout
         controller.initialize(**init_kwargs)
         return controller
 

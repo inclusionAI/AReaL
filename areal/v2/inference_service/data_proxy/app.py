@@ -33,6 +33,7 @@ from areal.experimental.openai.types import (
     configure_r3_interactions,
     normalize_group_rewards,
 )
+from areal.infra.model_routing import model_routing_context
 from areal.infra.rpc.guard.data_blueprint import (
     data_bp,
 )
@@ -253,6 +254,8 @@ def _create_inf_bridge(
         max_resubmit_retries=config.max_resubmit_retries,
         resubmit_wait=config.resubmit_wait,
         return_routed_experts=config.return_routed_experts,
+        model_router_addr=config.model_router_addr,
+        model_router_api_key=config.admin_api_key,
     )
 
 
@@ -499,10 +502,17 @@ def create_app(config: DataProxyConfig) -> FastAPI:
             )
 
         try:
-            result = await areal_client.chat.completions.create(
-                areal_cache=areal_cache,
-                **kwargs,
-            )
+            if config.model_router_addr:
+                if session is None:
+                    raise ValueError("Model Router requires an authenticated session")
+                with model_routing_context(session.session_id):
+                    result = await areal_client.chat.completions.create(
+                        areal_cache=areal_cache, **kwargs
+                    )
+            else:
+                result = await areal_client.chat.completions.create(
+                    areal_cache=areal_cache, **kwargs
+                )
         except ValueError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception as exc:
@@ -1103,6 +1113,15 @@ def create_app(config: DataProxyConfig) -> FastAPI:
             return ExportTrajectoriesResponse(traj=serialized)
         finally:
             if body.remove_session:
+                if config.model_router_addr and app.state.inf_bridge is not None:
+                    try:
+                        await app.state.inf_bridge.release_routing_keys(
+                            list(owned_sessions)
+                        )
+                    except httpx.HTTPError:
+                        # Cleanup failure must not change rewards or mask a
+                        # valid export. The pool lifetime bounds orphan state.
+                        logger.warning("Could not release exported model routing keys")
                 for sid, session in owned_sessions.items():
                     store.remove_session(sid, expected_session=session)
 
@@ -1115,6 +1134,11 @@ def create_app(config: DataProxyConfig) -> FastAPI:
         """Reconfigure the inference backend address after process start."""
         store: SessionStore = app.state.session_store
         _require_admin_key(request, store)
+        if config.model_router_addr:
+            raise HTTPException(
+                status_code=409,
+                detail="Model Router pools are static; recover to reconfigure backends",
+            )
         body = await request.json()
         new_addr = body.get("backend_addr")
         if not new_addr:

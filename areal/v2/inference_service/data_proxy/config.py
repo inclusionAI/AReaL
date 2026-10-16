@@ -11,6 +11,8 @@ class DataProxyConfig:
     port: int = 8082
     backend_addr: str = "http://localhost:30000"  # co-located SGLang/vLLM
     backend_type: str = "sglang"
+    # Generation-only endpoint. Physical backend_addr remains the control target.
+    model_router_addr: str = ""
     tokenizer_path: str = ""
     log_level: str = "warning"
     request_timeout: float = 120.0  # seconds per SGLang call
@@ -39,6 +41,8 @@ class DataProxyConfig:
     prm: PRMConfig = field(default_factory=PRMConfig)
 
     def __post_init__(self) -> None:
+        if self.model_router_addr and self.backend_type != "sglang":
+            raise ValueError("Model Router currently supports only SGLang")
         if self.prm.enabled and self.prm.scorers and self.prm.error_policy != "reject":
             raise ValueError(
                 "PRM keep_original error policy is only supported by the v1 proxy"

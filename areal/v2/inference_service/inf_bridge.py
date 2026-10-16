@@ -11,12 +11,18 @@ from __future__ import annotations
 
 import asyncio
 import time
+import uuid
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import httpx
 import numpy as np
 
 from areal.api.io_struct import HttpRequest
+from areal.infra.model_routing import (
+    TRAJECTORY_HEADER,
+    VERSION_HEADER,
+    get_model_routing_key,
+)
 from areal.utils import logging, stats_tracker
 from areal.v2.inference_service.backend import InfBridgeBackend
 
@@ -56,6 +62,10 @@ class InfBridge:
         Sleep duration (seconds) between pause-state polls.
     version:
         Initial weight version.
+    model_router_addr:
+        Optional generation-only router; physical management keeps backend_addr.
+    model_router_api_key:
+        Internal router credential. Trajectory identity comes from task context.
     """
 
     def __init__(
@@ -68,6 +78,8 @@ class InfBridge:
         resubmit_wait: float = 0.5,
         version: int = 0,
         return_routed_experts: bool = False,
+        model_router_addr: str = "",
+        model_router_api_key: str = "",
     ) -> None:
         self.backend = backend
         self.backend_addr = backend_addr.rstrip("/")
@@ -77,7 +89,11 @@ class InfBridge:
         self.resubmit_wait = resubmit_wait
         self._version = version
         self.return_routed_experts = return_routed_experts
-        self._client = httpx.AsyncClient(timeout=request_timeout)
+        self.model_router_addr = model_router_addr.rstrip("/")
+        self.model_router_api_key = model_router_api_key
+        self._client = httpx.AsyncClient(
+            timeout=request_timeout, trust_env=not bool(model_router_addr)
+        )
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client."""
@@ -161,6 +177,42 @@ class InfBridge:
 
     # -- main generation with pause/abort/resubmit --------------------------
 
+    async def _send_routed_generation(
+        self, http_req: HttpRequest, version: int
+    ) -> dict[str, Any] | None:
+        """Send once; only explicit pre-admission rejections can be retried."""
+        response = await self._client.post(
+            f"{self.model_router_addr}{http_req.endpoint}",
+            json=http_req.payload,
+            headers={
+                "Authorization": f"Bearer {self.model_router_api_key}",
+                TRAJECTORY_HEADER: get_model_routing_key(),
+                VERSION_HEADER: str(version),
+            },
+            timeout=self.request_timeout,
+        )
+        if response.status_code in (409, 503):
+            detail = response.json().get("detail")
+            if detail in ("model_router_paused", "model_router_version_mismatch"):
+                # The Router guarantees these requests were never forwarded.
+                # Rebuild against the newly published version after resuming.
+                await asyncio.sleep(self.resubmit_wait)
+                return None
+        response.raise_for_status()
+        if response.headers.get(VERSION_HEADER) != str(version):
+            raise RuntimeError("Model Router returned an unexpected weight version")
+        return response.json()
+
+    async def release_routing_keys(self, keys: list[str]) -> None:
+        if not self.model_router_addr or not keys:
+            return
+        response = await self._client.post(
+            f"{self.model_router_addr}/release",
+            json={"keys": keys},
+            headers={"Authorization": f"Bearer {self.model_router_api_key}"},
+        )
+        response.raise_for_status()
+
     async def agenerate(self, req: ModelRequest) -> ModelResponse:
         """Generate a response for *req* via the configured backend.
 
@@ -204,7 +256,8 @@ class InfBridge:
 
         t0 = time.monotonic()
 
-        for _attempt in range(self.max_resubmit_retries):
+        _attempt = 0
+        while _attempt < self.max_resubmit_retries:
             # Wait while paused (weight update in progress)
             while await self.pause_state.is_paused():
                 await asyncio.sleep(self.resubmit_wait)
@@ -223,7 +276,18 @@ class InfBridge:
                 remaining,
             )
 
-            data = await self._send_request(http_req)
+            segment_version = self._version
+            if self.model_router_addr:
+                # Each physical attempt has a unique rid; trajectory affinity
+                # comes from context and survives abort/resubmit and tool turns.
+                assert http_req.payload is not None
+                http_req.payload["rid"] = uuid.uuid4().hex
+                data = await self._send_routed_generation(http_req, segment_version)
+                if data is None:
+                    continue
+            else:
+                data = await self._send_request(http_req)
+            _attempt += 1
             result = self.backend.parse_generation_response(data)
 
             if requested_routing and result.routed_experts is None:
@@ -238,7 +302,10 @@ class InfBridge:
 
             accumulated_tokens.extend(result.output_tokens)
             accumulated_logprobs.extend(result.output_logprobs)
-            accumulated_versions.extend([self._version] * len(result.output_tokens))
+            accumulated_versions.extend(
+                [segment_version if self.model_router_addr else self._version]
+                * len(result.output_tokens)
+            )
             stop_reason = cast(_StopReason, result.stop_reason)
 
             if result.routed_experts is not None:

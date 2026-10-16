@@ -146,6 +146,12 @@ class RolloutControllerV2:
         self._router_addr: str = ""
         self._data_proxy_addrs: list[str] = []
         self._gateway_addr: str = ""
+        self._model_router_addrs: list[str] = []
+        self._model_router_by_backend: dict[str, str] = {}
+        self._model_router_owner: RolloutControllerV2 = self
+        self._model_router_failed = False
+        self._model_memory_offloaded = False
+        self._model_generation_paused = False
 
         # Worker ID mapping (data proxy addr → router-assigned worker_id)
         self._worker_ids: dict[str, str] = {}  # data_proxy_addr -> worker_id
@@ -209,9 +215,35 @@ class RolloutControllerV2:
         r3_topk: int | None = None,
         *args: Any,
         wait: bool = False,
+        model_router_owner: RolloutControllerV2 | None = None,
         **kwargs: Any,
     ) -> concurrent.futures.Future | None:
         from areal.infra.utils.concurrent import get_executor
+
+        if self.config.model_router != "disabled" and server_infos is not None:
+            if model_router_owner is None:
+                raise ValueError("Shared inference servers require model_router_owner")
+            model_router_owner._ensure_initialized()
+            owner = model_router_owner._model_router_owner
+            if owner.config.model_router != self.config.model_router:
+                raise ValueError(
+                    "Shared inference servers require the same model_router mode"
+                )
+            if owner.config.admin_api_key != self.config.admin_api_key:
+                raise ValueError(
+                    "Shared Model Routers require the same admin credentials"
+                )
+            expected = {
+                f"http://{format_hostport(info.host, info.port)}"
+                for info in server_infos
+            }
+            if expected != set(owner._model_router_by_backend):
+                raise ValueError(
+                    "Shared Model Router must cover the same inference servers"
+                )
+            self._model_router_owner = owner
+            self._model_router_addrs = list(owner._model_router_addrs)
+            self._model_router_by_backend = dict(owner._model_router_by_backend)
 
         if self._init_future is not None:
             raise RuntimeError(
@@ -444,7 +476,7 @@ class RolloutControllerV2:
         if self.external_mode:
             logger.info("External mode — skipping inference server launch")
         elif server_infos is not None:
-            self._server_infos = server_infos
+            self._server_infos = list(server_infos)
             self._inf_addrs = [
                 f"http://{format_hostport(info.host, info.port)}"
                 for info in server_infos
@@ -471,6 +503,11 @@ class RolloutControllerV2:
         self._forked_services.append((guard_addr_0, "router", 0))
         self._router_addr = f"http://{format_hostport(router_host, router_port)}"
         logger.info("Router: %s", self._router_addr)
+
+        if cfg.model_router != "disabled" and self._model_router_owner is self:
+            await self._async_start_model_routers(
+                inf_workers, server_infos is not None, nnodes_per_instance
+            )
 
         if self._shutdown_requested.is_set():
             return
@@ -550,6 +587,11 @@ class RolloutControllerV2:
                     "--backend-type",
                     inf_backend or "sglang",
                 ]
+                if cfg.model_router != "disabled":
+                    dp_cmd += [
+                        "--model-router-addr",
+                        self._model_router_by_backend[self._inf_addrs[group_idx]],
+                    ]
             host, port = await self._async_fork_on_guard(
                 guard_addr=guard_addr,
                 role="data-proxy",
@@ -594,6 +636,89 @@ class RolloutControllerV2:
         self._forked_services.append((guard_addr_0, "gateway", 0))
         self._gateway_addr = f"http://{format_hostport(gw_host, gw_port)}"
         logger.info("Gateway: %s", self._gateway_addr)
+
+    async def _async_start_model_routers(
+        self, inf_workers: list, preexisting: bool, nnodes_per_instance: int
+    ) -> None:
+        """Create generation-only pools using existing RPCGuard resources."""
+        pools: dict[str, list[str]] = {}
+        guards: dict[str, str] = {}
+        for i, addr in enumerate(self._inf_addrs):
+            head = inf_workers[i if preexisting else i * nnodes_per_instance]
+            host = httpx.URL(addr).host
+            if self.config.model_router == "node" and host != head.ip:
+                raise ValueError(
+                    "model_router=node requires each Data Proxy guard to be on "
+                    f"its serving head node ({host!r} != {head.ip!r})"
+                )
+            pool = host if self.config.model_router == "node" else "global"
+            pools.setdefault(pool, []).append(addr)
+            guards.setdefault(
+                pool, f"http://{format_hostport(head.ip, int(head.worker_ports[0]))}"
+            )
+        for pool_index, (pool, backends) in enumerate(pools.items()):
+            cmd = [
+                sys.executable,
+                "-m",
+                "areal.infra.model_router",
+                "--admin-api-key",
+                self.config.admin_api_key,
+                "--request-timeout",
+                str(self.config.request_timeout),
+            ]
+            for addr in backends:
+                cmd += ["--backend", addr]
+            host, port = await self._async_fork_on_guard(
+                guards[pool], "model-router", pool_index, cmd
+            )
+            self._forked_services.append((guards[pool], "model-router", pool_index))
+            router_addr = f"http://{format_hostport(host, port)}"
+            self._model_router_addrs.append(router_addr)
+            self._model_router_by_backend.update(dict.fromkeys(backends, router_addr))
+            logger.info("Model Router %s serves %s", router_addr, backends)
+        logger.info(
+            "Model Router mode=%s pools=%d", self.config.model_router, len(pools)
+        )
+
+    async def _async_model_router_post(
+        self, endpoint: str, payload: dict | None = None
+    ) -> None:
+        """All participants must ACK; transport errors never count as success."""
+        client = await self._get_async_client()
+
+        async def post(addr: str):
+            response = await client.post(
+                f"{addr}{endpoint}",
+                json=payload or {},
+                headers={"Authorization": f"Bearer {self.config.admin_api_key}"},
+                timeout=self.config.request_timeout + 10,
+            )
+            response.raise_for_status()
+
+        results = await asyncio.gather(
+            *(post(addr) for addr in self._model_router_addrs),
+            return_exceptions=True,
+        )
+        failed = [r for r in results if isinstance(r, BaseException)]
+        if failed:
+            self._model_router_owner._model_router_failed = True
+            if endpoint != "/fail":
+                await self._async_model_router_post("/fail")
+            raise RuntimeError(
+                f"Model Router {endpoint} failed on {len(failed)} pools"
+            ) from failed[0]
+
+    async def _async_fail_model_routers(self) -> None:
+        """Latch unsafe control failures, including across train/eval owners."""
+        self._model_router_owner._model_router_failed = True
+        await self._async_model_router_post("/fail")
+
+    def fail_model_router(self) -> None:
+        """Prevent admission after a partially failed physical weight update."""
+        from areal.infra.utils.concurrent import run_async_task
+
+        if self._model_router_addrs:
+            run_async_task(self._async_fail_model_routers)
 
     async def _async_fork_inf_servers(
         self,
@@ -1196,6 +1321,8 @@ class RolloutControllerV2:
         self._worker_ids.clear()
         self._router_addr = ""
         self._gateway_addr = ""
+        self._model_router_addrs.clear()
+        self._model_router_by_backend.clear()
         self._staleness_manager = None
 
     # -- Version management ------------------------------------------------
@@ -1206,13 +1333,13 @@ class RolloutControllerV2:
 
         self._ensure_initialized()
 
+        if self._gateway_addr:
+            if not self._model_router_addrs:
+                with self._version_lock:
+                    self._version = version
+            run_async_task(self._async_set_version, version)
         with self._version_lock:
             self._version = version
-
-        if not self._gateway_addr:
-            return
-
-        run_async_task(self._async_set_version, version)
 
     async def _async_set_version(self, version: int) -> None:
         payload = {"version": version}
@@ -1226,10 +1353,14 @@ class RolloutControllerV2:
         failed = [r for r in results if isinstance(r, Exception)]
         for r in failed:
             logger.error("Failed to set version on a worker: %s", r)
-        if failed and len(failed) == len(results):
+        if failed and (self._model_router_addrs or len(failed) == len(results)):
+            if self._model_router_addrs:
+                await self._async_fail_model_routers()
             raise RuntimeError(
-                f"set_version({version}) failed on ALL {len(failed)} workers"
+                f"set_version({version}) failed on {len(failed)}/{len(results)} workers"
             )
+        if self._model_router_addrs:
+            await self._async_model_router_post("/set_version", payload)
 
     def get_version(self) -> int:
         """Return the local version (compatible with VersionProvider protocol)."""
@@ -1580,6 +1711,10 @@ class RolloutControllerV2:
     async def _async_offload(self) -> None:
         if not self._data_proxy_addrs:
             return
+        if self._model_router_addrs:
+            if not self._model_router_owner._model_generation_paused:
+                await self._async_pause_generation()
+            self._model_router_owner._model_memory_offloaded = True
         results = await asyncio.gather(
             *(
                 self._async_data_proxy_post(addr, "/release_memory_occupation", {})
@@ -1590,8 +1725,12 @@ class RolloutControllerV2:
         failed = [r for r in results if isinstance(r, Exception)]
         for r in failed:
             logger.error("Failed to offload a worker: %s", r)
-        if failed and len(failed) == len(results):
-            raise RuntimeError(f"offload failed on ALL {len(failed)} workers")
+        if failed and (self._model_router_addrs or len(failed) == len(results)):
+            if self._model_router_addrs:
+                await self._async_fail_model_routers()
+            raise RuntimeError(
+                f"offload failed on {len(failed)}/{len(results)} workers"
+            )
 
     def onload(self, tags: list[str] | None = None) -> None:
         """Reload model memory on all inference workers."""
@@ -1603,6 +1742,15 @@ class RolloutControllerV2:
     async def _async_onload(self, tags: list[str] | None = None) -> None:
         if not self._data_proxy_addrs:
             return
+        if self._model_router_addrs:
+            if self._model_router_owner._model_router_failed:
+                raise RuntimeError("Model Router pool failed; recover before onload")
+            if tags is not None and self._model_router_owner._model_memory_offloaded:
+                raise ValueError(
+                    "Model Router requires onload() without tags after offload"
+                )
+            if not self._model_router_owner._model_generation_paused:
+                await self._async_pause_generation()
         payload: dict = {"tags": tags} if tags is not None else {}
         results = await asyncio.gather(
             *(
@@ -1614,8 +1762,13 @@ class RolloutControllerV2:
         failed = [r for r in results if isinstance(r, Exception)]
         for r in failed:
             logger.error("Failed to onload a worker: %s", r)
-        if failed and len(failed) == len(results):
-            raise RuntimeError(f"onload failed on ALL {len(failed)} workers")
+        if failed and (self._model_router_addrs or len(failed) == len(results)):
+            if self._model_router_addrs:
+                await self._async_fail_model_routers()
+            raise RuntimeError(f"onload failed on {len(failed)}/{len(results)} workers")
+
+        if self._model_router_addrs and tags is None:
+            self._model_router_owner._model_memory_offloaded = False
 
     def pause_generation(self) -> None:
         """Pause generation on all workers."""
@@ -1627,6 +1780,12 @@ class RolloutControllerV2:
     async def _async_pause_generation(self) -> None:
         if not self._data_proxy_addrs:
             return
+        if self._model_router_addrs:
+            if self._model_router_owner._model_router_failed:
+                raise RuntimeError("Model Router pool failed; recover before pausing")
+            if self._model_router_owner._model_generation_paused:
+                return
+            await self._async_model_router_post("/close")
         results = await asyncio.gather(
             *[
                 self._async_data_proxy_post(addr, "/pause_generation", {})
@@ -1637,8 +1796,15 @@ class RolloutControllerV2:
         failed = [r for r in results if isinstance(r, Exception)]
         for r in failed:
             logger.error("Failed to pause generation on a worker: %s", r)
-        if failed and len(failed) == len(results):
-            raise RuntimeError(f"pause_generation failed on ALL {len(failed)} workers")
+        if failed and (self._model_router_addrs or len(failed) == len(results)):
+            if self._model_router_addrs:
+                await self._async_fail_model_routers()
+            raise RuntimeError(
+                f"pause_generation failed on {len(failed)}/{len(results)} workers"
+            )
+        if self._model_router_addrs:
+            await self._async_model_router_post("/drain")
+            self._model_router_owner._model_generation_paused = True
 
     def continue_generation(self) -> None:
         """Continue generation on all workers."""
@@ -1650,6 +1816,12 @@ class RolloutControllerV2:
     async def _async_continue_generation(self) -> None:
         if not self._data_proxy_addrs:
             return
+        if self._model_router_addrs:
+            if self._model_router_owner._model_router_failed:
+                raise RuntimeError("Model Router pool failed; recover before resuming")
+            if self._model_router_owner._model_memory_offloaded:
+                # The colocated trainer restores memory after publishing weights.
+                return
         results = await asyncio.gather(
             *[
                 self._async_data_proxy_post(addr, "/continue_generation", {})
@@ -1660,10 +1832,15 @@ class RolloutControllerV2:
         failed = [r for r in results if isinstance(r, Exception)]
         for r in failed:
             logger.error("Failed to continue generation on a worker: %s", r)
-        if failed and len(failed) == len(results):
+        if failed and (self._model_router_addrs or len(failed) == len(results)):
+            if self._model_router_addrs:
+                await self._async_fail_model_routers()
             raise RuntimeError(
-                f"continue_generation failed on ALL {len(failed)} workers"
+                f"continue_generation failed on {len(failed)}/{len(results)} workers"
             )
+        if self._model_router_addrs:
+            await self._async_model_router_post("/open")
+            self._model_router_owner._model_generation_paused = False
 
     # -- Stats -------------------------------------------------------------
 

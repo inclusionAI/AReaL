@@ -17,6 +17,9 @@ import torch
 from PIL import Image
 
 from areal.api.cli_args import PRMConfig, PRMScorerConfig
+from areal.infra.model_router import ModelRouterConfig
+from areal.infra.model_router import create_app as create_router_app
+from areal.infra.model_routing import TRAJECTORY_HEADER
 from areal.infra.rpc import rtensor
 from areal.infra.rpc.serialization import deserialize_value
 from areal.v2.inference_service.data_proxy.app import (
@@ -33,7 +36,8 @@ from areal.v2.inference_service.data_proxy.session import SessionStore
 async def proxy(monkeypatch, request):
     """Use real cache/export code with fake inference and tensor transport."""
     config = DataProxyConfig(tokenizer_path="mock-vlm", backend_type="sglang")
-    prm_enabled = getattr(request, "param", False)
+    setting = getattr(request, "param", False)
+    prm_enabled, routed = setting if isinstance(setting, tuple) else (setting, False)
     if prm_enabled:
         config = DataProxyConfig(
             tokenizer_path="mock-vlm",
@@ -49,6 +53,8 @@ async def proxy(monkeypatch, request):
                 ]
             ),
         )
+    if routed:
+        config.model_router_addr = "http://router"
     tokenizer = MagicMock(eos_token_id=99, pad_token_id=0)
     tokenizer.apply_chat_template.side_effect = lambda *args, tokenize=True, **kwargs: (
         {"input_ids": [10, 2, 20]} if tokenize else "describe"
@@ -77,6 +83,31 @@ async def proxy(monkeypatch, request):
         }
     )
     monkeypatch.setattr(bridge, "_send_request", send)
+    router_app = None
+    router_calls = []
+    router_backend = None
+    if routed:
+        router_app = create_router_app(
+            ModelRouterConfig(
+                ("http://backend0", "http://backend1"), config.admin_api_key
+            )
+        )
+
+        async def infer(request):
+            return httpx.Response(200, json=await send(request))
+
+        router_backend = httpx.AsyncClient(transport=httpx.MockTransport(infer))
+        router_app.state.http_client = router_backend
+        await bridge._client.aclose()
+
+        async def capture(request):
+            if request.url.path == "/generate":
+                router_calls.append(request)
+
+        bridge._client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(router_app),
+            event_hooks={"request": [capture]},
+        )
     areal_client = _create_areal_client(bridge, tok, config)
     monkeypatch.setattr(
         "areal.v2.inference_service.data_proxy.app.TokenizerProxy", lambda path: tok
@@ -121,9 +152,13 @@ async def proxy(monkeypatch, request):
                 backend=backend,
                 admin={"Authorization": f"Bearer {config.admin_api_key}"},
                 prm_enabled=prm_enabled,
+                router=router_app,
+                router_calls=router_calls,
             )
         finally:
             await areal_client.close()
+            if router_backend is not None:
+                await router_backend.aclose()
 
 
 async def _run_group(proxy, colors):
@@ -189,7 +224,9 @@ async def _export(proxy, sessions, *, discard=False):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("proxy", [False, True], indirect=True)
+@pytest.mark.parametrize(
+    "proxy", [False, True, (False, True), (True, True)], indirect=True
+)
 @pytest.mark.parametrize(
     "colors,unique_images", [(["red"] * 4, 1), (["red", "blue"], 2), (["red"], 1)]
 )
@@ -200,6 +237,11 @@ async def test_group_export_shares_only_matching_images(proxy, colors, unique_im
     assert proxy.send.await_count == len(colors)
     group_cache = proxy.store.get_session(sessions[0]["session_id"]).processor_cache
     trajectory = await _export(proxy, sessions)
+    if proxy.router is not None:
+        assert {r.headers[TRAJECTORY_HEADER] for r in proxy.router_calls} == {
+            member["session_id"] for member in sessions
+        }
+        assert not proxy.router.state.model_router.bindings
     assert proxy.store.session_count == 0
     if group_cache is not None:
         assert not group_cache._results

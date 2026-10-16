@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import httpx
 import pytest
@@ -14,6 +15,58 @@ from areal.v2.training_service.controller.controller import (
 )
 
 MODULE = "areal.v2.training_service.controller.controller"
+
+
+@pytest.mark.parametrize("mode", ["disabled", "node", "global"])
+def test_update_weights_router_publishes_version_before_continue(mode):
+    controller = object.__new__(GatewayTrainController)
+    sequence = MagicMock()
+    controller.rollout = sequence.rollout
+    controller.rollout.config.model_router = mode
+    controller._weight_update_ctrl = sequence.weight_update
+    sequence.weight_update.update_weights.return_value = SimpleNamespace(
+        status="ok", version=3, duration_ms=1.0
+    )
+    controller.update_weights(SimpleNamespace(version=3))
+    expected = [
+        call.rollout.pause_generation(),
+        call.weight_update.update_weights(version=3),
+    ]
+    if mode != "disabled":
+        expected.append(call.rollout.set_version(3))
+    expected.append(call.rollout.continue_generation())
+    assert sequence.mock_calls == expected
+
+
+def test_update_weights_router_version_failure_leaves_generation_closed():
+    controller = object.__new__(GatewayTrainController)
+    controller.rollout = MagicMock()
+    controller.rollout.config.model_router = "global"
+    controller.rollout.set_version.side_effect = RuntimeError("lost version ACK")
+    controller._weight_update_ctrl = MagicMock()
+    controller._weight_update_ctrl.update_weights.return_value = SimpleNamespace(
+        status="ok", version=3
+    )
+    with pytest.raises(RuntimeError, match="lost version ACK"):
+        controller.update_weights(SimpleNamespace(version=3))
+    controller.rollout.continue_generation.assert_not_called()
+    controller.rollout.fail_model_router.assert_called_once()
+
+
+@pytest.mark.parametrize("status,version", [("error", 3), ("ok", 2)])
+def test_failed_weight_update_result_never_publishes_or_resumes(status, version):
+    controller = object.__new__(GatewayTrainController)
+    controller.rollout = MagicMock()
+    controller.rollout.config.model_router = "global"
+    controller._weight_update_ctrl = MagicMock()
+    controller._weight_update_ctrl.update_weights.return_value = SimpleNamespace(
+        status=status, version=version
+    )
+    with pytest.raises(RuntimeError, match="did not install"):
+        controller.update_weights(SimpleNamespace(version=3))
+    controller.rollout.set_version.assert_not_called()
+    controller.rollout.continue_generation.assert_not_called()
+    controller.rollout.fail_model_router.assert_called_once()
 
 
 def _make_response(method: str, url: str, *, json=None) -> httpx.Response:

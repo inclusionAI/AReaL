@@ -3099,6 +3099,19 @@ class InferenceEngineConfig:
         default="round_robin",
         metadata={"help": "Routing strategy for the inference-service router."},
     )
+    # Pinned OmegaConf rejects Literal in structured configs; validate below.
+    model_router: str = field(
+        default="disabled",
+        metadata={
+            "help": "Optional trajectory-sticky model routing for v2 SGLang. "
+            "'disabled' preserves direct Data Proxy-to-backend generation; "
+            "'node' balances among serving endpoints on the same head node; "
+            "'global' balances across this controller's model pool. "
+            "Only the first model call selects by in-flight request count; "
+            "later turns keep the same backend. Data Proxy placement is unchanged.",
+            "choices": ["disabled", "node", "global"],
+        },
+    )
     poll_interval: float = field(
         default=5.0,
         metadata={
@@ -3133,6 +3146,14 @@ class InferenceEngineConfig:
             raise ValueError(
                 f"_version must be either 'v1' or 'v2', got '{self._version}'"
             )
+        if self.model_router not in ("disabled", "node", "global"):
+            raise ValueError(f"Unknown model_router mode: {self.model_router!r}")
+        if self.model_router != "disabled" and (
+            self._version != "v2"
+            or self.api_url is not None
+            or not self.backend.startswith("sglang:")
+        ):
+            raise ValueError("model_router requires v2 with a local SGLang backend")
         if not self.admin_api_key or not self.admin_api_key.strip():
             raise ValueError("admin_api_key must not be empty or whitespace-only")
         if self.deterministic_sampling and self.max_head_offpolicyness > 0:

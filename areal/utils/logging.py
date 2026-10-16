@@ -134,6 +134,7 @@ LOGGER_COLORS_EXACT = {
     "InferenceInfBridge": "white",
     "InferenceRouter": "white",
     "InferenceGateway": "white",
+    "ModelRouter": "white",
     "RPCGuard": "white",
     # R3 native router replay - cyan
     "R3Replay": "light_cyan",
