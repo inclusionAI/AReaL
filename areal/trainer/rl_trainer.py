@@ -1988,11 +1988,13 @@ class PPOTrainer:
             current_platform.synchronize()
 
     def _validate_weight_update_model(self) -> None:
-        """Allow Qwen2/Qwen2.5 text-model weight updates via disk or v1 XCCL."""
+        """Reject Qwen2/Qwen2.5 text models only when AWEX is selected."""
         actor = self.config.actor
-        if actor.weight_update_mode == "disk" or (
-            actor._version == "v1" and actor.weight_update_mode == "xccl"
-        ):
+        # Controller v2 selects disk for LoRA and AWEX otherwise, regardless
+        # of weight_update_mode. Controller v1 dispatches on that field.
+        if actor._version == "v2" and actor.use_lora:
+            return
+        if actor._version == "v1" and actor.weight_update_mode in ("disk", "xccl"):
             return
 
         from transformers import PretrainedConfig
@@ -2005,9 +2007,8 @@ class PPOTrainer:
         ):
             raise ValueError(
                 "Qwen2/Qwen2.5 text models do not support AWEX weight updates. "
-                "For RL, set actor.weight_update_mode=disk with v1 or v2, "
-                "or use actor.weight_update_mode=xccl with actor._version=v1 "
-                "and rollout._version=v1."
+                "For v1, set actor.weight_update_mode=disk or xccl. "
+                "For v2, set actor.use_lora=True to select disk adapter updates."
             )
 
     def _resolve_actor_r3_moe_config(self) -> R3MoEConfig:

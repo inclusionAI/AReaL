@@ -13,13 +13,14 @@ from areal.api.cli_args import SchedulingStrategy
 from areal.trainer.rl_trainer import PPOTrainer
 
 
-def _config(version: str, mode: str, colocated: bool):
+def _config(version: str, mode: str, colocated: bool, use_lora: bool = False):
     actor = type(
         "Actor",
         (),
         {
             "_version": version,
             "weight_update_mode": mode,
+            "use_lora": use_lora,
             "scheduling_strategy": SchedulingStrategy(
                 type="colocation" if colocated else "separation",
                 target="rollout" if colocated else "",
@@ -79,7 +80,12 @@ class TestQwen2WeightUpdateGuard:
     )
     @pytest.mark.parametrize(
         "version,mode",
-        [("v1", "awex"), ("v2", "awex"), ("v2", "xccl")],
+        [
+            ("v1", "awex"),
+            ("v2", "awex"),
+            ("v2", "xccl"),
+            ("v2", "disk"),
+        ],
     )
     def test_qwen2_rejects_unsupported_weight_update(
         self, monkeypatch, model_config, version, mode
@@ -91,18 +97,27 @@ class TestQwen2WeightUpdateGuard:
         monkeypatch.setattr(PretrainedConfig, "get_config_dict", load_config)
 
         with pytest.raises(
-            ValueError, match="actor.weight_update_mode=disk with v1 or v2"
+            ValueError, match="Qwen2/Qwen2.5 text models do not support AWEX"
         ):
             trainer._validate_weight_update_model()
 
         load_config.assert_called_once_with("renamed-checkpoint")
 
     @pytest.mark.parametrize(
-        "version,mode", [("v1", "xccl"), ("v1", "disk"), ("v2", "disk")]
+        "version,mode,use_lora",
+        [
+            ("v1", "xccl", False),
+            ("v1", "disk", False),
+            ("v2", "xccl", True),
+            ("v2", "awex", True),
+            ("v2", "disk", True),
+        ],
     )
-    def test_supported_modes_do_not_load_model_config(self, monkeypatch, version, mode):
+    def test_supported_modes_do_not_load_model_config(
+        self, monkeypatch, version, mode, use_lora
+    ):
         trainer = object.__new__(PPOTrainer)
-        trainer.config = _config(version, mode, colocated=False)
+        trainer.config = _config(version, mode, colocated=False, use_lora=use_lora)
         load_config = Mock(side_effect=AssertionError("must not load model config"))
         monkeypatch.setattr(PretrainedConfig, "get_config_dict", load_config)
 
