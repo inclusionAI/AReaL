@@ -2,8 +2,10 @@
 
 `areal.v2.data_engineering` runs bounded foreground data jobs. It provides recipe
 execution, public-task calibration, deduplication, provenance, and verified dataset
-snapshots. A research controller chooses the objective and recipe; the recipe supplies
-domain-specific generation, cleaning, scoring, selection, and training projection.
+snapshots. This is a default task-data workflow; task projects can compose multiple jobs
+or use other workflows when their requirements differ. A research controller chooses the
+objective and recipe; the recipe supplies domain-specific generation, cleaning, scoring,
+selection, and training projection.
 
 ## Run the TIR example
 
@@ -16,16 +18,15 @@ python3 -m areal.v2.data_engineering \
   --export-hf /tmp/tir-training-data
 ```
 
-Both output directories must be new. This example generates exact-answer math tasks
-without a model, GPU, or inference service. AReaL's package imports still require its
-normal Python dependencies. The final stdout line contains `dataset_id`, `dataset_path`,
-and, when requested, `training_dataset_path`.
+For a new job, both output directories must be new. Use `--resume` to continue an
+existing data job. This example generates exact-answer math tasks without a model, GPU,
+or inference service. AReaL's package imports still require its normal Python
+dependencies. The final stdout line contains `dataset_id`, `dataset_path`, and, when
+requested, `training_dataset_path`.
 
-The TIR recipe has eight families and two structures per family, adapted from the
-AReaL-RSI TIR generator at commit `97226ea54e9e009484f18c9c28e770697e9f6449`. Its
-training view contains `task_id`, `messages`, and an exact boxed `answer`. It produces
-task data; training rollouts, tokenization, and RL/SFT/OPD tensors are created
-downstream.
+The TIR recipe has eight families and two structures per family. Its training view
+contains `task_id`, `messages`, and an exact boxed `answer`. It produces task data;
+training rollouts, tokenization, and RL/SFT/OPD tensors are created downstream.
 
 ## Python API and execution protocol
 
@@ -61,12 +62,12 @@ The public Python protocols are exported from `areal.v2.data_engineering`:
 
 The executor runs generate → clean → deduplicate/exclude → calibrate → select. Cleaned
 candidates and their scores accumulate across batches. Only `InsufficientDataError`
-retries selection; other errors fail the job. Generic `max_batches` and `max_candidates`
-bound the search; domain parameters stay in `params`. A recipe may read raw data through
-`context.inputs` instead of synthesizing it. Inputs and exclusions are files, resolved
-relative to the config file by the module entry point. Paths inside plugin `params`
-remain plugin-owned; the supplied calibration adapters resolve them against the process
-working directory.
+requests another candidate batch; other errors fail the job after any configured
+transient retries. Generic `max_batches` and `max_candidates` bound the search; domain
+parameters stay in `params`. A recipe may read raw data through `context.inputs` instead
+of synthesizing it. Inputs and exclusions are files, resolved relative to the config
+file by the module entry point. Paths inside plugin `params` remain plugin-owned; the
+supplied calibration adapters resolve them against the process working directory.
 
 `purpose` is `harness`, `model`, or `joint`. It is recorded and passed to the recipe;
 recipes decide how it affects generation and selection. It does not automatically infer
@@ -78,6 +79,130 @@ conflicting references fail the job. Exact JSON input duplicates are removed; se
 or domain-specific normalization belongs in `clean()`. Exclusion JSONL files need
 top-level `task_id` fields; use prior snapshots' `public.jsonl` or a previous job's
 `work/batch-N-public.jsonl` to exclude previously selected or probed tasks.
+
+## Parallel execution and recovery
+
+Add an `execution` section to a job configuration:
+
+```yaml
+execution:
+  max_workers: 4
+  batch_size: 256
+  backend: process
+  max_retries: 2
+  retry_delay: 1.0
+```
+
+`run_data_job` starts a dedicated coordinator thread with its own event loop. Global
+coordination, source hashing, SQLite operations, and snapshot I/O execute there, leaving
+the caller's event loop responsive. Factories create calibrators inside that job loop;
+they must not reuse async resources tied to the caller's loop. The SQLite connection is
+created and used in its owning coordinator thread.
+
+Cancelling the caller task signals the job and cancels pending async calibration. The
+call waits for worker shutdown, database closure, and final state persistence; repeated
+cancellation does not abandon cleanup. Synchronous plugin/storage calls cannot be
+forcibly stopped: cancellation takes effect when they return, before starting the next
+stage or chunk. A snapshot already atomically published is retained and verified on
+resume. This does not make a non-returning plugin interruptible.
+
+`max_workers` defaults to 1, `batch_size` to 256, `backend` to `thread`, and
+`max_retries` to 0. `thread` suits blocking I/O; `process` uses spawned Python workers
+for CPU-bound generation, cleaning, scoring, ranking, and training projection. Process
+workers require importable factories and picklable raw samples. Scripts that use process
+workers must call `asyncio.run(...)` under an `if __name__ == "__main__":` guard.
+Deduplication and the final global constraint merge run in the coordinator. Async
+calibration is split into at most `max_workers` concurrent calls, each with at most
+`batch_size` public tasks; repeats stay inside the calibrator protocol.
+
+```bash
+python3 -m areal.v2.data_engineering \
+  --config examples/data_engineering/tir/data_generation.yaml \
+  --output /tmp/tir-data-job --resume
+```
+
+Python callers use `await run_data_job(config, output, resume=True)`. Recovery requires
+the same configuration, declared input/exclusion files, recipe/calibrator source files,
+and executor code. Changed identities fail before execution starts. A completed job
+returns its verified existing snapshot. HF export still requires a new destination; omit
+`--export-hf` when that dataset has already been exported.
+
+The local `work/checkpoints.sqlite3` database atomically commits each cleaning,
+calibration, and projection chunk. Candidate payloads, deduplication indexes, and probe
+results and ranked candidates stay on disk; only bounded worker chunks are prefetched.
+Snapshot publication and verification stream files. Selection receives a disk-backed
+`Sequence[DataSample]` and score `Mapping`: use iteration for large pools, since
+repeated indexed lookups/slicing can be expensive. Recipe code can still materialize its
+own pool; `training_rows()` and HF export also intentionally materialize rows. The
+executor ranks TIR candidates in parallel and selects through disk indexes; calling its
+standalone `select()` method still materializes a sorted list.
+
+Use a local filesystem for the SQLite WAL database and process lock. This is single-host
+execution, not a Ray/Slurm distributed job. The lock is released on process death, so
+SIGKILL does not require deleting a stale lock file. Derived
+`work/batch-N-{candidates,public}.jsonl` files are rebuilt from checkpoints.
+
+Recipe methods must be deterministic from their arguments and declared inputs;
+cleaning/projection workers create their own instances. No mutable instance state is
+saved. If generation was interrupted, it replays from the start of that batch, skipping
+committed cleaning chunks; completed generation batches are not replayed. Calibration
+must support concurrent calls when more than one worker is configured.
+
+Only `OSError` (including connection failures) and `TimeoutError` retry, using
+exponential backoff capped at 60 seconds. Validation errors and cancellation do not
+retry. An `Attempt.failure_reason` is a completed calibration result, not an exception
+to retry. Persisted chunks are reused, but failed or uncommitted chunks may execute
+again. External services should use task/repeat identities for idempotency; the executor
+does not promise exactly-once external side effects.
+
+## Parallel generation, scoring, and global selection
+
+Existing recipes remain valid: without the optional hooks, generation and selection use
+their original coordinator implementation. Scoring always runs in worker chunks. To
+parallelize generation, implement both methods:
+
+| Hook                                     | Contract                                                                                                       |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `generation_shards(context, shard_size)` | Yield deterministic `GenerationShard(start, stop)` ranges, contiguous from zero; `shard_size` is a sizing hint |
+| `generate_shard(context, shard)`         | Yield at most `stop-start` raw samples; the complete plan must fit the remaining `max_candidates` budget       |
+
+Each generation worker constructs its own recipe, generates and cleans a shard, and
+streams the retained/null rows to `work/generation-B-S.jsonl`. The adjacent JSON
+metadata records its range, row count and digest. Complete verified files are reused on
+resume, even if the database commit was interrupted. The coordinator imports rows in
+bounded `batch_size` chunks and applies global deduplication in shard order. Recipes
+choose shard sizes; larger shards use fewer files but have a coarser retry boundary.
+`generate(context)` should concatenate the same deterministic shard streams.
+
+Calibration responses are validated and checkpointed before scoring. Grading failures
+retry/recover from the stored responses without repeating completed model requests.
+Workers instantiate their own scoring recipes, so scores must not depend on mutable
+state established by generation or calibration.
+
+To parallelize ranking, implement all three methods:
+
+| Hook                                                    | Contract                                                                                           |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `selection_policy(context, calibrated)`                 | Return `SelectionPolicy(minimum_per_group, maximum_per_bucket)`                                    |
+| `rank(sample, scores, context)`                         | Return `None` for ineligible data or a `RankedCandidate` for that same task ID                     |
+| `finalize_selection(selected, eligible_count, context)` | Return final task IDs/statistics, or raise `InsufficientDataError` for domain quality requirements |
+
+A `RankedCandidate` contains finite floating-point `priority`, string `tie_breaker`,
+`group`, `bucket`, and JSON `metadata`. Workers independently check eligibility and sort
+local chunks by `(priority, tie_breaker, task_id)`. SQLite indexes retain the global
+ordering; already committed ranking chunks are reused. A candidate's ranking must stay
+fixed as later batches arrive; it cannot depend on the evolving candidate pool.
+Implementations with adaptive global policies can retain the original `select`.
+
+The coordinator first fills group minima in the policy's insertion order, then fills
+remaining slots globally by rank, checking bucket caps and duplicate IDs throughout.
+This final merge is serial and deterministic; it is a greedy policy, not a solver for
+arbitrary overlapping constraints. Recipes can call `select_ranked_candidates` with an
+in-memory ordered-row provider to share exactly the same merge algorithm. The TIR
+example uses 16 independently seeded recipe streams, family minima, recipe caps and a
+final borderline-case check. Its candidates are invariant to worker count, but this
+generator version does not reproduce the previous generator's candidates; recorded
+calibration reports must match the actual candidate/source identities.
 
 ## Calibration protocol
 
@@ -148,9 +273,9 @@ this adapter does not run an evaluation or start SGLang.
 `job.json` records running/succeeded/failed/cancelled state. `config.json`,
 `progress.json`, and per-batch files under `work/` retain execution evidence.
 Publication occurs only after successful selection and validation, by renaming a staging
-directory on the same filesystem. Existing output directories are rejected. Jobs run in
-the foreground; interrupting the module cancels it. There is no background daemon or
-resume protocol.
+directory on the same filesystem. Existing output directories require `--resume`. Jobs
+run in the foreground; interrupting the module cancels it. Recovery continues from
+committed chunks without a background daemon.
 
 The dataset directory contains:
 
