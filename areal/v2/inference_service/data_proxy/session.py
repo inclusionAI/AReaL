@@ -94,6 +94,7 @@ class ExportTrajectoriesResponse(BaseModel):
 
     traj: dict[str, Any]
     prm_stats: PRMExportStats | None = None
+    episode_turns: dict[str, int | None] | None = None
 
 
 @dataclass(frozen=True)
@@ -361,6 +362,22 @@ class SessionData:
         self._active_completions[interaction_id] = interaction
         self.update_last_access()
         return interaction_id
+
+    def snapshot_generated_turns(self, trajectory_id: int | None = None) -> int | None:
+        """Observe a ready trajectory, or an unfinished offline episode, before discard."""
+        from areal.utils.episode_turns import count_generated_responses
+
+        with self._lock:
+            if trajectory_id is not None:
+                ready = self._ready_trajectories.get(trajectory_id)
+                return count_generated_responses(ready.completions) if ready else None
+            # Offline sessions may finalize a reward mid-episode and continue
+            # generating. Include every ready segment plus unfinished history.
+            interactions = {}
+            for ready in self._ready_trajectories.values():
+                interactions.update(ready.completions)
+            interactions.update(self._active_completions)
+            return count_generated_responses(interactions)
 
     def export_trajectory(
         self,

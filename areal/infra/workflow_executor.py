@@ -37,11 +37,13 @@ from areal.experimental.openai.types import (
     concat_string_interactions,
     concat_tensor_interactions,
 )
+from areal.utils.episode_turns import track_episode_turns
 from areal.utils.environ import is_single_controller
 from areal.utils.rollout_metrics import ConsumedMetrics, Metrics, capture_metrics
 from areal.utils.rollout_stats import (
     localize_rollout_turn_stats,
     record_rollout_turn_stats,
+    with_rollout_turn_stats,
 )
 from areal.utils import logging, perf_tracer, stats_tracker
 from areal.infra.utils.concurrent import get_executor
@@ -1356,9 +1358,10 @@ class WorkflowExecutor:
             try:
                 workflow_data = pending_task.data
                 if workflow_data is not None:
-                    traj = await pending_task.workflow.arun_episode(
-                        self.inference_engine, workflow_data
-                    )
+                    with track_episode_turns():
+                        traj = await pending_task.workflow.arun_episode(
+                            self.inference_engine, workflow_data
+                        )
 
                 # Trajectory format checking
                 if self.config.check_trajectory_format and traj is not None:
@@ -1409,6 +1412,10 @@ class WorkflowExecutor:
 
                 assert traj is None or isinstance(traj, dict), traj
                 if traj is not None and "input_ids" in traj:
+                    if "rollout_num_turns" not in traj and isinstance(
+                        traj.get("turn_ids"), torch.Tensor
+                    ):
+                        traj = with_rollout_turn_stats(traj, None)
                     try:
                         rows = traj["input_ids"].shape[0]
                         group = traj.get("rollout_group")
@@ -1453,7 +1460,7 @@ class WorkflowExecutor:
                             localize_rollout_turn_stats, [traj]
                         )
                         if turn_rows:
-                            record_rollout_turn_stats(turn_rows, scope="eval-rollout")
+                            record_rollout_turn_stats(turn_rows, scope="eval-train")
                     manager.on_rollout_accepted()
                     stats_tracker.get(workflow_context.stat_scope()).scalar(
                         accepted=1, rejected=0

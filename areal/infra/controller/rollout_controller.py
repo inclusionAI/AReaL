@@ -43,6 +43,7 @@ from areal.infra.utils.inference_targets import write_inference_targets
 from areal.utils import logging, perf_tracer
 from areal.utils.data import cycle_dataloader
 from areal.utils.dynamic_import import import_from_string
+from areal.utils.episode_turns import is_turn_distribution
 from areal.utils.network import find_free_ports, format_hostport, gethostip
 from areal.utils.perf_tracer import trace_perf
 from areal.utils.rollout_metrics import ConsumedMetrics
@@ -127,7 +128,11 @@ def _merge_worker_stats(
                 f"{key.removesuffix('_count')}/{reduction}" in raw_stats
                 for reduction in ("avg", "min", "max")
             )
-            if is_prm_sum or is_distribution_count:
+            is_turn_count = key.endswith("_count") and (
+                is_turn_distribution(key.removesuffix("_count"))
+                or key.endswith("/num_turns_missing_count")
+            )
+            if is_prm_sum or is_distribution_count or is_turn_count:
                 sums[key] += value
 
     merged = dict(sums)

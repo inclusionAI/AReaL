@@ -13,6 +13,8 @@ from contextvars import ContextVar
 from threading import Lock
 from typing import Protocol, TypeVar
 
+from areal.utils.episode_turns import is_turn_distribution, publish_turn_distribution
+
 Metrics = dict[str, list[float]]
 _CAPTURE: ContextVar[Metrics | None] = ContextVar("rollout_metrics", default=None)
 
@@ -68,6 +70,16 @@ class ConsumedMetrics:
 
             tracker = stats_tracker.get()
             for key, values in metrics.items():
+                if is_turn_distribution(key):
+                    publish_turn_distribution(key, values)
+                    continue
+                if key.endswith("/num_turns_missing_count"):
+                    tracker.stat_compact(
+                        torch.ones(1, dtype=torch.bool),
+                        ReduceType.SUM,
+                        **{key: torch.tensor([sum(values)], dtype=torch.float32)},
+                    )
+                    continue
                 for value in values:
                     tracker.scalar(**{key: value})
             for key, count_key in (
@@ -100,6 +112,19 @@ class ConsumedMetrics:
         result = {}
         for key, values in metrics.items():
             if values:
+                if is_turn_distribution(key):
+                    result.update(
+                        {
+                            f"{key}/avg": sum(values) / len(values),
+                            f"{key}/min": min(values),
+                            f"{key}/max": max(values),
+                            f"{key}_count": len(values),
+                        }
+                    )
+                    continue
+                if key.endswith("/num_turns_missing_count"):
+                    result[key] = sum(values)
+                    continue
                 result[key] = sum(values) / len(values)
                 result[f"{key}__count"] = len(values)
         # StatsLogger hides internal __count companions. Publish the two main

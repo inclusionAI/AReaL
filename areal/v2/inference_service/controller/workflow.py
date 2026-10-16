@@ -16,6 +16,7 @@ from areal.infra.rpc.rtensor import RTensor
 from areal.infra.rpc.serialization import deserialize_value
 from areal.infra.utils.http import async_http_retry
 from areal.utils import logging, stats_tracker
+from areal.utils.episode_turns import record_episode_turns
 
 if TYPE_CHECKING:
     from areal.api.engine_api import InferenceEngine
@@ -150,7 +151,17 @@ class InferenceServiceWorkflow(RolloutWorkflow):
             payload["session_metadata"] = session_metadata
         if export_session_ids is not None:
             payload["export_session_ids"] = export_session_ids
-        data = await self._request_export(session, payload)
+        observations = {}
+        try:
+            data = await self._request_export(session, payload)
+            observations = data.get("episode_turns") or {}
+        finally:
+            for sid in dict.fromkeys(session_ids):
+                record_episode_turns(
+                    observations.get(sid),
+                    (session_metadata or {}).get(sid),
+                    require_status=True,
+                )
         traj = deserialize_value(data["traj"])
         if data.get("prm_stats") is not None:
             from pydantic import TypeAdapter
@@ -258,7 +269,6 @@ class InferenceServiceWorkflow(RolloutWorkflow):
                     http_client=http_client,
                     api_key=session_api_key,
                 )
-                session_metadata[session_id] = await self._get_agent_episode_metadata()
                 step_rewards: dict[str, float] | None = None
                 if isinstance(rewards, dict):
                     if rewards:
@@ -300,6 +310,7 @@ class InferenceServiceWorkflow(RolloutWorkflow):
                 # retries. Group export still handles session cleanup.
                 return None
             finally:
+                session_metadata[session_id] = await self._get_agent_episode_metadata()
                 logger.debug(
                     "V2 rollout member finish: task_id=%s group_id=%s member=%d "
                     "session_id=%s version=%s mode=%s",

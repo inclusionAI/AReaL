@@ -114,6 +114,7 @@ class ExportTrajectoriesResponse(BaseModel):
     """Response containing serialized interactions."""
 
     interactions: dict[str, Any]
+    generated_turn_count: int | None = None
     tensor_reference_group_id: str | None = None
 
 

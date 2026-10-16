@@ -59,7 +59,7 @@ You can log any other scalars in your customized workflow, e.g.,
 ```python
 async def run(self, data, **extra_kwargs):
     # `workflow_context.stat_scope()` automatically differentiates evaluation/training scopes
-    stats_tracker.get(workflow_context.stat_scope()).scalar(num_turns=num_turns, max_tokens=max_tokens, reward=reward)
+    stats_tracker.get(workflow_context.stat_scope()).scalar(max_tokens=max_tokens, reward=reward)
     return reward
 ```
 
@@ -88,65 +88,77 @@ def export_stats(self) -> dict[str, float]:
             if counts.get(k + "__count", 0) > 0}
 ```
 
-### Consumption-aligned rollout quality and training-row turns
+### Consumed rollout episodes and retained training rows
 
-Training quality scalars recorded inside a workflow task travel with its result. They
-are published when the final consumer removes that result from the queue, not when
-generation completes. Prefetched results left in the queue are excluded; rejected
-attempts and ordinary workflow failures are included. Worker-to-controller RPC transfer
-does not consume them. Terminal contract errors retain fail-fast behavior and are
-counted when surfaced; they abort training rather than forming a normal step. This is
-local queue-consumption accounting, not an exactly-once network retry protocol.
+Training quality observations travel with task results and are published when the final
+consumer dequeues them. Rejected attempts count; unused prefetch and
+worker-to-controller RPC transfer do not. Terminal contract errors retain fail-fast
+behavior and abort training. This is local queue accounting, not an exactly-once
+protocol across network retries.
 
-| Metric                                 | Value and denominator                                                                                                                                    |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `rollout/reward`                       | Mean of recorded episode rewards in consumed attempts. An episode that never records a reward is absent, not implicitly zero.                            |
-| `rollout/reward_sample_count`          | Number of recorded reward observations.                                                                                                                  |
-| `rollout/accepted`, `rollout/rejected` | Complementary fractions of consumed workflow tasks accepted/rejected by the executor, with one observation of each per task. A grouped task counts once. |
-| `rollout/group_attempt_count`          | Number of consumed workflow tasks, including rejection. For ungrouped workflows each task is one episode.                                                |
-| `rollout/incomplete_group`             | Fraction of observed groups with missing members, including complete groups as zero.                                                                     |
-| `rollout/incomplete_trajectories`      | Mean number of missing members per observed group, including complete groups as zero.                                                                    |
-| `rollout/num_turns/{avg,min,max}`      | Distribution of generation counts over retained training rows selected for the current batch.                                                            |
-| `rollout/num_turns_count`              | Number of selected rows carrying turn metadata, not episodes, prompt groups, tokens, or optimizer microbatches.                                          |
+| Metric                                 | Population and denominator                                                                                                               |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `rollout/reward`                       | Mean of actual reward observations from consumed attempts, including rejected attempts. Missing rewards are not filled with zero.        |
+| `rollout/reward_sample_count`          | Number of recorded reward observations.                                                                                                  |
+| `rollout/accepted`, `rollout/rejected` | Complementary acceptance/rejection fractions over consumed workflow tasks. A grouped task counts once.                                   |
+| `rollout/group_attempt_count`          | Number of consumed tasks, including rejection.                                                                                           |
+| `rollout/incomplete_group`             | Fraction of groups with missing members; complete groups contribute zero.                                                                |
+| `rollout/incomplete_trajectories`      | Mean missing-member count per group, including complete groups.                                                                          |
+| `rollout/num_turns/{avg,min,max}`      | Generated-response count per consumed logical episode, before filtering. Includes episodes later rejected or discarded with their group. |
+| `rollout/num_turns_count`              | Number of consumed episodes with an observed turn count.                                                                                 |
+| `rollout/num_turns_missing_count`      | Consumed episodes whose turn count is unavailable; excluded from the turn distribution, not treated as zero.                             |
+| `train/num_turns/{avg,min,max}`        | Original generated-response ancestry per retained training row, after batch selection/filtering.                                         |
+| `train/num_turns_count`                | Number of retained rows carrying turn metadata.                                                                                          |
 
-Other captured scalar keys retain their own observation unit: group metrics count
-recorded groups, while episode metrics count recorded episodes. `__count` companions
-carry these observation counts for aggregation. Operational `rollout/arena/*`, proxy PRM
-`rollout/prm_*`, speculative acceptance metrics, tensor distributions, and
-explicit-reduction-group scalars retain their existing export windows. Evaluation is
-separate under `eval-rollout`; quality scalars are not captured by the training buffer.
-V2 records available member rewards even when the enclosing group is discarded.
+For example, consuming episodes with 2 and 8 turns and rejecting the second produces
+rollout mean 5 (count 2), but training mean 2 (count 1) when the first episode exports
+one row. Reward observations, workflow tasks, logical episodes, and training rows are
+separate denominators.
 
-For OpenAI tensor exports, two row-aligned columns snapshot turn count and Harness
-classification. Each retained interaction row counts responses with generated tokens on
-its own parent chain; siblings and discarded retry branches do not contribute.
-Zero-token responses do not add a turn. If only cached tensors are available, count
-distinct nonnegative turn IDs within the original attention mask. Loss masking does not
-erase observed history. Snapshot before HTTP serialization preserves history when parent
-links or non-growing prompts would otherwise lose it. `individual` export may retain
-ancestor interactions: three such rows can contribute counts `[1, 2, 3]`, not one
-deduplicated episode count. Workflows without turn metadata do not contribute.
+A rollout turn is a response with at least one generated token. Raw session counts
+include retry/sibling responses even if export later discards them; each response is
+counted once, not once per descendant row. Empty responses add no turn. Classic proxy
+snapshots the raw cache on session end (online: before export); v2 snapshots every
+requested session before export or group discard, including failed sessions without
+rewards. Online v2 counts only the requested trajectory, not earlier trajectories in the
+persistent session. Native remote inference counts completed `agenerate` responses
+within each episode. An empty observed cache is zero; an unavailable session,
+tensor-only cache, or uninstrumented custom workflow is unknown. A request that fails
+before returning a response cannot supply its unobserved generated tokens. Custom
+workflows may report an episode count with `areal.utils.episode_turns.set_episode_turns`
+inside their workflow execution.
 
-Turn distributions are emitted after batch selection and filtering, once per selected
-row. Later token masking/cropping preserves the snapshot; any row filtering/reordering
-must apply the same indices to both metadata columns. Rejected rows do not contribute to
-training turns, even though their quality observations contribute to consumed-attempt
-metrics. Accepted evaluation rows use `eval-rollout/num_turns/*` instead.
+Training-row snapshots count generated responses on each retained interaction's parent
+chain; cached tensors fall back to distinct nonnegative turn IDs within the original
+attention mask. Sibling/discarded retry branches do not count toward that row. Loss
+masking or token cropping does not erase generation history. `individual` export can
+retain three ancestor rows with counts `[1, 2, 3]`; this is three training rows, not
+three episodes. Generic tensor workflows with local `turn_ids` also receive row
+snapshots before filtering. Row selection/reordering must apply the same indices to both
+compact metadata columns. Workflows without row metadata do not contribute to the
+training distribution.
 
-`num_turns_no_harness_err` includes rows classified as having no Harness failure; it
-does not imply positive reward or task success. `num_turns_harness_err` includes
-`HARNESS_FAILED` rows, with bounded per-code subgroups and `OTHER` for unknown failure
-codes. Every distribution has its own `<metric>_count`. Empty subgroups have count zero
-and no average/minimum/maximum. V2 accepts optional per-session `arena_status` and
-`harness_outcome_code` from the agent's `get_episode_metadata()` hook. Missing V2 status
-is unknown: it contributes only to overall turns, so subgroup counts need not sum to the
-total. Classic non-Harness workflows retain the no-Harness-error classification.
+Both scopes have `num_turns_no_harness_err` and `num_turns_harness_err` distributions,
+with bounded failure-code subgroups and `OTHER` for unknown failure codes. No Harness
+error does not imply task success. Missing v2 status contributes only to overall turns;
+subgroup counts need not sum to the total. Each distribution has its own `_count`; empty
+training subgroups report zero count without avg/min/max, while unobserved rollout
+subgroups may be absent. V2 accepts optional per-session status from
+`get_episode_metadata()` on success and failure.
 
-Single-controller training records selected rows once on the controller. SPMD uses the
-actor's existing data-parallel reduction, including sum/count weighting for quality
-scalars; it does not average rank means or sum tensor/pipeline/context-parallel copies.
-These definitions change the prior completion-window turn statistics prospectively;
-existing dashboard history is not recomputed.
+Single-controller training records selected rows once. SPMD uses the existing actor DP
+export: observation sums/counts are reduced, not rank means, without summing TP/PP/CP
+copies. Evaluation uses `eval-rollout` for episode observations and `eval-train` for
+retained row diagnostics; it does not enter training capture. Operational
+`rollout/arena/*`, proxy PRM `rollout/prm_*`, speculative acceptance, tensor
+distributions and explicit-group scalars retain their existing export windows. V2
+records available rewards even when the group is discarded. These definitions apply
+prospectively; dashboards must not interpret `train/num_turns` as episode statistics or
+splice old completion-window turn values into the new series.
+
+The `num_turns` metric families are managed by the episode/row observers. Custom
+workflows should use `set_episode_turns` for an explicit episode count, not additionally
+log a `scalar(num_turns=...)` observation that would duplicate automatic counting.
 
 ### Batch Metrics (Training Engines)
 

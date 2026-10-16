@@ -49,6 +49,7 @@ from areal.infra.utils.proc import kill_process_tree
 from areal.utils import logging, name_resolve, names, stats_tracker
 from areal.utils.data import RolloutGroup, concat_padded_tensors, get_batch_size
 from areal.utils.dynamic_import import import_from_string
+from areal.utils.episode_turns import observe_generated_response, track_episode_turns
 from areal.utils.network import (
     find_free_ports,
     format_hostport,
@@ -134,7 +135,8 @@ class GroupedRolloutWorkflow(RolloutWorkflow):
                     processor_cache=shared_processor_cache,
                 )
             )
-            result = await self.workflow.arun_episode(engine, data)
+            with track_episode_turns():
+                result = await self.workflow.arun_episode(engine, data)
             completed_results[sample_idx] = result
             return sample_idx, result
 
@@ -1265,6 +1267,7 @@ class RemoteInfEngine(InferenceEngine):
             processor=req.processor,
             routed_experts=final_routed_experts,
         )
+        observe_generated_response(response.output_len)
         return response
 
     def init_weights_update_group(

@@ -40,6 +40,8 @@ def _check_metrics(rank, rendezvous):
                         trajectory={},
                         metrics={
                             "rollout/reward": rewards,
+                            "rollout/num_turns": turns,
+                            "rollout/num_turns_missing_count": [float(rank)],
                             "rollout/accepted": [1.0],
                         },
                     )
@@ -57,13 +59,16 @@ def _check_metrics(rank, rendezvous):
             assert buffer.export() == {}
             result = stats_tracker.export_all(reduce_group=dist.group.WORLD)
             assert result["rollout/reward"] == (1.0 if empty_rank else 0.25)
+            assert result["rollout/num_turns/avg"] == (2.0 if empty_rank else 5.0)
+            assert result["rollout/num_turns_count"] == (1 if empty_rank else 4)
+            assert result["rollout/num_turns_missing_count"] == (0 if empty_rank else 1)
             assert result["rollout/reward_sample_count"] == (1 if empty_rank else 4)
             assert result["rollout/group_attempt_count"] == (1 if empty_rank else 2)
-            assert result["rollout/num_turns_count"] == (1 if empty_rank else 4)
-            assert result["rollout/num_turns/avg"] == (2.0 if empty_rank else 5.0)
-            assert result["rollout/num_turns/min"] == 2.0
-            assert result["rollout/num_turns/max"] == (2.0 if empty_rank else 8.0)
-            assert result["rollout/num_turns_no_harness_err_count"] == (
+            assert result["train/num_turns_count"] == (1 if empty_rank else 4)
+            assert result["train/num_turns/avg"] == (2.0 if empty_rank else 5.0)
+            assert result["train/num_turns/min"] == 2.0
+            assert result["train/num_turns/max"] == (2.0 if empty_rank else 8.0)
+            assert result["train/num_turns_no_harness_err_count"] == (
                 1 if empty_rank else 2
             )
             assert stats_tracker.export_all(reduce_group=dist.group.WORLD) == {}

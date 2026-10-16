@@ -16,6 +16,7 @@ import aiohttp
 from areal.api import RolloutWorkflow
 from areal.infra import workflow_context
 from areal.utils import logging, stats_tracker
+from areal.utils.episode_turns import set_episode_turns
 from areal.utils.perf_tracer import session_context, trace_session
 from areal.utils.rollout_stats import (
     HARNESS_OUTCOME_METRIC_CODES as HARNESS_OUTCOME_METRIC_CODES,
@@ -452,6 +453,10 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
                 drop_retry_orphans=self.drop_retry_orphans,
                 is_eval=workflow_context.get().is_eval,
             )
+            episode_metadata = await self._get_agent_episode_metadata()
+            set_episode_turns(
+                getattr(proxy_client, "generated_turn_count", None), episode_metadata
+            )
             self._configure_r3_interactions(interactions)
 
             # Return None if no interactions (empty session — user never sent chat/completions)
@@ -463,7 +468,6 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
                 return None
 
             self._set_individual_rollout_reward(interactions)
-            episode_metadata = await self._get_agent_episode_metadata()
             episode_metadata["session_id"] = session_info.session_id
             self._stamp_interaction_metadata(interactions, episode_metadata)
             self._record_interaction_stats(
@@ -487,26 +491,29 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
             metadata=await self._get_agent_session_metadata(data),
         )
         agent_error: Exception | None = None
-        async with proxy_client:
-            # Run the user code.
-            try:
-                rewards = await self._run_agent(
-                    proxy_client.session_api_key,
-                    data,
-                    session_id=proxy_client.session_id,
-                    worker_runtime=engine,
-                )
-            except Exception as exc:
-                agent_error = exc
-            else:
-                # Assign rewards back according to user code output
-                if isinstance(rewards, dict):
-                    for completion_id, reward in rewards.items():
-                        await proxy_client.set_reward(completion_id, reward)
-                elif isinstance(rewards, float):
-                    await proxy_client.set_last_reward(rewards)
+        try:
+            async with proxy_client:
+                # Run the user code.
+                try:
+                    rewards = await self._run_agent(
+                        proxy_client.session_api_key,
+                        data,
+                        session_id=proxy_client.session_id,
+                        worker_runtime=engine,
+                    )
+                except Exception as exc:
+                    agent_error = exc
                 else:
-                    raise ValueError(f"Invalid reward type: {type(rewards)}")
+                    # Assign rewards back according to user code output
+                    if isinstance(rewards, dict):
+                        for completion_id, reward in rewards.items():
+                            await proxy_client.set_reward(completion_id, reward)
+                    elif isinstance(rewards, float):
+                        await proxy_client.set_last_reward(rewards)
+                    else:
+                        raise ValueError(f"Invalid reward type: {type(rewards)}")
+        finally:
+            set_episode_turns(getattr(proxy_client, "generated_turn_count", None))
 
         if (
             agent_error is None
@@ -530,6 +537,11 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
                 agent_error,
                 failure_disposition,
             )
+
+        episode_metadata = await self._get_agent_episode_metadata()
+        set_episode_turns(
+            getattr(proxy_client, "generated_turn_count", None), episode_metadata
+        )
 
         reject_failed_sample = getattr(self.agent, "should_reject_failed_sample", None)
         if (
@@ -640,7 +652,6 @@ class OpenAIProxyWorkflow(RolloutWorkflow):
             return None
 
         self._set_individual_rollout_reward(interactions)
-        episode_metadata = await self._get_agent_episode_metadata()
         episode_metadata["session_id"] = proxy_client.session_id
         self._stamp_interaction_metadata(interactions, episode_metadata)
 

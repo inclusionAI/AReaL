@@ -182,7 +182,10 @@ async def test_data_proxy_stamps_each_session_before_merging(monkeypatch, tracke
         "s2": {"c": _interaction(6)},
     }
     sessions = {
-        sid: SimpleNamespace(export_trajectory=Mock(return_value=(0, interactions)))
+        sid: SimpleNamespace(
+            export_trajectory=Mock(return_value=(0, interactions)),
+            snapshot_generated_turns=Mock(return_value=1),
+        )
         for sid, interactions in branches.items()
     }
     monkeypatch.setattr(store, "get_session", sessions.get)
@@ -216,7 +219,7 @@ async def test_data_proxy_stamps_each_session_before_merging(monkeypatch, tracke
         "arena_status": "DONE",
     }
     assert branches["s2"]["c"].metadata == {"thinking_option": "on"}
-    record_rollout_turn_stats([trajectory])
+    record_rollout_turn_stats([trajectory], scope="rollout")
     metrics = tracker.export()
     assert metrics["rollout/num_turns_count"] == 3
     assert metrics["rollout/num_turns_no_harness_err/avg"] == 2
@@ -232,3 +235,95 @@ def test_export_schema_keeps_old_clients_compatible():
     first.session_metadata["s0"] = {"arena_status": "DONE"}
 
     assert second.session_metadata == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("discard", [False, True])
+async def test_export_observes_excluded_failed_session_before_cleanup(
+    monkeypatch, discard
+):
+    from areal.v2.inference_service.data_proxy.session import SessionData
+
+    config = DataProxyConfig(backend_addr="")
+    app = create_app(config)
+    store = SessionStore()
+    store.set_admin_key(config.admin_api_key)
+    app.state.session_store = store
+    good, failed = SessionData("good"), SessionData("failed")
+    good.active_completions["g"] = _interaction(1)
+    good.active_completions["g"]._interaction_id = "g"
+    good.active_completions["g"].output_message_list = [
+        {"role": "assistant", "content": "ok"}
+    ]
+    good.set_reward(None, 1.0)
+    for i in range(3):
+        failed.active_completions[str(i)] = _interaction(1)
+    # Failed member has generated responses, but no reward and no ready trajectory.
+    sessions = {"good": good, "failed": failed}
+    monkeypatch.setattr(store, "get_session", sessions.get)
+    monkeypatch.setattr(RTensor, "remotize", lambda trajectory, node_addr: trajectory)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/export_trajectories",
+            headers={"Authorization": f"Bearer {config.admin_api_key}"},
+            json={
+                "session_ids": ["good", "failed"],
+                "export_session_ids": ["good"],
+                "discard_trajectory": discard,
+                "remove_session": False,
+            },
+        )
+    assert response.status_code == 200, response.text
+    assert response.json()["episode_turns"] == {"good": 1, "failed": 3}
+    trajectory = deserialize_value(response.json()["traj"])
+    assert bool(trajectory) is not discard
+
+
+def test_online_turn_snapshot_is_limited_to_target_trajectory():
+    from areal.v2.inference_service.data_proxy.session import SessionData
+
+    session = SessionData("online")
+    session.active_completions["first"] = _interaction(1)
+    first = session.set_reward(None, 1.0)
+    for i in range(2):
+        session.active_completions[f"second-{i}"] = _interaction(1)
+    second = session.set_reward(None, 1.0)
+    assert session.snapshot_generated_turns(first.trajectory_id) == 1
+    assert session.snapshot_generated_turns(second.trajectory_id) == 2
+    assert session.snapshot_generated_turns(999) is None
+    session.active_completions["unfinished"] = _interaction(1)
+    assert session.snapshot_generated_turns() == 4
+    assert session.snapshot_generated_turns(first.trajectory_id) == 1
+
+
+@pytest.mark.asyncio
+async def test_export_empty_trajectory_still_carries_turn_metrics_until_consumption(
+    monkeypatch,
+):
+    from areal.infra import workflow_context
+    from areal.infra.rpc.serialization import serialize_value
+    from areal.infra.workflow_context import WorkflowContext
+    from areal.utils.episode_turns import track_episode_turns
+    from areal.utils.rollout_metrics import ConsumedMetrics, capture_metrics
+
+    workflow_context.set(WorkflowContext(is_eval=False))
+    workflow = _workflow(SimpleNamespace(run=AsyncMock(return_value=0.0)), monkeypatch)
+    workflow._request_export = AsyncMock(
+        return_value={"traj": serialize_value({}), "episode_turns": {"s0": 2, "s1": 7}}
+    )
+    # _workflow stubs the method for agent tests; exercise the real response path.
+    with capture_metrics() as metrics:
+        with track_episode_turns():
+            result = await InferenceServiceWorkflow._export_interactions(
+                workflow, AsyncMock(), ["s0", "s1"], discard_trajectory=True
+            )
+    assert result == {}
+    buffer = ConsumedMetrics()
+    assert buffer.export() == {}
+    buffer.consume(SimpleNamespace(trajectory=None, metrics=metrics))
+    stats = buffer.export()
+    assert stats["rollout/num_turns_count"] == 2
+    assert stats["rollout/num_turns/avg"] == 4.5
+    assert stats["rollout/num_turns_missing_count"] == 0

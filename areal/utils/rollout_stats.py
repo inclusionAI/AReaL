@@ -148,9 +148,9 @@ def localize_rollout_turn_stats(
 
 
 def record_rollout_turn_stats(
-    batch: Sequence[dict[str, Any]], *, scope: str = "rollout"
+    batch: Sequence[dict[str, Any]], *, scope: str = "train"
 ) -> None:
-    """Record the original turn-family names from the selected, filtered batch.
+    """Record turn distributions from the selected, filtered training rows.
 
     On a controller, fetch only the two small per-row columns, not the remote
     token tensors. In SPMD, each rank records its local DP shard; the existing

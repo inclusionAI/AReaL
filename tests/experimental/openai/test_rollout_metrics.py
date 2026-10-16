@@ -34,16 +34,16 @@ def recorded_stats(monkeypatch) -> dict[str, DistributedStatsTracker]:
     """Capture rollout metrics without touching global trackers."""
     trackers: dict[str, DistributedStatsTracker] = {}
 
-    def get_tracker(name: str) -> DistributedStatsTracker:
+    def get_tracker(name: str = "") -> DistributedStatsTracker:
         return trackers.setdefault(name, DistributedStatsTracker(name))
 
     monkeypatch.setattr(
         "areal.experimental.openai.proxy.workflow.stats_tracker.get", get_tracker
     )
-    monkeypatch.setattr(
-        "areal.experimental.openai.proxy.workflow.workflow_context.get",
-        lambda: SimpleNamespace(is_eval=False),
-    )
+    from areal.infra import workflow_context
+    from areal.infra.workflow_context import WorkflowContext
+
+    workflow_context.set(WorkflowContext(is_eval=False))
     return trackers
 
 
@@ -76,16 +76,16 @@ def test_selected_batch_records_one_turn_count_per_row(recorded_stats):
         [_trajectory(1.0, 2), _trajectory(0.0, 3), _trajectory(1.0, 1)]
     )
 
-    metrics = recorded_stats["rollout"].export()
+    metrics = recorded_stats["train"].export()
 
-    assert metrics["rollout/num_turns_count"] == 3
-    assert metrics["rollout/num_turns/avg"] == pytest.approx(2.0)
-    assert metrics["rollout/num_turns/min"] == pytest.approx(1.0)
-    assert metrics["rollout/num_turns/max"] == pytest.approx(3.0)
-    assert metrics["rollout/num_turns_no_harness_err_count"] == 3
-    assert metrics["rollout/num_turns_no_harness_err/avg"] == pytest.approx(2.0)
-    assert metrics["rollout/num_turns_no_harness_err/min"] == pytest.approx(1.0)
-    assert metrics["rollout/num_turns_no_harness_err/max"] == pytest.approx(3.0)
+    assert metrics["train/num_turns_count"] == 3
+    assert metrics["train/num_turns/avg"] == pytest.approx(2.0)
+    assert metrics["train/num_turns/min"] == pytest.approx(1.0)
+    assert metrics["train/num_turns/max"] == pytest.approx(3.0)
+    assert metrics["train/num_turns_no_harness_err_count"] == 3
+    assert metrics["train/num_turns_no_harness_err/avg"] == pytest.approx(2.0)
+    assert metrics["train/num_turns_no_harness_err/min"] == pytest.approx(1.0)
+    assert metrics["train/num_turns_no_harness_err/max"] == pytest.approx(3.0)
 
 
 def test_selected_batch_uses_eval_rollout_scope(recorded_stats, monkeypatch):
@@ -96,14 +96,16 @@ def test_selected_batch_uses_eval_rollout_scope(recorded_stats, monkeypatch):
     )
 
     OpenAIProxyWorkflow._record_interaction_stats(_result(1.0, 2))
-    record_rollout_turn_stats([_trajectory(1.0, 2)], scope="eval-rollout")
+    record_rollout_turn_stats([_trajectory(1.0, 2)], scope="eval-train")
 
-    metrics = recorded_stats["eval-rollout"].export()
+    metrics = recorded_stats["eval-train"].export()
 
-    assert metrics["eval-rollout/reward"] == pytest.approx(1.0)
-    assert metrics["eval-rollout/num_turns/avg"] == pytest.approx(2.0)
-    assert metrics["eval-rollout/num_turns/min"] == pytest.approx(2.0)
-    assert metrics["eval-rollout/num_turns/max"] == pytest.approx(2.0)
+    assert recorded_stats["eval-rollout"].export()[
+        "eval-rollout/reward"
+    ] == pytest.approx(1.0)
+    assert metrics["eval-train/num_turns/avg"] == pytest.approx(2.0)
+    assert metrics["eval-train/num_turns/min"] == pytest.approx(2.0)
+    assert metrics["eval-train/num_turns/max"] == pytest.approx(2.0)
     assert "rollout" not in recorded_stats
 
 
@@ -125,20 +127,20 @@ def test_selected_batch_excludes_harness_errors_from_filtered_turns(
         ]
     )
 
-    metrics = recorded_stats["rollout"].export()
+    metrics = recorded_stats["train"].export()
 
-    assert metrics["rollout/num_turns/avg"] == pytest.approx(3.0)
-    assert metrics["rollout/num_turns/min"] == pytest.approx(2.0)
-    assert metrics["rollout/num_turns/max"] == pytest.approx(4.0)
-    assert metrics["rollout/num_turns_no_harness_err_count"] == 1
-    assert metrics["rollout/num_turns_no_harness_err/avg"] == pytest.approx(2.0)
-    assert metrics["rollout/num_turns_no_harness_err/min"] == pytest.approx(2.0)
-    assert metrics["rollout/num_turns_no_harness_err/max"] == pytest.approx(2.0)
-    assert metrics["rollout/num_turns_harness_err_count"] == 1
-    assert metrics["rollout/num_turns_harness_err/avg"] == pytest.approx(4.0)
-    assert metrics["rollout/num_turns_harness_err/min"] == pytest.approx(4.0)
-    assert metrics["rollout/num_turns_harness_err/max"] == pytest.approx(4.0)
-    outcome_metric = "rollout/num_turns_harness_err/LLM_CONTEXT_WINDOW_EXCEEDED"
+    assert metrics["train/num_turns/avg"] == pytest.approx(3.0)
+    assert metrics["train/num_turns/min"] == pytest.approx(2.0)
+    assert metrics["train/num_turns/max"] == pytest.approx(4.0)
+    assert metrics["train/num_turns_no_harness_err_count"] == 1
+    assert metrics["train/num_turns_no_harness_err/avg"] == pytest.approx(2.0)
+    assert metrics["train/num_turns_no_harness_err/min"] == pytest.approx(2.0)
+    assert metrics["train/num_turns_no_harness_err/max"] == pytest.approx(2.0)
+    assert metrics["train/num_turns_harness_err_count"] == 1
+    assert metrics["train/num_turns_harness_err/avg"] == pytest.approx(4.0)
+    assert metrics["train/num_turns_harness_err/min"] == pytest.approx(4.0)
+    assert metrics["train/num_turns_harness_err/max"] == pytest.approx(4.0)
+    outcome_metric = "train/num_turns_harness_err/LLM_CONTEXT_WINDOW_EXCEEDED"
     assert metrics[f"{outcome_metric}_count"] == 1
     assert metrics[f"{outcome_metric}/avg"] == pytest.approx(4.0)
     assert metrics[f"{outcome_metric}/min"] == pytest.approx(4.0)
@@ -156,10 +158,10 @@ def test_selected_batch_bounds_unknown_harness_outcome(recorded_stats, code):
         ]
     )
 
-    metrics = recorded_stats["rollout"].export()
+    metrics = recorded_stats["train"].export()
 
-    assert "rollout/num_turns_harness_err/FUTURE_UNKNOWN_CODE/avg" not in metrics
-    assert metrics["rollout/num_turns_harness_err/OTHER/avg"] == pytest.approx(3.0)
+    assert "train/num_turns_harness_err/FUTURE_UNKNOWN_CODE/avg" not in metrics
+    assert metrics["train/num_turns_harness_err/OTHER/avg"] == pytest.approx(3.0)
 
 
 def test_completion_records_reward_without_turn_metrics(recorded_stats):
@@ -181,15 +183,15 @@ def test_buffered_rollouts_count_only_when_consumed(recorded_stats):
     new_rows = [_trajectory(1.0, 4), _trajectory(0.0, 6)]
 
     record_rollout_turn_stats([concat_padded_tensors(buffered + new_rows)])
-    metrics = recorded_stats["rollout"].export()
+    metrics = recorded_stats["train"].export()
 
-    assert metrics["rollout/num_turns_count"] == 12
-    assert metrics["rollout/num_turns/avg"] == pytest.approx(2.5)
-    assert metrics["rollout/num_turns/max"] == 6
+    assert metrics["train/num_turns_count"] == 12
+    assert metrics["train/num_turns/avg"] == pytest.approx(2.5)
+    assert metrics["train/num_turns/max"] == 6
     record_rollout_turn_stats([future_batch])
-    next_metrics = recorded_stats["rollout"].export()
-    assert next_metrics["rollout/num_turns_count"] == 1
-    assert next_metrics["rollout/num_turns/avg"] == 50
+    next_metrics = recorded_stats["train"].export()
+    assert next_metrics["train/num_turns_count"] == 1
+    assert next_metrics["train/num_turns/avg"] == 50
 
 
 def test_turn_metadata_tracks_concat_reorder_and_row_filter(recorded_stats):
@@ -203,12 +205,12 @@ def test_turn_metadata_tracks_concat_reorder_and_row_filter(recorded_stats):
     split = split_and_unpad_tensor(selected, n_trajs=2, traj_group_sizes=[1, 1])
 
     record_rollout_turn_stats(split)
-    metrics = recorded_stats["rollout"].export()
+    metrics = recorded_stats["train"].export()
 
-    assert metrics["rollout/num_turns_count"] == 2
-    assert metrics["rollout/num_turns/avg"] == 3
-    assert metrics["rollout/num_turns_no_harness_err/avg"] == 2
-    assert metrics["rollout/num_turns_harness_err/OTHER/avg"] == 4
+    assert metrics["train/num_turns_count"] == 2
+    assert metrics["train/num_turns/avg"] == 3
+    assert metrics["train/num_turns_no_harness_err/avg"] == 2
+    assert metrics["train/num_turns_harness_err/OTHER/avg"] == 4
 
 
 def test_final_metadata_overrides_cached_interaction_status(recorded_stats):
@@ -225,11 +227,11 @@ def test_final_metadata_overrides_cached_interaction_status(recorded_stats):
 
     row = with_rollout_turn_stats(interaction.to_tensor_dict(), interaction.metadata)
     record_rollout_turn_stats([row])
-    metrics = recorded_stats["rollout"].export()
+    metrics = recorded_stats["train"].export()
 
     assert ROLLOUT_HARNESS_OUTCOME not in cached  # Do not mutate the token cache.
-    assert metrics["rollout/num_turns_no_harness_err_count"] == 0
-    metric = "rollout/num_turns_harness_err/LLM_OUTPUT_TOKEN_LIMIT_EXCEEDED"
+    assert metrics["train/num_turns_no_harness_err_count"] == 0
+    metric = "train/num_turns_harness_err/LLM_OUTPUT_TOKEN_LIMIT_EXCEEDED"
     assert metrics[f"{metric}_count"] == 1
     assert metrics[f"{metric}/avg"] == 4
 
@@ -295,12 +297,12 @@ def test_interaction_history_survives_tensor_fallback_and_ignores_empty_response
     result = asyncio.run(WorkflowExecutor._create_workflow_task(executor, task)())
     assert result is not None
     record_rollout_turn_stats([result.trajectory])
-    metrics = recorded_stats["rollout"].export()
+    metrics = recorded_stats["train"].export()
 
-    assert metrics["rollout/num_turns_count"] == 1
-    assert metrics["rollout/num_turns/avg"] == 2
-    assert metrics["rollout/num_turns_no_harness_err/avg"] == 2
-    assert metrics["rollout/num_turns_harness_err_count"] == 0
+    assert metrics["train/num_turns_count"] == 1
+    assert metrics["train/num_turns/avg"] == 2
+    assert metrics["train/num_turns_no_harness_err/avg"] == 2
+    assert metrics["train/num_turns_harness_err_count"] == 0
 
 
 def test_serialized_history_preserves_turns_but_uses_final_harness_status(
@@ -324,10 +326,10 @@ def test_serialized_history_preserves_turns_but_uses_final_harness_status(
     )
 
     record_rollout_turn_stats([row])
-    metrics = recorded_stats["rollout"].export()
+    metrics = recorded_stats["train"].export()
 
-    assert metrics["rollout/num_turns_no_harness_err_count"] == 0
-    assert metrics["rollout/num_turns_harness_err/LLM_CONTEXT_WINDOW_EXCEEDED/avg"] == 2
+    assert metrics["train/num_turns_no_harness_err_count"] == 0
+    assert metrics["train/num_turns_harness_err/LLM_CONTEXT_WINDOW_EXCEEDED/avg"] == 2
 
 
 @pytest.mark.parametrize("status", [None, "", " ", 123])
@@ -340,12 +342,12 @@ def test_required_harness_status_missing_is_neither_success_nor_failure(
     )
 
     record_rollout_turn_stats([row])
-    metrics = recorded_stats["rollout"].export()
+    metrics = recorded_stats["train"].export()
 
-    assert metrics["rollout/num_turns_count"] == 1
-    assert metrics["rollout/num_turns/avg"] == 3
-    assert metrics["rollout/num_turns_no_harness_err_count"] == 0
-    assert metrics["rollout/num_turns_harness_err_count"] == 0
+    assert metrics["train/num_turns_count"] == 1
+    assert metrics["train/num_turns/avg"] == 3
+    assert metrics["train/num_turns_no_harness_err_count"] == 0
+    assert metrics["train/num_turns_harness_err_count"] == 0
 
 
 def test_original_turns_follow_row_reorder_despite_mask_edits(recorded_stats):
@@ -360,15 +362,15 @@ def test_original_turns_follow_row_reorder_despite_mask_edits(recorded_stats):
     edited["loss_mask"][edited["turn_ids"] >= 1] = 0
 
     record_rollout_turn_stats([edited])
-    metrics = recorded_stats["rollout"].export()
+    metrics = recorded_stats["train"].export()
 
     torch.testing.assert_close(
         edited[ROLLOUT_TURN_COUNT], torch.tensor([4.0, 2.0]), rtol=0, atol=0
     )
-    assert metrics["rollout/num_turns_no_harness_err_count"] == 1
-    assert metrics["rollout/num_turns_harness_err/OTHER_count"] == 1
-    assert metrics["rollout/num_turns_harness_err/OTHER/avg"] == 4
-    assert metrics["rollout/num_turns_no_harness_err/avg"] == 2
+    assert metrics["train/num_turns_no_harness_err_count"] == 1
+    assert metrics["train/num_turns_harness_err/OTHER_count"] == 1
+    assert metrics["train/num_turns_harness_err/OTHER/avg"] == 4
+    assert metrics["train/num_turns_no_harness_err/avg"] == 2
 
 
 def test_record_rejects_hook_that_drops_rows_without_slicing_metadata(recorded_stats):
@@ -422,21 +424,21 @@ def test_remote_turn_history_is_not_fetched_or_replaced_after_hook(
 def test_zero_turn_row_is_retained(recorded_stats):
     record_rollout_turn_stats([_trajectory(0.0, 0)])
 
-    metrics = recorded_stats["rollout"].export()
+    metrics = recorded_stats["train"].export()
 
-    assert metrics["rollout/num_turns_count"] == 1
-    assert metrics["rollout/num_turns/avg"] == 0
+    assert metrics["train/num_turns_count"] == 1
+    assert metrics["train/num_turns/avg"] == 0
 
 
 def test_empty_selected_batch_has_zero_count_not_stale_average(recorded_stats):
     record_rollout_turn_stats([_trajectory(1.0, 5)])
-    recorded_stats["rollout"].export()
+    recorded_stats["train"].export()
 
     record_rollout_turn_stats([])
-    metrics = recorded_stats["rollout"].export()
+    metrics = recorded_stats["train"].export()
 
-    assert metrics["rollout/num_turns_count"] == 0
-    assert "rollout/num_turns/avg" not in metrics
+    assert metrics["train/num_turns_count"] == 0
+    assert "train/num_turns/avg" not in metrics
 
 
 def test_turn_stats_fetch_only_compact_columns(recorded_stats, monkeypatch):
@@ -467,7 +469,7 @@ def test_turn_stats_fetch_only_compact_columns(recorded_stats, monkeypatch):
     assert fetched == [
         [{ROLLOUT_TURN_COUNT: count_handle, ROLLOUT_HARNESS_OUTCOME: outcome_handle}]
     ]
-    assert recorded_stats["rollout"].export()["rollout/num_turns/avg"] == 3
+    assert recorded_stats["train"].export()["train/num_turns/avg"] == 3
 
 
 def test_workflow_without_turn_metadata_does_not_emit_turn_metrics(recorded_stats):
@@ -486,11 +488,11 @@ def test_each_known_harness_code_keeps_original_metric_name(recorded_stats, code
     )
 
     record_rollout_turn_stats([row])
-    metrics = recorded_stats["rollout"].export()
+    metrics = recorded_stats["train"].export()
 
-    assert metrics[f"rollout/num_turns_harness_err/{code}_count"] == 1
-    assert metrics[f"rollout/num_turns_harness_err/{code}/avg"] == 3
-    assert metrics["rollout/num_turns_no_harness_err_count"] == 0
+    assert metrics[f"train/num_turns_harness_err/{code}_count"] == 1
+    assert metrics[f"train/num_turns_harness_err/{code}/avg"] == 3
+    assert metrics["train/num_turns_no_harness_err_count"] == 0
 
 
 def test_task_failure_without_harness_error_stays_in_filtered_turns(recorded_stats):
@@ -498,10 +500,10 @@ def test_task_failure_without_harness_error_stays_in_filtered_turns(recorded_sta
         [_trajectory(0.0, 4, {"arena_status": "DONE", "harness_outcome_code": "OTHER"})]
     )
 
-    metrics = recorded_stats["rollout"].export()
+    metrics = recorded_stats["train"].export()
 
-    assert metrics["rollout/num_turns_no_harness_err_count"] == 1
-    assert metrics["rollout/num_turns_harness_err_count"] == 0
+    assert metrics["train/num_turns_no_harness_err_count"] == 1
+    assert metrics["train/num_turns_harness_err_count"] == 0
 
 
 @pytest.mark.parametrize("misalignment", ["missing_outcome", "outcome_shape", "rows"])
@@ -552,13 +554,13 @@ def test_executor_records_only_accepted_eval_rows(recorded_stats, is_eval, accep
 
     assert (result is not None and result.trajectory is not None) == accept
     if is_eval and accept:
-        metrics = recorded_stats["eval-rollout"].export()
-        assert metrics["eval-rollout/num_turns_count"] == 1
-        assert metrics["eval-rollout/num_turns/avg"] == 4
+        metrics = recorded_stats["eval-train"].export()
+        assert metrics["eval-train/num_turns_count"] == 1
+        assert metrics["eval-train/num_turns/avg"] == 4
     else:
-        assert "eval-rollout" not in recorded_stats
-    completion_metrics = recorded_stats["rollout"].export()
-    assert not any("num_turns" in key for key in completion_metrics)
+        assert "eval-train" not in recorded_stats
+    if not is_eval:
+        assert "train" not in recorded_stats
     if result is not None and result.trajectory is not None:
         assert result.trajectory[ROLLOUT_TURN_COUNT].shape == (1,)
 
@@ -598,14 +600,14 @@ def test_executor_preserves_real_turns_after_training_edits(
     result = asyncio.run(WorkflowExecutor._create_workflow_task(executor, task)())
     assert result is not None
     record_rollout_turn_stats([result.trajectory])
-    metrics = recorded_stats["rollout"].export()
+    metrics = recorded_stats["train"].export()
 
-    assert metrics["rollout/num_turns/avg"] == 4
+    assert metrics["train/num_turns/avg"] == 4
     subgroup = (
         "num_turns_harness_err/OTHER" if harness_failed else "num_turns_no_harness_err"
     )
-    assert metrics[f"rollout/{subgroup}/avg"] == 4
-    assert metrics[f"rollout/{subgroup}_count"] == 1
+    assert metrics[f"train/{subgroup}/avg"] == 4
+    assert metrics[f"train/{subgroup}_count"] == 1
 
 
 def test_concurrent_eval_records_masks_and_values_on_event_loop(
@@ -646,14 +648,14 @@ def test_concurrent_eval_records_masks_and_values_on_event_loop(
         return await asyncio.gather(*(task() for task in tasks))
 
     results = asyncio.run(run())
-    metrics = recorded_stats["eval-rollout"].export()
+    metrics = recorded_stats["eval-train"].export()
 
     assert all(result is not None for result in results)
     assert record_threads == [threading.get_ident()] * 2
-    assert metrics["eval-rollout/num_turns_count"] == 3
-    assert metrics["eval-rollout/num_turns/avg"] == 4
-    assert metrics["eval-rollout/num_turns_no_harness_err/avg"] == 2
-    assert metrics["eval-rollout/num_turns_harness_err/avg"] == 5
+    assert metrics["eval-train/num_turns_count"] == 3
+    assert metrics["eval-train/num_turns/avg"] == 4
+    assert metrics["eval-train/num_turns_no_harness_err/avg"] == 2
+    assert metrics["eval-train/num_turns_harness_err/avg"] == 5
 
 
 def test_eval_metadata_failure_does_not_accept_then_reject(recorded_stats, monkeypatch):

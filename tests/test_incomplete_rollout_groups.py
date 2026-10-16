@@ -58,7 +58,7 @@ def test_rollout_group_size_contract_rejects_invalid_threshold(
 def rollout_stats(monkeypatch):
     tracker = MagicMock()
     monkeypatch.setattr(
-        "areal.infra.remote_inf_engine.stats_tracker.get", lambda _: tracker
+        "areal.infra.remote_inf_engine.stats_tracker.get", lambda _=None: tracker
     )
     workflow_context.set(WorkflowContext(is_eval=False))
     return tracker
