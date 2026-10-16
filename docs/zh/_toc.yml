@@ -30,6 +30,7 @@ parts:
     chapters:
     - file: customization/dataset
     - file: customization/agent
+    - file: customization/advantage
   - caption: 算法
     chapters:
     - file: algorithms/async

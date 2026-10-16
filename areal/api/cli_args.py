@@ -1847,8 +1847,90 @@ class RejectionSamplingConfig:
 
 
 @dataclass
+class AdvantageFunctionConfig:
+    """Reference one built-in algorithm key or a dotted Python callable path."""
+
+    implementation: str = field(
+        default="auto",
+        metadata={
+            "help": "Built-in algorithm key or trusted dotted Python callable path."
+        },
+    )
+    kwargs: dict[str, Any] = field(
+        default_factory=dict,
+        metadata={"help": "Keyword arguments forwarded to the resolved callable."},
+    )
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.implementation, str) or not self.implementation.strip():
+            raise ValueError("advantage function implementation must be non-empty")
+        self.implementation = self.implementation.strip()
+        if not isinstance(self.kwargs, (dict, DictConfig)):
+            raise TypeError("advantage function kwargs must be a mapping")
+        if isinstance(self.kwargs, DictConfig):
+            self.kwargs = OmegaConf.to_container(self.kwargs, resolve=False)
+        try:
+            json.dumps(self.kwargs)
+        except (TypeError, ValueError) as exc:
+            raise TypeError(
+                "advantage function kwargs must contain only serializable values"
+            ) from exc
+
+
+@dataclass
+class AdvantageConfig:
+    """Select the advantage function and its orthogonal built-in stages."""
+
+    compute: AdvantageFunctionConfig = field(
+        default_factory=lambda: AdvantageFunctionConfig(implementation="default"),
+        metadata={"help": "Default compute key or custom dotted compute path."},
+    )
+    outcome_reward_shaping: AdvantageFunctionConfig | None = field(
+        default=None,
+        metadata={
+            "help": "Transform task-result rewards before reward normalization; built-in key or dotted callable path."
+        },
+    )
+    estimator: AdvantageFunctionConfig | None = field(
+        default=None,
+        metadata={"help": "Optional advantage-estimator key or dotted callable path."},
+    )
+    process_adv_shaping: AdvantageFunctionConfig | None = field(
+        default=None,
+        metadata={
+            "help": "Modify estimated advantages using process rewards; additive by default, or a built-in key or dotted callable path."
+        },
+    )
+
+    def __post_init__(self) -> None:
+        def normalize(value):
+            if value is None or isinstance(value, AdvantageFunctionConfig):
+                return value
+            if isinstance(value, (dict, DictConfig)):
+                return AdvantageFunctionConfig(**dict(value))
+            raise TypeError("advantage algorithm specifications must be mappings")
+
+        self.compute = normalize(self.compute)
+        if self.compute is None:
+            raise ValueError("advantage.compute must not be None")
+        for name in (
+            "outcome_reward_shaping",
+            "estimator",
+            "process_adv_shaping",
+        ):
+            setattr(self, name, normalize(getattr(self, name)))
+
+
+@dataclass
 class PPOActorConfig(TrainEngineConfig):
     """Configuration for PPO actor model, a subclass of a TrainEngine."""
+
+    advantage: AdvantageConfig = field(
+        default_factory=AdvantageConfig,
+        metadata={
+            "help": "Composable advantage computation; defaults preserve GAE/PRM settings."
+        },
+    )
 
     # Core PPO/GRPO Parameters
     ppo_n_minibatches: int = field(
@@ -2124,6 +2206,10 @@ class PPOActorConfig(TrainEngineConfig):
 
     def __post_init__(self):
         """Validate PPO actor configuration."""
+        if isinstance(self.advantage, (dict, DictConfig)):
+            self.advantage = AdvantageConfig(**dict(self.advantage))
+        if not isinstance(self.advantage, AdvantageConfig):
+            raise ValueError("advantage must be an AdvantageConfig or mapping")
         if isinstance(self.gae_lambda, bool) or not isinstance(
             self.gae_lambda, int | float | str
         ):
@@ -4222,8 +4308,17 @@ class PPOConfig(BaseExperimentConfig):
                 "actor.token_rewards_as_adv=True; folded process rewards are "
                 "not supported yet"
             )
+        # Actor overrides own process semantics. Keep legacy validation only
+        # when the default pipeline will actually consume the legacy selection.
+        advantage = self.actor.advantage
+        process = advantage.process_adv_shaping
+        uses_legacy_process = advantage.compute.implementation in {
+            "default",
+            "areal.trainer.ppo.advantage.compute_advantages",
+        } and (process is None or process.implementation == "auto")
         if (
             prm.enabled
+            and uses_legacy_process
             and prm.advantage_shaping.mode in {"gvpo", "process_weighted"}
             and not self.actor.token_rewards_as_adv
         ):
@@ -4233,6 +4328,7 @@ class PPOConfig(BaseExperimentConfig):
             )
         if (
             prm.enabled
+            and uses_legacy_process
             and prm.advantage_shaping.mode == "process_weighted"
             and self.actor.mask_no_eos_with_zero
         ):

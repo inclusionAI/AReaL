@@ -69,6 +69,8 @@ python3 train.py --config path/to/config.yaml actor.lr=1e-4 seed=42
 
 ### Others
 
+- [Advantage Configuration](section-advantage)
+- [AdvantageFunction Configuration](section-advantage-function)
 - [Agent Configuration](section-agent)
 - [ArchonEngine Configuration](section-archon-engine)
 - [ArchonFP8 Configuration](section-archon-fp8)
@@ -400,6 +402,7 @@ Configuration for PPO actor model, a subclass of a TrainEngine.
 | `setup_timeout`                 | float                                                           | `3600.0`               | Gateway setup timeout in seconds for controller v2.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `workers_ready_timeout`         | float                                                           | `30.0`                 | Timeout (seconds) for initialize() to wait for guards to be ready.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `scheduling_strategy`           | [`SchedulingStrategy`](section-scheduling-strategy)             | *SchedulingStrategy*   | The scheduling strategy of this TrainEngine, either separation or colocation. Currently only used by the TrainController.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `advantage`                     | [`AdvantageConfig`](section-advantage)                          | *AdvantageConfig*      | Composable advantage computation; defaults preserve GAE/PRM settings.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `ppo_n_minibatches`             | integer                                                         | `4`                    | Number of minibatches for each PPO update. Separation DTE AdamW delta transfer currently requires 1.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `eps_clip`                      | float                                                           | `0.2`                  | Clipping factor for policy ratio                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `eps_clip_higher`               | float \| None                                                   | `None`                 | Clipping factor (higher value) for policy ratio. Default is None. When eps_clip_higher is set (decoupled), eps_clip will be used as the lower value.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
@@ -932,6 +935,30 @@ Configuration for Weights & Biases experiment tracking.
 | `tags`           | list of string \| None | `None`       | -                                                                                                                          |
 | `config`         | `dict` \| None         | `None`       | -                                                                                                                          |
 | `id_suffix`      | string \| None         | `"train"`    | -                                                                                                                          |
+
+(section-advantage)=
+
+## Advantage Configuration
+
+Select the advantage function and its orthogonal built-in stages.
+
+| Parameter                | Type                                                            | Default                   | Description                                                                                                        |
+| ------------------------ | --------------------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `compute`                | [`AdvantageFunctionConfig`](section-advantage-function)         | *AdvantageFunctionConfig* | Default compute key or custom dotted compute path.                                                                 |
+| `outcome_reward_shaping` | [`AdvantageFunctionConfig`](section-advantage-function) \| None | `None`                    | Transform task-result rewards before reward normalization; built-in key or dotted callable path.                   |
+| `estimator`              | [`AdvantageFunctionConfig`](section-advantage-function) \| None | `None`                    | Optional advantage-estimator key or dotted callable path.                                                          |
+| `process_adv_shaping`    | [`AdvantageFunctionConfig`](section-advantage-function) \| None | `None`                    | Modify estimated advantages using process rewards; additive by default, or a built-in key or dotted callable path. |
+
+(section-advantage-function)=
+
+## AdvantageFunction Configuration
+
+Reference one built-in algorithm key or a dotted Python callable path.
+
+| Parameter        | Type   | Default  | Description                                                    |
+| ---------------- | ------ | -------- | -------------------------------------------------------------- |
+| `implementation` | string | `"auto"` | Built-in algorithm key or trusted dotted Python callable path. |
+| `kwargs`         | `dict` | `{}`     | Keyword arguments forwarded to the resolved callable.          |
 
 (section-agent)=
 
