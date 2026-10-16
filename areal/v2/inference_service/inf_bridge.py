@@ -223,6 +223,8 @@ class InfBridge:
                 remaining,
             )
 
+            # A weight update may complete before this segment's response arrives.
+            request_version = self._version
             data = await self._send_request(http_req)
             result = self.backend.parse_generation_response(data)
 
@@ -238,7 +240,7 @@ class InfBridge:
 
             accumulated_tokens.extend(result.output_tokens)
             accumulated_logprobs.extend(result.output_logprobs)
-            accumulated_versions.extend([self._version] * len(result.output_tokens))
+            accumulated_versions.extend([request_version] * len(result.output_tokens))
             stop_reason = cast(_StopReason, result.stop_reason)
 
             if result.routed_experts is not None:
