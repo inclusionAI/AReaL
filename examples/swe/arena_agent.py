@@ -27,9 +27,10 @@ from examples.swe.arena_client import (
     ArenaTaskFailedError,
     ArenaTaskResult,
     LLMProtocol,
+    infer_llm_protocol_from_harness,
 )
 from examples.swe.arena_config import load_arena_stream_configs
-from examples.swe.arena_reward_mapping import load_reward_mapping
+from examples.swe.arena_reward_mapping import load_harness_mapping, load_reward_mapping
 from examples.swe.arena_types import ArenaRewardRefConfig, ArenaStreamConfig
 
 from areal.experimental.openai.proxy.workflow import HARNESS_OUTCOME_METRIC_CODES
@@ -538,6 +539,13 @@ class ArenaStreamAgentWorkflow:
             for config in stream_configs
             if config.reward_mapping_file
         }
+        self.harness_mappings = {
+            config.name: load_harness_mapping(
+                config.reward_mapping_file, config.stream_id
+            )
+            for config in self.stream_configs.values()
+            if config.reward_mapping_file
+        }
         self.default_stream_name = (
             stream_configs[0].name if len(stream_configs) == 1 else ""
         )
@@ -702,16 +710,6 @@ class ArenaStreamAgentWorkflow:
             or outcome.get("class") != "agent"
             or outcome.get("source") != "core_context_budget"
             or not isinstance(details, dict)
-            or set(details)
-            != {
-                "byteLimit",
-                "byteLimitExceeded",
-                "bytes",
-                "compactionEnabled",
-                "estimatedTokens",
-                "tokenLimit",
-                "tokenLimitExceeded",
-            }
             or cls._gameagent_outcome_code(raw) != outcome["code"]
             or harness.get("phase") != "agent"
             or harness.get("result_status") != "ERROR"
@@ -722,6 +720,33 @@ class ArenaStreamAgentWorkflow:
             != "GAMEAGENT_OUTCOME_CODE=LLM_CONTEXT_WINDOW_EXCEEDED "
             "GAMEAGENT_OUTCOME_CLASS=agent"
         ):
+            return None
+        # The current Core also emits this shape for byte-budget exhaustion;
+        # token usage can therefore be below inputLimit. Match the native receipt.
+        if set(details) == {"reason", "estimatedTokens", "inputLimit"}:
+            if (
+                not isinstance(details["reason"], str)
+                or not details["reason"]
+                or type(details["estimatedTokens"]) is not int
+                or type(details["inputLimit"]) is not int
+                or details["inputLimit"] < 0
+                or details["estimatedTokens"] < 0
+            ):
+                return None
+            return (
+                f"context window limit exceeded: {details['reason']} "
+                f"({details['estimatedTokens']} estimated tokens / "
+                f"{details['inputLimit']} input tokens)"
+            )
+        if set(details) != {
+            "byteLimit",
+            "byteLimitExceeded",
+            "bytes",
+            "compactionEnabled",
+            "estimatedTokens",
+            "tokenLimit",
+            "tokenLimitExceeded",
+        }:
             return None
         for key in ("byteLimit", "bytes", "estimatedTokens", "tokenLimit"):
             if type(details[key]) is not int or details[key] <= 0:
@@ -748,12 +773,42 @@ class ArenaStreamAgentWorkflow:
         )
 
     @classmethod
+    def _is_structured_context_failure(cls, raw: Any) -> bool:
+        """Recognize the terminal context code independently of its producer."""
+        if not isinstance(raw, dict):
+            return False
+        outcome = raw.get("outcome")
+        harness = raw.get("harness")
+        if not isinstance(outcome, dict) or not isinstance(harness, dict):
+            return False
+        if (
+            outcome.get("code") != "LLM_CONTEXT_WINDOW_EXCEEDED"
+            or outcome.get("class") != "agent"
+            or cls._gameagent_outcome_code(raw) != outcome["code"]
+            or harness.get("phase") != "agent"
+            or harness.get("result_status") != "ERROR"
+            or type(harness.get("exit_code")) is not int
+            or harness["exit_code"] != 1
+            or raw.get("failure") is not None
+            or harness.get("summary")
+            != "GAMEAGENT_OUTCOME_CODE=LLM_CONTEXT_WINDOW_EXCEEDED "
+            "GAMEAGENT_OUTCOME_CLASS=agent"
+        ):
+            return False
+        # Keep validating the known local budget evidence, but do not require
+        # provider outcomes to use that producer's details or error message.
+        if outcome.get("source") == "core_context_budget":
+            return cls._core_context_zero_failure_message(raw) is not None
+        return True
+
+    @classmethod
     def _is_core_agent_zero_failure(cls, raw: Any, receipt: Any) -> bool:
         """Require a matching native receipt for model or context exhaustion."""
         message = cls._core_model_zero_failure_message(raw)
         if message is None:
             message = cls._core_context_zero_failure_message(raw)
-        if message is None or not isinstance(receipt, dict):
+        context_failure = cls._is_structured_context_failure(raw)
+        if (message is None and not context_failure) or not isinstance(receipt, dict):
             return False
         if (
             receipt.get("implementation") != "rust-core-runtime"
@@ -770,7 +825,17 @@ class ArenaStreamAgentWorkflow:
             not isinstance(errors, list)
             or len(errors) != 1
             or not isinstance(errors[0], dict)
-            or errors[0].get("message") != message
+            or not isinstance(errors[0].get("message"), str)
+            or not errors[0]["message"]
+            or (
+                message is not None
+                and errors[0]["message"] != message
+                and not (
+                    message == "model stopped with reason: length"
+                    and errors[0]["message"]
+                    == "provider terminal response includes final usage"
+                )
+            )
         ):
             return False
         expected = raw["outcome"]
@@ -1059,6 +1124,66 @@ class ArenaStreamAgentWorkflow:
         code = cls._gameagent_outcome_code(raw)
         return code if code in HARNESS_OUTCOME_METRIC_CODES else "OTHER"
 
+    @staticmethod
+    def _is_abbreviated_whitebox_failure(raw: Any) -> bool:
+        """Recognize Arena's adopted Whitebox wrapper without Harness metadata."""
+        if not isinstance(raw, dict) or set(raw) != {"error"}:
+            return False
+        detail = raw["error"]
+        return (
+            isinstance(detail, str)
+            and re.match(
+                r"harness: (?:adopted harness: )?"
+                r"harness agent phase exited with code 1: ",
+                detail,
+            )
+            is not None
+            and re.search(
+                r"\(runner=[^\n)]+/skills/scene-whitebox-unified-b-bridge/"
+                r"scripts/runner\.py\)",
+                detail,
+            )
+            is not None
+            and "GAMEAGENT_OUTCOME_CODE=" not in detail
+        )
+
+    @classmethod
+    def _is_whitebox_execution_timeout(cls, error: ArenaTaskFailedError) -> bool:
+        """Accept only the bridge's explicit execution deadline, not generic kills."""
+        lifecycle = error.whitebox_lifecycle
+        raw = error.result.raw if error.result is not None else None
+        if not isinstance(lifecycle, dict) or not isinstance(raw, dict):
+            return False
+        abbreviated = cls._is_abbreviated_whitebox_failure(raw)
+        # An existing terminal receipt may precede a collection/exit deadline.
+        # Do not overwrite it or bypass conflicting result-family evidence.
+        if (
+            (not abbreviated and cls._harness_result_format(raw) != "native-runner")
+            or error.harness_result is not None
+            or (
+                not abbreviated
+                and (
+                    not isinstance(raw.get("harness"), dict)
+                    or raw["harness"].get("phase") != "agent"
+                )
+            )
+            or raw.get("outcome")
+            or raw.get("outcome_code")
+            or raw.get("failure") is not None
+            or raw.get("trajectoryHealth", "healthy") != "healthy"
+            or raw.get("status", "ERROR") != "ERROR"
+        ):
+            return False
+        return (
+            lifecycle.get("schema") == "whitebox-runner-lifecycle/v1"
+            and lifecycle.get("trigger") == "BRIDGE_EXECUTION_DEADLINE"
+            and lifecycle.get("status") == "INTERRUPTED"
+            and lifecycle.get("remaining_pids") == []
+            and lifecycle.get("native_receipt_synthesized") is False
+            and type(lifecycle.get("native_exit_code")) is int
+            and lifecycle["native_exit_code"] in (-9, -15)
+        )
+
     @classmethod
     def _is_model_attributed_harness_failure(
         cls, error: ArenaTaskFailedError, *, context_overflow: bool = False
@@ -1066,6 +1191,8 @@ class ArenaStreamAgentWorkflow:
         """Select one result family, then apply only that family's admission rules."""
         result = error.result
         raw = result.raw if result is not None else None
+        if cls._is_whitebox_execution_timeout(error):
+            return True
         result_format = cls._harness_result_format(raw)
         if result_format is None:
             return False
@@ -1157,9 +1284,10 @@ class ArenaStreamAgentWorkflow:
             error, ArenaTaskFailedError
         ):
             return False
-        # A failed grader leaves this task unscored. It does not invalidate
-        # other tasks' rewards, even though it is not a model-attributed failure.
-        if error.status == "EVAL_FAILED":
+        # Setup and grader failures leave this task unscored without
+        # invalidating healthy siblings. Proxy service errors are still
+        # propagated by OpenAIProxyWorkflow before applying this hook.
+        if error.status in {"SETUP_FAILED", "EVAL_FAILED"}:
             return disposition == "system_failure_reject"
         return (
             error.status in {"HARNESS_FAILED", "NO_OUTPUT", "TIMEOUT"}
@@ -1414,7 +1542,14 @@ class ArenaStreamAgentWorkflow:
                 "arena_llm_route_mode='session_gateway'"
             )
         self._validate_row_reward_ref(data, stream_config)
-        self._validate_row_llm_protocol(llm_protocol, stream_config)
+        harness = self._expected_harness(data, stream_config)
+        if self.harness_mappings.get(stream_config.name):
+            expected_protocol = infer_llm_protocol_from_harness(harness)
+            llm_protocol = data.get("llm_protocol", expected_protocol)
+            if llm_protocol != expected_protocol:
+                raise ValueError("Arena row LLM protocol mismatch with task Harness")
+        else:
+            self._validate_row_llm_protocol(llm_protocol, stream_config)
         if arena_http_client is None:
             async with httpx.AsyncClient(timeout=self.request_timeout) as check_client:
                 await self._validate_live_reward_ref(
@@ -1608,7 +1743,7 @@ class ArenaStreamAgentWorkflow:
                         proxy_base_url=registered_url,
                         proxy_api_key=launch_api_key,
                         session_id=proxy_session_id,
-                        harness=stream_config.harness,
+                        harness=harness,
                         task_envs=launch_task_envs,
                         experiment=self.experiment_name,
                         metadata=task_metadata,
@@ -1625,10 +1760,10 @@ class ArenaStreamAgentWorkflow:
                     self._task_result.set(exc.result)
                     if exc.status == "HARNESS_FAILED" and (
                         self._harness_result_format(exc.result.raw) == "native-runner"
+                        or self._is_abbreviated_whitebox_failure(exc.result.raw)
                         or self._core_model_zero_failure_message(exc.result.raw)
                         is not None
-                        or self._core_context_zero_failure_message(exc.result.raw)
-                        is not None
+                        or self._is_structured_context_failure(exc.result.raw)
                     ):
                         try:
                             exc.harness_result = (
@@ -1645,6 +1780,26 @@ class ArenaStreamAgentWorkflow:
                                 exc.task_id,
                                 exc_info=True,
                             )
+                if (
+                    exc.status == "HARNESS_FAILED"
+                    and isinstance(harness, str)
+                    and harness.split("@", 1)[0] == "whitebox-unified-b-areal"
+                ):
+                    try:
+                        exc.whitebox_lifecycle = (
+                            await self.client.get_whitebox_lifecycle_async(
+                                exc.task_id,
+                                client=client,
+                                timeout=min(self.request_timeout, 15.0),
+                            )
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Failed to fetch Whitebox lifecycle for task %s; "
+                            "deadline recovery unavailable.",
+                            exc.task_id,
+                            exc_info=True,
+                        )
                 raise
             except asyncio.CancelledError:
                 await audit_incomplete_task("LOCAL_WAIT_CANCELLED")
@@ -1812,6 +1967,18 @@ class ArenaStreamAgentWorkflow:
             )
         return stream_config
 
+    def _expected_harness(
+        self, data: dict[str, Any], stream_config: ArenaStreamConfig
+    ) -> str:
+        mapping = self.harness_mappings.get(stream_config.name, {})
+        data_id = str(data.get("data_id") or "")
+        if mapping and data_id not in mapping:
+            raise ValueError(f"Arena Harness mapping has no data_id {data_id!r}")
+        expected = mapping[data_id] if mapping else stream_config.harness
+        if data.get("harness") and data["harness"] != expected:
+            raise ValueError("Arena row Harness mismatch with frozen binding")
+        return expected
+
     def _expected_reward_ref(
         self, data: dict[str, Any], stream_config: ArenaStreamConfig
     ) -> ArenaRewardRefConfig:
@@ -1946,6 +2113,7 @@ class ArenaStreamAgentWorkflow:
                     if result.status == "HARNESS_FAILED"
                     else None
                 ),
+                "expected_harness": self._expected_harness(data, stream_config),
                 "expected_reward_ref": {
                     "key": expected_ref.key,
                     "version": expected_ref.version,

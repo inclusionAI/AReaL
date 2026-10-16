@@ -71,6 +71,7 @@ class ArenaTaskFailedError(ArenaAPIError):
         self.payload = dict(payload or {})
         self.result = result
         self.harness_result: dict[str, Any] | None = None
+        self.whitebox_lifecycle: dict[str, Any] | None = None
         super().__init__(f"Arena task {task_id!r} failed with {status}")
 
 
@@ -322,8 +323,28 @@ class ArenaOpenAPIClient:
     ) -> dict[str, Any]:
         """Fetch the terminal Harness receipt for one failed task."""
 
+        return await self._get_failure_artifact_async(
+            task_id, "harness_result.json", client=client, timeout=timeout
+        )
+
+    async def get_whitebox_lifecycle_async(
+        self, task_id: str, *, client: httpx.AsyncClient, timeout: float
+    ) -> dict[str, Any]:
+        """Fetch the bridge supervisor receipt without inferring from exit codes."""
+        return await self._get_failure_artifact_async(
+            task_id, "whitebox-lifecycle.json", client=client, timeout=timeout
+        )
+
+    async def _get_failure_artifact_async(
+        self,
+        task_id: str,
+        artifact: Literal["harness_result.json", "whitebox-lifecycle.json"],
+        *,
+        client: httpx.AsyncClient,
+        timeout: float,
+    ) -> dict[str, Any]:
         encoded_task_id = quote(task_id, safe="")
-        url = f"{self.base_url}/api/artifacts/{encoded_task_id}/harness_result.json"
+        url = f"{self.base_url}/api/artifacts/{encoded_task_id}/{artifact}"
         response = await self._async_request(
             client, "GET", url, headers=self._headers, timeout=timeout
         )
@@ -437,14 +458,14 @@ class ArenaOpenAPIClient:
 
     def get_published_version(
         self,
-        kind: Literal["envs", "rewards"],
+        kind: Literal["envs", "rewards", "harnesses"],
         key: str,
         version: str,
         *,
         client: httpx.Client | None = None,
     ) -> dict[str, Any]:
-        """Read an exact published Env or reward version for startup pinning."""
-        if kind not in {"envs", "rewards"}:
+        """Read an exact published Env, reward, or Harness version for startup pinning."""
+        if kind not in {"envs", "rewards", "harnesses"}:
             raise ValueError(f"Unsupported Arena version kind: {kind!r}")
         response = self._sync_request(
             "GET",

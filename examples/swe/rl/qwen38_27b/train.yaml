@@ -60,8 +60,8 @@ rollout:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
   max_concurrent_rollouts: 1500
-  queue_size: 16
-  consumer_batch_size: 32
+  queue_size: 256
+  consumer_batch_size: 16
   max_head_offpolicyness: 1
   enable_rollout_tracing: false
   check_trajectory_format: false
@@ -100,6 +100,7 @@ rollout:
     - set -euo pipefail
     - source "$QWEN_RUNTIME_SCRIPT"
     - python3 "$QWEN_RECIPE_DIR/configure_sglang_logging.py"
+    - python3 -m areal.engine.sglang_mm_tensor_storage
     - test "$TMS_INIT_ENABLE" = 0
     - test "$TMS_INIT_ENABLE_CPU_BACKUP" = 0
     - cd ${oc.env:QWEN_REPO}
@@ -196,6 +197,7 @@ actor:
   temperature: ${gconfig.temperature}
   kl_ctl: 0.0
   ppo_n_minibatches: 1
+  loss_aggregation: token_mean
   recompute_logprob: false
   prox_logp_method: reuse_train_logp
   use_decoupled_loss: true
@@ -281,7 +283,7 @@ econfig:
   - name: whitebox-b
     stream_id: whitebox-b-overfit64-20261013
     sampling_weight: 1
-    harness: whitebox-unified-b-areal@0.1.0
+    harness: whitebox-unified-b-areal@0.1.1-no-budget
     llm_protocol: chat_completions
     task_envs:
       DSH_LLM_REQUEST_TIMEOUT_SECONDS: '7200'
@@ -294,12 +296,12 @@ sglang:
   context_length: 262144
   max_prefill_tokens: 8192
   chunked_prefill_size: 8192
-  max_running_requests: 16
+  max_running_requests: 24
   mem_fraction_static: 0.7
   attention_backend: null
   sampling_backend: null
   disable_cuda_graph: false
-  cuda_graph_max_bs: 16
+  cuda_graph_max_bs: 24
   disable_radix_cache: false
   enable_memory_saver: true
   mamba_ssm_dtype: bfloat16
@@ -307,7 +309,7 @@ sglang:
   log_level: info
   enable_multimodal: true
 train_dataset:
-  batch_size: 32
+  batch_size: 16
   shuffle: true
   pin_memory: true
   num_workers: 0

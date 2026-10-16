@@ -922,6 +922,11 @@ def _core_model_failure_error(
             "provider_length_stop",
             "model stopped with reason: length",
         ),
+        (
+            "LLM_OUTPUT_TOKEN_LIMIT_EXCEEDED",
+            "provider_length_stop",
+            "provider terminal response includes final usage",
+        ),
     ],
 )
 def test_core_model_failure_with_matching_native_receipt_keeps_zero(
@@ -1020,6 +1025,229 @@ def _core_context_failure_error() -> ArenaTaskFailedError:
     return error
 
 
+def _provider_context_failure_error(source="provider_stream"):
+    error = _core_context_failure_error()
+    outcome = {
+        "code": "LLM_CONTEXT_WINDOW_EXCEEDED",
+        "class": "agent",
+        "source": source,
+        "details": {
+            "code": "context_length_exceeded",
+            "errorShape": "object",
+            "errorType": "context_length_exceeded",
+            "eventType": "error",
+            "reason": None,
+        },
+    }
+    error.result.raw["outcome"] = outcome
+    error.harness_result["error"][0] = {
+        "message": "provider stream error: context_length_exceeded",
+        "outcome": outcome.copy(),
+    }
+    error.harness_result["raw"]["outcome"] = outcome.copy()
+    return error
+
+
+@pytest.mark.parametrize(
+    "source", ["provider_stream", "provider_http", "other_producer"]
+)
+def test_structured_context_code_from_other_producers_keeps_zero(source):
+    """The terminal code, rather than the producer name, defines overflow."""
+    error = _provider_context_failure_error(source)
+    assert (
+        ArenaStreamAgentWorkflow.classify_proxy_failure(
+            error, context_overflow=False, interaction_count=2
+        )
+        == "model_failure_zero"
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "infrastructure",
+        "different_code",
+        "missing_receipt",
+        "conflicting_receipt",
+        "system_failure",
+        "unhealthy",
+        "no_interactions",
+        "setup_failed",
+    ],
+)
+def test_provider_context_failure_with_invalid_evidence_is_rejected(mutation):
+    """A context outcome cannot hide infrastructure errors or empty samples."""
+    error = _provider_context_failure_error()
+    count = 2
+    if mutation == "infrastructure":
+        error.result.raw["outcome"]["class"] = "infrastructure"
+    elif mutation == "different_code":
+        error.result.raw["outcome"]["code"] = "LLM_RESPONSE_FAILED"
+    elif mutation == "missing_receipt":
+        error.harness_result = None
+    elif mutation == "conflicting_receipt":
+        error.harness_result["raw"]["outcome"]["source"] = "core_context_budget"
+    elif mutation == "system_failure":
+        error.result.raw["failure"] = {"code": "EXPORT_FAILED"}
+    elif mutation == "unhealthy":
+        error.result.raw["trajectoryHealth"] = "unhealthy"
+    elif mutation == "setup_failed":
+        error.status = "SETUP_FAILED"
+    else:
+        count = 0
+    assert (
+        ArenaStreamAgentWorkflow.classify_proxy_failure(
+            error, context_overflow=True, interaction_count=count
+        )
+        != "model_failure_zero"
+    )
+
+
+def _current_core_context_failure_error(reason="compaction is disabled"):
+    error = _core_context_failure_error()
+    details = {"estimatedTokens": 189066, "inputLimit": 188416, "reason": reason}
+    error.result.raw["outcome"]["details"] = details
+    for outcome in (
+        error.harness_result["error"][0]["outcome"],
+        error.harness_result["raw"]["outcome"],
+    ):
+        outcome["details"] = details.copy()
+    error.harness_result["error"][0]["message"] = (
+        f"context window limit exceeded: {reason} "
+        "(189066 estimated tokens / 188416 input tokens)"
+    )
+    return error
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "compaction is disabled",
+        "full request does not fit after compaction; inspect fixed instructions, tools and retained inputs",
+    ],
+)
+def test_current_core_context_overflow_keeps_zero(reason):
+    error = _current_core_context_failure_error(reason)
+    assert (
+        ArenaStreamAgentWorkflow.classify_proxy_failure(
+            error, context_overflow=False, interaction_count=2
+        )
+        == "model_failure_zero"
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "negative_tokens",
+        "missing_receipt",
+        "conflicting_receipt",
+        "bad_limit",
+        "no_interactions",
+    ],
+)
+def test_current_core_context_overflow_rejects_invalid_evidence(mutation):
+    error = _current_core_context_failure_error()
+    count = 2
+    if mutation == "negative_tokens":
+        error.result.raw["outcome"]["details"]["estimatedTokens"] = -1
+    elif mutation == "bad_limit":
+        error.result.raw["outcome"]["details"]["inputLimit"] = True
+    elif mutation == "missing_receipt":
+        error.harness_result = None
+    elif mutation == "conflicting_receipt":
+        error.harness_result["raw"]["outcome"]["details"]["inputLimit"] = 1
+    else:
+        count = 0
+    assert (
+        ArenaStreamAgentWorkflow.classify_proxy_failure(
+            error, context_overflow=True, interaction_count=count
+        )
+        == "unknown_failure_reject"
+    )
+
+
+def _whitebox_deadline_error():
+    error = _core_context_failure_error()
+    error.result = replace(
+        error.result,
+        raw={
+            "error": "harness agent phase exited with code 1",
+            "harness": {"phase": "agent", "exit_code": 1},
+        },
+    )
+    error.harness_result = None
+    error.whitebox_lifecycle = {
+        "schema": "whitebox-runner-lifecycle/v1",
+        "status": "INTERRUPTED",
+        "trigger": "BRIDGE_EXECUTION_DEADLINE",
+        "native_exit_code": -9,
+        "remaining_pids": [],
+        "native_receipt_synthesized": False,
+    }
+    return error
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        None,
+        "missing",
+        "external",
+        "cleanup",
+        "schema",
+        "outcome",
+        "native_receipt",
+        "outcome_marker",
+        "mixed_family",
+        "wrong_phase",
+        "no_interactions",
+        "setup",
+        "eval",
+    ],
+)
+def test_whitebox_deadline_only_recovers_confirmed_execution_timeout(mutation):
+    error = _whitebox_deadline_error()
+    count = 2
+    if mutation == "missing":
+        error.whitebox_lifecycle = None
+    elif mutation == "external":
+        error.whitebox_lifecycle["trigger"] = "EXTERNAL_TERMINATION"
+    elif mutation == "cleanup":
+        error.whitebox_lifecycle["remaining_pids"] = [123]
+    elif mutation == "schema":
+        error.whitebox_lifecycle["schema"] = "unknown"
+    elif mutation == "outcome":
+        error.result.raw["outcome"] = {"code": "HARNESS_INTERNAL_ERROR"}
+    elif mutation == "native_receipt":
+        error.harness_result = {"status": "ERROR", "error": "collect failed"}
+    elif mutation == "outcome_marker":
+        error.result.raw["error"] += " GAMEAGENT_OUTCOME_CODE=HARNESS_INTERNAL_ERROR"
+    elif mutation == "mixed_family":
+        error.result.raw["nativeFailure"] = {"code": "SYSTEM_FAILURE"}
+    elif mutation == "wrong_phase":
+        error.result.raw["harness"]["phase"] = "collect"
+    elif mutation == "no_interactions":
+        count = 0
+    elif mutation in ("setup", "eval"):
+        error.status = "SETUP_FAILED" if mutation == "setup" else "EVAL_FAILED"
+    expected = (
+        "model_failure_zero"
+        if mutation is None
+        else (
+            "system_failure_reject"
+            if mutation in ("setup", "eval")
+            else "unknown_failure_reject"
+        )
+    )
+    assert (
+        ArenaStreamAgentWorkflow.classify_proxy_failure(
+            error, context_overflow=False, interaction_count=count
+        )
+        == expected
+    )
+
+
 def test_core_context_budget_exhaustion_keeps_zero_with_matching_native_receipt():
     error = _core_context_failure_error()
 
@@ -1041,8 +1269,13 @@ def test_core_context_budget_exhaustion_keeps_zero_with_matching_native_receipt(
     )
 
 
+@pytest.mark.parametrize(
+    "failure",
+    ["legacy_context", "current_context", "provider_context", "whitebox_deadline"],
+)
 def test_context_budget_failure_fetches_native_receipt_before_classification(
     monkeypatch,
+    failure,
 ):
     monkeypatch.setenv("ARENA_OPENAPI_TOKEN", "arena-token")
     monkeypatch.setenv("ARENA_LLM_API_KEY", "llm-key")
@@ -1052,9 +1285,23 @@ def test_context_budget_failure_fetches_native_receipt_before_classification(
             "arena_streams": [{"name": "a", "stream_id": "stream-a"}],
         }
     )
-    error = _core_context_failure_error()
-    receipt = error.harness_result
-    error.harness_result = None
+    if failure == "whitebox_deadline":
+        workflow.stream_configs["a"].harness = "whitebox-unified-b-areal@0.1.0"
+        error = _whitebox_deadline_error()
+        receipt = error.whitebox_lifecycle
+        error.whitebox_lifecycle = None
+        fetch_method = "get_whitebox_lifecycle_async"
+    else:
+        error = (
+            _current_core_context_failure_error()
+            if failure == "current_context"
+            else _core_context_failure_error()
+        )
+        if failure == "provider_context":
+            error = _provider_context_failure_error()
+        receipt = error.harness_result
+        error.harness_result = None
+        fetch_method = "get_harness_result_async"
     fetched = []
 
     async def register(**_kwargs):
@@ -1073,7 +1320,7 @@ def test_context_budget_failure_fetches_native_receipt_before_classification(
 
     monkeypatch.setattr(workflow.client, "register_llm_proxy_async", register)
     monkeypatch.setattr(workflow.client, "launch_one_task_result", launch)
-    monkeypatch.setattr(workflow.client, "get_harness_result_async", get_receipt)
+    monkeypatch.setattr(workflow.client, fetch_method, get_receipt)
     monkeypatch.setattr(workflow.client, "delete_llm_proxy_async", delete)
 
     with pytest.raises(ArenaTaskFailedError) as caught:
@@ -2109,6 +2356,73 @@ def test_healthy_native_receipt_cannot_hide_explicit_system_failure(
     assert (
         _native_failure_disposition(
             native_model_failure_receipt, context_overflow=context_overflow
+        )
+        == "unknown_failure_reject"
+    )
+
+
+def test_current_core_byte_context_overflow_below_token_limit_keeps_zero():
+    error = _current_core_context_failure_error()
+    for outcome in (
+        error.result.raw["outcome"],
+        error.harness_result["error"][0]["outcome"],
+        error.harness_result["raw"]["outcome"],
+    ):
+        outcome["details"]["estimatedTokens"] = 1000
+    error.harness_result["error"][0]["message"] = (
+        "context window limit exceeded: compaction is disabled "
+        "(1000 estimated tokens / 188416 input tokens)"
+    )
+    assert (
+        ArenaStreamAgentWorkflow.classify_proxy_failure(
+            error, context_overflow=False, interaction_count=2
+        )
+        == "model_failure_zero"
+    )
+
+
+@pytest.mark.parametrize(
+    "runner",
+    ["scene-whitebox-unified-b-bridge/scripts/runner.py", "other/scripts/runner.py"],
+)
+def test_whitebox_adopted_error_only_envelope_requires_known_runner(runner):
+    error = _whitebox_deadline_error()
+    error.result = replace(
+        error.result,
+        raw={
+            "error": "harness: adopted harness: harness agent phase exited with code 1: "
+            f"harness: running task lifecycle (runner=/envarena/harness/skills/{runner})"
+        },
+    )
+    expected = (
+        "model_failure_zero"
+        if runner.startswith("scene-whitebox")
+        else "unknown_failure_reject"
+    )
+    assert (
+        ArenaStreamAgentWorkflow.classify_proxy_failure(
+            error, context_overflow=False, interaction_count=2
+        )
+        == expected
+    )
+
+
+@pytest.mark.parametrize(
+    "code,reason",
+    [
+        ("LLM_RESPONSE_FAILED", "transport"),
+        ("LLM_RESPONSE_FAILED", "empty_completion"),
+        ("LLM_OUTPUT_TOKEN_LIMIT_EXCEEDED", "unknown"),
+    ],
+)
+def test_final_usage_wrapper_without_valid_length_outcome_is_rejected(code, reason):
+    """The usage wrapper alone is not evidence of a model length stop."""
+    error = _core_model_failure_error(
+        code, reason, "provider terminal response includes final usage"
+    )
+    assert (
+        ArenaStreamAgentWorkflow.classify_proxy_failure(
+            error, context_overflow=False, interaction_count=2
         )
         == "unknown_failure_reject"
     )

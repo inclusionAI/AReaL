@@ -49,7 +49,12 @@ print("Shared storage preflight: 16 MiB fsync succeeded", flush=True)
 VERIFY_STORAGE
 
 # Validate the exact rsynced files, including uncommitted source and site profile.
-python3 "$QWEN_RECIPE_DIR/source_snapshot.py" verify \
+# Compute hosts may have an old system Python; use the training image for scripts.
+preflight_python() {
+  singularity exec --no-eval --no-home --writable-tmpfs \
+    --bind "$QWEN_CONTROLLER_MOUNTS" "$QWEN_ACTOR_IMAGE" python3 "$@"
+}
+preflight_python "$QWEN_RECIPE_DIR/source_snapshot.py" verify \
   --snapshot "$QWEN_SUBMITTED_SNAPSHOT" --revision "$QWEN_SOURCE_REVISION"
 export SWE_RL_ADMIN_API_KEY
 SWE_RL_ADMIN_API_KEY=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
@@ -181,7 +186,7 @@ if [[ ${QWEN_CLEANUP_ONLY:-0} == 1 ]]; then
 fi
 
 # Check both credentials before GPU allocation; cleanup requires only OpenAPI.
-python3 "$QWEN_RECIPE_DIR/validate_arena_auth.py" \
+preflight_python "$QWEN_RECIPE_DIR/validate_arena_auth.py" \
   --report "$EXPERIMENT_ROOT/monitoring/auth-preflight-${SLURM_JOB_ID}.json"
 
 # Import the actual proxy entry and Arena workflow before allocating GPU workers.
@@ -195,7 +200,7 @@ singularity exec --no-home --writable-tmpfs --nv --bind "$QWEN_MOUNTS" \
 if [[ ${QWEN_REQUIRE_RECOVER:-0} == 1 ]]; then
   : "${QWEN_PREVIOUS_SUBMISSION:?Previous attempt receipt is required}"
   export QWEN_RECOVERY_HOST_REPORT="$EXPERIMENT_ROOT/monitoring/recovery-host-${SLURM_JOB_ID}.json"
-  python3 "$QWEN_RECIPE_DIR/validate_recover_preflight.py" \
+  preflight_python "$QWEN_RECIPE_DIR/validate_recover_preflight.py" \
     --submission "$QWEN_PREVIOUS_SUBMISSION" --previous-jobs-only \
     --report "$QWEN_RECOVERY_HOST_REPORT"
 fi
