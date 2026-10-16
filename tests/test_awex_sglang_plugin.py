@@ -9,14 +9,14 @@ import pytest
 import torch
 
 from areal.api.cli_args import MegatronEngineConfig, PPOActorConfig
-from areal.engine.awex.colocate_reader import (
-    _get_awex_infer_hf_config,
+from areal.engine.awex.adapters.sglang_adapter import (
+    _get_legacy_awex_hf_config,
     _get_router_dtype,
     _PhysicalDeviceMetaServerClient,
 )
 from areal.engine.awex.memory_saver import patch_tms_hook_mode
 from areal.engine.awex.metadata import serialize_metadata_gc
-from areal.engine.awex.sglang_plugin import (
+from areal.engine.awex.plugins.sglang_plugin import (
     AwexSchedulerPlugin,
     _load_sglang_plugins_if_available,
     _resolve_transfer_rank,
@@ -25,7 +25,7 @@ from areal.engine.awex.sglang_plugin import (
 
 
 def test_load_sglang_plugins_accepts_runtime_without_registry(monkeypatch):
-    import areal.engine.awex.sglang_plugin as plugin_module
+    import areal.engine.awex.plugins.sglang_plugin as plugin_module
 
     def _missing_registry(name):
         assert name == "sglang.srt.plugins"
@@ -92,7 +92,7 @@ def test_native_scheduler_hook_preserves_loops_and_runs_once(monkeypatch):
 
 
 def test_awex_config_preserves_nested_router_and_vision_metadata(monkeypatch):
-    import areal.engine.awex.colocate_reader as reader
+    import areal.engine.awex.adapters.sglang_adapter as reader
 
     composite = object()
 
@@ -104,7 +104,7 @@ def test_awex_config_preserves_nested_router_and_vision_metadata(monkeypatch):
         }
 
     monkeypatch.setattr(reader, "simple_hf_config", serialize)
-    config = _get_awex_infer_hf_config(
+    config = _get_legacy_awex_hf_config(
         SimpleNamespace(config=object()),
         SimpleNamespace(model_config=SimpleNamespace(hf_config=composite)),
     )
@@ -222,18 +222,19 @@ def test_awex_meta_client_uses_physical_device_for_colocate_identity():
 
 
 def test_awex_weight_update_runs_without_grad_tracking():
-    from areal.engine.awex.colocate_reader import AwexColocateReader
+    from areal.engine.awex.adapters.sglang_adapter import AwexSGLangAdapter
 
     grad_modes = []
     reader = SimpleNamespace(
         update_weights=lambda step_id: grad_modes.append(torch.is_grad_enabled())
     )
-    instance = AwexColocateReader(SimpleNamespace())
+    instance = object.__new__(AwexSGLangAdapter)
     instance._initialized = True
+    instance._qwen4_frozen_contract = None
     instance._ensure_reader = lambda: reader
     instance._rebuild_derived_weights = lambda: None
 
-    AwexColocateReader.update_weights(instance, 1)
+    AwexSGLangAdapter.update_weights(instance, 1)
 
     assert grad_modes == [False]
 
@@ -388,14 +389,14 @@ def test_awex_rejects_megatron_without_ddp_flat_buffers():
     "installed", ["0.5.9", "0.5.10.post1", "0.5.18.dev10+g85b539146"]
 )
 def test_supported_sglang_builds_are_accepted(monkeypatch, installed):
-    import areal.engine.awex.sglang_plugin as plugin
+    import areal.engine.awex.plugins.sglang_plugin as plugin
 
     monkeypatch.setattr(plugin.pkg_version, "get_version", lambda name: installed)
     plugin.assert_supported_sglang_version()
 
 
 def test_unverified_sglang_build_is_rejected(monkeypatch):
-    import areal.engine.awex.sglang_plugin as plugin
+    import areal.engine.awex.plugins.sglang_plugin as plugin
 
     monkeypatch.setattr(plugin.pkg_version, "get_version", lambda name: "0.5.19.dev126")
     with pytest.raises(RuntimeError, match="Re-check Scheduler"):
@@ -408,7 +409,7 @@ def test_unverified_sglang_build_is_rejected(monkeypatch):
 def test_awex_reader_uses_model_device_independent_of_physical_ids(
     monkeypatch, visible, logical
 ):
-    from areal.engine.awex.colocate_reader import _DeviceBoundWeightsReader
+    from areal.engine.awex.adapters.sglang_adapter import _DeviceBoundWeightsReader
 
     if visible is None:
         monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
@@ -430,7 +431,7 @@ def test_awex_reader_uses_model_device_independent_of_physical_ids(
 
 
 def test_awex_reader_rejects_model_weights_still_on_cpu():
-    from areal.engine.awex.colocate_reader import _DeviceBoundWeightsReader
+    from areal.engine.awex.adapters.sglang_adapter import _DeviceBoundWeightsReader
 
     with pytest.raises(RuntimeError, match="model weights resumed on CUDA"):
         _DeviceBoundWeightsReader(model=torch.nn.Linear(2, 2))
@@ -467,7 +468,7 @@ def test_scheduler_dispatcher_captures_gc_guard_and_registration_is_idempotent(
 ):
     import sys
 
-    import areal.engine.awex.sglang_plugin as plugin_module
+    import areal.engine.awex.plugins.sglang_plugin as plugin_module
 
     class Scheduler:
         def __init__(self):
@@ -580,7 +581,9 @@ def test_metadata_gc_guard_releases_lock_after_failure():
 @pytest.mark.parametrize("rank", range(4))
 @pytest.mark.parametrize("location", ["scheduler", "worker", "runner", "worker_direct"])
 def test_legacy_model_worker_callback_preserves_native_tp_rank(rank, location):
-    from areal.engine.awex.sglang_plugin import _patch_execute_task_in_model_worker
+    from areal.engine.awex.plugins.sglang_plugin import (
+        _patch_execute_task_in_model_worker,
+    )
 
     runner = SimpleNamespace(model=object())
     worker = SimpleNamespace(model_runner=runner)
@@ -612,7 +615,9 @@ def test_legacy_model_worker_callback_preserves_native_tp_rank(rank, location):
 
 @pytest.mark.parametrize("rank", [None, -1, 4])
 def test_legacy_model_worker_callback_rejects_unresolved_or_invalid_tp_rank(rank):
-    from areal.engine.awex.sglang_plugin import _patch_execute_task_in_model_worker
+    from areal.engine.awex.plugins.sglang_plugin import (
+        _patch_execute_task_in_model_worker,
+    )
 
     scheduler = SimpleNamespace(
         tp_rank=rank,
@@ -628,7 +633,9 @@ def test_legacy_model_worker_callback_rejects_unresolved_or_invalid_tp_rank(rank
 
 
 def test_legacy_model_worker_callback_allows_single_rank_without_parallel_state():
-    from areal.engine.awex.sglang_plugin import _patch_execute_task_in_model_worker
+    from areal.engine.awex.plugins.sglang_plugin import (
+        _patch_execute_task_in_model_worker,
+    )
 
     scheduler = SimpleNamespace(
         server_args=SimpleNamespace(tp_size=1),

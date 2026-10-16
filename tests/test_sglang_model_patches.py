@@ -304,7 +304,7 @@ def test_launcher_wraps_selected_entrypoint_and_keeps_child_environment(monkeypa
     command = [
         "inference-python",
         "-m",
-        "areal.engine.awex.sglang_plugin",
+        "areal.engine.awex.plugins.sglang_plugin",
         "--model-path",
         "model",
     ]

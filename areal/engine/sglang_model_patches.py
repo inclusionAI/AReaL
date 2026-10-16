@@ -16,7 +16,7 @@ from areal.engine._sglang_source_patch import (
 _BOOTSTRAP = "areal.engine.sglang_model_patches"
 _ENTRYPOINTS = (
     "areal.v2.inference_service.sglang.launch_server",
-    "areal.engine.awex.sglang_plugin",
+    "areal.engine.awex.plugins.sglang_plugin",
     "sglang.launch_server",
 )
 
