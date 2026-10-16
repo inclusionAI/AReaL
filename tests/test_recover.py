@@ -238,7 +238,15 @@ class TestRecoverHandler:
 
     @staticmethod
     def _make_gateway_controller() -> GatewayTrainController:
-        return GatewayTrainController.__new__(GatewayTrainController)
+        controller = GatewayTrainController.__new__(GatewayTrainController)
+        controller.config = SimpleNamespace(
+            backend="fsdp:d1", megatron=SimpleNamespace(async_save=False)
+        )
+        controller.save = Mock()
+        controller.load = Mock()
+        controller.set_version = Mock()
+        controller.set_version_for_recovery = Mock()
+        return controller
 
     @staticmethod
     def _dump_dependencies():
@@ -445,46 +453,79 @@ class TestRecoverHandler:
         )
         assert checkpoint_pointer.read_latest(save_root) is None
 
-    @pytest.mark.parametrize("mode", ["on", "auto"])
-    def test_load_rejects_gateway_train_controller(self, mode):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            handler = self._make_handler(tmpdir, mode)
+    def test_dump_gateway_train_controller_publishes_generation(self, tmp_path):
+        """A v2 train controller uses the same durable layout as v1."""
+        handler = self._make_handler(str(tmp_path), "on")
+        handler.freq_ctl = Mock()
+        handler.freq_ctl.check.return_value = True
+        handler.freq_ctl.state_dict.return_value = {}
+        controller = self._make_gateway_controller()
 
-            with pytest.raises(NotImplementedError) as exc_info:
-                handler.load(
-                    self._make_gateway_controller(),
-                    Mock(),
-                    Mock(),
-                    Mock(),
-                    Mock(),
-                )
+        handler.dump(controller, self._step_info(handler), *self._dump_dependencies())
 
-            assert "GatewayTrainController" in str(exc_info.value)
-            assert '`_version="v2"`' in str(exc_info.value)
+        save_root = Saver.get_save_root("test_exp", "test_trial", str(tmp_path))
+        assert checkpoint_pointer.read_latest(save_root).global_step == 3
+        assert check_if_recover(handler.config, 1) is True
+        assert controller.save.call_args.args[0].path == checkpoint_pointer.payload_dir(
+            checkpoint_pointer.generation_dir(save_root, 3), "default"
+        )
 
-    @pytest.mark.parametrize("mode", ["on", "auto"])
-    def test_dump_rejects_gateway_train_controller(self, mode):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            handler = self._make_handler(tmpdir, mode)
-            step_info = StepInfo(
-                epoch=0,
-                epoch_step=0,
-                global_step=0,
-                steps_per_epoch=handler.ft_spec.steps_per_epoch,
-            )
+    @pytest.mark.parametrize("legacy", [False, True])
+    def test_load_gateway_controller_reads_v1_checkpoint(
+        self, tmp_path, monkeypatch, legacy
+    ):
+        """A v2 controller can resume either published or legacy v1 DCP state."""
+        if legacy:
+            monkeypatch.setenv("AREAL_SPMD_MODE", "1")
+        handler = self._make_handler(str(tmp_path), "on")
+        handler.freq_ctl = Mock()
+        handler.freq_ctl.check.return_value = True
+        handler.freq_ctl.state_dict.return_value = {}
+        v1_engine = Mock()
+        v1_engine.config = SimpleNamespace(
+            backend="fsdp:d1", megatron=SimpleNamespace(async_save=False)
+        )
+        handler.dump(v1_engine, self._step_info(handler), *self._dump_dependencies())
+        controller = self._make_gateway_controller()
 
-            with pytest.raises(NotImplementedError) as exc_info:
-                handler.dump(
-                    self._make_gateway_controller(),
-                    step_info,
-                    Mock(),
-                    Mock(),
-                    Mock(),
-                    Mock(),
-                )
+        result = handler.load(controller, *self._dump_dependencies())
 
-            assert "GatewayTrainController" in str(exc_info.value)
-            assert "recover.mode" in str(exc_info.value)
+        assert result.last_step_info.global_step == 3
+        assert controller.load.call_args.args[0].path == (
+            v1_engine.save.call_args.args[0].path
+        )
+        assert controller.load.call_args.args[0].with_optim is True
+        controller.set_version_for_recovery.assert_called_once_with(4)
+
+    def test_load_gateway_actor_and_critic_from_one_generation(self, tmp_path):
+        """Both v2 model roles load the same committed recovery step."""
+        handler = self._make_handler(str(tmp_path), "on")
+        handler.freq_ctl = Mock()
+        handler.freq_ctl.check.return_value = True
+        handler.freq_ctl.state_dict.return_value = {}
+        actor_v1 = Mock(config=SimpleNamespace(backend="fsdp:d1"))
+        critic_v1 = Mock(config=SimpleNamespace(backend="fsdp:d1"))
+        handler.dump(
+            {"default": actor_v1, "critic": critic_v1},
+            self._step_info(handler),
+            *self._dump_dependencies(),
+        )
+        actor_v2 = self._make_gateway_controller()
+        critic_v2 = self._make_gateway_controller()
+
+        handler.load(
+            {"default": actor_v2, "critic": critic_v2},
+            *self._dump_dependencies(),
+        )
+
+        assert actor_v2.load.call_args.args[0].path == (
+            actor_v1.save.call_args.args[0].path
+        )
+        assert critic_v2.load.call_args.args[0].path == (
+            critic_v1.save.call_args.args[0].path
+        )
+        actor_v2.set_version_for_recovery.assert_called_once_with(4)
+        critic_v2.set_version_for_recovery.assert_called_once_with(4)
 
     @pytest.mark.parametrize("no_save_optim", [False, True])
     def test_save_checkpoint_passes_with_optim_from_config(self, no_save_optim):
@@ -558,6 +599,90 @@ class TestPPORecoverEngines:
             "default": trainer.actor,
             "critic": trainer.critic,
         }
+
+
+class TestV2RecoverRestore:
+    @pytest.mark.parametrize("colocated", [False, True])
+    def test_restore_orders_actor_critic_and_rollout_before_admission(
+        self, tmp_path, monkeypatch, colocated
+    ):
+        """A recovered v2 version is published only after both loads and transfer."""
+        handler = TestRecoverHandler._make_handler(str(tmp_path), "on")
+        actor = TestRecoverHandler._make_gateway_controller()
+        critic = TestRecoverHandler._make_gateway_controller()
+        rollout = Mock()
+        events = []
+
+        def record(label):
+            return Mock(side_effect=lambda *args, **kwargs: events.append(label))
+
+        monkeypatch.setattr(
+            handler,
+            "_load_checkpoint",
+            lambda _engine, path, name: events.append(f"load:{name}"),
+        )
+        actor.connect_engine = record("connect")
+        actor.update_weights_for_recovery = record("update")
+        actor.onload = record("actor-onload")
+        actor.offload = record("actor-offload")
+        actor.set_version_for_recovery = record("actor-version")
+        critic.set_version_for_recovery = record("critic-version")
+        for label, method in (
+            ("pause", "pause"),
+            ("pause-generation", "pause_generation_for_recovery"),
+            ("rollout-offload", "offload_for_recovery"),
+            ("rollout-onload", "onload_for_recovery"),
+            ("rollout-version", "set_version_for_recovery"),
+            ("continue-generation", "continue_generation_for_recovery"),
+            ("resume", "resume"),
+        ):
+            setattr(rollout, method, record(label))
+
+        handler._restore_v2_controllers(
+            {"default": actor, "critic": critic},
+            SimpleNamespace(payloads={"default": "actor", "critic": "critic"}),
+            18,
+            rollout,
+            WeightUpdateMeta(type="awex"),
+            "default",
+            colocated,
+        )
+
+        expected = ["connect", "pause", "pause-generation"]
+        if colocated:
+            expected.extend(["rollout-offload", "actor-onload"])
+        expected.extend(["load:default", "load:critic"])
+        expected.extend(
+            ["update", "actor-version", "critic-version", "rollout-version"]
+        )
+        if colocated:
+            expected.extend(["actor-offload", "rollout-onload"])
+        expected.extend(["continue-generation", "resume"])
+        assert events == expected
+        assert actor.update_weights_for_recovery.call_args.args[0].version == 18
+
+    def test_restore_transfer_failure_keeps_rollout_paused(self, tmp_path, monkeypatch):
+        """A partial weight transfer cannot admit inference traffic."""
+        handler = TestRecoverHandler._make_handler(str(tmp_path), "on")
+        actor = TestRecoverHandler._make_gateway_controller()
+        actor.connect_engine = Mock()
+        actor.update_weights_for_recovery = Mock(side_effect=RuntimeError("transfer"))
+        rollout = Mock()
+        monkeypatch.setattr(handler, "_load_checkpoint", Mock())
+
+        with pytest.raises(RuntimeError, match="transfer"):
+            handler._restore_v2_controllers(
+                {"default": actor},
+                SimpleNamespace(payloads={"default": "actor"}),
+                18,
+                rollout,
+                WeightUpdateMeta(type="awex"),
+                "default",
+                False,
+            )
+
+        rollout.continue_generation_for_recovery.assert_not_called()
+        rollout.resume.assert_not_called()
 
 
 class TestAwexRecoverRestore:

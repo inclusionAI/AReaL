@@ -105,6 +105,9 @@ def register_engine_routes(
     app.post("/eval")(_broadcast_post_route("/eval"))
     app.post("/offload")(_broadcast_post_route("/offload"))
     app.post("/onload")(_broadcast_post_route("/onload"))
+    app.post("/init_weight_residency_adapter")(
+        _broadcast_post_route("/init_weight_residency_adapter", require_non_empty=True)
+    )
     app.post("/set_version")(_broadcast_post_route("/set_version"))
     app.get("/get_version")(_dispatch_get_route("/get_version"))
     app.post("/save")(_broadcast_post_route("/save", require_non_empty=True))

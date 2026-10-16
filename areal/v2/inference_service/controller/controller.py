@@ -342,9 +342,9 @@ class RolloutControllerV2:
         *args: Any,
         **kwargs: Any,
     ) -> None:
-        from dataclasses import asdict
+        from dataclasses import asdict, replace
 
-        from areal.api.cli_args import SchedulingSpec, SchedulingStrategy
+        from areal.api.cli_args import SchedulingSpec
         from areal.api.scheduler_api import Job
 
         cfg = self.config
@@ -390,10 +390,18 @@ class RolloutControllerV2:
             inf_spec.cmd = "python -m areal.v2.inference_service.guard"
 
         inf_role = f"{self._worker_role}{self._INF_SUFFIX}"
+        strategy = cfg.scheduling_strategy
+        if strategy.type == "colocation" and strategy.target is not None:
+            target = (
+                "rollout-inf"
+                if strategy.target == "rollout"
+                else f"{strategy.target}-guard"
+            )
+            strategy = replace(strategy, target=target)
         inf_job = Job(
             replicas=total_workers,
             tasks=[inf_spec for _ in range(total_workers)],
-            scheduling_strategy=SchedulingStrategy(),
+            scheduling_strategy=strategy,
             role=inf_role,
         )
 
@@ -1214,7 +1222,18 @@ class RolloutControllerV2:
 
         run_async_task(self._async_set_version, version)
 
-    async def _async_set_version(self, version: int) -> None:
+    def set_version_for_recovery(self, version: int) -> None:
+        """Publish a recovered version only after every data proxy accepts it."""
+        from areal.infra.utils.concurrent import run_async_task
+
+        self._ensure_initialized()
+        if not self._data_proxy_addrs:
+            raise RuntimeError("No inference workers available for recovery version")
+        run_async_task(self._async_set_version, version, True)
+        with self._version_lock:
+            self._version = version
+
+    async def _async_set_version(self, version: int, strict: bool = False) -> None:
         payload = {"version": version}
         results = await asyncio.gather(
             *[
@@ -1226,9 +1245,10 @@ class RolloutControllerV2:
         failed = [r for r in results if isinstance(r, Exception)]
         for r in failed:
             logger.error("Failed to set version on a worker: %s", r)
-        if failed and len(failed) == len(results):
+        if failed and (strict or len(failed) == len(results)):
             raise RuntimeError(
-                f"set_version({version}) failed on ALL {len(failed)} workers"
+                f"set_version({version}) failed on {len(failed)}/{len(results)} "
+                f"workers: {failed[0]}"
             )
 
     def get_version(self) -> int:
@@ -1577,8 +1597,19 @@ class RolloutControllerV2:
         self._ensure_initialized()
         run_async_task(self._async_offload)
 
-    async def _async_offload(self) -> None:
+    def offload_for_recovery(self) -> None:
+        """Release every inference worker before loading colocated weights."""
+        from areal.infra.utils.concurrent import run_async_task
+
+        self._ensure_initialized()
+        run_async_task(self._async_offload, True)
+
+    async def _async_offload(self, strict: bool = False) -> None:
         if not self._data_proxy_addrs:
+            if strict:
+                raise RuntimeError(
+                    "No inference workers available for recovery offload"
+                )
             return
         results = await asyncio.gather(
             *(
@@ -1590,8 +1621,10 @@ class RolloutControllerV2:
         failed = [r for r in results if isinstance(r, Exception)]
         for r in failed:
             logger.error("Failed to offload a worker: %s", r)
-        if failed and len(failed) == len(results):
-            raise RuntimeError(f"offload failed on ALL {len(failed)} workers")
+        if failed and (strict or len(failed) == len(results)):
+            raise RuntimeError(
+                f"offload failed on {len(failed)}/{len(results)} workers: {failed[0]}"
+            )
 
     def onload(self, tags: list[str] | None = None) -> None:
         """Reload model memory on all inference workers."""
@@ -1600,8 +1633,19 @@ class RolloutControllerV2:
         self._ensure_initialized()
         run_async_task(self._async_onload, tags)
 
-    async def _async_onload(self, tags: list[str] | None = None) -> None:
+    def onload_for_recovery(self, tags: list[str] | None = None) -> None:
+        """Restore every inference worker before admitting resumed requests."""
+        from areal.infra.utils.concurrent import run_async_task
+
+        self._ensure_initialized()
+        run_async_task(self._async_onload, tags, True)
+
+    async def _async_onload(
+        self, tags: list[str] | None = None, strict: bool = False
+    ) -> None:
         if not self._data_proxy_addrs:
+            if strict:
+                raise RuntimeError("No inference workers available for recovery onload")
             return
         payload: dict = {"tags": tags} if tags is not None else {}
         results = await asyncio.gather(
@@ -1614,8 +1658,10 @@ class RolloutControllerV2:
         failed = [r for r in results if isinstance(r, Exception)]
         for r in failed:
             logger.error("Failed to onload a worker: %s", r)
-        if failed and len(failed) == len(results):
-            raise RuntimeError(f"onload failed on ALL {len(failed)} workers")
+        if failed and (strict or len(failed) == len(results)):
+            raise RuntimeError(
+                f"onload failed on {len(failed)}/{len(results)} workers: {failed[0]}"
+            )
 
     def pause_generation(self) -> None:
         """Pause generation on all workers."""
@@ -1624,8 +1670,17 @@ class RolloutControllerV2:
         self._ensure_initialized()
         run_async_task(self._async_pause_generation)
 
-    async def _async_pause_generation(self) -> None:
+    def pause_generation_for_recovery(self) -> None:
+        """Pause all inference workers; a partial pause is unsafe for recovery."""
+        from areal.infra.utils.concurrent import run_async_task
+
+        self._ensure_initialized()
+        run_async_task(self._async_pause_generation, True)
+
+    async def _async_pause_generation(self, strict: bool = False) -> None:
         if not self._data_proxy_addrs:
+            if strict:
+                raise RuntimeError("No inference workers available for recovery pause")
             return
         results = await asyncio.gather(
             *[
@@ -1637,8 +1692,11 @@ class RolloutControllerV2:
         failed = [r for r in results if isinstance(r, Exception)]
         for r in failed:
             logger.error("Failed to pause generation on a worker: %s", r)
-        if failed and len(failed) == len(results):
-            raise RuntimeError(f"pause_generation failed on ALL {len(failed)} workers")
+        if failed and (strict or len(failed) == len(results)):
+            raise RuntimeError(
+                f"pause_generation failed on {len(failed)}/{len(results)} workers: "
+                f"{failed[0]}"
+            )
 
     def continue_generation(self) -> None:
         """Continue generation on all workers."""
@@ -1647,8 +1705,17 @@ class RolloutControllerV2:
         self._ensure_initialized()
         run_async_task(self._async_continue_generation)
 
-    async def _async_continue_generation(self) -> None:
+    def continue_generation_for_recovery(self) -> None:
+        """Resume all inference workers after the recovered version is visible."""
+        from areal.infra.utils.concurrent import run_async_task
+
+        self._ensure_initialized()
+        run_async_task(self._async_continue_generation, True)
+
+    async def _async_continue_generation(self, strict: bool = False) -> None:
         if not self._data_proxy_addrs:
+            if strict:
+                raise RuntimeError("No inference workers available for recovery resume")
             return
         results = await asyncio.gather(
             *[
@@ -1660,9 +1727,10 @@ class RolloutControllerV2:
         failed = [r for r in results if isinstance(r, Exception)]
         for r in failed:
             logger.error("Failed to continue generation on a worker: %s", r)
-        if failed and len(failed) == len(results):
+        if failed and (strict or len(failed) == len(results)):
             raise RuntimeError(
-                f"continue_generation failed on ALL {len(failed)} workers"
+                f"continue_generation failed on {len(failed)}/{len(results)} workers: "
+                f"{failed[0]}"
             )
 
     # -- Stats -------------------------------------------------------------

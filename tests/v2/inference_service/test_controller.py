@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import httpx
 import pytest
 
-from areal.api.cli_args import AgentConfig, InferenceEngineConfig
+from areal.api.cli_args import AgentConfig, InferenceEngineConfig, SchedulingStrategy
 from areal.utils import stats_tracker
 from areal.v2.inference_service.controller.controller import (
     RolloutControllerV2,
@@ -443,6 +443,26 @@ class TestRolloutControllerV2Construction:
         # No gateway services started, but version management is local
         controller._version = 42
         assert controller.get_version() == 42
+
+    @pytest.mark.asyncio
+    async def test_recovery_pause_rejects_partial_worker_failure(self):
+        """Recovery requires every inference worker to stop before loading."""
+        controller = RolloutControllerV2(
+            config=InferenceEngineConfig(backend="sglang:d2"),
+            scheduler=_make_scheduler(),
+        )
+        controller._data_proxy_addrs = ["http://worker-0", "http://worker-1"]
+
+        async def pause_one(addr, _path, _payload):
+            if addr.endswith("worker-1"):
+                raise RuntimeError("pause failed")
+
+        controller._async_data_proxy_post = AsyncMock(side_effect=pause_one)
+
+        with pytest.raises(RuntimeError, match="1/2 workers"):
+            await controller._async_pause_generation(strict=True)
+
+        controller._sync_client.close()
 
     def test_export_stats_returns_dict(self):
         cfg = InferenceEngineConfig(backend="sglang:d1", admin_api_key="test-key")
@@ -1216,7 +1236,11 @@ class TestMultiNodeConfig:
         assert controller._nnodes_per_instance == 2
 
     @pytest.mark.asyncio
-    async def test_async_initialize_multinode_worker_count(self):
+    @pytest.mark.parametrize(
+        ("target", "guard_role"),
+        [("actor", "actor-guard"), ("rollout", "rollout-inf")],
+    )
+    async def test_async_initialize_multinode_worker_count(self, target, guard_role):
         """With multi-node and pre-existing server_infos, should create dp_size workers."""
         from areal.api.cli_args import SchedulingSpec
         from areal.api.io_struct import LocalInfServerInfo
@@ -1238,6 +1262,7 @@ class TestMultiNodeConfig:
         cfg = InferenceEngineConfig(
             tokenizer_path="mock-tokenizer",
             backend="sglang:d1t8",
+            scheduling_strategy=SchedulingStrategy(type="colocation", target=target),
             scheduling_spec=(SchedulingSpec(gpu=1, cpu=1, mem=1, cmd="mock"),),
             admin_api_key="test-key",
         )
@@ -1265,6 +1290,7 @@ class TestMultiNodeConfig:
         create_call = scheduler.create_workers.call_args
         job = create_call.kwargs.get("job") or create_call.args[0]
         assert job.replicas == 1
+        assert job.scheduling_strategy.target == guard_role
 
         # 3 forks: router + data-proxy + gateway (all on head worker)
         assert mock_fork.call_count == 3

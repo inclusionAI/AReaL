@@ -200,19 +200,6 @@ class RecoverHandler:
             )
         return False
 
-    def _ensure_recover_supported(
-        self,
-        engine: TrainEngine
-        | TrainController
-        | dict[str, TrainEngine | TrainController],
-    ) -> None:
-        if self._is_gateway_train_controller(engine):
-            raise NotImplementedError(
-                "Recovery is not supported with GatewayTrainController "
-                '(`_version="v2"`) yet. Disable `recover.mode` or use '
-                '`_version="v1"`.'
-            )
-
     @staticmethod
     def _normalize_recover_engines(
         engine: TrainEngine
@@ -290,6 +277,61 @@ class RecoverHandler:
             and bool(getattr(megatron_config, "async_save", False))
         )
 
+    def _restore_v2_controllers(
+        self,
+        engines: dict[str, TrainEngine | TrainController],
+        source: checkpoint_pointer.ResumeSource,
+        recovery_version: int,
+        inference_engine: InferenceEngine | None,
+        weight_update_meta: WeightUpdateMeta | None,
+        inference_engine_update_from: str,
+        colocated_rollout: bool,
+    ) -> None:
+        """Restore v2 workers before exposing a recovered inference version."""
+        if inference_engine is None:
+            for name, engine in engines.items():
+                self._load_checkpoint(engine, path=source.payloads[name], name=name)
+                getattr(engine, "set_version_for_recovery", engine.set_version)(
+                    recovery_version
+                )
+            return
+
+        assert weight_update_meta is not None
+        update_engine = engines[inference_engine_update_from]
+        versioned_meta = weight_update_meta.with_version(recovery_version)
+        # A resumed PPOTrainer has already connected the pair.  The v2
+        # controller treats this second call as an idempotent reconnect.
+        update_engine.connect_engine(inference_engine, versioned_meta)
+        inference_engine.pause()
+        # Keep dispatch paused on every failure. The caller tears down this
+        # attempt; a later invocation can use the last published checkpoint.
+        inference_engine.pause_generation_for_recovery()
+        if colocated_rollout:
+            inference_engine.offload_for_recovery()
+            # The trainer had offloaded the actor before inference started.
+            # Resume its TMS region before DCP writes restored parameters.
+            update_engine.onload()
+
+        for name, engine in engines.items():
+            self._load_checkpoint(engine, path=source.payloads[name], name=name)
+
+        update_engine.update_weights_for_recovery(versioned_meta)
+        for engine in engines.values():
+            getattr(engine, "set_version_for_recovery", engine.set_version)(
+                recovery_version
+            )
+        inference_engine.set_version_for_recovery(recovery_version)
+
+        if colocated_rollout:
+            update_engine.offload()
+            if versioned_meta.type == "awex":
+                # The colocate gateway has already restored weights and KV.
+                inference_engine.onload_for_recovery(tags=["cuda_graph"])
+            else:
+                inference_engine.onload_for_recovery()
+        inference_engine.continue_generation_for_recovery()
+        inference_engine.resume()
+
     def dump(
         self,
         engine: TrainEngine
@@ -306,7 +348,6 @@ class RecoverHandler:
     ):
         if self.config.mode in ("disabled", "off"):
             return
-        self._ensure_recover_supported(engine)
         # currently only support recover on one engine
         if not self.freq_ctl.check(
             epochs=int(step_info.epoch_step == self.ft_spec.steps_per_epoch - 1),
@@ -438,14 +479,9 @@ class RecoverHandler:
     ) -> RecoverInfo | None:
         if self.config.mode in ("disabled", "off"):
             return
-        self._ensure_recover_supported(engine)
         if inference_engine is not None and weight_update_meta is None:
             raise ValueError("Weight update meta is required for recovery.")
 
-        # TODO(agent): GatewayTrainController is currently duck-typed and does
-        # not satisfy this TrainController type check. Extend recovery to accept
-        # controller-v2 instances (or make v2 inherit TrainController) before
-        # relying on resumed runs with `_version="v2"`.
         normalized_engine: dict[str, TrainEngine | TrainController] = (
             self._normalize_recover_engines(engine)
         )
@@ -485,6 +521,21 @@ class RecoverHandler:
 
             global_step = recover_info.last_step_info.global_step
             recovery_version = global_step + 1
+
+            if self._is_gateway_train_controller(
+                normalized_engine[inference_engine_update_from]
+            ):
+                colocate_restore_started = inference_engine is not None
+                self._restore_v2_controllers(
+                    normalized_engine,
+                    source,
+                    recovery_version,
+                    inference_engine,
+                    weight_update_meta,
+                    inference_engine_update_from,
+                    colocated_rollout,
+                )
+                return recover_info
 
             is_awex_colocate = self._should_run_awex_colocate_transfer(
                 inference_engine=inference_engine,
