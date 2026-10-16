@@ -3,6 +3,7 @@
 """Recipe-based data production, independent of the research controller."""
 
 from .runner import run_data_job
+from .selection import select_ranked_candidates
 from .snapshot import DatasetSnapshot, export_hf_dataset, load_snapshot
 from .types import (
     Attempt,
@@ -13,10 +14,16 @@ from .types import (
     DataJobConfig,
     DataRecipe,
     DataSample,
+    ExecutionConfig,
+    GenerationShard,
     InsufficientDataError,
     PublicTask,
+    RankedCandidate,
+    RankedDataRecipe,
     RecipeContext,
     Selection,
+    SelectionPolicy,
+    ShardedDataRecipe,
 )
 
 __all__ = [
@@ -27,6 +34,13 @@ __all__ = [
     "Calibrator",
     "DataJobConfig",
     "DataSample",
+    "ExecutionConfig",
+    "GenerationShard",
+    "ShardedDataRecipe",
+    "RankedDataRecipe",
+    "RankedCandidate",
+    "SelectionPolicy",
+    "select_ranked_candidates",
     "DataRecipe",
     "DatasetSnapshot",
     "InsufficientDataError",
