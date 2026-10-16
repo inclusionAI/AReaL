@@ -16,6 +16,10 @@ actor:
 - 使用 `bridge_type=megatron-bridge` 启用新路径。
 - 未显式配置时，默认使用 `mbridge`。
 
+在 NPU 上，`actor.mindspeed.moe_permute_fusion` 和 `moe_token_dispatcher_type` 控制两种 bridge
+后端的融合与 token 分发，对应的 Megatron 配置项不生效。NPU 仅支持 `alltoall` 分发器。CUDA Megatron Bridge 同样使用
+`alltoall`；CUDA mbridge 使用 Megatron 分发器配置。
+
 ## 为什么需要这个功能
 
 - `mbridge` 正在被弃用，且不支持 PEFT/LoRA。

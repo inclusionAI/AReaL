@@ -914,12 +914,17 @@ class MegatronEngineConfig:
     moe_token_dispatcher_type: str = field(
         default="alltoall",
         metadata={
-            "help": "Type of token dispatcher. Options: 'allgather','alltoall' and 'flex'."
+            "help": "Type of token dispatcher. Options: 'allgather','alltoall' and 'flex'. "
+            "Ignored on NPU; use mindspeed.moe_token_dispatcher_type. "
+            "Megatron Bridge always uses 'alltoall'."
         },
     )
     moe_permute_fusion: bool = field(
         default=False,
-        metadata={"help": "Fuse token rearrangement ops during token dispatching."},
+        metadata={
+            "help": "Fuse token rearrangement ops during token dispatching. "
+            "Ignored on NPU; use mindspeed.moe_permute_fusion."
+        },
     )
 
     # FP8 Training Configuration
@@ -1044,7 +1049,13 @@ class MindSpeedEngineConfig:
             "Requires moe_alltoall_overlap_comm. Options: 'disable', 'level0', 'level1'."
         },
     )
-    moe_permute_fusion: bool = False
+    moe_permute_fusion: bool = field(
+        default=False,
+        metadata={
+            "help": "Control MoE permutation fusion for MindSpeed patches "
+            "and model execution on NPU."
+        },
+    )
     gemm_gradient_accumulation_fusion: bool = False
     position_embedding_type: str = field(
         default="rope",
@@ -1053,11 +1064,22 @@ class MindSpeedEngineConfig:
     moe_aux_loss_coeff: float = field(default=0.0)
     moe_router_load_balancing_type: str = field(default="aux_loss")
     moe_token_dispatcher_type: str = field(
-        default="allgather",
+        default="alltoall",
         metadata={
-            "help": "Type of token dispatcher. Options: 'allgather','alltoall' and 'flex'."
+            "help": "NPU token dispatcher for MindSpeed patches and model execution. "
+            "Only 'alltoall' is supported on NPU."
         },
     )
+
+    def validate_moe_token_dispatcher(self, bridge_type: str) -> str:
+        """Validate and return the NPU dispatcher before backend initialization."""
+        dispatcher = self.moe_token_dispatcher_type
+        if dispatcher != "alltoall":
+            raise ValueError(
+                "NPU requires mindspeed.moe_token_dispatcher_type='alltoall'; "
+                f"got {dispatcher!r} for {bridge_type}."
+            )
+        return dispatcher
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
