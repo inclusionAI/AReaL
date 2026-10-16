@@ -1031,7 +1031,10 @@ class SlurmScheduler(Scheduler):
         # Build final command and export string
         if self.container_type == "apptainer":
             # For apptainer, pass env vars to singularity
-            env_string = " ".join(f"--env {k}={v}" for k, v in env_vars_dict.items())
+            # Preserve each environment assignment as one shell argument.
+            env_string = " ".join(
+                f"--env {shlex.quote(f'{k}={v}')}" for k, v in env_vars_dict.items()
+            )
             final_cmd = "singularity exec --no-home --writable-tmpfs --nv"
             if self.container_mounts:
                 final_cmd += f" --bind {self.container_mounts}"
