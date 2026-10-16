@@ -44,6 +44,28 @@ def _groups():
     return groups
 
 
+def _add_r3_routing(groups):
+    routing = torch.arange(4 * 4 * 2 * 2).reshape(4, 4, 2, 2)
+    validity = torch.tensor([True, False, True, True])
+    for group in groups:
+        rows = group["input_ids"][:, 0]
+        group["routed_experts"] = routing[rows]
+        group["r3_routing_valid"] = validity[rows]
+
+
+def _assert_r3_routing(engine, batch):
+    rows = batch["input_ids"][:, 0]
+    routing = torch.arange(4 * 4 * 2 * 2).reshape(4, 4, 2, 2)
+    validity = torch.tensor([True, False, True, True])
+    torch.testing.assert_close(
+        engine._r3_pending_routed_experts, routing[rows], rtol=0, atol=0
+    )
+    torch.testing.assert_close(engine._r3_pending_valid, validity[rows], rtol=0, atol=0)
+    assert "routed_experts" not in batch
+    assert "r3_routing_valid" not in batch
+    assert "_r3_row_indices" not in batch
+
+
 def _actor(mode, n_steps, train_batch):
     actor = object.__new__(PPOActor)
     actor.config = PPOActorConfig(
@@ -63,9 +85,12 @@ def _actor(mode, n_steps, train_batch):
     return actor
 
 
+@pytest.mark.parametrize("r3_enabled", [False, True])
 @pytest.mark.parametrize("mode", ["token_mean", "seq_mean", "prompt_mean", "constant"])
-def test_actor_modes_keep_original_response_schedule(mode):
+def test_actor_modes_keep_original_response_schedule(mode, r3_enabled):
     groups = _groups()
+    if r3_enabled:
+        _add_r3_routing(groups)
     batched, _ = concat_batch(groups)
     expected = [
         mb["input_ids"][:, 0].tolist()
@@ -74,24 +99,53 @@ def test_actor_modes_keep_original_response_schedule(mode):
     visited = []
 
     def train_batch(batch, **kwargs):
+        if r3_enabled:
+            _assert_r3_routing(actor.engine, batch)
         assert "group_sizes" not in batch
         visited.append(batch["input_ids"][:, 0].tolist())
         return {}
 
+    actor = _actor(mode, 4, train_batch)
+    actor.engine._r3_enabled = r3_enabled
     with patch("areal.trainer.ppo.actor.stats_tracker", MagicMock()):
-        _actor(mode, 4, train_batch).ppo_update(groups)
+        actor.ppo_update(groups)
+    if r3_enabled:
+        assert actor.engine._r3_pending_routed_experts is None
+        assert actor.engine._r3_pending_valid is None
 
     assert visited == expected
     assert len(visited) == 4  # Three groups still produce four response steps.
 
 
+@pytest.mark.parametrize("mode", ["token_mean", "seq_mean", "prompt_mean", "constant"])
+def test_actor_r3_training_failure_clears_routing_with_loss_aggregation(mode):
+    """A failed optimizer minibatch must not contaminate the next actor call."""
+    groups = _groups()
+    _add_r3_routing(groups)
+
+    def train_batch(batch, **kwargs):
+        _assert_r3_routing(actor.engine, batch)
+        raise RuntimeError("training minibatch failed")
+
+    actor = _actor(mode, 4, train_batch)
+    actor.engine._r3_enabled = True
+    with patch("areal.trainer.ppo.actor.stats_tracker", MagicMock()):
+        with pytest.raises(RuntimeError, match="training minibatch failed"):
+            actor.ppo_update(groups)
+    assert actor.engine._r3_pending_routed_experts is None
+    assert actor.engine._r3_pending_valid is None
+
+
+@pytest.mark.parametrize("r3_enabled", [False, True])
 @pytest.mark.parametrize("packed", [False, True])
 @pytest.mark.parametrize("requested_steps", [1, 3, 6])
 def test_actor_prompt_step_mean_matches_frozen_full_group_loss_and_gradient(
-    packed, requested_steps
+    packed, requested_steps, r3_enabled
 ):
     """Fixed-parameter step averaging preserves the full original prompt objective."""
     groups = _groups()
+    if r3_enabled:
+        _add_r3_routing(groups)
     parameter = torch.zeros(4, requires_grad=True)
     oracle_gradient = torch.zeros_like(parameter)
     offset = 0
@@ -114,6 +168,8 @@ def test_actor_prompt_step_mean_matches_frozen_full_group_loss_and_gradient(
 
     def train_batch(batch, *, loss_fn, loss_weight_fn):
         nonlocal saw_zero_step
+        if r3_enabled:
+            _assert_r3_routing(actor.engine, batch)
         rows = batch["input_ids"][:, 0]
         expected_rows = expected_steps[len(step_losses)]["input_ids"][:, 0]
         torch.testing.assert_close(rows, expected_rows, rtol=0, atol=0)
@@ -149,8 +205,13 @@ def test_actor_prompt_step_mean_matches_frozen_full_group_loss_and_gradient(
         step_losses.append(loss)
         return {}
 
+    actor = _actor("prompt_mean", requested_steps, train_batch)
+    actor.engine._r3_enabled = r3_enabled
     with patch("areal.trainer.ppo.actor.stats_tracker", MagicMock()):
-        _actor("prompt_mean", requested_steps, train_batch).ppo_update(groups)
+        actor.ppo_update(groups)
+    if r3_enabled:
+        assert actor.engine._r3_pending_routed_experts is None
+        assert actor.engine._r3_pending_valid is None
 
     mean_loss = torch.stack(step_losses).mean()
     gradient = torch.autograd.grad(mean_loss, parameter)[0]

@@ -144,6 +144,22 @@ def test_unknown_source_rejects_entire_profile_without_partial_modification(runt
     assert not (root / ".areal-sglang-patches.lock").exists()
 
 
+@pytest.mark.parametrize("patch", [qsa, qwen, executor])
+def test_patch_cli_applies_fix_and_repeats_safely(runtime, monkeypatch, patch):
+    """Recipe commands use the guarded, idempotent engine patch entry points."""
+    root, _, sources = runtime
+    target = root / patch.TARGET_RELATIVE
+    monkeypatch.setattr(sys, "argv", [patch.__name__, "--target", str(target)])
+
+    patch.main()
+    assert target.read_bytes() == patch.patched_source(sources[patch])
+    mtime = target.stat().st_mtime_ns
+    patch.main()
+
+    assert target.stat().st_mtime_ns == mtime
+    assert target.read_bytes() == patch.patched_source(sources[patch])
+
+
 def test_concurrent_starts_install_each_source_once(runtime, monkeypatch):
     root, model, sources = runtime
     writes = []

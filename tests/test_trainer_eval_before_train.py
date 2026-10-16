@@ -5,7 +5,9 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+import torch
 
+from areal.api.cli_args import InferenceEngineConfig
 from areal.trainer import dpo_trainer, rl_trainer, rw_trainer, sft_trainer
 from areal.trainer.dpo_trainer import DPOTrainer
 from areal.trainer.rl_trainer import PPOTrainer
@@ -158,7 +160,7 @@ def _build_ppo_trainer(events: list[tuple], *, recovered: bool = False):
     trainer.config = SimpleNamespace(
         total_train_epochs=1,
         total_train_steps=None,
-        rollout=SimpleNamespace(agent=None, _version="v1"),
+        rollout=InferenceEngineConfig(agent=None, _version="v1"),
         teacher=None,
         gconfig=SimpleNamespace(
             n_samples=1,
@@ -329,6 +331,85 @@ def test_ppo_train_colocated_auxiliary_scoring_releases_rollout_first(
 
     trainer.actor.onload.assert_called_once()
     assert trainer.rollout.offload.call_count == (3 if awex_colocate else 1)
+
+
+@pytest.mark.parametrize("role", ["ref", "teacher", "critic"])
+def test_ppo_train_auxiliary_models_use_live_routes_and_preserve_actor_batch(
+    monkeypatch, role
+):
+    """Auxiliary scoring/updates exclude actor routing without cloning tensors."""
+    _disable_timing_contexts(monkeypatch, rl_trainer)
+    trainer = _build_ppo_trainer([])
+    routed = torch.ones(1, 3, 2, 2, dtype=torch.int32)
+    valid = torch.tensor([True])
+    tokens = torch.ones(1, 3, dtype=torch.long)
+    rollout = [
+        {"input_ids": tokens, "routed_experts": routed, "r3_routing_valid": valid}
+    ]
+    trainer.actor.prepare_batch = lambda *args, **kwargs: rollout
+    trainer.actor.compute_advantages = lambda batch: batch
+    trainer.config.actor.should_compute_prox_logp = lambda: True
+    actor_calls = []
+
+    def actor_batch(batch):
+        assert batch[0]["routed_experts"] is routed
+        assert batch[0]["r3_routing_valid"] is valid
+        assert batch[0]["input_ids"] is tokens
+
+    def actor_score(batch):
+        actor_batch(batch)
+        actor_calls.append("score")
+        return [torch.zeros(1, 3)]
+
+    def actor_update(batch):
+        actor_batch(batch)
+        actor_calls.append("update")
+        if role != "critic":
+            raise _StopAfterFirstUpdate
+
+    trainer.actor.compute_logp = actor_score
+    trainer.actor.ppo_update = actor_update
+    trainer.actor.step_lr_scheduler = Mock()
+    auxiliary = Mock(parallel_strategy=SimpleNamespace(dp_size=1))
+    setattr(trainer, role, auxiliary)
+    setattr(trainer, f"_should_offload_{role}", False)
+
+    def auxiliary_batch(batch):
+        assert batch[0] is not rollout[0]
+        assert "routed_experts" not in batch[0]
+        assert "r3_routing_valid" not in batch[0]
+        assert batch[0]["input_ids"] is tokens
+
+    def score(batch):
+        auxiliary_batch(batch)
+        # Mutating the view must not affect the actor's trajectory dictionary.
+        batch[0].pop("input_ids")
+        return [torch.zeros(1, 3)]
+
+    auxiliary.compute_logp.side_effect = score
+    auxiliary.compute_values.side_effect = score
+    if role == "teacher":
+        trainer.config.teacher = SimpleNamespace(
+            engine_type="train", rl_loss_weight=1.0, distill_loss_weight=1.0
+        )
+    if role == "critic":
+
+        def critic_update(batch):
+            auxiliary_batch(batch)
+            raise _StopAfterFirstUpdate
+
+        auxiliary.ppo_update.side_effect = critic_update
+
+    with pytest.raises(_StopAfterFirstUpdate):
+        trainer.train(workflow=object())
+
+    assert actor_calls == ["score", "update"]
+    actor_batch(rollout)
+    if role == "critic":
+        auxiliary.compute_values.assert_called_once()
+        auxiliary.ppo_update.assert_called_once()
+    else:
+        auxiliary.compute_logp.assert_called_once()
 
 
 @pytest.mark.parametrize(

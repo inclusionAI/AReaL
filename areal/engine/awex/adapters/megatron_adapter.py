@@ -103,6 +103,9 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
         self._legacy_infer_world_size: int | None = None
         self._legacy_num_infer_engines: int | None = None
         self._legacy_logical_train_rank: int | None = None
+        self._pending_ipc_export: (
+            tuple[list[torch.Tensor], list[torch.Tensor]] | None
+        ) = None
 
     @property
     def residency(self) -> MegatronWeightResidency:
@@ -789,13 +792,17 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
 
     @torch.no_grad()
     def execute_legacy_colocate_weight_update(self, version: int) -> None:
-        """Execute the v1 MetaServer/CUDA-IPC colocate update unchanged."""
+        """Publish v1 colocate weights until the reader acknowledges the IPC export."""
         from awex.util.tensor_util import (
             release_tensors,
         )
 
         if self._legacy_meta_server_client is None:
             raise RuntimeError("Legacy AWEX colocate adapter is not initialized")
+        if self._pending_ipc_export is not None:
+            raise RuntimeError(
+                "Previous CUDA IPC export is still awaiting reader acknowledgement"
+            )
 
         torch.cuda.ipc_collect()
         self._prepare_residency_for_publish()
@@ -829,6 +836,8 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
         release_tensors(owned)
         del tensors, owned
         parameters.clear()
+        gc.collect()
+        torch.cuda.empty_cache()
 
         self.release_memory(tags=["weights"])
 
@@ -845,6 +854,8 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
         )
 
         group_shared = [tensor.share_memory_() for tensor in group_tensors]
+        # Keep exported storage alive until the reader has closed its IPC mapping.
+        self._pending_ipc_export = (group_tensors, group_shared)
         serialized_weights = cuda_ipc_serialize((group_shared, metadata, names))
         torch.cuda.synchronize()
 
@@ -883,13 +894,15 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
             self._legacy_meta_server_client.delete_if_exists(update_finished_key)
             self._legacy_meta_server_client.delete_if_exists(serialized_weights_key)
         finally:
-            release_tensors(group_tensors)
-            release_tensors(group_shared)
-            del group_tensors, group_shared
             torch.cuda.synchronize()
-            gc.collect()
-            torch.cuda.ipc_collect()
-            torch.cuda.empty_cache()
+
+        # The reader has acknowledged and closed its mapping. Free the packed
+        # tensors before signaling write_finished for the remaining lifecycle.
+        self._pending_ipc_export = None
+        del group_tensors, group_shared
+        gc.collect()
+        torch.cuda.ipc_collect()
+        torch.cuda.empty_cache()
 
         write_finished_key = f"write_finished{key_suffix}"
         self._legacy_meta_server_client.put_object(write_finished_key, True)
@@ -1030,6 +1043,13 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
         self._residency.release_grad_memory()
         if weights_were_offloaded:
             self._residency.resume_memory(tags=["weights"])
+
+    def checkpoint_residency(self, *, with_model: bool, with_optimizer: bool):
+        """Temporarily restore only resources required by a checkpoint."""
+        return self._residency.checkpoint_residency(
+            with_model=with_model,
+            with_optimizer=with_optimizer,
+        )
 
     def _release_grad_memory(self) -> None:
         self._residency.release_grad_memory()

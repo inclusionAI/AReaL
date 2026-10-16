@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from areal.api.cli_args import MOPDConfig
+from areal.engine.r3.transport import without_r3_tensors
 from areal.infra.rpc.rtensor import RTensorDrainReceipt
 from areal.trainer.mopd.targets import MOPD_CONTRIBUTIONS_KEY
 from areal.trainer.mopd.teacher_manager import (
@@ -114,7 +115,9 @@ class MOPDTeacherPhase:
                 subset = [
                     {
                         key: value
-                        for key, value in rollout_batch[index].items()
+                        for key, value in without_r3_tensors(
+                            rollout_batch[index]
+                        ).items()
                         if key != MOPD_CONTRIBUTIONS_KEY
                     }
                     for index in indices

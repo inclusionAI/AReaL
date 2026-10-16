@@ -30,6 +30,7 @@ VALID_DATASETS = [
     "virl39k",
     "hh-rlhf",
     "torl_data",
+    "dapo-math-17k",
     "swe_sft",
 ]
 
@@ -174,6 +175,16 @@ def _get_custom_dataset(
             max_length=max_length,
             **kwargs,
         )
+    elif "dapo-math-17k" in path.lower() and type == "rl":
+        from .dapo_math_17k import get_dapo_math_17k_rl_dataset
+
+        return get_dapo_math_17k_rl_dataset(
+            path=path,
+            split=split,
+            tokenizer=tokenizer,
+            max_length=max_length,
+            **kwargs,
+        )
     elif (
         _SWE_PATH_PATTERN.search(path.lower()) or _is_swe_sft_artifact(path)
     ) and type == "sft":
@@ -241,6 +252,11 @@ def get_custom_dataset(
     ):
         raise ValueError("dataset_config.path and dataset_config.type are required")
 
+    # Configured loader kwargs apply to both the remote and the local path;
+    # explicit call kwargs take precedence.
+    dataset_kwargs = dict(getattr(dataset_config, "dataset_kwargs", None) or {})
+    dataset_kwargs.update(kwargs)
+
     if (
         is_single_controller()
         and dataset_config is not None
@@ -248,8 +264,6 @@ def get_custom_dataset(
     ):
         from areal.infra.data_service.rdataset import RDataset
 
-        dataset_kwargs = dict(getattr(dataset_config, "dataset_kwargs", None) or {})
-        dataset_kwargs.update(kwargs)
         return RDataset(
             path=dataset_config.path,
             type=dataset_config.type,
@@ -266,7 +280,7 @@ def get_custom_dataset(
             max_length=dataset_config.max_length,
             tokenizer=tokenizer,
             processor=processor,
-            **kwargs,
+            **dataset_kwargs,
         )
 
     logger.warning("dataset_config is not provided")

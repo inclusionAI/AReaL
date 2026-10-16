@@ -240,6 +240,65 @@ class TestRolloutControllerInitialization:
 
         controller.destroy()
 
+    @pytest.mark.parametrize("nnodes", [1, 2])
+    @pytest.mark.parametrize("awex", [False, True])
+    def test_separate_workers_launch_with_unique_awex_ranks(
+        self, monkeypatch, nnodes, awex
+    ):
+        from areal.engine import sglang_remote
+        from areal.engine.awex.plugins.sglang_plugin import _resolve_transfer_rank
+
+        config = create_test_config(backend=f"sglang:d{4 * nnodes}t2")
+        scheduler = MockScheduler()
+        scheduler.n_gpus_per_node = 8
+        controller = RolloutController(
+            inf_engine=MockInferenceEngine, config=config, scheduler=scheduler
+        )
+        server_args = {"base_gpu_id": 0, "awex_colocate_mode": awex}
+        controller.initialize(role="rollout", server_args=server_args)
+        launches = [c for c in scheduler.engine_calls if c[1] == "launch_server"]
+        assert len(launches) == 4 * nnodes
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "2,5")
+        for name in ("AWEX_TRANSFER_RANK", "AWEX_TRANSFER_RANK_BASE", "RANK"):
+            monkeypatch.delenv(name, raising=False)
+        commands = []
+        children = []
+        monkeypatch.setattr(
+            sglang_remote.SGLangConfig,
+            "build_cmd_from_args",
+            lambda args: commands.append(args.copy()) or ["sglang.launch_server"],
+        )
+        monkeypatch.setattr(
+            sglang_remote.subprocess,
+            "Popen",
+            lambda *args, **kwargs: children.append(kwargs["env"]) or Mock(),
+        )
+        ranks = []
+        for rank, (_, _, _, kwargs) in enumerate(launches):
+            sglang_remote.SGLangBackend().launch_server(kwargs["server_args"].copy())
+            assert commands[-1]["base_gpu_id"] == 0
+            assert "_awex_transfer_rank_base" not in commands[-1]
+            if awex:
+                base = children[-1]["AWEX_TRANSFER_RANK_BASE"]
+                assert int(base) == (rank % 4) * 2
+                monkeypatch.setenv("AWEX_TRANSFER_RANK_BASE", base)
+                ranks.extend(
+                    _resolve_transfer_rank(
+                        infer_world_size=8 * nnodes,
+                        gpu_id=gpu,
+                        node_id=rank // 4,
+                        nnodes=nnodes,
+                        instance_world_size=2,
+                    )
+                    for gpu in range(2)
+                )
+            else:
+                assert "AWEX_TRANSFER_RANK_BASE" not in children[-1]
+        if awex:
+            assert ranks == list(range(8 * nnodes))
+        assert server_args == {"base_gpu_id": 0, "awex_colocate_mode": awex}
+        controller.destroy()
+
     def test_initialize_nonfork_colocation_uses_port_after_actor_rendezvous(self):
         """A reused actor worker reserves port 2 for SGLang NCCL."""
         config = create_test_config(
@@ -293,8 +352,13 @@ class TestRolloutControllerInitialization:
             call for call in scheduler.engine_calls if call[1] == "launch_server"
         ]
         assert len(launch_calls) == 2
+        base_gpu_ids = []
         for _, _, _, kwargs in launch_calls:
-            assert kwargs["server_args"]["nccl_port"] == 8001
+            server_args = kwargs["server_args"]
+            assert server_args["nccl_port"] == 8001
+            assert server_args["_awex_gpus_per_server"] == 1
+            base_gpu_ids.append(server_args["base_gpu_id"])
+        assert base_gpu_ids == [0, 1]
 
         controller.destroy()
 

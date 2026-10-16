@@ -168,18 +168,20 @@ def _resolve_transfer_rank(
     node_id: int,
     nnodes: int,
     instance_world_size: int,
+    server_base_gpu_id: int = 0,
 ) -> int:
     """Resolve the inference rank in AWEX's global transfer world.
 
     A one-GPU SGLang server can use the colocated actor's inherited global
     rank when CUDA device isolation remaps its only GPU to device zero. For a
-    multi-GPU server, every TP/PP scheduler inherits the same environment, so
-    its scheduler-local physical GPU identity must be used instead.
+    multi-GPU server, every TP/PP scheduler inherits the same environment.
+    Subtract the server's logical base GPU before adding the dense transfer base.
     """
     explicit_rank = os.environ.get("AWEX_TRANSFER_RANK")
     if explicit_rank is not None:
         transfer_rank = int(explicit_rank)
     else:
+        explicit_base = os.environ.get("AWEX_TRANSFER_RANK_BASE")
         env_rank = os.environ.get("RANK")
         env_world_size = os.environ.get("WORLD_SIZE")
         if (
@@ -189,6 +191,12 @@ def _resolve_transfer_rank(
             and int(env_world_size) == infer_world_size
         ):
             transfer_rank = int(env_rank)
+        elif explicit_base is not None:
+            n_gpus_per_node = max(1, infer_world_size // nnodes)
+            local_gpu_rank = gpu_id - server_base_gpu_id
+            transfer_rank = (
+                node_id * n_gpus_per_node + int(explicit_base) + local_gpu_rank
+            )
         else:
             n_gpus_per_node = max(1, infer_world_size // nnodes)
             transfer_rank = node_id * n_gpus_per_node + gpu_id
@@ -973,10 +981,10 @@ class AwexSchedulerPlugin:
 
         receiver = self._require_receiver()
 
-        # `physical_gpu_id` is node-local. Multi-node colocate needs a globally
-        # unique transfer rank that stays physically paired with the training
-        # process. SGLang may run with logical gpu_id=0 under CUDA_VISIBLE_DEVICES
-        # isolation, so do not use scheduler.gpu_id for AWEX keys.
+        # Transfer ranks are dense process coordinates, while physical GPU IDs
+        # are only used for device pairing and MetaServer keys. The launcher
+        # supplies the server's dense node-local base when GPU visibility is
+        # isolated or non-contiguous.
         gpu_id = self._logical_gpu_id()
         physical_gpu_id = self._physical_gpu_id()
         node_id = int(os.environ.get("SLURM_NODEID", "0"))
@@ -1010,6 +1018,9 @@ class AwexSchedulerPlugin:
             node_id=node_id,
             nnodes=nnodes,
             instance_world_size=self._instance_world_size(),
+            server_base_gpu_id=self._int_attr(
+                self._scheduler.server_args, "base_gpu_id", 0
+            ),
         )
 
         logger.info(
