@@ -9,11 +9,12 @@ from itertools import combinations
 
 import pytest
 
-from examples.data_engineering.tir.data_recipe import TirDataRecipe
+from examples.data_engineering.tir.data_recipe import Family, TirDataRecipe
 
 from areal.v2.data_engineering import (
     CalibrationConfig,
     DataJobConfig,
+    InsufficientDataError,
     RecipeContext,
     run_data_job,
 )
@@ -314,3 +315,47 @@ async def test_tir_can_exclude_all_previous_probe_candidates(tmp_path):
     report = json.loads((snapshot.root / "report.json").read_text())
     assert report["excluded"] == 64
     assert report["batches"] == 2
+
+
+@pytest.mark.parametrize("calibrated", [False, True])
+def test_tir_smallest_selection_covers_every_family(calibrated):
+    """Eight selected tasks retain one case per family, with or without probes."""
+    samples = generated(128)
+    scores = (
+        {sample.task.task_id: (1.0, 0.0) for sample in samples} if calibrated else None
+    )
+    selection = TirDataRecipe().select(
+        samples, scores, RecipeContext(42, 8, "joint", {})
+    )
+    by_id = {sample.task.task_id: sample for sample in samples}
+    families = Counter(
+        by_id[task_id].task.metadata["family"] for task_id in selection.task_ids
+    )
+    assert families == {family.value: 1 for family in Family}
+    assert selection.statistics["families"] == dict(families)
+
+
+@pytest.mark.parametrize("calibrated", [False, True])
+def test_tir_smallest_selection_rejects_missing_eligible_families(calibrated):
+    """Enough algebra cases cannot replace a missing family at target_count=8."""
+    samples = generated(128)
+    if calibrated:
+        scores = {
+            sample.task.task_id: (
+                (1.0, 0.0)
+                if sample.task.metadata["family"] == Family.ALGEBRA.value
+                else (1.0, 1.0)
+            )
+            for sample in samples
+        }
+    else:
+        samples = [
+            sample
+            for sample in samples
+            if sample.task.metadata["family"] == Family.ALGEBRA.value
+        ]
+        scores = None
+    with pytest.raises(
+        InsufficientDataError, match="Too few eligible number_theory cases"
+    ):
+        TirDataRecipe().select(samples, scores, RecipeContext(42, 8, "joint", {}))

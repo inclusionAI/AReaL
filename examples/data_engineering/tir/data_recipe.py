@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
-"""Exact-answer TIR task recipe, adapted from AReaL-RSI 97226ea.
+"""Exact-answer mathematical task recipe for TIR.
 
 Domain formulas and selection policy stay here; execution and storage live in
 areal.v2.data_engineering. This produces tasks, not teacher trajectories.
@@ -12,19 +12,23 @@ import hashlib
 import random
 import re
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from enum import StrEnum
 from fractions import Fraction
 from math import comb, lcm
 from pathlib import Path
 from typing import Any
 
+from areal.v2.data_engineering.selection import select_ranked_candidates
 from areal.v2.data_engineering.types import (
     DataSample,
+    GenerationShard,
     InsufficientDataError,
     PublicTask,
+    RankedCandidate,
     RecipeContext,
     Selection,
+    SelectionPolicy,
     positive_int,
 )
 
@@ -237,13 +241,31 @@ class TirDataRecipe:
     def source_files(self) -> tuple[Path, ...]:
         return (Path(__file__),)
 
-    def generate(self, context: RecipeContext) -> list[DataSample]:
-        rng = random.Random(context.seed + context.batch_index * 100)
-        families = tuple(Family)
-        result = []
+    def generation_shards(
+        self, context: RecipeContext, shard_size: int
+    ) -> Iterable[GenerationShard]:
+        # Independent streams preserve uniqueness within each mathematical recipe.
+        count = self.candidate_count // 16
+        for group in range(16):
+            yield GenerationShard(group * count, (group + 1) * count)
+
+    def generate_shard(
+        self, context: RecipeContext, shard: GenerationShard
+    ) -> Iterable[DataSample]:
+        count = self.candidate_count // 16
+        group = shard.start // count
+        if (
+            group >= 16
+            or shard.start != group * count
+            or shard.stop != (group + 1) * count
+        ):
+            raise ValueError(
+                "TIR generation needs one complete recipe stream per shard"
+            )
+        family, variant = tuple(Family)[group % 8], group // 8
+        rng = random.Random(f"tir:{context.seed}:{context.batch_index}:{group}")
         seen = set()
-        for index in range(self.candidate_count):
-            family, variant = families[index % 8], (index // 8) % 2
+        for _ in range(count):
             for _ in range(1000):
                 question, answer = _diverse_problem(family, variant, rng)
                 task_id = hashlib.sha256(
@@ -256,17 +278,25 @@ class TirDataRecipe:
                     "TIR recipe exhausted its distinct parameters"
                 )
             seen.add(task_id)
-            task = PublicTask(
-                task_id,
-                {"messages": [{"role": "user", "content": question}]},
-                {
-                    "family": family.value,
-                    "recipe": f"{family.value}_{variant}",
-                    "structure_level": 2 + variant,
-                },
+            yield DataSample(
+                PublicTask(
+                    task_id,
+                    {"messages": [{"role": "user", "content": question}]},
+                    {
+                        "family": family.value,
+                        "recipe": f"{family.value}_{variant}",
+                        "structure_level": 2 + variant,
+                    },
+                ),
+                answer,
             )
-            result.append(DataSample(task, answer))
-        return result
+
+    def generate(self, context: RecipeContext) -> list[DataSample]:
+        return [
+            sample
+            for shard in self.generation_shards(context, self.candidate_count)
+            for sample in self.generate_shard(context, shard)
+        ]
 
     def clean(self, sample: DataSample) -> DataSample | None:
         messages = sample.task.input.get("messages")
@@ -301,108 +331,120 @@ class TirDataRecipe:
             raise ValueError("TIR calibration responses must be strings")
         return float(_answer(response) == Fraction(sample.reference))
 
-    def select(
-        self,
-        samples: Sequence[DataSample],
-        scores: Mapping[str, tuple[float | None, ...]] | None,
-        context: RecipeContext,
-    ) -> Selection:
+    def _required_one_pass(self, context: RecipeContext, calibrated: bool) -> int:
         count = context.target_count
         if count < 8 or count % 8:
             raise ValueError("TIR target_count must be divisible by eight")
         required = (
             0
-            if scores is None
+            if not calibrated
             else (
                 count // 4 if self.minimum_one_pass is None else self.minimum_one_pass
             )
         )
         if required > count:
             raise ValueError("minimum_one_pass exceeds target_count")
-        eligible = []
-        for sample in samples:
-            if scores is None:
-                eligible.append((sample, None))
-                continue
-            values = scores[sample.task.task_id]
-            if len(values) != 2 or any(
-                value not in {None, 0.0, 1.0} for value in values
+        return required
+
+    def selection_policy(
+        self, context: RecipeContext, calibrated: bool
+    ) -> SelectionPolicy:
+        self._required_one_pass(context, calibrated)
+        minimum = max(1, context.target_count // (2 * len(Family)))
+        return SelectionPolicy(
+            {family.value: minimum for family in Family},
+            {}
+            if self.maximum_per_recipe is None
+            else {
+                f"{family.value}_{variant}": self.maximum_per_recipe
+                for family in Family
+                for variant in range(2)
+            },
+        )
+
+    def rank(
+        self,
+        sample: DataSample,
+        scores: tuple[float | None, ...] | None,
+        context: RecipeContext,
+    ) -> RankedCandidate | None:
+        passed = None
+        if scores is not None:
+            if len(scores) != 2 or any(
+                value not in {None, 0.0, 1.0} for value in scores
             ):
                 raise ValueError("TIR calibration requires two binary-scored attempts")
-            if None not in values and sum(values) < 2:
-                eligible.append((sample, int(sum(values))))
+            if None in scores or sum(scores) >= 2:
+                return None
+            passed = int(sum(scores))
+        return RankedCandidate(
+            sample.task.task_id,
+            0 if passed == 1 else 1,
+            hashlib.sha256(
+                f"{context.seed}:{sample.task.task_id}".encode()
+            ).hexdigest(),
+            sample.task.metadata["family"],
+            sample.task.metadata["recipe"],
+            {"passed": passed},
+        )
 
-        def rank(pair: tuple[DataSample, int | None]) -> tuple[int, str]:
-            sample, passed = pair
-            return (
-                0 if passed == 1 else 1,
-                hashlib.sha256(
-                    f"{context.seed}:{sample.task.task_id}".encode()
-                ).hexdigest(),
-            )
-
-        selected: list[tuple[DataSample, int | None]] = []
-        recipe_counts: Counter[str] = Counter()
-
-        def admit(pair: tuple[DataSample, int | None]) -> bool:
-            recipe = pair[0].task.metadata["recipe"]
-            if (
-                self.maximum_per_recipe is not None
-                and recipe_counts[recipe] >= self.maximum_per_recipe
-            ):
-                return False
-            recipe_counts[recipe] += 1
-            selected.append(pair)
-            return True
-
-        minimum = count // (2 * len(Family))
-        for family in Family:
-            group = sorted(
-                (
-                    pair
-                    for pair in eligible
-                    if pair[0].task.metadata["family"] == family.value
-                ),
-                key=rank,
-            )
-            admitted = 0
-            for pair in group:
-                if admitted == minimum:
-                    break
-                admitted += admit(pair)
-            if admitted < minimum:
-                raise InsufficientDataError(f"Too few eligible {family.value} cases")
-        selected_ids = {sample.task.task_id for sample, _ in selected}
-        for pair in sorted(eligible, key=rank):
-            if len(selected) == count:
-                break
-            if pair[0].task.task_id not in selected_ids:
-                if admit(pair):
-                    selected_ids.add(pair[0].task.task_id)
-        if len(selected) != count:
-            raise InsufficientDataError("Too few diverse cases under the recipe cap")
-        one_pass = sum(passed == 1 for _, passed in selected)
-        if one_pass < required:
+    def finalize_selection(
+        self,
+        selected: Sequence[RankedCandidate],
+        eligible_count: int,
+        context: RecipeContext,
+    ) -> Selection:
+        one_pass = sum(item.metadata["passed"] == 1 for item in selected)
+        calibrated = any(item.metadata["passed"] is not None for item in selected)
+        if one_pass < self._required_one_pass(context, calibrated):
             raise InsufficientDataError(
                 "Too few borderline cases; revise generator difficulty"
             )
-        selected.sort(
-            key=lambda pair: hashlib.sha256(
-                f"train:{context.seed}:{pair[0].task.task_id}".encode()
-            ).hexdigest()
+        ordered = sorted(
+            selected,
+            key=lambda item: hashlib.sha256(
+                f"train:{context.seed}:{item.task_id}".encode()
+            ).hexdigest(),
         )
         return Selection(
-            tuple(sample.task.task_id for sample, _ in selected),
+            tuple(item.task_id for item in ordered),
             {
-                "eligible": len(eligible),
-                "one_pass": one_pass if scores is not None else None,
-                "zero_pass": count - one_pass if scores is not None else None,
-                "families": dict(
-                    Counter(sample.task.metadata["family"] for sample, _ in selected)
-                ),
-                "recipes": dict(recipe_counts),
+                "eligible": eligible_count,
+                "one_pass": one_pass if calibrated else None,
+                "zero_pass": len(selected) - one_pass if calibrated else None,
+                "families": dict(Counter(item.group for item in selected)),
+                "recipes": dict(Counter(item.bucket for item in selected)),
             },
         )
+
+    def select(
+        self,
+        samples: Sequence[DataSample],
+        scores: Mapping[str, tuple[float | None, ...]] | None,
+        context: RecipeContext,
+    ) -> Selection:
+        policy = self.selection_policy(context, scores is not None)
+        ranked = [
+            item
+            for sample in samples
+            if (
+                item := self.rank(
+                    sample,
+                    scores[sample.task.task_id] if scores is not None else None,
+                    context,
+                )
+            )
+            is not None
+        ]
+        ranked.sort(key=lambda item: (item.priority, item.tie_breaker, item.task_id))
+        selected = select_ranked_candidates(
+            policy,
+            context.target_count,
+            lambda group: (
+                item for item in ranked if group is None or item.group == group
+            ),
+        )
+        return self.finalize_selection(selected, len(ranked), context)
 
     def training_row(self, sample: DataSample) -> dict[str, Any]:
         return {

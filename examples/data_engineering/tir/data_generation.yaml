@@ -6,3 +6,7 @@ max_batches: 1
 max_candidates: 128
 params:
   candidate_count: 128
+execution:
+  max_workers: 4
+  batch_size: 32
+  backend: thread
