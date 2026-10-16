@@ -1988,11 +1988,14 @@ class PPOTrainer:
             current_platform.synchronize()
 
     def _validate_weight_update_model(self) -> None:
-        """Reject Qwen2/Qwen2.5 text models only when AWEX is selected."""
+        """Reject Qwen2/Qwen2.5 text models on the Megatron AWEX path."""
         actor = self.config.actor
         # Controller v2 selects disk for LoRA and AWEX otherwise, regardless
-        # of weight_update_mode. Controller v1 dispatches on that field.
-        if actor._version == "v2" and actor.use_lora:
+        # of weight_update_mode. FSDP uses HF parameter layout and bypasses
+        # the Megatron model converter. Controller v1 dispatches on the field.
+        if actor._version == "v2" and (
+            actor.use_lora or self.actor_alloc.backend != "megatron"
+        ):
             return
         if actor._version == "v1" and actor.weight_update_mode in ("disk", "xccl"):
             return
@@ -2006,7 +2009,7 @@ class PPOTrainer:
             model_config.get("architectures") or []
         ):
             raise ValueError(
-                "Qwen2/Qwen2.5 text models do not support AWEX weight updates. "
+                "Qwen2/Qwen2.5 text models do not support Megatron AWEX weight updates. "
                 "For v1, set actor.weight_update_mode=disk or xccl. "
                 "For v2, set actor.use_lora=True to select disk adapter updates."
             )
