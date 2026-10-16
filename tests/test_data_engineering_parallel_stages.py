@@ -25,11 +25,11 @@ from areal.v2.data_engineering.snapshot import read_jsonl
 
 def config(directory, workers=1, backend="thread", **params):
     return DataJobConfig(
-        "tests.data_engineering_parallel_fixtures:create_sharded_recipe",
+        "tests.test_data_engineering_execution:create_sharded_recipe",
         8,
         params={"directory": str(directory), "count": 16, **params},
         calibration=CalibrationConfig(
-            "tests.data_engineering_parallel_fixtures:create_calibrator",
+            "tests.test_data_engineering_execution:create_calibrator",
             params={"directory": str(directory), "fail_task": "absent"},
         ),
         execution=ExecutionConfig(max_workers=workers, batch_size=1, backend=backend),
@@ -191,7 +191,7 @@ def test_invalid_generation_ranges_fail_before_execution(start, stop):
 @pytest.mark.parametrize("mode", ["gap", "budget", "overflow", "rank_id"])
 async def test_invalid_parallel_outputs_never_publish(tmp_path, monkeypatch, mode):
     """Shard budgets, partitioning and ranked identities remain executor invariants."""
-    from tests.data_engineering_parallel_fixtures import ShardedRankRecipe
+    from tests.test_data_engineering_execution import ShardedRankRecipe
 
     cfg = config(tmp_path)
     if mode == "gap":
