@@ -113,7 +113,7 @@ def test_worker_gpu_assignment_preserves_slurm_allocation(
     )
     tokens = shlex.split(script[script.index("stdbuf -oL srun") :])
     command = tokens[tokens.index("bash") + 2]
-    command = command[: command.rindex("true --experiment-name")]
+    command = command[: command.rindex("exec ")]
     command += f'printf "%s" "${{{device_var}}}"'
     env = {
         key: value
@@ -142,6 +142,56 @@ def test_worker_gpu_assignment_preserves_slurm_allocation(
 
 
 class TestUserEnvPrecedence:
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "4",
+            "/models/model cache",
+            '{"provider": "oss", "prefix": "trial/policy"}',
+            "space and 'single' and \"double\" quotes",
+            "$(printf expanded) `$UNSET` ; & | < >",
+            "first\nsecond",
+            "",
+        ],
+    )
+    def test_generated_script_structured_env_preserves_literal_value(
+        self, tmp_path, value
+    ):
+        """Exercise shell parsing without invoking Slurm or a container."""
+        scheduler = object.__new__(SlurmScheduler)
+        scheduler._n_gpus_per_node = 8
+        scheduler.experiment_name = "exp"
+        scheduler.trial_name = "trial"
+        scheduler.fileroot = str(tmp_path)
+        scheduler._slurm_name = lambda role: f"exp-trial-{role}"
+        scheduler.name_resolve_config = NameResolveConfig(
+            type="nfs", nfs_record_root=str(tmp_path / "nr")
+        )
+        scheduler.container_type = "apptainer"
+        scheduler.container_mounts = None
+        scheduler.srun_additional_args = "--mpi=pmi2"
+        spec = SchedulingSpec(
+            gpu=1, cpu=4, mem=32, image="test.sif", env_vars={"TEST_VALUE": value}
+        )
+        with mock.patch(
+            "areal.infra.scheduler.slurm.build_streaming_log_cmd",
+            side_effect=lambda cmd, *args: cmd,
+        ):
+            script = scheduler._generate_sbatch_script(
+                "actor", 8, 1, 8, 4, 32768, [spec], None, None
+            )
+
+        result = subprocess.run(
+            ["bash", "-c", "srun() { printf '%s\\0' \"$@\"; }\n" + script],
+            capture_output=True,
+            check=True,
+        )
+
+        argv = result.stdout.decode().split("\0")[:-1]
+        index = argv.index("--env")
+        assert argv[index + 1] == f"TEST_VALUE={value}"
+        assert argv[index + 2] == "test.sif"
+
     def test_user_env_wins_over_framework_defaults(self):
         scheduler = object.__new__(SlurmScheduler)
         scheduler.enable_tms_offload = False

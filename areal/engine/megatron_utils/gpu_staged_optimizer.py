@@ -1007,7 +1007,10 @@ def get_megatron_optimizer_with_gpu_staged_adamw(
     replaced = _replace_metadata_optimizers_with_staged_adamw(
         optimizer, mcore_config, staged_config
     )
-    if replaced == 0 or bind_gpu_staged_adamw(optimizer) != replaced:
+    # MCore marks fully frozen pipeline stages as stubs: no state to stage.
+    if (
+        replaced == 0 and not getattr(optimizer, "is_stub_optimizer", False)
+    ) or bind_gpu_staged_adamw(optimizer) != replaced:
         raise RuntimeError(
             "Megatron builder did not produce a managed distributed optimizer"
         )

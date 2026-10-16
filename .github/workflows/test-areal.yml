@@ -74,12 +74,12 @@ jobs:
         variant: ${{ fromJson(needs.determine-variants.outputs.matrix) }}
     env:
       CONTAINER_IMAGE: ghcr.io/areal-project/areal-runtime:${{ inputs.image_tag || 'dev' }}-${{ matrix.variant }}
-      RUNNER_LABELS: gcp-a2-highgpu-2g,variant-${{ matrix.variant }}
+      RUNNER_LABELS: gcp-a2-highgpu-2g-run-${{ github.run_id }}-${{ github.run_attempt }},variant-${{ matrix.variant }}
     steps:
       - name: Set instance variables
         id: vars
         run: |
-          echo "instance_name=gcp-runner-${{ github.run_id }}-${{ matrix.variant }}" >> "$GITHUB_OUTPUT"
+          echo "instance_name=gcp-runner-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.variant }}" >> "$GITHUB_OUTPUT"
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
@@ -297,7 +297,7 @@ jobs:
       contents: read
     runs-on:
       - self-hosted
-      - gcp-a2-highgpu-2g
+      - "gcp-a2-highgpu-2g-run-${{ github.run_id }}-${{ github.run_attempt }}"
       - "variant-${{ matrix.variant }}"
     timeout-minutes: 120
     env:
@@ -307,23 +307,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Sync AWEX dependency
-        run: |
-          AWEX_REQUIREMENT=$("$VIRTUAL_ENV/bin/python" - <<'PY'
-          import tomllib
-          with open("pyproject.toml", "rb") as f:
-              dependencies = tomllib.load(f)["project"]["dependencies"]
-          print(next(dep for dep in dependencies if dep.startswith("awex==")))
-          PY
-          )
-          uv pip install --python "$VIRTUAL_ENV/bin/python" --no-deps "$AWEX_REQUIREMENT"
-
       - name: Install Muon dependency in the prebuilt environment
         run: |
           export PATH="/opt/.venv/bin:$PATH"
           uv pip install --python /opt/.venv/bin/python --target "$RUNNER_TEMP/muon-deps" --no-deps "emerging-optimizers==0.3.0"
 
       - name: Validate Docker installation
+        env:
+          PYTHONPATH: ${{ github.workspace }}:${{ runner.temp }}/muon-deps
         run: |
           export PATH="/opt/.venv/bin:$PATH"
           python areal/tools/validate_docker_installation.py
@@ -363,7 +354,7 @@ jobs:
 
       - name: Delete runner instance
         env:
-          INSTANCE_NAME: gcp-runner-${{ github.run_id }}-${{ matrix.variant }}
+          INSTANCE_NAME: gcp-runner-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.variant }}
         run: |
           # Look up instance zone dynamically since matrix job outputs
           # cannot be consumed per-element by downstream matrix jobs.

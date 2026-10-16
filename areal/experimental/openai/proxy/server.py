@@ -9,7 +9,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from areal.experimental.openai.cache import InteractionCache
 
@@ -106,6 +106,8 @@ class ExportTrajectoriesRequest(BaseModel):
     drop_retry_orphans: bool = False
     supports_shared_tensor_references: bool = False
     is_eval: bool = False
+    # Explicit agent opt-in; applied before serialization when PRM is disabled.
+    episode_reward: float | None = Field(default=None, allow_inf_nan=False)
 
 
 class ExportTrajectoriesResponse(BaseModel):
@@ -250,9 +252,19 @@ class SessionData:
 def serialize_interactions(
     interactions: dict[str, InteractionWithTokenLogpReward],
     tensor_store: GroupTensorStore | None = None,
+    *,
+    r3_num_moe_layers: int | None = None,
+    r3_topk: int | None = None,
 ) -> dict[str, Any]:
     """Serialize interactions into a json-compatible format for HTTP transport."""
+    from areal.experimental.openai.types import configure_r3_interactions
     from areal.infra.rpc.serialization import serialize_value
+
+    configure_r3_interactions(
+        interactions,
+        num_moe_layers=r3_num_moe_layers,
+        topk=r3_topk,
+    )
 
     result = {}
     for key, interaction in interactions.items():

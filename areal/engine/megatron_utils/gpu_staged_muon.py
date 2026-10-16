@@ -131,8 +131,6 @@ class _FrozenOwnerParameter:
     device_index: int | None
     storage: Any
     storage_cdata: int
-    param_data_ptr: int
-    storage_data_ptr: int
     storage_nbytes: int
     storage_offset: int
 
@@ -165,11 +163,6 @@ def _freeze_owner_schema(
                     device_index=param.device.index,
                     storage=storage,
                     storage_cdata=int(storage._cdata),
-                    # A zero pointer is a valid value for a zero-numel tensor;
-                    # it is frozen and compared exactly, never used as a
-                    # missing-authority sentinel.
-                    param_data_ptr=int(param.data_ptr()),
-                    storage_data_ptr=int(storage.data_ptr()),
                     storage_nbytes=int(storage.nbytes()),
                     storage_offset=param.storage_offset(),
                 )
@@ -1052,6 +1045,9 @@ def get_megatron_optimizer_with_dist_muon(
         raise TypeError(
             "official Muon builder did not return LayerWiseDistributedOptimizer"
         )
+    # MCore 0.19 implements sharded checkpointing for this optimizer at fixed
+    # DP topology, despite not using Megatron's distributed Adam optimizer.
+    optimizer.supports_non_distributed_checkpoint = True
     optimizer.allgather_params = _allgather_layerwise_params_empty_safe.__get__(
         optimizer, type(optimizer)
     )
@@ -2765,6 +2761,8 @@ def _make_staged_layerwise_class():
                                     param.device.index,
                                 ),
                                 (
+                                    # AWEX may reallocate this storage on resume;
+                                    # its identity and tensor aliases must survive.
                                     "storage_object_identity",
                                     True,
                                     storage is frozen.storage,
@@ -2778,16 +2776,6 @@ def _make_staged_layerwise_class():
                                     "storage_nbytes",
                                     frozen.storage_nbytes,
                                     int(storage.nbytes()),
-                                ),
-                                (
-                                    "storage_data_ptr",
-                                    frozen.storage_data_ptr,
-                                    int(storage.data_ptr()),
-                                ),
-                                (
-                                    "param_data_ptr",
-                                    frozen.param_data_ptr,
-                                    int(param.data_ptr()),
                                 ),
                                 (
                                     "storage_offset",

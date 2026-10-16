@@ -509,9 +509,31 @@ class RolloutController:
             # CUDA_VISIBLE_DEVICES per worker). Use the collective launch + addr-less
             # initialize that the verified disaggregated baseline relies on; the
             # worker discovers its server address via name_resolve.
-            self.server_infos = await self._collective_rpc_async(
-                "launch_server", server_args=server_args
-            )
+            if server_args.get("awex_colocate_mode", False):
+                # Isolated CUDA device IDs repeat across replicas. AWEX needs
+                # a separate dense transfer base even with separate workers.
+                slots_per_node = max(
+                    1, self.scheduler.n_gpus_per_node // self._gpus_per_server
+                )
+                self.server_infos = await asyncio.gather(
+                    *[
+                        self.scheduler.async_call_engine(
+                            worker_id=worker.id,
+                            method="launch_server",
+                            engine_name=self._engine_name(rank),
+                            server_args={
+                                **server_args,
+                                "_awex_transfer_rank_base": (rank % slots_per_node)
+                                * self._gpus_per_server,
+                            },
+                        )
+                        for rank, worker in enumerate(self.workers)
+                    ]
+                )
+            else:
+                self.server_infos = await self._collective_rpc_async(
+                    "launch_server", server_args=server_args
+                )
             await asyncio.to_thread(self._write_inference_targets, "separation")
             tasks = [
                 self.scheduler.async_call_engine(
@@ -1417,7 +1439,11 @@ class RolloutController:
         await self._collective_rpc_async("pause_generation")
 
     def pause_generation_sync(self):
-        self._collective_rpc("pause_generation", http_timeout=120.0)
+        # SGLang first aborts in-flight requests, then pauses the scheduler;
+        # the worker also waits for pause_grace_period before returning.
+        # A short RPC timeout retries the same pause while the
+        # first call is still running and queues work behind the stalled call.
+        self._collective_rpc("pause_generation", http_timeout=600.0, max_retries=1)
 
     async def continue_generation(self):
         await self._collective_rpc_async("continue_generation")

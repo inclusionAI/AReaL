@@ -830,3 +830,35 @@ def test_builder_concurrency_never_mutates_global_adam(
     run_pair((True, True))
     run_pair((True, False))
     run_pair((False, False))
+
+
+@pytest.mark.parametrize("stub_flags", [(), (True,), (True, True), (True, False)])
+def test_builder_preserves_all_stub_pipeline_optimizer(monkeypatch, stub_flags):
+    """A frozen pipeline rank keeps MCore's stubs; malformed real leaves fail."""
+    import megatron.core.optimizer as mcore_optimizer
+
+    leaves = [
+        SimpleNamespace(optimizer=None, is_stub_optimizer=stub) for stub in stub_flags
+    ]
+    optimizer = (
+        leaves[0]
+        if len(leaves) == 1
+        else SimpleNamespace(
+            chained_optimizers=leaves, is_stub_optimizer=all(stub_flags)
+        )
+    )
+    monkeypatch.setattr(
+        mcore_optimizer, "get_megatron_optimizer", lambda *args, **kwargs: optimizer
+    )
+
+    def build():
+        return get_megatron_optimizer_with_gpu_staged_adamw(
+            _compatible_mcore_config(), [object()], _tiny_config()
+        )
+
+    if all(stub_flags):
+        assert build() is optimizer
+        assert all(leaf.optimizer is None for leaf in leaves)
+    else:
+        with pytest.raises(RuntimeError, match="managed distributed optimizer"):
+            build()

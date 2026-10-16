@@ -66,7 +66,10 @@ def test_launch_selects_native_theta_only_without_awex(
     assert cmd == [
         "python3",
         "-m",
+        "areal.engine.sglang_model_patches",
+        "--entrypoint",
         entrypoint,
+        "--",
         "--model-path",
         "model",
         "--tp-size",
@@ -90,7 +93,12 @@ def test_awex_environment_keeps_plugin_entrypoint(monkeypatch, launched_servers)
 
     SGLangBackend().launch_server({"model_path": "model"})
 
-    assert launched_servers[0][0][2] == "areal.engine.awex.sglang_plugin"
+    assert launched_servers[0][0][2:6] == [
+        "areal.engine.sglang_model_patches",
+        "--entrypoint",
+        "areal.engine.awex.sglang_plugin",
+        "--",
+    ]
 
 
 @pytest.mark.parametrize(

@@ -59,10 +59,12 @@ from areal.api import (
 )
 from areal.api.cli_args import OptimizerConfig, PerfTracerConfig, TrainEngineConfig
 from areal.api.io_struct import DeviceRuntimeInfo
+from areal.api.loss import LossFunction, LossNormalizer, LossValue
 from areal.engine.core import (
     aggregate_eval_losses,
     compute_microbatch_loss_weight,
     compute_total_loss_weight,
+    normalize_loss,
     reorder_and_pad_outputs,
 )
 from areal.engine.core.distributed import (
@@ -846,8 +848,8 @@ class FSDPEngine(TrainEngine):
     def train_batch(
         self,
         input_: list[dict[str, Any]] | dict[str, Any],
-        loss_fn: Callable[..., torch.Tensor],
-        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
+        loss_fn: LossFunction,
+        loss_weight_fn: LossNormalizer,
     ) -> dict[str, float]:
         self._ensure_ready()
         input_batched, _ = self._normalize_batch_input(input_)
@@ -889,8 +891,8 @@ class FSDPEngine(TrainEngine):
     def eval_batch(
         self,
         input_: list[dict[str, Any]] | dict[str, Any],
-        loss_fn: Callable[..., torch.Tensor],
-        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
+        loss_fn: LossFunction,
+        loss_weight_fn: LossNormalizer,
     ) -> torch.Tensor | None:
         self._ensure_ready()
 
@@ -2141,6 +2143,7 @@ class FSDPEngine(TrainEngine):
 
         inputs.pop("turn_ids", None)
         inputs.pop("is_truncated", None)
+        inputs.pop("_pg_token_weights", None)
 
         ctx = FSDPTrainContext(
             model_inputs=inputs,
@@ -2245,14 +2248,16 @@ class FSDPEngine(TrainEngine):
         self,
         logits: torch.Tensor,
         ctx: FSDPTrainContext,
-        loss_fn: Callable[..., torch.Tensor],
-        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
-        total_loss_weight: torch.Tensor,
+        loss_fn: LossFunction,
+        loss_weight_fn: LossNormalizer,
+        total_loss_weight: LossValue,
         loss_multiplier: float = 1.0,
     ) -> torch.Tensor:
         """Compute logprobs/entropy and return scaled loss."""
+        if ctx.mb_input.get(TRANSPORT_DUMMY_KEY) is True:
+            return logits.float().mean() * 0.0
         local_weight = compute_microbatch_loss_weight(ctx.mb_input, loss_weight_fn)
-        if local_weight == 0:
+        if isinstance(local_weight, torch.Tensor) and local_weight == 0:
             return logits.mean() * 0.0
 
         if self.config.is_critic and self.enable_tree_training:
@@ -2310,8 +2315,7 @@ class FSDPEngine(TrainEngine):
                 values = values[: -ctx.pad_length]
             loss = loss_fn(values, ctx.mb_input)
 
-        loss_scale = local_weight / total_loss_weight * loss_multiplier
-        return loss * loss_scale
+        return normalize_loss(loss, local_weight, total_loss_weight, loss_multiplier)
 
     def _compute_forward_result(
         self,

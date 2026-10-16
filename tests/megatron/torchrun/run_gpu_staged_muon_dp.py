@@ -8,15 +8,15 @@ from __future__ import annotations
 import argparse
 import copy
 import os
+from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import torch
 import torch.distributed as dist
 from megatron.core import parallel_state
-from megatron.core.optimizer import (
-    get_megatron_optimizer,
-    get_standard_config_overrides,
-)
+from megatron.core.dist_checkpointing.mapping import ShardedTensor
+from megatron.core.optimizer import get_standard_config_overrides
 from megatron.core.optimizer.optimizer_config import OptimizerConfig, ParamKey
 from megatron.core.optimizer_param_scheduler import (
     OptimizerParamScheduler,
@@ -24,6 +24,7 @@ from megatron.core.optimizer_param_scheduler import (
 )
 from megatron.core.process_groups_config import ProcessGroupCollection
 
+from areal.engine.megatron_utils.checkpointer import MegatronCheckpointManager
 from areal.engine.megatron_utils.gpu_staged_muon import (
     GPUStagedMuonConfig,
     get_megatron_optimizer_with_dist_muon,
@@ -56,6 +57,15 @@ class _TinyMuonModel(torch.nn.Module):
             self.experts_weight.tensor_model_parallel = False
             self.experts_weight.partition_dim = 0
             self.experts_weight.partition_stride = 1
+
+    def sharded_state_dict(self) -> dict:
+        # This checkpoint regression uses TP1 and fixed DP2.
+        return {
+            name: ShardedTensor.from_rank_offsets(
+                name, param, replica_id=(0, 0, parallel_state.get_data_parallel_rank())
+            )
+            for name, param in self.named_parameters()
+        }
 
 
 class _SingleParamModel(torch.nn.Module):
@@ -128,7 +138,7 @@ def _make_config() -> OptimizerConfig:
     )
 
 
-def _run_dp2_outer(tp_size: int) -> None:
+def _run_dp2_outer(tp_size: int, checkpoint_path: Path) -> None:
     if dist.get_world_size() != 2 * tp_size:
         raise ValueError("staged Muon outer worker requires DP size 2")
     device = torch.device("cuda", int(os.environ["LOCAL_RANK"]))
@@ -157,11 +167,9 @@ def _run_dp2_outer(tp_size: int) -> None:
         pg_collection=pg_collection,
     )
     baseline_config = _make_config()
-    baseline_build_config = copy.copy(baseline_config)
-    baseline = get_megatron_optimizer(
-        baseline_build_config,
+    baseline = get_megatron_optimizer_with_dist_muon(
+        baseline_config,
         [baseline_model],
-        use_gloo_process_groups=False,
         pg_collection=pg_collection,
     )
 
@@ -176,6 +184,8 @@ def _run_dp2_outer(tp_size: int) -> None:
     staged_by_name = dict(staged_model.named_parameters())
     baseline_by_name = dict(baseline_model.named_parameters())
     for step in range(3):
+        if step == 1:
+            _reallocate_model_storage(staged_model.dense_weight)
         for param_index, name in enumerate(staged_by_name):
             grad = torch.randn(
                 staged_by_name[name].shape,
@@ -205,8 +215,74 @@ def _run_dp2_outer(tp_size: int) -> None:
             for replica in replicas[1:]:
                 torch.testing.assert_close(replica, replicas[0], rtol=0.0, atol=0.0)
 
+    if tp_size == 1:
+        _check_checkpoint(baseline_model, baseline, checkpoint_path)
+        staged.bind_managed_checkpoint_process_group(dist.new_group(backend="gloo"))
+        _check_checkpoint(
+            staged_model, staged, checkpoint_path.parent / "staged_checkpoint"
+        )
+    _check_owner_rebinding_rejected(staged)
     _run_single_param_case(pg_collection, tp_size, expert=False)
     _run_single_param_case(pg_collection, tp_size, expert=True)
+
+
+def _reallocate_model_storage(param: torch.nn.Parameter) -> None:
+    """Reproduce AWEX release/resume while retaining Tensor and Storage identity."""
+    value = param.detach().cpu().clone()
+    storage = param.untyped_storage()
+    nbytes, old_ptr = storage.nbytes(), storage.data_ptr()
+    torch.cuda.synchronize()
+    storage.resize_(0)
+    # Hold allocations so resume cannot reuse the released address.
+    blockers = [
+        torch.empty(nbytes, dtype=torch.uint8, device=param.device) for _ in range(32)
+    ]
+    storage.resize_(nbytes)
+    assert param.untyped_storage() is storage
+    assert storage.data_ptr() != old_ptr
+    with torch.no_grad():
+        param.copy_(value)
+    del blockers
+
+
+def _check_owner_rebinding_rejected(optimizer) -> None:
+    owners = optimizer.dp_cp_params_list
+    owner = next(params for params in owners if params)
+    original = owner[0]
+    owner[0] = torch.nn.Parameter(original.detach().clone())
+    try:
+        with pytest.raises(RuntimeError, match="changed after bind"):
+            optimizer.allgather_params()
+    finally:
+        owner[0] = original
+    storage = original.untyped_storage()
+    original.data = original.detach().clone()
+    try:
+        with pytest.raises(RuntimeError, match="storage"):
+            optimizer.allgather_params()
+    finally:
+        original.data = torch.empty(
+            0, dtype=original.dtype, device=original.device
+        ).set_(storage, original.storage_offset(), original.shape, original.stride())
+
+
+def _check_checkpoint(model, optimizer, checkpoint_path: Path) -> None:
+    """The real manager saves and resumes either Muon path at fixed DP."""
+    manager = MegatronCheckpointManager(
+        torch.nn.ModuleList([model]), optimizer, None, use_distributed_optimizer=False
+    )
+    checkpoint_path.mkdir(parents=True, exist_ok=True)
+    manager.save_checkpoint(str(checkpoint_path), with_rng=False)
+    saved_params = copy.deepcopy(model.state_dict())
+    assert optimizer.step()[0]
+    expected = copy.deepcopy(model.state_dict())
+    manager.load_checkpoint(str(checkpoint_path), with_rng=False)
+    for name, param in model.named_parameters():
+        torch.testing.assert_close(param, saved_params[name], rtol=0.0, atol=0.0)
+    assert optimizer.step()[0]
+    for name, param in model.named_parameters():
+        torch.testing.assert_close(param, expected[name], rtol=0.0, atol=0.0)
+    manager.close()
 
 
 def _run_single_param_case(
@@ -291,7 +367,7 @@ def main() -> None:
         create_gloo_process_groups=False,
     )
     try:
-        _run_dp2_outer(args.tp_size)
+        _run_dp2_outer(args.tp_size, Path(args.output).parent / "checkpoint")
         dist.barrier()
         if dist.get_rank() == 0:
             with open(args.output, "w") as file:

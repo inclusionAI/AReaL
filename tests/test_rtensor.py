@@ -25,6 +25,7 @@ from areal.utils.network import find_free_ports
 
 
 class _FakeDeleteResponse:
+    status = 200
     content_type = "application/json"
 
     def __init__(self, payload):

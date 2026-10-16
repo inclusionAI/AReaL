@@ -8,8 +8,6 @@ from collections.abc import Callable, Mapping
 from concurrent.futures import Future
 from typing import Any
 
-import numpy as np
-import pybase64
 import torch
 from torchdata.stateful_dataloader import StatefulDataLoader
 
@@ -31,6 +29,7 @@ from areal.api.io_struct import (
     WeightUpdateRequests,
     get_versioned_lora_name,
 )
+from areal.engine.r3.preprocess import decode_sglang_routed_experts
 from areal.infra import RemoteInfEngine, RolloutController, WorkflowExecutor
 from areal.infra.platforms import current_platform
 from areal.infra.utils.launcher import TRITON_CACHE_PATH
@@ -94,6 +93,36 @@ def _resolve_colocated_base_gpu_id(
     )
 
 
+def _compact_image_tokens(req: ModelRequest) -> list[int]:
+    """Use one placeholder per image on the wire, preserving training token IDs.
+
+    HF processors expand an image placeholder into patch tokens. SGLang expands
+    placeholders again while processing image_data; sending expanded tokens can
+    force it to decode and retokenize the entire prompt, changing generated token
+    IDs and invalidating the context budget. Only compact when image-token runs
+    match the supplied images, leaving unknown processor formats unchanged.
+    """
+    image_token_id = getattr(req.processor, "image_token_id", None)
+    if not req.image_data or not isinstance(image_token_id, int):
+        return req.input_ids.copy()
+
+    compact_ids: list[int] = []
+    image_count = 0
+    previous_is_image = False
+    for token in req.input_ids:
+        is_image = token == image_token_id
+        if is_image and previous_is_image:
+            continue
+        if is_image:
+            image_count += 1
+        compact_ids.append(token)
+        previous_is_image = is_image
+
+    if image_count != len(req.image_data):
+        return req.input_ids.copy()
+    return compact_ids
+
+
 class SGLangBackend:
     """SGLang-specific backend implementation for remote inference."""
 
@@ -136,7 +165,7 @@ class SGLangBackend:
             sample_params["sampling_seed"] = gconfig.seed
 
         payload = {
-            "input_ids": req.input_ids.copy(),
+            "input_ids": _compact_image_tokens(req),
             "image_data": req.image_data,  # ImageObject or str
             "sampling_params": sample_params,
             "return_logprob": True,
@@ -169,13 +198,12 @@ class SGLangBackend:
         # Extract routed_experts information if available
         routed_experts = meta_info.get("routed_experts", None)
         if routed_experts is not None:
-            num_sgl_token = (
-                meta_info["prompt_tokens"] + meta_info["completion_tokens"] - 1
+            routed_experts = decode_sglang_routed_experts(
+                routed_experts,
+                prompt_tokens=meta_info["prompt_tokens"],
+                completion_tokens=meta_info["completion_tokens"],
+                source="v1 SGLangBackend",
             )
-            # Extract expert_id and reshape to (num_sgl_token, num_layers*expert_top_k)
-            routed_experts = np.frombuffer(
-                pybase64.b64decode(routed_experts.encode("utf-8")), dtype=np.int32
-            ).reshape(num_sgl_token, -1)
 
         # Speculative-decoding acceptance metrics (present only when SGLang is
         # launched with a speculative_algorithm; None otherwise).
@@ -522,7 +550,7 @@ class SGLangBackend:
         # real colocation. Resolve base_gpu_id in the worker because scheduler
         # device isolation is only observable here, after Local/Slurm/Ray launch.
         awex_gpus_per_server = server_args.pop("_awex_gpus_per_server", None)
-        awex_transfer_rank_base = None
+        awex_transfer_rank_base = server_args.pop("_awex_transfer_rank_base", None)
         if awex_gpus_per_server is not None:
             fallback_base_gpu_id = int(server_args.get("base_gpu_id", 0))
             awex_transfer_rank_base = fallback_base_gpu_id
@@ -602,8 +630,10 @@ class SGLangBackend:
             ]
             logger.info("Theta mode: using native SGLang entry, cmd=%s", cmd[:4])
 
+        from areal.engine.sglang_model_patches import wrap_server_command
+
         return subprocess.Popen(
-            cmd,
+            wrap_server_command(cmd),
             env=_env,
             stdout=sys.stdout,
             stderr=sys.stdout,
