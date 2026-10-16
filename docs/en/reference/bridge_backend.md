@@ -16,6 +16,11 @@ actor:
 - Use `bridge_type=megatron-bridge` to enable the new path.
 - `mbridge` is the default choice if this argument is not present
 
+On NPU, `actor.mindspeed.moe_permute_fusion` and `moe_token_dispatcher_type` control
+fusion and token dispatch for both bridge backends; the corresponding Megatron settings
+are ignored. NPU supports only the `alltoall` dispatcher. CUDA Megatron Bridge also uses
+`alltoall`; CUDA mbridge uses the Megatron dispatcher setting.
+
 ## Custom pipeline layout
 
 Set `actor.megatron.pipeline_model_parallel_layout` to use a native Megatron layout with

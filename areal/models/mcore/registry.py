@@ -130,16 +130,35 @@ def make_hf_and_mcore_config(
     dtype: torch.dtype,
     bridge=None,
     bridge_type: str = "mbridge",
+    moe_permute_fusion: bool | None = None,
+    moe_token_dispatcher_type: str | None = None,
 ) -> tuple[PretrainedConfig, TransformerConfig]:
     if bridge is not None and bridge_type == "mbridge":
         hf_config = bridge.hf_config
         hf_config._name_or_path = hf_path
         return hf_config, bridge.config
     elif bridge is not None and bridge_type == "megatron-bridge":
+        if is_npu_available and moe_token_dispatcher_type is not None:
+            MindSpeedEngineConfig(
+                moe_token_dispatcher_type=moe_token_dispatcher_type
+            ).validate_moe_token_dispatcher(bridge_type)
+        if not is_npu_available and moe_token_dispatcher_type is not None:
+            if moe_token_dispatcher_type != "alltoall":
+                logger.warning(
+                    "Ignoring megatron.moe_token_dispatcher_type=%r for Megatron Bridge; using 'alltoall'.",
+                    moe_token_dispatcher_type,
+                )
+            moe_token_dispatcher_type = "alltoall"
         hf_config = getattr(bridge.hf_pretrained, "config", bridge.hf_pretrained)
         if hasattr(hf_config, "_name_or_path"):
             hf_config._name_or_path = hf_path
-        if is_npu_available and mpu.get_expert_model_parallel_world_size() > 1:
+        if moe_token_dispatcher_type is not None or (
+            is_npu_available
+            and (
+                mpu.get_expert_model_parallel_world_size() > 1
+                or moe_permute_fusion is not None
+            )
+        ):
             # MindSpeed validates overlap during config extraction. Set expert
             # dimensions before finalizing; pipeline layout is configured later.
             provider = bridge.to_megatron_provider(load_weights=False)
@@ -149,6 +168,13 @@ def make_hf_and_mcore_config(
             provider.expert_tensor_parallel_size = (
                 mpu.get_expert_tensor_parallel_world_size()
             )
+            if moe_token_dispatcher_type is not None:
+                provider.moe_token_dispatcher_type = moe_token_dispatcher_type
+            if moe_permute_fusion is not None:
+                if moe_token_dispatcher_type is None:
+                    provider.moe_token_dispatcher_type = "alltoall"
+                provider.moe_permute_fusion = moe_permute_fusion
+                provider.use_fused_moe_token_permute_and_unpermute = moe_permute_fusion
             provider.finalize()
             tf_config = TransformerConfig(
                 **{
@@ -355,6 +381,21 @@ def make_mcore_model(
         return models
 
     if bridge is not None and bridge_type == "megatron-bridge":
+        dispatcher = (
+            (mindspeed_config or MindSpeedEngineConfig()).validate_moe_token_dispatcher(
+                bridge_type
+            )
+            if is_npu_available
+            else "alltoall"
+        )
+        if (
+            not is_npu_available
+            and mcore_config.moe_token_dispatcher_type != "alltoall"
+        ):
+            logger.warning(
+                "Ignoring megatron.moe_token_dispatcher_type=%r for Megatron Bridge; using 'alltoall'.",
+                mcore_config.moe_token_dispatcher_type,
+            )
         if is_npu_available and hf_config.model_type in (
             "qwen3_vl",
             "qwen3_vl_moe",
@@ -496,12 +537,7 @@ def make_mcore_model(
 
         # Keep runtime-sensitive provider flags aligned with AReaL's config.
         provider.variable_seq_lengths = True
-        logger.warning(
-            "Ignoring mcore_config.moe_token_dispatcher_type=%s for bridge_type='megatron-bridge'; "
-            "using 'alltoall' and variable_seq_lengths=True.",
-            mcore_config.moe_token_dispatcher_type,
-        )
-        provider.moe_token_dispatcher_type = "alltoall"
+        provider.moe_token_dispatcher_type = dispatcher
         provider.batch_p2p_comm = False
         provider.overlap_p2p_comm = (
             vpp_size > 1 and provider.pipeline_model_parallel_size > 1
@@ -517,8 +553,19 @@ def make_mcore_model(
         tf_config.variable_seq_lengths = provider.variable_seq_lengths
         tf_config.moe_token_dispatcher_type = provider.moe_token_dispatcher_type
 
-        provider.moe_permute_fusion = mcore_config.moe_permute_fusion
+        provider.moe_permute_fusion = (
+            (mindspeed_config or MindSpeedEngineConfig()).moe_permute_fusion
+            if is_npu_available
+            else mcore_config.moe_permute_fusion
+        )
         tf_config.moe_permute_fusion = provider.moe_permute_fusion
+        if is_npu_available:
+            provider.use_fused_moe_token_permute_and_unpermute = (
+                provider.moe_permute_fusion
+            )
+            tf_config.use_fused_moe_token_permute_and_unpermute = (
+                provider.moe_permute_fusion
+            )
 
         if is_npu_available and mindspeed_config is not None:
             provider.moe_aux_loss_coeff = mindspeed_config.moe_aux_loss_coeff

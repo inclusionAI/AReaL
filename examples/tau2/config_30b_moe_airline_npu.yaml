@@ -92,7 +92,7 @@ actor:
     use_fused_swiglu: true
     moe_alltoall_overlap_comm: true
     moe_grouped_gemm: true
-    moe_zero_memory: "level 1"
+    moe_zero_memory: "level1"
     moe_permute_fusion: true
     gemm_gradient_accumulation_fusion: true
     position_embedding_type: "rope"

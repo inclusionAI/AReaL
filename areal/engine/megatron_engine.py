@@ -157,6 +157,8 @@ from areal.utils.offload import is_tms_enabled, torch_memory_saver
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.seeding import get_seed
 
+logger = logging.getLogger("MegatronEngine")
+
 if TYPE_CHECKING:
     from megatron.bridge.peft.lora import LoRA as MegatronBridgeLoRA
 
@@ -242,6 +244,32 @@ class MegatronEngine(TrainEngine):
         )
         self.quantization_config: dict[str, int | str | list[str]] | None = None
         self.bridge_cls: str = getattr(self.mcore_config, "bridge_type", "mbridge")
+        self.moe_token_dispatcher_type = (
+            self.mindspeed_config.validate_moe_token_dispatcher(self.bridge_cls)
+            if is_npu_available
+            else self.mcore_config.moe_token_dispatcher_type
+        )
+        if is_npu_available:
+            for name, default in (
+                ("moe_permute_fusion", False),
+                ("moe_token_dispatcher_type", "alltoall"),
+            ):
+                value = getattr(self.mcore_config, name)
+                if value != default:
+                    logger.warning(
+                        "Ignoring non-default megatron.%s=%r on NPU; using mindspeed.%s=%r.",
+                        name,
+                        value,
+                        name,
+                        getattr(self.mindspeed_config, name),
+                    )
+        elif self.bridge_cls == "megatron-bridge":
+            if self.moe_token_dispatcher_type != "alltoall":
+                logger.warning(
+                    "Ignoring megatron.moe_token_dispatcher_type=%r for Megatron Bridge; using 'alltoall'.",
+                    self.moe_token_dispatcher_type,
+                )
+            self.moe_token_dispatcher_type = "alltoall"
         if self.bridge_cls == "megatron-bridge" and is_npu_available:
             # On NPU, megatron-bridge runs from source on PYTHONPATH (the wheels
             # have CUDA-only deps), so require the package rather than block it.
@@ -569,7 +597,25 @@ class MegatronEngine(TrainEngine):
                 dtype=self.dtype,
                 bridge=self.bridge,
                 bridge_type=self.bridge_cls,
+                moe_token_dispatcher_type=self.moe_token_dispatcher_type,
+                moe_permute_fusion=(
+                    self.mindspeed_config.moe_permute_fusion
+                    if is_npu_available
+                    else None
+                ),
             )
+            self.tf_config.moe_token_dispatcher_type = self.moe_token_dispatcher_type
+            if is_npu_available:
+                self.tf_config.moe_permute_fusion = (
+                    self.mindspeed_config.moe_permute_fusion
+                )
+                self.tf_config.use_fused_moe_token_permute_and_unpermute = (
+                    self.mindspeed_config.moe_permute_fusion
+                )
+                self.logger.info(
+                    "MoE permutation fusion: %s (mindspeed.moe_permute_fusion)",
+                    self.tf_config.moe_permute_fusion,
+                )
 
             self._configure_pipeline_layer_splits()
 
@@ -849,14 +895,24 @@ class MegatronEngine(TrainEngine):
                 self.config.path, trust_remote_code=True
             )
             self.bridge.dtype = self.dtype
+            extra_args = {"moe_token_dispatcher_type": self.moe_token_dispatcher_type}
+            if is_npu_available:
+                extra_args["moe_permute_fusion"] = (
+                    self.mindspeed_config.moe_permute_fusion
+                )
+                extra_args["use_fused_moe_token_permute_and_unpermute"] = (
+                    self.mindspeed_config.moe_permute_fusion
+                )
             if self.config.gradient_checkpointing:
-                self.bridge.set_extra_args(
+                extra_args.update(
                     recompute_granularity=self.mcore_config.recompute_granularity,
                     recompute_method=self.mcore_config.recompute_method,
                     recompute_num_layers=self.mcore_config.recompute_num_layers,
                     distribute_saved_activations=self.mcore_config.distribute_saved_activations,
                     recompute_modules=self.mcore_config.recompute_modules,
                 )
+            if extra_args:
+                self.bridge.set_extra_args(**extra_args)
             self.logger.info(
                 "Using mbridge to create models and hf model save/load in MegatronEngine."
             )
@@ -2799,6 +2855,8 @@ class MegatronEngine(TrainEngine):
         config = self.mindspeed_config.as_dict()
         megatron_config = self.mcore_config
         config_overrides = {
+            "moe_token_dispatcher_type": self.moe_token_dispatcher_type,
+            "use_fused_moe_token_permute_and_unpermute": self.mindspeed_config.moe_permute_fusion,
             "context_parallel_size": getattr(
                 parallel_strategy, "context_parallel_size", 1
             ),
