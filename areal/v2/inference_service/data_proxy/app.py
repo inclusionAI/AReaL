@@ -984,6 +984,13 @@ def create_app(config: DataProxyConfig) -> FastAPI:
                         trajectory_id=body.trajectory_id,
                         drop_retry_orphans=body.drop_retry_orphans,
                     )
+                    for interaction in (interactions or {}).values():
+                        metadata = {
+                            key: value
+                            for key, value in body.session_metadata.get(sid, {}).items()
+                            if key in {"arena_status", "harness_outcome_code"}
+                        }
+                        interaction.metadata = {**interaction.metadata, **metadata}
                     grouped_interactions.append(interactions)
                 except KeyError:
                     grouped_interactions.append(None)
@@ -1092,7 +1099,7 @@ def create_app(config: DataProxyConfig) -> FastAPI:
             if not merged:
                 traj = {}
             elif all(v.has_tensor_data for v in merged.values()):
-                traj = concat_tensor_interactions(merged)
+                traj = concat_tensor_interactions(merged, require_harness_status=True)
                 traj = _remotize_trajectory(traj, node_addr=config.serving_addr)
             else:
                 traj = concat_string_interactions(merged)

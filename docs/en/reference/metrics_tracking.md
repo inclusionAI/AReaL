@@ -34,7 +34,8 @@ independently. This streaming approach handles variable completion times natural
 **Characteristics:**
 
 - Each workflow logs scalars individually as they complete
-- Metrics accumulate in a list within the worker process
+- Training quality scalars travel with their task until consumption; other scalars
+  accumulate within the worker process
 - No synchronization between workers during logging
 - Aggregation happens at export time via the controller
 
@@ -64,7 +65,9 @@ async def run(self, data, **extra_kwargs):
 
 **Controller aggregation:**
 
-The `RolloutController` collects stats from all workers and computes weighted averages:
+For worker-buffered metrics, `RolloutController` computes weighted averages. It then
+adds quality metrics from consumed tasks (described below). The weighted aggregation
+portion is equivalent to:
 
 ```python
 # areal/infra/controller/rollout_controller.py
@@ -84,6 +87,66 @@ def export_stats(self) -> dict[str, float]:
     return {k: v / counts[k + "__count"] for k, v in stats.items()
             if counts.get(k + "__count", 0) > 0}
 ```
+
+### Consumption-aligned rollout quality and training-row turns
+
+Training quality scalars recorded inside a workflow task travel with its result. They
+are published when the final consumer removes that result from the queue, not when
+generation completes. Prefetched results left in the queue are excluded; rejected
+attempts and ordinary workflow failures are included. Worker-to-controller RPC transfer
+does not consume them. Terminal contract errors retain fail-fast behavior and are
+counted when surfaced; they abort training rather than forming a normal step. This is
+local queue-consumption accounting, not an exactly-once network retry protocol.
+
+| Metric                                 | Value and denominator                                                                                                                                    |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rollout/reward`                       | Mean of recorded episode rewards in consumed attempts. An episode that never records a reward is absent, not implicitly zero.                            |
+| `rollout/reward_sample_count`          | Number of recorded reward observations.                                                                                                                  |
+| `rollout/accepted`, `rollout/rejected` | Complementary fractions of consumed workflow tasks accepted/rejected by the executor, with one observation of each per task. A grouped task counts once. |
+| `rollout/group_attempt_count`          | Number of consumed workflow tasks, including rejection. For ungrouped workflows each task is one episode.                                                |
+| `rollout/incomplete_group`             | Fraction of observed groups with missing members, including complete groups as zero.                                                                     |
+| `rollout/incomplete_trajectories`      | Mean number of missing members per observed group, including complete groups as zero.                                                                    |
+| `rollout/num_turns/{avg,min,max}`      | Distribution of generation counts over retained training rows selected for the current batch.                                                            |
+| `rollout/num_turns_count`              | Number of selected rows carrying turn metadata, not episodes, prompt groups, tokens, or optimizer microbatches.                                          |
+
+Other captured scalar keys retain their own observation unit: group metrics count
+recorded groups, while episode metrics count recorded episodes. `__count` companions
+carry these observation counts for aggregation. Operational `rollout/arena/*`, proxy PRM
+`rollout/prm_*`, speculative acceptance metrics, tensor distributions, and
+explicit-reduction-group scalars retain their existing export windows. Evaluation is
+separate under `eval-rollout`; quality scalars are not captured by the training buffer.
+V2 records available member rewards even when the enclosing group is discarded.
+
+For OpenAI tensor exports, two row-aligned columns snapshot turn count and Harness
+classification. Each retained interaction row counts responses with generated tokens on
+its own parent chain; siblings and discarded retry branches do not contribute.
+Zero-token responses do not add a turn. If only cached tensors are available, count
+distinct nonnegative turn IDs within the original attention mask. Loss masking does not
+erase observed history. Snapshot before HTTP serialization preserves history when parent
+links or non-growing prompts would otherwise lose it. `individual` export may retain
+ancestor interactions: three such rows can contribute counts `[1, 2, 3]`, not one
+deduplicated episode count. Workflows without turn metadata do not contribute.
+
+Turn distributions are emitted after batch selection and filtering, once per selected
+row. Later token masking/cropping preserves the snapshot; any row filtering/reordering
+must apply the same indices to both metadata columns. Rejected rows do not contribute to
+training turns, even though their quality observations contribute to consumed-attempt
+metrics. Accepted evaluation rows use `eval-rollout/num_turns/*` instead.
+
+`num_turns_no_harness_err` includes rows classified as having no Harness failure; it
+does not imply positive reward or task success. `num_turns_harness_err` includes
+`HARNESS_FAILED` rows, with bounded per-code subgroups and `OTHER` for unknown failure
+codes. Every distribution has its own `<metric>_count`. Empty subgroups have count zero
+and no average/minimum/maximum. V2 accepts optional per-session `arena_status` and
+`harness_outcome_code` from the agent's `get_episode_metadata()` hook. Missing V2 status
+is unknown: it contributes only to overall turns, so subgroup counts need not sum to the
+total. Classic non-Harness workflows retain the no-Harness-error classification.
+
+Single-controller training records selected rows once on the controller. SPMD uses the
+actor's existing data-parallel reduction, including sum/count weighting for quality
+scalars; it does not average rank means or sum tensor/pipeline/context-parallel copies.
+These definitions change the prior completion-window turn statistics prospectively;
+existing dashboard history is not recomputed.
 
 ### Batch Metrics (Training Engines)
 

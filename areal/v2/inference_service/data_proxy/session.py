@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from areal.experimental.openai.cache import InteractionCache, PrefixMatcher
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
@@ -86,6 +86,7 @@ class ExportTrajectoriesRequest(BaseModel):
     reward_normalization: bool = False
     discard_trajectory: bool = False
     is_eval: bool = False
+    session_metadata: dict[str, dict[str, str]] = Field(default_factory=dict)
 
 
 class ExportTrajectoriesResponse(BaseModel):

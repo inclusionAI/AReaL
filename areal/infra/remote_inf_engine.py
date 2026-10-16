@@ -180,6 +180,10 @@ class GroupedRolloutWorkflow(RolloutWorkflow):
         results = [result if result else None for result in completed_results]
         valid_results = [r for r in results if r is not None]
         usable_slot_count = len(valid_results)
+        stats_tracker.get(workflow_context.stat_scope()).scalar(
+            incomplete_trajectories=self.group_size - usable_slot_count,
+            incomplete_group=float(usable_slot_count < self.group_size),
+        )
 
         interaction_group = not valid_results or all(
             isinstance(result, dict)
@@ -1512,7 +1516,7 @@ class RemoteInfEngine(InferenceEngine):
         # Keep successful payloads visible to the RPC guard's RTensor traversal.
         if result is None or isinstance(result, WorkflowContractFailure):
             return result
-        return result.trajectory
+        return {"trajectory": result.trajectory, "metrics": result.metrics}
 
     def rollout_batch(
         self,

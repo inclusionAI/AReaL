@@ -31,7 +31,7 @@ Rollout 工作器异步执行工作流，每个工作流独立记录指标。这
 **特性：**
 
 - 每个工作流在完成时单独记录标量
-- 指标在工作器进程内的列表中累积
+- 训练质量标量随任务结果传递，在消费时汇总；其他标量在工作器进程内累积
 - 记录期间工作器之间无需同步
 - 归约在导出时通过控制器完成
 
@@ -61,7 +61,7 @@ async def run(self, data, **extra_kwargs):
 
 **控制器聚合：**
 
-`RolloutController` 从所有工作器收集统计信息并计算加权平均值：
+对于工作器缓冲的指标，`RolloutController` 收集统计信息并计算加权平均值，然后加入已消费任务的质量指标。加权聚合部分等价于：
 
 ```python
 # areal/infra/controller/rollout_controller.py
@@ -81,6 +81,46 @@ def export_stats(self) -> dict[str, float]:
     return {k: v / counts[k + "__count"] for k, v in stats.items()
             if counts.get(k + "__count", 0) > 0}
 ```
+
+### 按消费时机对齐的质量指标与训练行 turn 指标
+
+训练 workflow 内记录的质量 scalar 随任务结果传输，在最终消费者出队时发布， 不在生成完成时发布。仍留在预取队列的结果不计；已消费的拒绝尝试和普通异常计入。
+worker 向 controller 传输不算消费。不可恢复的契约错误保持 fail-fast，抛出时计数， 但会中止训练，不构成正常训练
+step。这是本地队列的消费计数，不是网络重试的 exactly-once 保证。
+
+| 指标                                   | 数值与分母                                                                               |
+| -------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `rollout/reward`                       | 已消费尝试中实际记录的 episode reward 均值；未产生 reward 记录的 episode 不自动补零。    |
+| `rollout/reward_sample_count`          | 实际 reward 观测数。                                                                     |
+| `rollout/accepted`、`rollout/rejected` | executor 接受/拒绝的消费任务比例；每个任务各记一次 0/1，grouped task 只计一次。          |
+| `rollout/group_attempt_count`          | 已消费任务数，包含拒绝；未分组 workflow 的一个任务就是一个 episode。                     |
+| `rollout/incomplete_group`             | 缺少成员的 group 比例，完整 group 也记零。                                               |
+| `rollout/incomplete_trajectories`      | 每个观测 group 的缺失成员数均值，完整 group 也记零。                                     |
+| `rollout/num_turns/{avg,min,max}`      | 当前选中训练行的生成次数分布。                                                           |
+| `rollout/num_turns_count`              | 带 turn 元数据的选中行数，不是 episode、prompt group、token 或 optimizer microbatch 数。 |
+
+其他 scalar 保留各自观测单位：group 指标按有记录的 group 计，episode 指标按有记录的 episode 计，`__count`
+携带加权分母。`rollout/arena/*` 运维指标、`rollout/prm_*`、 speculative acceptance、tensor 分布以及显式指定
+reduction group 的 scalar 保留原导出窗口。 eval 使用独立的 `eval-rollout` scope，不进入训练消费缓冲。v2 即使丢弃整个
+group， 也记录其中已获得 reward 的成员。
+
+OpenAI tensor 导出附带两列行对齐元数据：turn 数与 Harness 分类。每行统计其 interaction 自身祖先链上生成过 token
+的响应数；不含兄弟分支及已丢弃的 retry 分支，空响应不增加 turn。 仅有缓存 tensor 时，按原始 attention mask 内不同非负 turn ID
+计数。loss mask 不会抹除 已发生的生成历史；HTTP 序列化前快照避免 parent 丢失或非增长 prompt 重置 ID 导致少计。 `individual`
+导出若保留三个祖先 interaction，三行可以分别记为 `[1, 2, 3]`，不是 episode 去重统计。不提供 turn 元数据的 workflow
+不进入此分布。
+
+训练 turn 指标在选批、过滤后逐行记录。后续 token masking/cropping 保留原快照；行过滤或 重排必须同步处理两列元数据。被拒绝行不进入训练 turn
+分布，但其质量观测仍进入消费尝试指标。 eval 仅对接受的行记录 `eval-rollout/num_turns/*`。
+
+`num_turns_no_harness_err` 表示无 Harness 失败，不代表正奖励或任务成功； `num_turns_harness_err` 表示
+`HARNESS_FAILED`，并按有限 code 分类，未知失败 code 归 `OTHER`。 每个分布有独立的 `<metric>_count`；空子组只有零
+count，没有 avg/min/max。 v2 可通过 agent 的 `get_episode_metadata()` 提供逐 session 的
+`arena_status` 和 `harness_outcome_code`；缺少 status 时为 unknown，只计 overall，两个子组的 count 之和
+可能小于总数。classic 非 Harness workflow 保留无 Harness 错误分类。
+
+单 controller 模式在 controller 对选中行记一次；SPMD 通过 actor 既有 DP group 聚合， 质量均值按观测 sum/count
+加权，不平均各 rank 均值，也不累加 TP/PP/CP 的复制数据。 这些定义从更新后生效，不回算历史 dashboard 中按完成窗口统计的 turn 指标。
 
 ### 批量指标（训练引擎）
 
