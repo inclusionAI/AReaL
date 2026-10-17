@@ -542,11 +542,13 @@ def patch_qwen3_5_chunk_gated_delta_rule_with_mindspeed() -> None:
     try:
         # patch L2 norm before importing GDN
         import areal.engine.megatron_utils.triton_l2norm_patch  # noqa: F401, I001
-        from mindspeed.core.ssm.npu_chunk_gated_delta_rule import (
-            chunk_gated_delta_rule,
-        )
+        from mindspeed.core.ssm.gdn_backend import load_gdn_operators
+
+        chunk_gated_delta_rule = load_gdn_operators().chunk_gated_delta_rule
     except ImportError as exc:
-        logger.warning("Failed to import MindSpeed NPU chunk_gated_delta_rule: %s", exc)
+        # The backend selector already falls back to MindSpeed's own operators when
+        # fla_npu is missing, so reaching here means no GDN backend is available.
+        logger.warning("Failed to load a MindSpeed GDN backend: %s", exc)
         raise
 
     causal_conv1d = None

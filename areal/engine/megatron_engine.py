@@ -667,8 +667,9 @@ class MegatronEngine(TrainEngine):
                     )
                 if not has_mindspeed_gdn_conv1d(mindspeed_gdn):
                     raise RuntimeError(
-                        "Packed (THD) forward for Qwen3.5-family models requires "
-                        "MindSpeed's NPU varlen causal_conv1d implementation."
+                        "Packed (THD) forward for Qwen3.5-family models requires a "
+                        "varlen causal_conv1d from MindSpeed's GDN backend, but none "
+                        "is bound in the GDN module."
                     )
             if self.is_vision_model:
                 self.processor, self.tokenizer = load_hf_processor_and_tokenizer(

@@ -19,7 +19,7 @@ def has_mindspeed_gdn_conv1d(mindspeed_gdn: object) -> bool:
 
 
 def ensure_mindspeed_gdn_conv1d() -> bool:
-    """Bind MindSpeed's NPU causal conv into the inherited MCore GDN.
+    """Bind the selected MindSpeed backend's causal conv into MCore GDN.
 
     Returns True when a varlen conv implementation is available afterwards.
     """
@@ -30,9 +30,8 @@ def ensure_mindspeed_gdn_conv1d() -> bool:
         return False
 
     try:
-        npu_conv = importlib.import_module(
-            "mindspeed.core.ssm.npu_causal_conv1d"
-        ).causal_conv1d
+        backend = importlib.import_module("mindspeed.core.ssm.gdn_backend")
+        npu_conv = backend.load_gdn_operators().causal_conv1d
     except (AttributeError, ImportError):
         return False
 
@@ -44,5 +43,5 @@ def ensure_mindspeed_gdn_conv1d() -> bool:
 
     mcore_gdn.causal_conv1d = npu_conv
     ms_gdn.causal_conv1d = npu_conv
-    logger.info("Activated MindSpeed's NPU varlen causal_conv1d for GDN.")
+    logger.info("Activated the selected MindSpeed GDN causal_conv1d backend.")
     return True
