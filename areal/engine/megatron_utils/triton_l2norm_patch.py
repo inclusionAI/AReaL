@@ -9,6 +9,10 @@ per shape, the dominant cost of the GDN first-step compile. Monkeypatches
 ``mindspeed.megatron_adaptor`` (which binds ``l2norm`` into ``fla.modules``). No-op
 without MindSpeed; tracked in-repo so it survives image rebuilds.
 
+Covers MindSpeed's own l2norm only. MindSpeed's GDN backend selector sources
+l2norm from ``fla_npu`` when that package is installed, which bypasses this patch;
+the NPU images deliberately omit fla_npu, so the MindSpeed backend is what runs.
+
 Also despecializes ``NT`` in the GDN chunk kernels (``_despecialize_chunk_nt``) so
 they compile once across sequence lengths instead of recompiling per seqlen -- the
 dominant per-new-seqlen chunk cost. All three are runtime-free compile-once wins.

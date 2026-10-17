@@ -63,7 +63,10 @@ dependencies = [
     "transformers>=5.14.1,<6",
     "huggingface_hub",
     "datasets>=3.0.0",
-    "pyarrow",
+    # pyarrow>=26 needs NumPy 2, but the NPU image preinstalls numpy 1.26 for
+    # triton-ascend and MindSpeed. This lock resolves numpy 2 and so does not
+    # model that; the ceiling is what keeps installs into the image consistent.
+    "pyarrow<26",
     # AReaL's Lightning Attention uses FLA directly.
     "flash-linear-attention",
     "mbridge @ git+https://github.com/ISEEKYAN/mbridge.git@08975e6",
@@ -128,7 +131,9 @@ dependencies = [
     # Monitoring and logging
     "wandb",
     "tensorboardx",
-    "trackio",
+    # trackio caps pillow<13. Unbounded, the resolver satisfies a competing
+    # pillow>=13 by backtracking to trackio 0.0.6, which predates that cap.
+    "trackio>=0.35.0",
     "colorama",
     "colorlog",
     "swanboard==0.1.9b3",
