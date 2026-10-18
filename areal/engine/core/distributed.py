@@ -6,6 +6,10 @@ from datetime import timedelta
 import torch
 import torch.distributed as dist
 
+from areal.utils.logging import getLogger
+
+logger = getLogger("DistributedGroup")
+
 
 def patch_dist_group_timeout(timeout: timedelta):
     """
@@ -114,14 +118,25 @@ def init_custom_process_group(
 
     # backward compatible API
     if store is None:
+        logger.info(
+            "Rendezvous start: group=%s rank=%s world_size=%s backend=%s method=%s agent_store=%s",
+            group_name,
+            rank,
+            world_size,
+            backend,
+            init_method,
+            os.environ.get("TORCHELASTIC_USE_AGENT_STORE"),
+        )
         rendezvous_iterator = rendezvous(init_method, rank, world_size, timeout=timeout)
         store, rank, world_size = next(rendezvous_iterator)
+        logger.info("Rendezvous complete: group=%s rank=%s", group_name, rank)
         store.set_timeout(timeout)
 
         # Use a PrefixStore to avoid accidental overrides of keys used by
         # different systems (e.g. RPC) in case the store is multi-tenant.
         store = PrefixStore(group_name, store)
 
+    logger.info("Process group helper start: group=%s rank=%s", group_name, rank)
     pg, _ = _new_process_group_helper(
         world_size,
         rank,
@@ -135,5 +150,6 @@ def init_custom_process_group(
     )
 
     _world.pg_group_ranks[pg] = {i: i for i in range(world_size)}
+    logger.info("Process group ready: group=%s rank=%s", group_name, rank)
 
     return pg

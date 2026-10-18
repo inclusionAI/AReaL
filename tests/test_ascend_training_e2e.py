@@ -48,7 +48,7 @@ def test_geometry3k_two_steps_evaluates_and_saves(tmp_path: Path) -> None:
                 start_new_session=True,
             )
             try:
-                returncode = process.wait(timeout=1500)
+                returncode = process.wait(timeout=900)
                 assert returncode == 0, (
                     f"Training exited with {returncode}; see {output / 'controller.log'}\n"
                     + "".join(
@@ -61,6 +61,15 @@ def test_geometry3k_two_steps_evaluates_and_saves(tmp_path: Path) -> None:
                 assert evidence["completed_train_steps"] == 2
                 assert evidence["completed_evaluations"] == 1
                 shutil.copy2(root / "completion.json", output / "completion.json")
+            except subprocess.TimeoutExpired:
+                pytest.fail(
+                    "Training timed out. Controller log tail:\n"
+                    + "".join(
+                        (output / "controller.log")
+                        .read_text()
+                        .splitlines(keepends=True)[-120:]
+                    )
+                )
             finally:
                 if process.poll() is None:
                     parent = psutil.Process(process.pid)

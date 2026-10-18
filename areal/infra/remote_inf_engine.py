@@ -1684,6 +1684,11 @@ def _init_weights_update_group_remote(
                 http_req = backend.build_init_weights_group_request(
                     addr, xccl_group_rank, meta
                 )
+                logger.info(
+                    "Weight group request: address=%s payload=%s",
+                    addr,
+                    http_req.payload,
+                )
                 jobs.append(
                     arequest_with_retry(
                         session=session,
@@ -1697,6 +1702,9 @@ def _init_weights_update_group_remote(
                 )
             results = await asyncio.gather(*jobs, return_exceptions=True)
             for _idx, _r in enumerate(results):
+                logger.info(
+                    "Weight group response: address=%s result=%r", addresses[_idx], _r
+                )
                 if isinstance(_r, Exception):
                     logger.error(
                         "init_weights_update_group request %d to %s failed: %s",
