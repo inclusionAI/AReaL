@@ -257,6 +257,7 @@ jobs:
     env:
       AREAL_IS_IN_CI: "1"
       NPU_TEST_BASE_SHA: ""
+      AREAL_E2E_WORK_DIR: "/tmp/areal-e2e-${{ github.run_id }}-${{ github.run_attempt }}"
       AREAL_TEST_QWEN3_PATH: "/root/.cache/modelscope/hub/models/Qwen/Qwen3-0.6B"
       AREAL_TEST_QWEN35_PATH: "/root/.cache/modelscope/hub/models/Qwen/Qwen3.5-0.8B"
       HF_ENDPOINT: "https://hf-mirror.com"
@@ -784,6 +785,33 @@ jobs:
           timeout --kill-after=60s 1800s \
             pytest -q -s -p scripts.ci_test_report tests/test_ascend_training_e2e.py \
             2>&1 | tee npu-test-logs/geometry3k-e2e.log
+
+      - name: Print Geometry3K training logs and clean temporary files
+        if: always()
+        run: |
+          set -euo pipefail
+
+          cleanup() {
+            rm -rf -- "${AREAL_E2E_WORK_DIR:?}"
+          }
+          trap cleanup EXIT
+
+          # Preserve worker logs if pytest was interrupted before its finally block.
+          for workdir in "${AREAL_E2E_WORK_DIR}"/geometry3k-e2e-*; do
+            if [[ -d "${workdir}/logs" ]]; then
+              mkdir -p npu-test-logs/geometry3k-e2e/workers
+              cp -a "${workdir}/logs/." npu-test-logs/geometry3k-e2e/workers/
+            fi
+          done
+
+          if [[ -f npu-test-logs/geometry3k-e2e/controller.log ]]; then
+            echo "::group::Geometry3K AReaL training log"
+            cat npu-test-logs/geometry3k-e2e/controller.log
+            echo "::endgroup::"
+          fi
+          cleanup
+          test ! -e "${AREAL_E2E_WORK_DIR}"
+          echo "Geometry3K temporary training files cleaned up"
 
       - name: Report NPU test counts
         if: always()

@@ -3,6 +3,7 @@
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -27,7 +28,12 @@ def test_geometry3k_two_steps_evaluates_and_saves(tmp_path: Path) -> None:
     )
     output = Path(os.environ.get("AREAL_E2E_OUTPUT_DIR", str(tmp_path / "output")))
     output.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="geometry3k-e2e-") as workdir:
+    work_parent = os.environ.get("AREAL_E2E_WORK_DIR")
+    if work_parent:
+        Path(work_parent).mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix="geometry3k-e2e-", dir=work_parent
+    ) as workdir:
         root = Path(workdir)
         cmd = [
             sys.executable,
@@ -47,6 +53,8 @@ def test_geometry3k_two_steps_evaluates_and_saves(tmp_path: Path) -> None:
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
             )
+            # Let CI timeout/cancellation unwind the process and directory cleanup.
+            previous_sigterm = signal.signal(signal.SIGTERM, signal.default_int_handler)
             try:
                 returncode = process.wait(timeout=900)
                 assert returncode == 0, (
@@ -71,6 +79,7 @@ def test_geometry3k_two_steps_evaluates_and_saves(tmp_path: Path) -> None:
                     )
                 )
             finally:
+                signal.signal(signal.SIGTERM, previous_sigterm)
                 if process.poll() is None:
                     parent = psutil.Process(process.pid)
                     children = parent.children(recursive=True)
@@ -86,3 +95,4 @@ def test_geometry3k_two_steps_evaluates_and_saves(tmp_path: Path) -> None:
                     shutil.copytree(
                         root / "logs", output / "workers", dirs_exist_ok=True
                     )
+    assert not root.exists(), f"Temporary training files remain at {root}"
