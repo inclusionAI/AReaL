@@ -17,10 +17,6 @@ defaults:
   run:
     shell: bash
 
-# Temporarily isolate the E2E test while qualifying it on the PR runner.
-env:
-  ASCEND_E2E_ONLY: "1"
-
 jobs:
   pre-commit:
     name: pre-commit
@@ -51,7 +47,7 @@ jobs:
 
   cpu-unit-tests:
     name: cpu-unit-tests
-    if: false # Temporarily disabled during E2E qualification.
+    if: github.repository == 'areal-project/AReaL'
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -292,7 +288,7 @@ jobs:
           PY
 
       - name: Collect base NPU test inventory
-        if: env.ASCEND_E2E_ONLY != '1' && github.event_name != 'workflow_dispatch'
+        if: github.event_name != 'workflow_dispatch'
         env:
           AREAL_TEST_REPORT_DIR: /tmp/base-npu-test-reports
           NPU_TEST_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
@@ -443,14 +439,11 @@ jobs:
           }
 
           failed=0
-          if [[ "${ASCEND_E2E_ONLY}" != "1" ]]; then
-            resolve_model AREAL_TEST_QWEN3_PATH Qwen3-0.6B || failed=1
-          fi
+          resolve_model AREAL_TEST_QWEN3_PATH Qwen3-0.6B || failed=1
           resolve_model AREAL_TEST_QWEN35_PATH Qwen3.5-0.8B || failed=1
           exit "${failed}"
 
       - name: Run NPU-image dependency tests
-        if: env.ASCEND_E2E_ONLY != '1'
         env:
           AREAL_TEST_REPORT_DIR: /tmp/current-npu-test-reports
           HF_HUB_OFFLINE: "1"
@@ -465,7 +458,6 @@ jobs:
             -m skipif tests/test_reassemble_cp_logprobs.py
 
       - name: Run NPU test suites
-        if: env.ASCEND_E2E_ONLY != '1'
         env:
           AREAL_TEST_REPORT_DIR: /tmp/current-npu-test-reports
           HF_HUB_OFFLINE: "1"

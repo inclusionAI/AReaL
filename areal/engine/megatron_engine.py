@@ -1059,11 +1059,8 @@ class MegatronEngine(TrainEngine):
             self._init_weight_update_from_distributed(meta)
             self.weight_update_group_initialized = True
 
-        self.logger.info("connect_engine: weight group ready; synchronizing device")
         current_platform.synchronize()
-        self.logger.info("connect_engine: device synchronized; entering CPU barrier")
         dist.barrier(group=self.cpu_group)
-        self.logger.info("connect_engine: CPU barrier complete")
 
     def rollout_batch(
         self,
@@ -2570,9 +2567,7 @@ class MegatronEngine(TrainEngine):
                         timeout=DIST_GROUP_DEFAULT_TIMEOUT,
                     )
 
-                    self.logger.info("Waiting for inference weight-group callback")
                     fut.result()
-                    self.logger.info("Inference weight-group callback complete")
                 finally:
                     self.engine_lock.release()
             else:

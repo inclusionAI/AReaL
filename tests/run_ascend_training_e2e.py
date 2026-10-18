@@ -18,7 +18,7 @@ from areal.utils.saver import Saver
 
 
 def main(args: list[str]) -> None:
-    faulthandler.dump_traceback_later(120, repeat=True)
+    faulthandler.dump_traceback_later(600, repeat=True)
     config, _ = load_expr_config(args, GRPOConfig)
     processor, tokenizer = load_hf_processor_and_tokenizer(config.tokenizer_path)
     train_dataset = get_custom_dataset(
@@ -101,6 +101,7 @@ def main(args: list[str]) -> None:
     (Path(config.cluster.fileroot) / "completion.json").write_text(
         json.dumps(evidence, indent=2) + "\n"
     )
+    faulthandler.cancel_dump_traceback_later()
 
 
 if __name__ == "__main__":
