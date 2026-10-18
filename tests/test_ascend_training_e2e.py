@@ -50,7 +50,12 @@ def test_geometry3k_two_steps_evaluates_and_saves(tmp_path: Path) -> None:
             try:
                 returncode = process.wait(timeout=1500)
                 assert returncode == 0, (
-                    f"Training exited with {returncode}; see {output / 'controller.log'}"
+                    f"Training exited with {returncode}; see {output / 'controller.log'}\n"
+                    + "".join(
+                        (output / "controller.log")
+                        .read_text()
+                        .splitlines(keepends=True)[-120:]
+                    )
                 )
                 evidence = json.loads((root / "completion.json").read_text())
                 assert evidence["completed_train_steps"] == 2

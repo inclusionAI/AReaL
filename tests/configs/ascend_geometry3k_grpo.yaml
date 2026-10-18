@@ -176,6 +176,7 @@ vllm:
 
 # datasets
 train_dataset:
+  scheduling_spec: null
   batch_size: 1
   shuffle: true
   pin_memory: true
@@ -184,6 +185,7 @@ train_dataset:
   type: rl
 
 valid_dataset:
+  scheduling_spec: null
   batch_size: 1
   pin_memory: true
   num_workers: 0
