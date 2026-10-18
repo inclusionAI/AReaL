@@ -2,6 +2,7 @@
 
 """Run the real two-step Geometry3K trainer and record completion evidence."""
 
+import faulthandler
 import json
 import sys
 from pathlib import Path
@@ -17,6 +18,7 @@ from areal.utils.saver import Saver
 
 
 def main(args: list[str]) -> None:
+    faulthandler.dump_traceback_later(120, repeat=True)
     config, _ = load_expr_config(args, GRPOConfig)
     processor, tokenizer = load_hf_processor_and_tokenizer(config.tokenizer_path)
     train_dataset = get_custom_dataset(
