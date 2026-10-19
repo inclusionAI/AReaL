@@ -231,6 +231,41 @@ def _ffd_allocate(
     return group_indices
 
 
+def padded_allocate(
+    values: list[int], capacity: int, min_groups: int, n_groups_divisor: int = 1
+) -> list[list[int]]:
+    """Group nearby lengths subject to ``max(lengths) * group_size`` capacity.
+
+    Split the largest padded groups when more microbatches are required by the
+    pipeline or another data-parallel rank. Splitting preserves the budget.
+    """
+    if any(v > capacity for v in values):
+        raise RuntimeError(f"Values {values} is larger than capacity {capacity}")
+    groups: list[list[int]] = []
+    for idx in sorted(range(len(values)), key=lambda i: values[i], reverse=True):
+        if not groups or values[groups[-1][0]] * (len(groups[-1]) + 1) > capacity:
+            groups.append([idx])
+        else:
+            groups[-1].append(idx)
+    target = (
+        math.ceil(max(len(groups), min_groups) / n_groups_divisor) * n_groups_divisor
+    )
+    if target > len(values):
+        raise RuntimeError(
+            f"Cannot allocate {len(values)} values into {target} non-empty groups."
+        )
+    while len(groups) < target:
+        idx = max(
+            (i for i, g in enumerate(groups) if len(g) > 1),
+            key=lambda i: values[groups[i][0]] * len(groups[i]),
+        )
+        group = groups[idx]
+        midpoint = len(group) // 2
+        groups[idx] = group[:midpoint]
+        groups.append(group[midpoint:])
+    return groups
+
+
 def ffd_allocate(
     values: list[int], capacity: int, min_groups: int, n_groups_divisor: int = 1
 ) -> list[list[int]]:
@@ -543,7 +578,9 @@ def balanced_greedy_partition(nums: list[int], K: int) -> list[list[int]]:
 
     Returns indices (not values) for each group.
 
-    Greedy with capacity-aware assignment.
+    Greedy with capacity-aware assignment. When ``len(nums)`` is not divisible
+    by ``K``, group cardinalities differ by at most one (the first
+    ``len(nums) % K`` groups take the extra item).
 
     Args:
         nums: List of values to partition
@@ -553,14 +590,13 @@ def balanced_greedy_partition(nums: list[int], K: int) -> list[list[int]]:
         List of K lists, where each inner list contains the indices assigned to that group
 
     Raises:
-        ValueError: If len(nums) is not divisible by K or if len(nums) < K
+        ValueError: If len(nums) < K
     """
     n = len(nums)
     if n < K:
         raise ValueError(f"Number of items ({n}) must be >= K ({K}).")
-    if n % K != 0:
-        raise ValueError("The length of nums must be divisible by K.")
-    m = n // K
+    min_items, extra_items = divmod(n, K)
+    capacities = [min_items + int(i < extra_items) for i in range(K)]
 
     # Sort indices by value in descending order
     sorted_indices = sorted(range(n), key=lambda i: -nums[i])
@@ -575,7 +611,7 @@ def balanced_greedy_partition(nums: list[int], K: int) -> list[list[int]]:
         chosen_group = -1
         min_sum = float("inf")
         for i in range(K):
-            if counts[i] < m and sums[i] < min_sum:
+            if counts[i] < capacities[i] and sums[i] < min_sum:
                 min_sum = sums[i]
                 chosen_group = i
 

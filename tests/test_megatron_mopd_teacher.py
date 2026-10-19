@@ -14,7 +14,7 @@ import torch
 
 from areal.api import WeightUpdateMeta, Worker
 from areal.engine import MegatronEngine, MegatronScoringEngine
-from areal.engine.awex.colocate_writer import AwexWeightPublisher
+from areal.engine.awex.adapters.megatron_adapter import AwexMegatronAdapter
 from areal.infra.controller.train_controller import TrainController
 from areal.trainer.mopd.scoring import MOPDTeacherController
 from areal.trainer.rl_trainer import PPOTrainer
@@ -118,36 +118,36 @@ def test_mopd_teacher_controller_preserves_pipeline_active_dummies(monkeypatch):
 def test_teacher_weight_residency_adapter_has_no_awex_publication_state():
     engine = object.__new__(MegatronEngine)
     engine._weight_residency = None
-    engine._awex_publisher = None
+    engine._awex_adapter = None
     engine.logger = SimpleNamespace(info=lambda *_args, **_kwargs: None)
 
     engine.init_weight_residency_adapter()
 
     assert engine._weight_residency is not None
-    assert engine._awex_publisher is None
+    assert engine._awex_adapter is None
 
 
-def test_awex_publisher_composes_engine_weight_residency(monkeypatch):
+def test_awex_adapter_composes_engine_weight_residency(monkeypatch):
     engine = object.__new__(MegatronEngine)
     engine._weight_residency = None
-    engine._awex_publisher = None
+    engine._awex_adapter = None
     engine.logger = SimpleNamespace(info=lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
-        "areal.engine.awex.colocate_writer.AwexWeightPublisher.eager_publish_train_info",
+        "areal.engine.awex.adapters.megatron_adapter.AwexMegatronAdapter.eager_publish_train_info",
         lambda *_args, **_kwargs: None,
     )
 
     engine.init_awex_adapter()
-    first_publisher = engine._awex_publisher
+    first_publisher = engine._awex_adapter
     engine.init_awex_adapter()
 
     assert engine._weight_residency is not None
-    assert engine._awex_publisher is first_publisher
-    assert engine._awex_publisher.residency is engine._weight_residency
+    assert engine._awex_adapter is first_publisher
+    assert engine._awex_adapter.residency is engine._weight_residency
 
 
 @pytest.mark.parametrize("weights_released", [False, True])
-def test_awex_publisher_prepares_residency_in_oom_safe_order(
+def test_awex_adapter_prepares_residency_in_oom_safe_order(
     weights_released: bool,
 ):
     events = []
@@ -166,7 +166,7 @@ def test_awex_publisher_prepares_residency_in_oom_safe_order(
         def resume_memory(self, tags):
             events.append(("resume", tags))
 
-    publisher = AwexWeightPublisher(SimpleNamespace(), _Residency())
+    publisher = AwexMegatronAdapter(SimpleNamespace(), _Residency())
 
     publisher._prepare_residency_for_publish()
 
@@ -185,10 +185,10 @@ def test_awex_actor_worker_does_not_reenter_rollout(monkeypatch):
     events = []
 
     class _Adapter:
-        def execute_colocate_weight_update(self, version):
+        def execute_legacy_colocate_weight_update(self, version):
             events.append(("execute", version))
 
-        def finish_colocate_weight_update(self, training_world_size):
+        def finish_legacy_colocate_weight_update(self, training_world_size):
             events.append(("finish", training_world_size))
 
     class _Rollout:
@@ -199,7 +199,7 @@ def test_awex_actor_worker_does_not_reenter_rollout(monkeypatch):
             raise AssertionError("actor worker re-entered rollout generation")
 
     engine = object.__new__(MegatronEngine)
-    engine._awex_publisher = _Adapter()
+    engine._awex_adapter = _Adapter()
     engine.rollout_engine = _Rollout()
     engine.rollout_coordinator = object()
     engine.process_group_initialized = True
@@ -225,15 +225,15 @@ def test_awex_actor_worker_does_not_reenter_rollout(monkeypatch):
 
 def test_awex_weight_update_requires_initialized_publisher():
     engine = object.__new__(MegatronEngine)
-    engine._awex_publisher = None
+    engine._awex_adapter = None
     engine.rollout_engine = object()
     engine.rollout_coordinator = object()
 
-    with pytest.raises(RuntimeError, match="before publisher initialization"):
+    with pytest.raises(RuntimeError, match="before adapter initialization"):
         engine.update_weights(WeightUpdateMeta(type="awex", version=1))
 
 
-def test_megatron_engine_uses_residency_without_awex_publisher(monkeypatch):
+def test_megatron_engine_uses_residency_without_awex_adapter(monkeypatch):
     events = []
 
     class _Residency:
@@ -249,7 +249,7 @@ def test_megatron_engine_uses_residency_without_awex_publisher(monkeypatch):
 
     engine = object.__new__(MegatronEngine)
     engine._weight_residency = _Residency()
-    engine._awex_publisher = None
+    engine._awex_adapter = None
     engine.process_group_initialized = True
     engine._cpu_group = object()
     engine.is_offload = False
@@ -311,15 +311,19 @@ def test_awex_controller_discards_unfinished_requests_before_restoring_kv():
     trainer._update_weights_and_publish_version(
         WeightUpdateMeta(type="awex", version=1), 1
     )
+    trainer._export_and_commit_stats = lambda **kwargs: events.append(("stats", None))
+    trainer._export_stats_then_restore_awex_rollout(0, 0, 1)
     trainer._update_weights_and_publish_version(
         WeightUpdateMeta(type="awex", version=2), 2
     )
+    trainer._export_stats_then_restore_awex_rollout(0, 1, 2)
 
     assert events == [
         ("update", 1),
         ("actor_version", 1),
         ("rollout_version", 1),
         ("abort_all", None),
+        ("stats", None),
         ("onload", ["cuda_graph"]),
         ("onload", ["kv_cache"]),
         ("continue", None),
@@ -327,10 +331,103 @@ def test_awex_controller_discards_unfinished_requests_before_restoring_kv():
         ("actor_version", 2),
         ("rollout_version", 2),
         ("abort_all", None),
+        ("stats", None),
         ("onload", ["cuda_graph"]),
         ("onload", ["kv_cache"]),
         ("continue", None),
     ]
+
+
+def test_awex_eval_restores_servers_before_eval_and_commits_all_stats(monkeypatch):
+    events = []
+
+    def export(name):
+        events.append(name)
+        return {name: 1.0}
+
+    trainer = object.__new__(PPOTrainer)
+    trainer.config = SimpleNamespace(
+        actor=SimpleNamespace(_version="v1", weight_update_mode="awex")
+    )
+    trainer.actor = SimpleNamespace(export_stats=lambda: export("actor"))
+    trainer.rollout = SimpleNamespace(
+        export_stats=lambda: export("train_rollout"),
+        onload=lambda tags: events.append("onload_" + tags[0]),
+        continue_generation=lambda: events.append("continue"),
+    )
+    trainer.eval_rollout = SimpleNamespace(export_stats=lambda: export("eval_rollout"))
+    commits = []
+    trainer.stats_logger = SimpleNamespace(commit=lambda *args: commits.append(args))
+    monkeypatch.setattr("areal.trainer.rl_trainer.is_single_controller", lambda: True)
+    monkeypatch.setattr(
+        "areal.trainer.rl_trainer.stats_tracker.export_all",
+        lambda: {"timeperf/eval": 2.0, "timeperf/clear_batches": 3.0},
+    )
+
+    stats = trainer._prepare_awex_evaluation()
+    assert events == [
+        "actor",
+        "train_rollout",
+        "onload_cuda_graph",
+        "onload_kv_cache",
+        "continue",
+    ]
+    events.append("evaluate")
+    trainer._export_stats_then_restore_awex_rollout(
+        0,
+        9,
+        9,
+        actor_stats_before_exchange={"actor_before_exchange": 4.0},
+        prepared_stats=stats,
+    )
+
+    assert events == [
+        "actor",
+        "train_rollout",
+        "onload_cuda_graph",
+        "onload_kv_cache",
+        "continue",
+        "evaluate",
+        "eval_rollout",
+    ]
+    assert commits == [
+        (
+            0,
+            9,
+            9,
+            {
+                "actor_before_exchange": 4.0,
+                "actor": 1.0,
+                "train_rollout": 1.0,
+                "eval_rollout": 1.0,
+                "timeperf/eval": 2.0,
+                "timeperf/clear_batches": 3.0,
+            },
+        )
+    ]
+
+
+def test_awex_eval_failed_stats_export_keeps_servers_paused():
+    trainer = object.__new__(PPOTrainer)
+    trainer.config = SimpleNamespace(
+        actor=SimpleNamespace(_version="v1", weight_update_mode="awex")
+    )
+
+    def fail():
+        raise RuntimeError("stats reduction failed")
+
+    trainer.actor = SimpleNamespace(export_stats=fail)
+    trainer.rollout = SimpleNamespace()
+    with pytest.raises(RuntimeError, match="stats reduction failed"):
+        trainer._prepare_awex_evaluation()
+
+
+def test_non_awex_eval_does_not_export_or_restore_early():
+    trainer = object.__new__(PPOTrainer)
+    trainer.config = SimpleNamespace(
+        actor=SimpleNamespace(_version="v1", weight_update_mode="disk")
+    )
+    assert trainer._prepare_awex_evaluation() is None
 
 
 def test_awex_controller_does_not_resume_when_discard_fails():
@@ -511,3 +608,11 @@ def test_teacher_residency_adapter_releases_and_restores_cuda_flat_buffer(mode):
         f"CUDA residency worker failed\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
     )
     assert f"Passed mode={mode}" in result.stdout
+
+
+def test_v2_awex_eval_does_not_use_v1_early_restore():
+    trainer = object.__new__(PPOTrainer)
+    trainer.config = SimpleNamespace(
+        actor=SimpleNamespace(_version="v2", weight_update_mode="awex")
+    )
+    assert trainer._prepare_awex_evaluation() is None

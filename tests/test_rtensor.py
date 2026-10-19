@@ -17,6 +17,7 @@ from areal.infra.rpc.rtensor import (
     HttpRTensorBackend,
     RTensor,
     TensorShardInfo,
+    fetch,
 )
 from areal.infra.rpc.serialization import deserialize_value, serialize_value
 from areal.infra.utils.proc import kill_process_tree
@@ -24,6 +25,7 @@ from areal.utils.network import find_free_ports
 
 
 class _FakeDeleteResponse:
+    status = 200
     content_type = "application/json"
 
     def __init__(self, payload):
@@ -223,7 +225,6 @@ class TestRTensorIntegration:
         assert remotized["score"] == 0.95
 
         # Store tensor on server using the NEW shard_id created by remotize
-        from areal.infra.rpc.rtensor import fetch
 
         actual_shard_id = remotized["logits"].shard.shard_id
         tensor_from_local = fetch(actual_shard_id)
@@ -740,8 +741,12 @@ class TestRemotize:
     """Test remotize method with various input types."""
 
     @pytest.mark.parametrize("preserve_tensor_aliases", [False, True])
-    def test_remotize_list_of_dicts(self, rpc_server, preserve_tensor_aliases):
+    def test_remotize_list_of_dicts(self, monkeypatch, preserve_tensor_aliases):
         """Test remotizing list of dicts with different attention masks."""
+        # Remotize stores locally; node_addr alone does not upload to an RPC server.
+        backend = _RecordingRTensorBackend()
+        monkeypatch.setattr("areal.infra.rpc.rtensor.get_backend", lambda: backend)
+        monkeypatch.setattr("areal.infra.rpc.rtensor._fetch_buffer", {})
         # Create two trajectory dicts with different seqlens
         traj1 = {
             "attention_mask": torch.tensor([[1, 1, 1, 0], [1, 1, 0, 0]]),
@@ -758,7 +763,7 @@ class TestRemotize:
 
         result = RTensor.remotize(
             [traj1, traj2],
-            node_addr=rpc_server,
+            node_addr="test-node",
             preserve_tensor_aliases=preserve_tensor_aliases,
         )
 
@@ -876,7 +881,6 @@ class TestRemotize:
         remotized = RTensor.remotize(original_traj, node_addr=rpc_server)
 
         # Store tensors on server using the NEW shard_ids created by remotize
-        from areal.infra.rpc.rtensor import fetch
 
         for key in ["attention_mask", "logits"]:
             if isinstance(remotized[key], RTensor):
@@ -922,7 +926,6 @@ class TestRemotize:
         assert remotized["logits"].data.shape == torch.Size([2, 3])
 
         # Verify via localize roundtrip
-        from areal.infra.rpc.rtensor import fetch
 
         for key in ["attention_mask", "input_ids", "logits"]:
             actual_shard_id = remotized[key].shard.shard_id

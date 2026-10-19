@@ -42,7 +42,8 @@ from areal.infra.utils.launcher import (
     get_env_vars,
     get_thread_env_vars,
 )
-from areal.infra.utils.proc import build_streaming_log_cmd
+from areal.infra.utils.proc import build_streaming_log_cmd, build_supervised_cmd
+from areal.infra.utils.process_supervisor import DEFAULT_SHUTDOWN_TIMEOUT, KILL_TIMEOUT
 from areal.infra.utils.slurm import (
     cancel_jobs,
     parse_slurm_nodelist,
@@ -55,6 +56,69 @@ from areal.utils.network import format_hostport, split_hostport
 from areal.utils.offload import get_tms_env_vars
 
 logger = logging.getLogger("SlurmScheduler")
+
+
+def _resolve_fork_python_executable(spec: SchedulingSpec | None) -> str:
+    """Resolve Python inside the worker that will own a forked process."""
+    if spec is None or not spec.cmd:
+        return sys.executable
+    try:
+        command = shlex.split(spec.cmd)
+    except ValueError:
+        return sys.executable
+    if not command:
+        return sys.executable
+    if re.fullmatch(r"python(?:\d+(?:\.\d+)*)?", Path(command[0]).name):
+        try:
+            module_flag = command.index("-m", 1)
+        except ValueError:
+            pass
+        else:
+            if module_flag + 1 < len(command):
+                return command[0]
+    return sys.executable
+
+
+def _supervise_rpc_command(command: str) -> str:
+    """Retain an explicit Python interpreter and leading env wrapper verbatim."""
+    lexer = shlex.shlex(command, posix=True)
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    first = lexer.get_token()
+    prefix = ""
+    python_executable = "python"
+    python_token = "python"
+    worker_command = command
+    if first and Path(first).name == "env":
+        while True:
+            start = lexer.instream.tell()
+            token = lexer.get_token()
+            if not token:
+                break
+            if "=" not in token and re.fullmatch(
+                r"python(?:\d+(?:\.\d+)*)?", Path(token).name
+            ):
+                # Preserve shell expansion/quoting in env assignments. Apply the
+                # wrapper once, before bootstrap, then inherit it in the worker.
+                prefix = command[:start]
+                python_executable = token
+                python_token = command[start : lexer.instream.tell()].strip()
+                worker_command = command[start:]
+                break
+    elif first and re.fullmatch(r"python(?:\d+(?:\.\d+)*)?", Path(first).name):
+        python_executable = first
+        python_token = command[: lexer.instream.tell()].strip()
+    supervised = build_supervised_cmd(["bash", "-c", worker_command], python_executable)
+    # Keep the original shell token: re-quoting a decoded "$VIRTUAL_ENV/bin/python"
+    # would prevent the expansion that worked before supervision was added.
+    return prefix + python_token + supervised[len(shlex.quote(python_executable)) :]
+
+
+def _resolve_srun_additional_args(spec: SchedulingSpec, scheduler_args: str) -> str:
+    """Prefer an explicit role override while preserving scheduler defaults."""
+    if spec.srun_additional_args != SchedulingSpec().srun_additional_args:
+        return spec.srun_additional_args
+    return scheduler_args
 
 
 @dataclass
@@ -537,7 +601,7 @@ class SlurmScheduler(Scheduler):
             # 2. Build the full raw command
             module_path = command or "areal.infra.rpc.rpc_server"
             raw_cmd = [
-                sys.executable,
+                _resolve_fork_python_executable(target_wi.spec),
                 "-m",
                 module_path,
                 "--host",
@@ -923,35 +987,54 @@ class SlurmScheduler(Scheduler):
 
         bash_cmds = (spec.additional_bash_cmds or []).copy()
 
-        # Set CUDA_VISIBLE_DEVICES based on SLURM_LOCALID before any Python imports.
-        # This MUST happen before Python starts, otherwise CUDA runtime ignores the
-        # env var change once it's initialized.
-        # We use bash commands instead of env_vars_dict because SLURM_LOCALID is only
-        # available at runtime and each task needs a different value.
+        # Slice Slurm's node-local allocation before CUDA is initialized. Rebuilding
+        # device IDs from zero can put separate jobs on the same physical GPU.
+        # Preserve the runtime namespace, including cgroup remapping and UUIDs.
         if total_gpus > 0:
             gpus_per_task = spec.gpu
-            if gpus_per_task == 1:
-                cuda_setup_cmd = (
-                    f"export CUDA_VISIBLE_DEVICES=$((SLURM_LOCALID * {gpus_per_task}))"
-                )
-            else:
-                cuda_setup_cmd = (
-                    f"export CUDA_VISIBLE_DEVICES=$(seq -s, $((SLURM_LOCALID * {gpus_per_task})) "
-                    f"$((SLURM_LOCALID * {gpus_per_task} + {gpus_per_task} - 1)))"
-                )
+            cuda_setup_cmd = (
+                f"areal_device_offset=$((SLURM_LOCALID * {gpus_per_task}));\n"
+                'if [[ -z "${CUDA_VISIBLE_DEVICES-}" && -z "${ASCEND_RT_VISIBLE_DEVICES-}" ]]; then\n'
+                '  echo "Missing Slurm-visible device allocation" >&2; exit 1;\n'
+                "fi;\n"
+                "for areal_device_var in CUDA_VISIBLE_DEVICES ASCEND_RT_VISIBLE_DEVICES; do\n"
+                '  [[ -v "$areal_device_var" ]] || continue;\n'
+                '  areal_visible="${!areal_device_var}";\n'
+                '  [[ -n "$areal_visible" ]] || continue;\n'
+                '  if [[ "$areal_visible" == ,* || '
+                '"$areal_visible" == *, || "$areal_visible" == *,,* || '
+                '",$areal_visible," == *,-1,* ]]; then\n'
+                '    echo "Invalid Slurm-visible device allocation" >&2; exit 1;\n'
+                "  fi;\n"
+                '  IFS=, read -r -a areal_devices <<< "$areal_visible";\n'
+                f"  if (( ${{#areal_devices[@]}} < areal_device_offset + {gpus_per_task} )); then\n"
+                '    echo "Insufficient Slurm-visible devices for worker '
+                '${SLURM_LOCALID}; expected a node-local device allocation" >&2; exit 1;\n'
+                "  fi;\n"
+                '  printf -v "$areal_device_var" "%s" "$(IFS=,; echo '
+                f'"${{areal_devices[*]:areal_device_offset:{gpus_per_task}}}")";\n'
+                '  export "$areal_device_var";\n'
+                "done"
+            )
             # Also set ASCEND_RT_VISIBLE_DEVICES for Ascend NPU compatibility
-            ascend_setup_cmd = "export ASCEND_RT_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
+            ascend_setup_cmd = 'export ASCEND_RT_VISIBLE_DEVICES="${ASCEND_RT_VISIBLE_DEVICES-${CUDA_VISIBLE_DEVICES-}}"'
             bash_cmds.insert(0, cuda_setup_cmd)
             bash_cmds.insert(1, ascend_setup_cmd)
 
-        bash_cmds.append(rpc_cmd)
+        # Retain detached worker descendants under a subreaper even on clusters
+        # whose Slurm proctrack plugin cannot follow reparented processes.
+        supervised_cmd = _supervise_rpc_command(rpc_cmd)
+        bash_cmds.append(f"exec {supervised_cmd}")
         bash_cmds_str = ";\n".join(bash_cmds)
         cmd = f"bash -c {shlex.quote(bash_cmds_str)}"
 
         # Build final command and export string
         if self.container_type == "apptainer":
             # For apptainer, pass env vars to singularity
-            env_string = " ".join(f"--env {k}={v}" for k, v in env_vars_dict.items())
+            # Preserve each environment assignment as one shell argument.
+            env_string = " ".join(
+                f"--env {shlex.quote(f'{k}={v}')}" for k, v in env_vars_dict.items()
+            )
             final_cmd = "singularity exec --no-home --writable-tmpfs --nv"
             if self.container_mounts:
                 final_cmd += f" --bind {self.container_mounts}"
@@ -975,14 +1058,18 @@ class SlurmScheduler(Scheduler):
         merged_log = self._merged_log_path()
 
         # Build srun command with streaming log pipeline
-        srun_cmd = (
-            f"srun {self.srun_additional_args} {' '.join(srun_flags)} {final_cmd}"
+        srun_additional_args = _resolve_srun_additional_args(
+            spec, self.srun_additional_args
         )
+        srun_cmd = f"srun {srun_additional_args} {' '.join(srun_flags)} {final_cmd}"
         log_pipeline = build_streaming_log_cmd(srun_cmd, role_log, merged_log, role)
 
         # Complete sbatch script with single srun command
         sbatch_script = f"""#!/bin/bash
 {sbatch_options_str}
+
+# Preserve worker failures through the streaming-log pipeline.
+set -o pipefail
 
 # Single srun command launches all workers
 # Output goes to role log (no prefix) and merged log (with prefix)
@@ -1448,16 +1535,21 @@ class SlurmScheduler(Scheduler):
         # down, so scancel will not cause TCPStore race conditions.
         try:
             cancel_jobs(slurm_ids=[job_id], signal="SIGTERM")
-            time.sleep(2)  # Give time for graceful shutdown
-
-            # Check if still running, force kill if needed
-            try:
-                job_infos = query_jobs(slurm_ids=[job_id])
-                if job_infos and job_infos[0].state == JobState.RUNNING:
+            # Let each supervisor finish TERM, KILL, and reaping before killing
+            # the supervisor itself; otherwise its orphans escape linuxproc.
+            deadline = time.monotonic() + DEFAULT_SHUTDOWN_TIMEOUT + KILL_TIMEOUT + 1
+            while True:
+                try:
+                    job_infos = query_jobs(slurm_ids=[job_id])
+                except subprocess.CalledProcessError:
+                    break  # Job already gone
+                if not job_infos or not job_infos[0].state.active():
+                    break
+                if time.monotonic() >= deadline:
                     logger.warning(f"Job {job_id} still running, force killing")
                     cancel_jobs(slurm_ids=[job_id], signal="SIGKILL")
-            except subprocess.CalledProcessError:
-                pass  # Job already gone
+                    break
+                time.sleep(1)
         except Exception as e:
             logger.error(f"Error cancelling job {job_id}: {e}")
 

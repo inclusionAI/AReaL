@@ -33,6 +33,7 @@ from areal.api.io_struct import (
 from areal.infra import RemoteInfEngine, RolloutController, WorkflowExecutor
 from areal.infra.platforms import current_platform
 from areal.infra.utils.launcher import TRITON_CACHE_PATH
+from areal.infra.workflow_executor import WorkflowTaskResult
 from areal.utils import logging, perf_tracer, stats_tracker
 from areal.utils.network import format_host_for_url
 from areal.utils.vllm_response import parse_vllm_generation_response
@@ -103,10 +104,12 @@ class VLLMBackend:
                                 raise ValueError(
                                     "Not enough images in req.image_data to match image_url entries."
                                 )
-                            mime = detect_image_mime(base64_img)
-                            content["image_url"] = {
-                                "url": f"data:{mime};base64,{base64_img}"
-                            }
+                            if base64_img.startswith(("data:", "http://", "https://")):
+                                image_url = base64_img
+                            else:
+                                mime = detect_image_mime(base64_img)
+                                image_url = f"data:{mime};base64,{base64_img}"
+                            content["image_url"] = {"url": image_url}
             payload["messages"] = parsed_input.copy()
             payload["logprobs"] = True
             return HttpRequest(endpoint="/v1/chat/completions", payload=payload)
@@ -438,6 +441,8 @@ class RemotevLLMEngine(InferenceEngine):
         proxy_addr: str | None = None,
         reward_normalization: bool = False,
         drop_incomplete_group: bool = False,
+        min_usable_group_size: int = 1,
+        reward_normalization_use_std: bool = True,
     ) -> int:
         """Submit a request to the inference engine."""
         return self._engine.submit(
@@ -446,11 +451,13 @@ class RemotevLLMEngine(InferenceEngine):
             workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
             group_size=group_size,
+            min_usable_group_size=min_usable_group_size,
             task_id=task_id,
             callback_addr=callback_addr,
             is_eval=is_eval,
             proxy_addr=proxy_addr,
             reward_normalization=reward_normalization,
+            reward_normalization_use_std=reward_normalization_use_std,
             drop_incomplete_group=drop_incomplete_group,
         )
 
@@ -466,6 +473,11 @@ class RemotevLLMEngine(InferenceEngine):
         """Wait for a specific task to complete by task_id."""
         return self._engine.wait_for_task(task_id, timeout, raise_timeout)
 
+    def _wait_for_task_result(
+        self, task_id: int, timeout: float | None = None, raise_timeout: bool = True
+    ) -> WorkflowTaskResult | None:
+        return self._engine._wait_for_task_result(task_id, timeout, raise_timeout)
+
     def rollout_batch(
         self,
         data: list[dict[str, Any]],
@@ -474,6 +486,8 @@ class RemotevLLMEngine(InferenceEngine):
         group_size: int = 1,
         reward_normalization: bool = False,
         drop_incomplete_group: bool = False,
+        min_usable_group_size: int = 1,
+        reward_normalization_use_std: bool = True,
     ) -> dict[str, Any]:
         """Submit a batch of requests and wait for results.
 
@@ -485,7 +499,9 @@ class RemotevLLMEngine(InferenceEngine):
             workflow=workflow,
             workflow_kwargs=workflow_kwargs,
             group_size=group_size,
+            min_usable_group_size=min_usable_group_size,
             reward_normalization=reward_normalization,
+            reward_normalization_use_std=reward_normalization_use_std,
             drop_incomplete_group=drop_incomplete_group,
         )
 
@@ -499,6 +515,8 @@ class RemotevLLMEngine(InferenceEngine):
         dynamic_bs: bool = False,
         reward_normalization: bool = False,
         drop_incomplete_group: bool = False,
+        min_usable_group_size: int = 1,
+        reward_normalization_use_std: bool = True,
     ):
         """Asynchronously submit and wait until a full batch is ready."""
         return self._engine.prepare_batch(
@@ -507,8 +525,10 @@ class RemotevLLMEngine(InferenceEngine):
             workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
             group_size=group_size,
+            min_usable_group_size=min_usable_group_size,
             dynamic_bs=dynamic_bs,
             reward_normalization=reward_normalization,
+            reward_normalization_use_std=reward_normalization_use_std,
             drop_incomplete_group=drop_incomplete_group,
         )
 

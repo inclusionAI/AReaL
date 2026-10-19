@@ -36,6 +36,7 @@ LOG_PREFIX_WIDTH = 10  # Fixed width for alignment in merged.log
 #   - light_green: Stats, Perf, Dataset, Trainers (data/metrics)
 #   - light_cyan/cyan: Engines, Platforms, MCore (compute backends)
 LOGGER_COLORS_EXACT = {
+    "MTPTrainingTest": "light_cyan",
     # Schedulers - blue
     "LocalScheduler": "blue",
     "RayScheduler": "blue",
@@ -44,6 +45,7 @@ LOGGER_COLORS_EXACT = {
     # Launchers - blue
     "LocalLauncher": "blue",
     "RayLauncher": "blue",
+    "RayBootstrap": "blue",
     "SlurmLauncher": "blue",
     "InfCli": "blue",
     # Workflows - purple
@@ -59,6 +61,7 @@ LOGGER_COLORS_EXACT = {
     # Stats/Perf - green
     "StatsLogger": "light_green",
     "StatsTracker": "light_green",
+    "InferenceTargets": "light_green",
     "PerfTracer": "light_green",
     # RPC servers - white
     "SyncRPCServer": "white",
@@ -72,7 +75,9 @@ LOGGER_COLORS_EXACT = {
     "vLLMEngine": "white",
     # Dataset - green
     "Dataset": "light_green",
+    "DataEngineeringRunner": "light_green",
     "CLEVR70KDataset": "light_green",
+    "ViRL39KDataset": "light_green",
     # Trainers - green
     "RLTrainer": "light_green",
     "SFTTrainer": "light_green",
@@ -111,9 +116,12 @@ LOGGER_COLORS_EXACT = {
     "OpenAIProxy": "light_purple",
     "ToolCallParser": "light_purple",
     "TokenLogpReward": "light_purple",
+    "PRMRunner": "light_purple",
     "ProxyUtils": "light_purple",
     "AReaL-SWEAgent": "light_purple",
+    "ArenaStreamAgent": "light_purple",
     "SWETrain": "light_green",
+    "SWEPrefixMatcher": "light_yellow",
     # Agent Service - purple
     "AgentGateway": "light_purple",
     "AgentBridge": "light_purple",
@@ -128,9 +136,13 @@ LOGGER_COLORS_EXACT = {
     "InferenceRouter": "white",
     "InferenceGateway": "white",
     "RPCGuard": "white",
+    # R3 native router replay - cyan
+    "R3Replay": "light_cyan",
+    "R3Layout": "light_cyan",
     # AWEX weight exchange - cyan (compute backend)
-    "AwexColocate": "light_cyan",
-    "AwexColocateReader": "light_cyan",
+    "AwexMegatronAdapter": "light_cyan",
+    "AwexSGLangAdapter": "light_cyan",
+    "AwexFSDPAdapter": "light_cyan",
     "MegatronResidency": "light_cyan",
     "MOPDTeacherPhase": "light_cyan",
     "AwexSGLangPlugin": "light_cyan",

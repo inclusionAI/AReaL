@@ -39,6 +39,7 @@ from areal.api.cli_args import (
 from areal.dataset.mopd import MOPD_ROUTE_METADATA_KEY, DatasetRoute
 from areal.infra.rpc.serialization import deserialize_value
 from areal.infra.utils.concurrent import run_async_task
+from areal.infra.utils.inference_targets import write_inference_targets
 from areal.utils import logging, perf_tracer
 from areal.utils.data import cycle_dataloader
 from areal.utils.dynamic_import import import_from_string
@@ -46,9 +47,98 @@ from areal.utils.network import find_free_ports, format_hostport, gethostip
 from areal.utils.perf_tracer import trace_perf
 
 from ..staleness_manager import StalenessManager
-from ..workflow_executor import BatchTaskDispatcher, TaskIdGenerator
+from ..workflow_executor import (
+    BatchTaskDispatcher,
+    TaskIdGenerator,
+    WorkflowContractFailure,
+    WorkflowTaskResult,
+    _RolloutResult,
+    get_workflow_result_error,
+    unwrap_workflow_result,
+    validate_rollout_group_sizes,
+)
 
 logger = logging.getLogger("RolloutController")
+
+
+def _merge_worker_stats(
+    all_raw_stats: list[dict[str, float]],
+) -> dict[str, float]:
+    """Merge independently aggregated stats from rollout workers.
+
+    Scalar means carry a ``__count`` companion. Distributions using the
+    ``<base>_count`` convention retain weighted averages and extrema. PRM
+    count/sum metrics have explicit SUM semantics; omit other tensor metrics
+    whose reduction or denominator cannot be determined from the export.
+    """
+    sums = defaultdict(float)
+    scalar_weighted_sums = defaultdict(float)
+    scalar_counts = defaultdict(float)
+    distribution_weighted_sums = defaultdict(float)
+    distribution_counts = defaultdict(float)
+    distribution_mins: dict[str, float] = {}
+    distribution_maxes: dict[str, float] = {}
+
+    for raw_stats in all_raw_stats:
+        for key, value in raw_stats.items():
+            if key.endswith("__count"):
+                continue
+
+            scalar_count_key = f"{key}__count"
+            if scalar_count_key in raw_stats:
+                count = raw_stats[scalar_count_key]
+                scalar_weighted_sums[key] += value * count
+                scalar_counts[key] += count
+                continue
+
+            base, separator, reduction = key.rpartition("/")
+            distribution_count_key = f"{base}_count"
+            if (
+                separator
+                and reduction in {"avg", "min", "max"}
+                and distribution_count_key in raw_stats
+            ):
+                count = raw_stats[distribution_count_key]
+                if count <= 0:
+                    continue
+                if reduction == "avg":
+                    distribution_weighted_sums[key] += value * count
+                    distribution_counts[key] += count
+                elif reduction == "min":
+                    distribution_mins[key] = min(
+                        value, distribution_mins.get(key, value)
+                    )
+                else:
+                    distribution_maxes[key] = max(
+                        value, distribution_maxes.get(key, value)
+                    )
+                continue
+
+            metric_key = key.removeprefix("rollout/").removeprefix("eval-rollout/")
+            segments = metric_key.split("/")
+            is_prm_sum = (
+                len(segments) == 5
+                and segments[0] == "prm_metric"
+                and segments[1] in {"turn", "trajectory"}
+                and segments[-1] in {"count", "sum", "observed_count"}
+            )
+            is_distribution_count = key.endswith("_count") and any(
+                f"{key.removesuffix('_count')}/{reduction}" in raw_stats
+                for reduction in ("avg", "min", "max")
+            )
+            if is_prm_sum or is_distribution_count:
+                sums[key] += value
+
+    merged = dict(sums)
+    for key, weighted_sum in scalar_weighted_sums.items():
+        if scalar_counts[key] > 0:
+            merged[key] = weighted_sum / scalar_counts[key]
+    for key, weighted_sum in distribution_weighted_sums.items():
+        if distribution_counts[key] > 0:
+            merged[key] = weighted_sum / distribution_counts[key]
+    merged.update(distribution_mins)
+    merged.update(distribution_maxes)
+    return merged
 
 
 # NOTE: remote task input has a slightly different
@@ -63,15 +153,11 @@ class _RemoteRolloutTaskInput:
     mopd_route: str | None = None
     is_eval: bool = False
     group_size: int = 1
+    min_usable_group_size: int = 1
     proxy_addr: str | None = None
     reward_normalization: bool = False
+    reward_normalization_use_std: bool = True
     drop_incomplete_group: bool = False
-
-
-@dataclass
-class _RemoteRolloutResult:
-    task_id: int
-    trajectory: dict[str, Any]
 
 
 class RolloutController:
@@ -110,7 +196,7 @@ class RolloutController:
 
         # Dispatcher will be initialized in initialize() after staleness_manager is ready
         self._dispatcher: (
-            BatchTaskDispatcher[_RemoteRolloutTaskInput, _RemoteRolloutResult] | None
+            BatchTaskDispatcher[_RemoteRolloutTaskInput, WorkflowTaskResult] | None
         ) = None
 
         # HTTP callback server
@@ -256,12 +342,13 @@ class RolloutController:
         # Create and initialize the dispatcher
         qsize = self.config.queue_size or max_concurrent_rollouts * 16
         self._dispatcher = BatchTaskDispatcher[
-            _RemoteRolloutTaskInput, _RemoteRolloutResult
+            _RemoteRolloutTaskInput, WorkflowTaskResult
         ](
             max_queue_size=qsize,
             task_factory=self._create_submit_callback,
             staleness_manager=self._staleness_manager,
             enable_tracing=self.config.enable_rollout_tracing,
+            terminal_error_fn=get_workflow_result_error,
             deterministic_order=getattr(self.config, "deterministic_sampling", False),
         )
         # Initialize the dispatcher's async task runner
@@ -269,6 +356,17 @@ class RolloutController:
 
         # Start callback server for weight sync coordination
         self._start_callback_server()
+
+    def _write_inference_targets(self, source: str) -> None:
+        write_inference_targets(
+            inf_engine=self.inf_engine,
+            server_infos=self.server_infos,
+            fileroot=self.config.fileroot,
+            experiment_name=self.config.experiment_name,
+            trial_name=self.config.trial_name,
+            role=self._worker_role,
+            source=source,
+        )
 
     async def _async_initialize(
         self,
@@ -320,6 +418,9 @@ class RolloutController:
                 len(self.server_infos),
                 len(self.workers),
             )
+            # Evaluation reuses targets already published by the training owner.
+            if self._worker_role != "eval-rollout":
+                await asyncio.to_thread(self._write_inference_targets, "provided")
             tasks = [
                 self.scheduler.async_call_engine(
                     worker_id=worker.id,
@@ -340,11 +441,11 @@ class RolloutController:
             self.config.scheduling_strategy.type
             == SchedulingStrategyType.colocation.value
         ):
-            # Colocation (AWEX) path: multiple servers share a node, so SLURM does
-            # NOT isolate GPUs per worker. We must compute base_gpu_id explicitly and
-            # inject `_awex_gpus_per_server` so the worker recomputes base_gpu_id from
-            # its own SLURM_LOCALID at runtime (the only value guaranteed unique per
-            # node-slot). See SGLangBackend.launch_server.
+            # Colocation (AWEX) path: compute a fallback node-local GPU offset.
+            # The worker uses `_awex_gpus_per_server` to resolve placement against
+            # its actual CUDA_VISIBLE_DEVICES: forked/reused workers may already
+            # be isolated, while other workers need a SLURM_LOCALID-based offset.
+            # See SGLangBackend.launch_server.
             #
             # NOTE: this assumes a server fits within one node
             # (gpus_per_server <= n_gpus_per_node). Cross-node TP servers would
@@ -386,6 +487,7 @@ class RolloutController:
                     )
                 )
             self.server_infos = await asyncio.gather(*launch_tasks)
+            await asyncio.to_thread(self._write_inference_targets, "colocation")
             tasks = [
                 self.scheduler.async_call_engine(
                     worker_id=worker.id,
@@ -407,9 +509,32 @@ class RolloutController:
             # CUDA_VISIBLE_DEVICES per worker). Use the collective launch + addr-less
             # initialize that the verified disaggregated baseline relies on; the
             # worker discovers its server address via name_resolve.
-            self.server_infos = await self._collective_rpc_async(
-                "launch_server", server_args=server_args
-            )
+            if server_args.get("awex_colocate_mode", False):
+                # Isolated CUDA device IDs repeat across replicas. AWEX needs
+                # a separate dense transfer base even with separate workers.
+                slots_per_node = max(
+                    1, self.scheduler.n_gpus_per_node // self._gpus_per_server
+                )
+                self.server_infos = await asyncio.gather(
+                    *[
+                        self.scheduler.async_call_engine(
+                            worker_id=worker.id,
+                            method="launch_server",
+                            engine_name=self._engine_name(rank),
+                            server_args={
+                                **server_args,
+                                "_awex_transfer_rank_base": (rank % slots_per_node)
+                                * self._gpus_per_server,
+                            },
+                        )
+                        for rank, worker in enumerate(self.workers)
+                    ]
+                )
+            else:
+                self.server_infos = await self._collective_rpc_async(
+                    "launch_server", server_args=server_args
+                )
+            await asyncio.to_thread(self._write_inference_targets, "separation")
             tasks = [
                 self.scheduler.async_call_engine(
                     worker_id=worker.id,
@@ -571,6 +696,12 @@ class RolloutController:
                 f"http://{format_hostport(worker.ip, int(worker.worker_ports[0]))}"
             )
         await asyncio.gather(*init_tasks)
+
+        # Recovery may publish weights before these proxy engines exist.
+        # Initialize their request versions before admitting agent workflows.
+        await self._proxy_collective_rpc_async(
+            "set_version", version=self.get_version(), http_timeout=60.0
+        )
 
         logger.info(f"Proxy servers initialized. Addresses: {self.proxy_addrs}")
 
@@ -953,7 +1084,7 @@ class RolloutController:
         )
 
     def _create_submit_callback(self, pending_task: _RemoteRolloutTaskInput):
-        async def _submit_then_wait() -> _RemoteRolloutResult | None:
+        async def _submit_then_wait() -> WorkflowTaskResult | None:
             # Choose worker via round-robin
             worker, rank = self._choose_worker()
             engine_name = self._engine_name(rank)
@@ -985,10 +1116,12 @@ class RolloutController:
                     http_timeout=self.config.request_timeout,
                     is_eval=pending_task.is_eval,
                     group_size=pending_task.group_size,
+                    min_usable_group_size=pending_task.min_usable_group_size,
                     task_id=task_id,
                     callback_addr=f"http://{self.callback_addr}/callback/rollout_complete",
                     proxy_addr=proxy_addr,
                     reward_normalization=pending_task.reward_normalization,
+                    reward_normalization_use_std=pending_task.reward_normalization_use_std,
                     drop_incomplete_group=pending_task.drop_incomplete_group,
                 )
 
@@ -1000,13 +1133,17 @@ class RolloutController:
                 # Fetch the result
                 result = await self.scheduler.async_call_engine(
                     worker.id,
-                    "wait_for_task",
+                    "_wait_for_task_result",
                     engine_name=engine_name,
                     task_id=engine_task_id,
                     timeout=0.1,  # A short time to prevent blocking other requests
                     raise_timeout=False,
                     http_timeout=self.config.request_timeout,
                 )
+
+                if isinstance(result, WorkflowContractFailure):
+                    manager.on_rollout_rejected()
+                    return result
 
                 traj = result
                 if traj is not None:
@@ -1016,7 +1153,7 @@ class RolloutController:
                         logger.info(
                             f"Finish and accept rollout. {self._rollout_stats()}"
                         )
-                    return _RemoteRolloutResult(task_id=task_id, trajectory=traj)
+                    return _RolloutResult(task_id=task_id, trajectory=traj)
 
                 manager.on_rollout_rejected()
                 if self.config.enable_rollout_tracing:
@@ -1055,7 +1192,11 @@ class RolloutController:
         proxy_addr: str | None = None,
         reward_normalization: bool = False,
         drop_incomplete_group: bool = False,
+        min_usable_group_size: int = 1,
+        reward_normalization_use_std: bool = True,
     ) -> int:
+        validate_rollout_group_sizes(group_size, min_usable_group_size)
+
         data, mopd_route = self._extract_mopd_route(
             data, required=self._mopd_routing_enabled and not is_eval
         )
@@ -1078,8 +1219,10 @@ class RolloutController:
             mopd_route=mopd_route,
             is_eval=is_eval,
             group_size=group_size,
+            min_usable_group_size=min_usable_group_size,
             proxy_addr=proxy_addr,
             reward_normalization=reward_normalization,
+            reward_normalization_use_std=reward_normalization_use_std,
             drop_incomplete_group=drop_incomplete_group,
         )
 
@@ -1091,7 +1234,10 @@ class RolloutController:
         self, count: int, timeout: float | None = None, raise_timeout: bool = True
     ) -> list[dict[str, Any] | None]:
         # Delegate to dispatcher and extract trajectories
-        results = self.dispatcher.wait_results(count, timeout, raise_timeout)
+        results = [
+            unwrap_workflow_result(result)
+            for result in self.dispatcher.wait_results(count, timeout, raise_timeout)
+        ]
         # Log and trace
         if self.config.enable_rollout_tracing:
             logger.info("Rollout results are ready!")
@@ -1108,6 +1254,8 @@ class RolloutController:
         group_size: int = 1,
         reward_normalization: bool = False,
         drop_incomplete_group: bool = False,
+        min_usable_group_size: int = 1,
+        reward_normalization_use_std: bool = True,
     ) -> list[dict[str, Any]]:
         perf_tracer.instant(
             "rollout_controller.rollout_batch",
@@ -1121,7 +1269,9 @@ class RolloutController:
                 workflow_kwargs=workflow_kwargs,
                 should_accept_fn=should_accept_fn,
                 group_size=group_size,
+                min_usable_group_size=min_usable_group_size,
                 reward_normalization=reward_normalization,
+                reward_normalization_use_std=reward_normalization_use_std,
                 drop_incomplete_group=drop_incomplete_group,
             )
         results = self.wait(count=len(data))
@@ -1139,6 +1289,8 @@ class RolloutController:
         dynamic_bs: bool = False,
         reward_normalization: bool = False,
         drop_incomplete_group: bool = False,
+        min_usable_group_size: int = 1,
+        reward_normalization_use_std: bool = True,
     ) -> list[dict[str, Any]]:
         """Prepare a batch with controlled staleness.
 
@@ -1148,6 +1300,7 @@ class RolloutController:
         See :meth:`~areal.api.engine_api.InferenceEngine.prepare_batch` for parameters.
         """
 
+        validate_rollout_group_sizes(group_size, min_usable_group_size)
         workflow_str = self._resolve_workflow_str(workflow)
         if workflow_kwargs is None:
             workflow_kwargs = {}
@@ -1166,7 +1319,9 @@ class RolloutController:
                         task_id=self._task_id_generator.next(),
                         mopd_route=mopd_route,
                         group_size=group_size,
+                        min_usable_group_size=min_usable_group_size,
                         reward_normalization=reward_normalization,
+                        reward_normalization_use_std=reward_normalization_use_std,
                         drop_incomplete_group=drop_incomplete_group,
                     )
 
@@ -1175,9 +1330,14 @@ class RolloutController:
 
         # Delegate to dispatcher
         assert dataloader.batch_size is not None
-        results = self.dispatcher.active_submit_and_wait(
-            self.data_generator, batch_size=dataloader.batch_size, dynamic_bs=dynamic_bs
-        )
+        results = [
+            unwrap_workflow_result(result)
+            for result in self.dispatcher.active_submit_and_wait(
+                self.data_generator,
+                batch_size=dataloader.batch_size,
+                dynamic_bs=dynamic_bs,
+            )
+        ]
 
         # Return list of trajectories
         trajectories = [r.trajectory if r is not None else None for r in results]
@@ -1279,7 +1439,11 @@ class RolloutController:
         await self._collective_rpc_async("pause_generation")
 
     def pause_generation_sync(self):
-        self._collective_rpc("pause_generation", http_timeout=120.0)
+        # SGLang first aborts in-flight requests, then pauses the scheduler;
+        # the worker also waits for pause_grace_period before returning.
+        # A short RPC timeout retries the same pause while the
+        # first call is still running and queues work behind the stalled call.
+        self._collective_rpc("pause_generation", http_timeout=600.0, max_retries=1)
 
     async def continue_generation(self):
         await self._collective_rpc_async("continue_generation")
@@ -1320,23 +1484,18 @@ class RolloutController:
 
     def export_stats(self) -> dict[str, float]:
         all_raw_stats = self._collective_rpc(method="export_stats", http_timeout=60.0)
-        stats = defaultdict(float)
-        counts = defaultdict(int)
-
-        for raw_stats in all_raw_stats:
-            for k, v in raw_stats.items():
-                if k.endswith("__count"):
-                    counts[k] += v
-                else:
-                    stats[k] += v * raw_stats.get(k + "__count", 0)
-
-        # Average non-count stats
-        final_stats = {}
-        for k, v in stats.items():
-            count_key = k + "__count"
-            if count_key in counts and counts[count_key] > 0:
-                final_stats[k] = v / counts[count_key]
-        return final_stats
+        agent_config = self.config.agent
+        if (
+            self._proxy_started
+            and self.proxy_workers
+            and agent_config is not None
+            and agent_config.prm.enabled
+            and any(scorer.enabled for scorer in agent_config.prm.scorers)
+        ):
+            all_raw_stats += self._proxy_collective_rpc(
+                method="export_stats", http_timeout=60.0
+            )
+        return _merge_worker_stats(all_raw_stats)
 
     def config_perf_tracer(self, config: PerfTracerConfig, role: str) -> None:
         async def _call():
@@ -1365,7 +1524,7 @@ class RolloutController:
     @property
     def dispatcher(
         self,
-    ) -> BatchTaskDispatcher[_RemoteRolloutTaskInput, _RemoteRolloutResult]:
+    ) -> BatchTaskDispatcher[_RemoteRolloutTaskInput, WorkflowTaskResult]:
         """Get the task dispatcher, ensuring initialization has been called."""
         if self._dispatcher is None:
             raise RuntimeError(

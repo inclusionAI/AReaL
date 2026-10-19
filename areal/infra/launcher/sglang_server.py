@@ -54,8 +54,10 @@ def launch_server_cmd(
     if custom_env is not None:
         _env.update(custom_env)
 
+    from areal.engine.sglang_model_patches import wrap_server_command
+
     return subprocess.Popen(
-        command,
+        wrap_server_command(command),
         env=_env,
         stdout=sys.stdout,
         stderr=subprocess.STDOUT,
@@ -208,7 +210,9 @@ class SGLangServerWrapper:
         if awex_meta_addr:
             custom_env = {"AWEX_META_SERVER_ADDR": awex_meta_addr}
             cmd = [
-                "areal.engine.awex.sglang_plugin" if c == "sglang.launch_server" else c
+                "areal.engine.awex.plugins.sglang_plugin"
+                if c == "sglang.launch_server"
+                else c
                 for c in cmd
             ]
         server_process = launch_server_cmd(cmd, custom_env=custom_env)

@@ -497,13 +497,26 @@ class DPOTrainer:
         data_generator = cycle_dataloader(self.valid_dataloader, num_cycles=1)
         for _ in range(len(self.valid_dataloader)):
             data = self._load_bcast_from(data_generator)
-            if self.ref is not None:
-                ref_logps = self.ref.compute_logp(data)
-                for seq_dict, logp in zip(data, ref_logps):
-                    seq_dict["ref_logprobs"] = (
-                        logp.unsqueeze(0) if logp.ndim == 1 else logp
-                    )
-            self.actor.evaluate_dpo(data)
+            ref_logps = None
+            try:
+                if self.ref is not None:
+                    ref_logps = self.ref.compute_logp(data)
+                    for seq_dict, logp in zip(data, ref_logps):
+                        seq_dict["ref_logprobs"] = (
+                            logp.unsqueeze(0) if logp.ndim == 1 else logp
+                        )
+                self.actor.evaluate_dpo(data)
+            finally:
+                if is_single_controller():
+                    # Include outputs not yet attached to data if evaluation failed.
+                    cleanups = [
+                        ("actor", lambda: self.actor.clear_batches(data, ref_logps))
+                    ]
+                    if self.ref is not None:
+                        cleanups.append(
+                            ("ref", lambda: self.ref.clear_batches(data, ref_logps))
+                        )
+                    run_batch_cleanups(cleanups)
 
         dist.barrier(group=self.actor.cpu_group)
         current_platform.synchronize()

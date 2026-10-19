@@ -57,7 +57,10 @@ from pydantic import BaseModel
 from areal.api import ModelRequest, ModelResponse
 from areal.api.cli_args import GenerationHyperparameters
 from areal.experimental.openai.cache import InteractionCache
-from areal.experimental.openai.tool_call_parser import process_tool_calls
+from areal.experimental.openai.tool_call_parser import (
+    process_tool_calls,
+    split_reasoning,
+)
 from areal.experimental.openai.types import InteractionWithTokenLogpReward
 from areal.infra.processor_cache import ProcessorCallCache
 from areal.utils import logging
@@ -75,11 +78,27 @@ class _AsyncGenerateEngine(Protocol):
 
 TRolloutEngine = TypeVar("TRolloutEngine", bound=_AsyncGenerateEngine)
 
+
+def _force_reasoning_from_chat_template_kwargs(
+    chat_template_kwargs: dict[str, Any] | None,
+) -> bool:
+    """Detect templates that pre-fill an open ``<think>`` tag."""
+    if not chat_template_kwargs:
+        return False
+    if chat_template_kwargs.get("enable_thinking") is not None:
+        return bool(chat_template_kwargs["enable_thinking"])
+    return str(chat_template_kwargs.get("thinking_option", "")).lower() == "on"
+
+
 # reset OpenAI keys when using the wrapped client.
 os.environ["OPENAI_API_KEY"] = os.environ.get("OPENAI_API_KEY", "none")
 os.environ["OPENAI_BASE_URL"] = os.environ.get("OPENAI_BASE_URL", "none")
 
 logger = logging.getLogger("OpenAIClient")
+
+
+class ContextLengthExceededError(ValueError):
+    """Raised before generation when the prompt exhausts the context window."""
 
 
 @dataclass
@@ -105,6 +124,37 @@ class _PreparedPrompt:
         )
 
 
+def _share_multimodal_tensors(
+    prompt: _PreparedPrompt,
+    cache: ProcessorCallCache,
+    processor: Any,
+    image_data: list[str],
+) -> _PreparedPrompt:
+    """Share identical CPU vision tensors across turns without caching text output.
+
+    Called in the processor thread. Compare bytes before sharing: some processors
+    can produce different tensors for the same images in different contexts.
+    """
+    tensors = prompt.multi_modal_input
+    if not tensors or any(t.device.type != "cpu" for t in tensors.values()):
+        return prompt
+    key = cache.make_key("openai_vision_tensors", id(processor), image_data)
+    canonical = cache.get_or_compute(key, lambda: dict(tensors))
+    if tensors.keys() != canonical.keys():
+        return prompt
+    for name, tensor in tensors.items():
+        other = canonical[name]
+        if tensor.shape != other.shape or tensor.dtype != other.dtype:
+            return prompt
+        if tensor is not other and not torch.equal(
+            tensor.contiguous().reshape(-1).view(torch.uint8),
+            other.contiguous().reshape(-1).view(torch.uint8),
+        ):
+            return prompt
+    prompt.multi_modal_input = dict(canonical)
+    return prompt
+
+
 def _process_multimodal_prompt(
     processor: "ProcessorMixin",
     tokenizer: "PreTrainedTokenizerFast",
@@ -113,7 +163,11 @@ def _process_multimodal_prompt(
     tools: Iterable[ChatCompletionToolParam] | None,
     chat_template_kwargs: dict[str, Any],
 ) -> _PreparedPrompt:
-    """Build model-ready prompt tokens and vision tensors with an HF processor."""
+    """Build prompt tokens and vision tensors from inline base64 images only.
+
+    Accept image data URIs or bare base64 payloads. URLs and filesystem paths
+    are not supported locally; URL forwarding requires a tokenizer-only client.
+    """
     import base64
     import binascii
     from io import BytesIO
@@ -123,8 +177,17 @@ def _process_multimodal_prompt(
 
     images = []
     for encoded_image in image_data:
+        match = _DATA_URI_RE.match(encoded_image)
+        payload = match.group(1) if match else encoded_image
+        if not re.fullmatch(r"[A-Za-z0-9+/]+={0,2}", payload):
+            raise ValueError(
+                "Local multimodal processing only supports inline base64 image data "
+                "(data:image/<subtype>;base64,... or a bare base64 payload). "
+                "URLs and filesystem paths are not supported. "
+                "URL forwarding is only available for tokenizer-only clients."
+            )
         try:
-            image_bytes = base64.b64decode(encoded_image, validate=True)
+            image_bytes = base64.b64decode(payload, validate=True)
             with Image.open(BytesIO(image_bytes)) as image:
                 images.append(load_image(image))
         except (binascii.Error, OSError, ValueError) as exc:
@@ -362,8 +425,12 @@ def _extract_images_from_messages(
     """Extract image data from OpenAI-format messages.
 
     Scans message ``content`` lists for ``image_url`` content parts,
-    extracts base64 data (or raw URLs), and converts messages to a
+    preserves image data URIs (or raw URLs), and converts messages to a
     HuggingFace-compatible format for ``apply_chat_template``.
+
+    Extraction preserves sources for backend forwarding by tokenizer-only clients.
+    Local preprocessing with an HF processor accepts only inline base64 images;
+    preserving a URL here does not make it supported by local preprocessing.
 
     Args:
         messages: Normalized list of message dicts (OpenAI format).
@@ -371,8 +438,7 @@ def _extract_images_from_messages(
     Returns:
         A 3-tuple of:
 
-        - **image_data** – list of base64 image strings without data-URI prefixes
-          or raw URL strings for each image found.
+        - **image_data** – list of image data URIs or raw URL strings for each image found.
         - **messages_for_tokenizer** – deep copy of *messages* where every
           ``{"type": "image_url", ...}`` part is replaced by
           ``{"type": "image"}`` so that HuggingFace VLM tokenizers insert
@@ -413,15 +479,14 @@ def _extract_images_from_messages(
                 if not isinstance(url, str) or not url:
                     raise ValueError(
                         "image_url content part has an empty or missing URL. "
-                        "Provide a valid data URI or HTTP(S) URL in image_url.url."
+                        "Provide inline base64 image data in image_url.url. "
+                        "HTTP(S) URLs are only supported for backend forwarding "
+                        "by tokenizer-only clients."
                     )
 
-                # Extract base64 payload from data URIs; keep raw URLs as-is.
-                m = _DATA_URI_RE.match(url)
-                if m:
-                    image_data.append(m.group(1))
-                else:
-                    image_data.append(url)
+                # Preserve the URI: bare JPEG base64 starts with "/" and can
+                # otherwise be mistaken for an absolute path by the backend.
+                image_data.append(url)
 
                 tok_parts.append({"type": "image"})
 
@@ -459,7 +524,9 @@ def _validate_multimodal_agent_backend(
         if isinstance(backend, str) and backend
         else type(engine).__name__.lower()
     )
-    if "vllm" in backend_name:
+    # v2 InfBridge keeps the concrete backend on .backend, without engine.config.
+    backend_impl = getattr(engine, "backend", None)
+    if "vllm" in backend_name or "vllm" in type(backend_impl).__name__.lower():
         raise ValueError(
             "Multimodal agent trajectories are currently supported only with "
             "the SGLang rollout backend; vLLM support is deferred."
@@ -743,7 +810,7 @@ async def _prepare_prompt(
     if image_data and processor is not None:
 
         def process_prompt() -> _PreparedPrompt:
-            return _process_multimodal_prompt(
+            prompt = _process_multimodal_prompt(
                 processor,
                 tokenizer,
                 tokenizer_messages,
@@ -751,6 +818,11 @@ async def _prepare_prompt(
                 tools,
                 chat_template_kwargs,
             )
+            if processor_cache is not None:
+                prompt = _share_multimodal_tensors(
+                    prompt, processor_cache, processor, image_data
+                )
+            return prompt
 
         if processor_cache is None:
             processed_prompt = await asyncio.to_thread(process_prompt)
@@ -893,6 +965,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         output_text: str,
         tool_calls: list | None,
         response: ModelResponse,
+        reasoning_text: str = "",
     ) -> tuple[ChatCompletion, ChatCompletionMessage]:
         """Build ChatCompletion and ChatCompletionMessage objects.
 
@@ -902,6 +975,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             output_text: The generated text output.
             tool_calls: List of tool calls, or None if no tool calls.
             response: The ModelResponse from the inference engine.
+            reasoning_text: Reasoning returned separately from the answer.
 
         Returns:
             A tuple of (ChatCompletion, ChatCompletionMessage).
@@ -911,6 +985,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             role="assistant",
             # For all empty tool calls, set tool_calls=None
             tool_calls=tool_calls or None,
+            **({"reasoning_content": reasoning_text} if reasoning_text else {}),
         )
         chat_completion = ChatCompletion(
             id=completion_id,
@@ -954,6 +1029,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         temperature: float | None | NotGiven = NOT_GIVEN,
         tool_choice: ChatCompletionToolChoiceOptionParam | NotGiven = NOT_GIVEN,
         tools: Iterable[ChatCompletionToolParam] | NotGiven = NOT_GIVEN,
+        top_k: int | None | NotGiven = NOT_GIVEN,
         top_p: float | None | NotGiven = NOT_GIVEN,
         extra_body: Body | None = None,
         areal_cache: InteractionCache | None = None,
@@ -980,6 +1056,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         temperature: float | None | NotGiven = NOT_GIVEN,
         tool_choice: ChatCompletionToolChoiceOptionParam | NotGiven = NOT_GIVEN,
         tools: Iterable[ChatCompletionToolParam] | NotGiven = NOT_GIVEN,
+        top_k: int | None | NotGiven = NOT_GIVEN,
         top_p: float | None | NotGiven = NOT_GIVEN,
         extra_body: Body | None = None,
         areal_cache: InteractionCache | None = None,
@@ -1005,6 +1082,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         temperature: float | None | NotGiven = NOT_GIVEN,
         tool_choice: ChatCompletionToolChoiceOptionParam | NotGiven = NOT_GIVEN,
         tools: Iterable[ChatCompletionToolParam] | NotGiven = NOT_GIVEN,
+        top_k: int | None | NotGiven = NOT_GIVEN,
         top_p: float | None | NotGiven = NOT_GIVEN,
         extra_body: Body | None = None,
         areal_cache: InteractionCache | None = None,
@@ -1145,7 +1223,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 ):
                     # Remove the interaction from cache on failure
                     del cache[completion_id]
-                raise ValueError(
+                raise ContextLengthExceededError(
                     f"len of prompt tokens {len(prompt_token_ids)} exceeds max_total_tokens {max_total_tokens_final}"
                 )
         if not is_omitted(max_completion_tokens):
@@ -1161,6 +1239,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             )
 
         top_p_val = 1.0 if is_omitted(top_p) else (top_p or 1.0)
+        top_k_val = int(1e8) if is_omitted(top_k) or top_k is None else int(top_k)
         stop_tokens = None if is_omitted(stop) else stop
 
         # Since the concat logic cannot properly handle stop tokens yet, so we remove stop here.
@@ -1187,6 +1266,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 engine_max_tokens=self.engine_max_tokens,
             ),
             top_p=top_p_val,
+            top_k=top_k_val,
             stop=stop_tokens,
             greedy=temp == 0,
             frequency_penalty=frequency_penalty,
@@ -1211,8 +1291,8 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         # Call inference engine
         response = await self.engine.agenerate(model_request)
         output_text = self.tokenizer.decode(response.output_tokens_without_stop)
-
-        # Parse tool calls.
+        # Parse raw output first: prefilled Qwen thinking may enter a tool call
+        # without emitting </think>. Splitting first would swallow that call.
         tool_calls = None
         try:
             if (is_omitted(tool_choice) or tool_choice != "none") and tools_list:
@@ -1230,6 +1310,14 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 f"{output_text}"
             )
 
+        reasoning_text, output_text = split_reasoning(
+            output_text,
+            self.reasoning_parser,
+            force_reasoning=_force_reasoning_from_chat_template_kwargs(
+                extra_body.get("chat_template_kwargs")
+            ),
+        )
+
         # If streaming is requested, return an async generator
         if is_streaming:
             # Update cache BEFORE returning the generator to ensure the interaction
@@ -1246,6 +1334,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                     output_text=output_text,
                     tool_calls=tool_calls,
                     response=response,
+                    reasoning_text=reasoning_text,
                 )
                 cache[completion_id].completion = chat_completion
                 cache[completion_id].model_response = response
@@ -1256,6 +1345,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                 completion_id=completion_id,
                 current_time=current_time,
                 model=response_model,
+                reasoning_text=reasoning_text,
                 output_text=output_text,
                 tool_calls=tool_calls,
                 response=response,
@@ -1269,6 +1359,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
             output_text=output_text,
             tool_calls=tool_calls,
             response=response,
+            reasoning_text=reasoning_text,
         )
 
         if cache is not None:
@@ -1287,6 +1378,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         output_text: str,
         tool_calls: list | None,
         response: ModelResponse,
+        reasoning_text: str = "",
     ) -> AsyncGenerator[ChatCompletionChunk, None]:
         """Generate streaming ChatCompletionChunk objects.
 
@@ -1315,6 +1407,21 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
 
             # Content chunks - yield the full text as one chunk
             # (In a true streaming implementation, this would be broken into smaller pieces)
+            if reasoning_text:
+                yield ChatCompletionChunk(
+                    id=completion_id,
+                    choices=[
+                        ChunkChoice(
+                            delta=ChoiceDelta(**{"reasoning_content": reasoning_text}),
+                            index=0,
+                            finish_reason=None,
+                        )
+                    ],
+                    created=current_time,
+                    model=model,
+                    object="chat.completion.chunk",
+                )
+
             if output_text:
                 yield ChatCompletionChunk(
                     id=completion_id,
@@ -1579,7 +1686,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
                 if interaction is not None and cache is not None and resp_id in cache:
                     # Remove the interaction from cache on failure
                     del cache[resp_id]
-                raise ValueError(
+                raise ContextLengthExceededError(
                     f"len of prompt tokens {len(prompt_token_ids)} exceeds engine_max_tokens {self.engine_max_tokens}"
                 )
         if not is_omitted(max_output_tokens):

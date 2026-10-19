@@ -7,6 +7,7 @@ import dataclasses
 import gc
 import math
 import os
+import re
 import time
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future
@@ -58,9 +59,12 @@ from areal.api import (
 )
 from areal.api.cli_args import OptimizerConfig, PerfTracerConfig, TrainEngineConfig
 from areal.api.io_struct import DeviceRuntimeInfo
+from areal.api.loss import LossFunction, LossNormalizer, LossValue
 from areal.engine.core import (
     aggregate_eval_losses,
+    compute_microbatch_loss_weight,
     compute_total_loss_weight,
+    normalize_loss,
     reorder_and_pad_outputs,
 )
 from areal.engine.core.distributed import (
@@ -115,6 +119,7 @@ from areal.utils import (
 )
 from areal.utils.constants import DIST_GROUP_DEFAULT_TIMEOUT
 from areal.utils.data import (
+    TRANSPORT_DUMMY_KEY,
     MicroBatchItem,
     MicroBatchList,
     amend_position_ids,
@@ -129,10 +134,12 @@ from areal.utils.data import (
 from areal.utils.functional import gather_logprobs, gather_logprobs_entropy
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer, load_hf_tokenizer
 from areal.utils.lr_scheduler import get_num_warmup_steps
+from areal.utils.moe_metrics import MoEMetrics
 from areal.utils.network import find_free_ports, format_host_for_url, gethostip
 from areal.utils.offload import is_tms_enabled, torch_memory_saver
 from areal.utils.perf_tracer import trace_perf, trace_scope
 from areal.utils.save_load import get_state_dict_from_repo_id_or_path
+from areal.utils.training_metrics import export_training_metrics, record_training_batch
 
 if TYPE_CHECKING:
     from areal.api import Scheduler
@@ -470,6 +477,24 @@ class FSDPEngine(TrainEngine):
 
         self._create_optimizer(ft_spec)
 
+        self._moe_metrics = MoEMetrics()
+        routers = []
+        for name, module in self.model.named_modules():
+            if type(module).__name__ in ("Qwen3MoeTopKRouter", "Qwen3_5MoeTopKRouter"):
+                match = re.search(r"layers\.(\d+)\.", name)
+                if match is not None:
+                    routers.append((match.group(1), module))
+        if routers:
+            num_experts = routers[0][1].num_experts
+
+            def extract_counts(output: tuple[torch.Tensor, ...]) -> torch.Tensor:
+                indices = output[2].reshape(-1)
+                return torch.zeros(
+                    num_experts, dtype=torch.int64, device=indices.device
+                ).scatter_add_(0, indices, torch.ones_like(indices, dtype=torch.int64))
+
+            self._moe_metrics.attach(self.model, routers, extract_counts)
+
         if self.config.fsdp.per_layer_optim_step:
             if self.optimizer_config.type != "adam":
                 raise ValueError(
@@ -506,6 +531,8 @@ class FSDPEngine(TrainEngine):
         return self._cpu_group
 
     def destroy(self):
+        if hasattr(self, "_moe_metrics"):
+            self._moe_metrics.close()
         self._initialized = False
         if hasattr(self, "optimizer"):
             del self.optimizer
@@ -583,6 +610,8 @@ class FSDPEngine(TrainEngine):
         group_size: int = 1,
         reward_normalization: bool = False,
         drop_incomplete_group: bool = False,
+        min_usable_group_size: int = 1,
+        reward_normalization_use_std: bool = True,
     ) -> list[dict[str, Any]]:
         self._check_rollout_engine_connected()
         return self.rollout_coordinator.rollout_batch(
@@ -590,7 +619,9 @@ class FSDPEngine(TrainEngine):
             workflow=workflow,
             workflow_kwargs=workflow_kwargs,
             group_size=group_size,
+            min_usable_group_size=min_usable_group_size,
             reward_normalization=reward_normalization,
+            reward_normalization_use_std=reward_normalization_use_std,
             drop_incomplete_group=drop_incomplete_group,
         )
 
@@ -604,6 +635,8 @@ class FSDPEngine(TrainEngine):
         dynamic_bs: bool = False,
         reward_normalization: bool = False,
         drop_incomplete_group: bool = False,
+        min_usable_group_size: int = 1,
+        reward_normalization_use_std: bool = True,
     ) -> list[dict[str, Any]]:
         self._check_rollout_engine_connected()
         return self.rollout_coordinator.prepare_batch(
@@ -612,8 +645,10 @@ class FSDPEngine(TrainEngine):
             workflow_kwargs=workflow_kwargs,
             should_accept_fn=should_accept_fn,
             group_size=group_size,
+            min_usable_group_size=min_usable_group_size,
             dynamic_bs=dynamic_bs,
             reward_normalization=reward_normalization,
+            reward_normalization_use_std=reward_normalization_use_std,
             drop_incomplete_group=drop_incomplete_group,
         )
 
@@ -738,7 +773,41 @@ class FSDPEngine(TrainEngine):
         ],
         forward_only: bool = False,
     ) -> None:
-        for mb_item in mb_list:
+        mb_items = list(mb_list)
+        n_micro_batches = len(mb_items)
+        if not self.enable_tree_training:
+            counts = torch.tensor(
+                [n_micro_batches, int(not mb_items)], dtype=torch.int64, device="cpu"
+            )
+            dist.all_reduce(counts, op=dist.ReduceOp.MAX, group=self.cpu_group)
+            if counts[1]:
+                raise ValueError("FSDP requires at least one real micro-batch per rank")
+            n_micro_batches = int(counts[0])
+
+        # Model configuration is shared by all ranks, including text-only peers.
+        if self.is_vision_model:
+            has_dummy = torch.tensor(
+                n_micro_batches > len(mb_items)
+                or any(mb.get(TRANSPORT_DUMMY_KEY) is True for mb in mb_list.mbs),
+                dtype=torch.int32,
+                device="cpu",
+            )
+            dist.all_reduce(has_dummy, op=dist.ReduceOp.MAX, group=self.cpu_group)
+            if has_dummy.item():
+                raise ValueError(
+                    "FSDP transport padding is not supported for vision-language "
+                    "models: text-only dummies can skip sharded vision layers "
+                    "and mismatch collectives. Use batches and microbatch settings "
+                    "that require no transport padding. All training ranks stopped "
+                    "before model execution."
+                )
+
+        # Preserve real packing and output metadata while short ranks participate
+        # in every FSDP forward/backward with their shortest valid input.
+        dummy_index = min(range(len(mb_items)), key=mb_list.group_lens.__getitem__)
+        for mb_index in range(n_micro_batches):
+            is_dummy = mb_index >= len(mb_items)
+            mb_item = mb_items[dummy_index if is_dummy else mb_index]
             inputs, ctx = self._prepare_mb_inputs(mb_item)
 
             # Lazily create tree attention metadata just before forward.
@@ -764,8 +833,13 @@ class FSDPEngine(TrainEngine):
             for key in tree_attn_keys:
                 del inputs[key]
 
-            ctx_dict = ctx.to_dict()
-            loss = process_output_fn(logits, ctx_dict)
+            if is_dummy:
+                # No output callback: dummy rows must not affect returned
+                # logprobs, loss normalization, or training statistics.
+                loss = None if forward_only else logits.mean() * 0.0
+            else:
+                ctx_dict = ctx.to_dict()
+                loss = process_output_fn(logits, ctx_dict)
 
             if not forward_only and loss is not None:
                 with trace_scope("fsdp_engine.backward"):
@@ -774,56 +848,60 @@ class FSDPEngine(TrainEngine):
     def train_batch(
         self,
         input_: list[dict[str, Any]] | dict[str, Any],
-        loss_fn: Callable[..., torch.Tensor],
-        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
+        loss_fn: LossFunction,
+        loss_weight_fn: LossNormalizer,
     ) -> dict[str, float]:
         self._ensure_ready()
-        self.optimizer_zero_grad()
-
         input_batched, _ = self._normalize_batch_input(input_)
+        with record_training_batch(self, input_batched, self.model_config):
+            self.optimizer_zero_grad()
 
-        # Step 1: Prepare micro-batches
-        mb_list = self._prepare_mb_list(input_batched).to(self.device)
+            # Step 1: Prepare micro-batches
+            mb_list = self._prepare_mb_list(
+                input_batched, allow_transport_padding=True
+            ).to(self.device)
 
-        # Step 2: Compute total loss weight
-        total_loss_weight = compute_total_loss_weight(
-            mb_list, loss_weight_fn, self.dp_group
-        )
-
-        # Step 3: Forward-backward using process_output_fn callback
-        def process_output(
-            logits: torch.Tensor, ctx_dict: dict[str, Any]
-        ) -> torch.Tensor:
-            ctx = FSDPTrainContext(**ctx_dict)
-            return self._compute_logprobs_and_loss(
-                logits,
-                ctx,
-                loss_fn,
-                loss_weight_fn,
-                total_loss_weight,
-                loss_multiplier=self.parallel_helper.dp_size,
+            # Step 2: Compute total loss weight
+            total_loss_weight = compute_total_loss_weight(
+                mb_list, loss_weight_fn, self.dp_group
             )
 
-        self.forward_backward_batch(mb_list, process_output, forward_only=False)
+            # Step 3: Forward-backward using process_output_fn callback
+            def process_output(
+                logits: torch.Tensor, ctx_dict: dict[str, Any]
+            ) -> torch.Tensor:
+                ctx = FSDPTrainContext(**ctx_dict)
+                return self._compute_logprobs_and_loss(
+                    logits,
+                    ctx,
+                    loss_fn,
+                    loss_weight_fn,
+                    total_loss_weight,
+                    loss_multiplier=self.parallel_helper.dp_size,
+                )
 
-        # Step 4: Optimizer step
-        stats = self.optimizer_step()
-        stats["num_micro_batches"] = len(mb_list.mbs)
-        return stats
+            self.forward_backward_batch(mb_list, process_output, forward_only=False)
+
+            # Step 4: Optimizer step
+            stats = self.optimizer_step()
+            stats["num_micro_batches"] = len(mb_list.mbs)
+            return stats
 
     @torch.no_grad()
     def eval_batch(
         self,
         input_: list[dict[str, Any]] | dict[str, Any],
-        loss_fn: Callable[..., torch.Tensor],
-        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
+        loss_fn: LossFunction,
+        loss_weight_fn: LossNormalizer,
     ) -> torch.Tensor | None:
         self._ensure_ready()
 
         input_batched, _ = self._normalize_batch_input(input_)
 
         # Step 1: Prepare micro-batches
-        mb_list = self._prepare_mb_list(input_batched).to(self.device)
+        mb_list = self._prepare_mb_list(input_batched, allow_transport_padding=True).to(
+            self.device
+        )
 
         # Step 2: Compute total loss weight
         total_loss_weight = compute_total_loss_weight(
@@ -881,7 +959,9 @@ class FSDPEngine(TrainEngine):
         batch_size = len(output_seqlens)
 
         # Step 2: Prepare micro-batches
-        mb_list = self._prepare_mb_list(input_batched).to(self.device)
+        mb_list = self._prepare_mb_list(input_batched, allow_transport_padding=True).to(
+            self.device
+        )
 
         # Step 3: Forward using process_output_fn callback, collecting results
         outputs: list[torch.Tensor] = []
@@ -921,9 +1001,17 @@ class FSDPEngine(TrainEngine):
 
     def export_stats(self) -> dict[str, float]:
         with self._offload_aware_context():
-            return stats_tracker.export_all(
+            data = stats_tracker.export_all(
                 reduce_group=self.data_parallel_group,
             )
+            data.update(
+                self._moe_metrics.export(
+                    reduce_group=self.world_mesh["dp_sp"].get_group()
+                )
+            )
+            data.update(export_training_metrics(self))
+
+        return data
 
     def offload(self) -> None:
         """Offload model memory to CPU using torch_memory_saver.
@@ -1880,7 +1968,12 @@ class FSDPEngine(TrainEngine):
         self.optimizer.load_state_dict(optimizer_state_dict)
         dist.barrier(group=self.cpu_group)
 
-    def _prepare_mb_list(self, input_: dict[str, Any]) -> MicroBatchList:
+    def _prepare_mb_list(
+        self,
+        input_: dict[str, Any],
+        *,
+        allow_transport_padding: bool = False,
+    ) -> MicroBatchList:
         assert "attention_mask" in input_ and "input_ids" in input_
         input_ = input_.copy()
 
@@ -1943,7 +2036,12 @@ class FSDPEngine(TrainEngine):
         else:
             input_ = amend_position_ids(input_)
 
-        mb_list = split_padded_tensor_dict_into_mb_list(input_, self.config.mb_spec)
+        mb_list = split_padded_tensor_dict_into_mb_list(
+            input_,
+            self.config.mb_spec,
+            allow_transport_padding=allow_transport_padding,
+            sync_mbs=False,
+        )
         mb_list.mbs = [pack_tensor_dict(mb) for mb in mb_list.mbs]
         mb_list = pad_mb_list(
             mb_list,
@@ -2045,6 +2143,7 @@ class FSDPEngine(TrainEngine):
 
         inputs.pop("turn_ids", None)
         inputs.pop("is_truncated", None)
+        inputs.pop("_pg_token_weights", None)
 
         ctx = FSDPTrainContext(
             model_inputs=inputs,
@@ -2149,14 +2248,16 @@ class FSDPEngine(TrainEngine):
         self,
         logits: torch.Tensor,
         ctx: FSDPTrainContext,
-        loss_fn: Callable[..., torch.Tensor],
-        loss_weight_fn: Callable[[dict[str, Any]], torch.Tensor],
-        total_loss_weight: torch.Tensor,
+        loss_fn: LossFunction,
+        loss_weight_fn: LossNormalizer,
+        total_loss_weight: LossValue,
         loss_multiplier: float = 1.0,
     ) -> torch.Tensor:
         """Compute logprobs/entropy and return scaled loss."""
-        local_weight = loss_weight_fn(ctx.mb_input)
-        if local_weight == 0:
+        if ctx.mb_input.get(TRANSPORT_DUMMY_KEY) is True:
+            return logits.float().mean() * 0.0
+        local_weight = compute_microbatch_loss_weight(ctx.mb_input, loss_weight_fn)
+        if isinstance(local_weight, torch.Tensor) and local_weight == 0:
             return logits.mean() * 0.0
 
         if self.config.is_critic and self.enable_tree_training:
@@ -2214,8 +2315,7 @@ class FSDPEngine(TrainEngine):
                 values = values[: -ctx.pad_length]
             loss = loss_fn(values, ctx.mb_input)
 
-        loss_scale = local_weight / total_loss_weight * loss_multiplier
-        return loss * loss_scale
+        return normalize_loss(loss, local_weight, total_loss_weight, loss_multiplier)
 
     def _compute_forward_result(
         self,

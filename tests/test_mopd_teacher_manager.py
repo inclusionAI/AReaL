@@ -354,6 +354,8 @@ class _PhaseController:
     def compute_logp_padded(self, subset):
         self.events.append(f"compute:{self.teacher_id}:{len(subset)}")
         assert all(MOPD_CONTRIBUTIONS_KEY not in trajectory for trajectory in subset)
+        assert all("routed_experts" not in trajectory for trajectory in subset)
+        assert all("r3_routing_valid" not in trajectory for trajectory in subset)
         value = 1.0 if self.teacher_id == "t0" else 3.0
         real = [torch.full((2,), value) for _ in subset]
         dummy = [torch.full((1,), -1.0)] if self.teacher_id == "t1" else []
@@ -455,7 +457,12 @@ def test_trainer_mopd_phase_routes_reuses_drains_then_releases():
         critic=_PhaseCritic(events),
         ref=_PhaseRef(events),
     )
-    batch = [{"mopd_route": "r0"}, {"mopd_route": "r1"}]
+    routed = torch.ones(1, 2, 1, 2, dtype=torch.int32)
+    valid = torch.tensor([True])
+    batch = [
+        {"mopd_route": route, "routed_experts": routed, "r3_routing_valid": valid}
+        for route in ("r0", "r1")
+    ]
 
     result = phase.materialize(batch)
 
@@ -490,6 +497,8 @@ def test_trainer_mopd_phase_routes_reuses_drains_then_releases():
         atol=0.0,
     )
     assert all("mopd_route" not in trajectory for trajectory in result)
+    assert all(trajectory["routed_experts"] is routed for trajectory in result)
+    assert all(trajectory["r3_routing_valid"] is valid for trajectory in result)
 
 
 def test_trainer_mopd_phase_failure_drains_rollout_before_release():

@@ -148,6 +148,7 @@ def test_compute_dpo_loss_simpo_without_ref_logprobs_matches_with_ref():
 class _RecordingDPOActor:
     def __init__(self):
         self.batches = []
+        self.cleared = []
 
     def train_dpo(self, batch):
         self.batches.append(batch)
@@ -155,6 +156,9 @@ class _RecordingDPOActor:
 
     def evaluate_dpo(self, batch):
         self.batches.append(batch)
+
+    def clear_batches(self, *args):
+        self.cleared.append(args)
 
 
 class _StopTraining(Exception):
@@ -208,7 +212,9 @@ def test_dpo_trainer_simpo_evaluate_runs_without_ref(monkeypatch):
     monkeypatch.setattr(
         dpo_trainer, "current_platform", SimpleNamespace(synchronize=lambda: None)
     )
+    monkeypatch.setattr(dpo_trainer, "is_single_controller", lambda: True)
 
     trainer._evaluate_fn()
 
     assert trainer.actor.batches == [[{"input_ids": 1}]]
+    assert trainer.actor.cleared == [([{"input_ids": 1}], None)]

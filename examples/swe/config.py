@@ -1,7 +1,6 @@
 """Configuration for SWE SFT training with AReaL."""
 
 from dataclasses import dataclass, field
-from typing import Literal
 
 from areal.api.cli_args import SFTConfig
 
@@ -74,11 +73,13 @@ class SweDataConfig:
         metadata={
             "help": "Convert OpenAI JSON-string tool_calls.arguments to dicts "
             "before apply_chat_template for templates that require structured "
-            "arguments. Leave disabled for templates that expect the standard "
+            "arguments, including GLM and native Qwen3.5. Leave disabled for "
+            "templates that expect the standard "
             "OpenAI string form."
         },
     )
-    split_mode: Literal["pair", "trajectory"] = field(
+    # OmegaConf structured configs do not support typing.Literal.
+    split_mode: str = field(
         default="pair",
         metadata={
             "help": "Sample construction mode: 'pair' (default) splits "
@@ -102,6 +103,10 @@ class SweDataConfig:
             "Set to 0 to disable, -1 to dump all."
         },
     )
+
+    def __post_init__(self):
+        if self.split_mode not in ("pair", "trajectory"):
+            raise ValueError("split_mode must be either 'pair' or 'trajectory'")
 
 
 @dataclass

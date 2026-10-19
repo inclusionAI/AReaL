@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from typing import Any
 from unittest.mock import AsyncMock
 
+import numpy as np
 import pytest
 
 from areal.api.cli_args import GenerationHyperparameters
@@ -23,6 +25,11 @@ from areal.v2.inference_service.vllm.bridge import VLLMBridgeBackend
 def _make_sglang_response(
     token_logprobs: list[tuple[float, int]],
     finish_reason_type: str = "stop",
+    *,
+    finish_reason_message: str = "",
+    routed_experts: np.ndarray | None = None,
+    prompt_tokens: int | None = None,
+    completion_tokens: int | None = None,
 ) -> dict[str, Any]:
     """Build a minimal SGLang /generate JSON response.
 
@@ -33,10 +40,25 @@ def _make_sglang_response(
     Returns:
         Dict matching SGLang /generate response schema.
     """
+    meta_info: dict[str, Any] = {
+        "finish_reason": {
+            "type": finish_reason_type,
+            "message": finish_reason_message,
+        },
+        "output_token_logprobs": token_logprobs,
+    }
+    if routed_experts is not None:
+        if prompt_tokens is None or completion_tokens is None:
+            raise ValueError("prompt_tokens and completion_tokens are required")
+        meta_info["prompt_tokens"] = prompt_tokens
+        meta_info["completion_tokens"] = completion_tokens
+        meta_info["routed_experts"] = base64.b64encode(
+            np.asarray(routed_experts, dtype=np.int32).tobytes()
+        ).decode("utf-8")
+
     return {
         "meta_info": {
-            "finish_reason": {"type": finish_reason_type},
-            "output_token_logprobs": token_logprobs,
+            **meta_info,
         },
     }
 
@@ -342,6 +364,39 @@ class TestInfBridge:
 
         assert resp.output_versions == [7]
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("backend_name", ["sglang", "vllm"])
+    @pytest.mark.parametrize("interrupted", [False, True])
+    async def test_output_versions_pinned_before_request(
+        self, backend_name, interrupted
+    ):
+        """Each segment retains its dispatch version across an in-flight update."""
+        backend = (
+            SGLangBridgeBackend() if backend_name == "sglang" else VLLMBridgeBackend()
+        )
+        bridge = _make_bridge(version=10, backend=backend)
+        responses = [([100, 101], [-0.5, -0.3], "abort" if interrupted else "stop")]
+        if interrupted:
+            responses.append(([102], [-0.2], "stop"))
+
+        async def send_request(http_req):
+            tokens, logprobs, reason = responses.pop(0)
+            # A weight update completes while the HTTP response is in flight.
+            await asyncio.sleep(0)
+            bridge.set_version(bridge.get_version() + 1)
+            if backend_name == "sglang":
+                return _make_sglang_response(list(zip(logprobs, tokens)), reason)
+            return _make_vllm_response(tokens, logprobs, reason)
+
+        bridge._send_request = AsyncMock(side_effect=send_request)
+        try:
+            resp = await bridge.agenerate(_make_request())
+        finally:
+            await bridge.aclose()
+
+        assert resp.output_tokens == ([100, 101, 102] if interrupted else [100, 101])
+        assert resp.output_versions == ([10, 10, 11] if interrupted else [10, 10])
+
     # -- 10. n_samples validation ------------------------------------------------
 
     @pytest.mark.asyncio
@@ -431,6 +486,122 @@ class TestInfBridge:
         assert resp.stop_reason == "length"
         bridge._send_request.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_return_routed_experts_missing_on_success_raises(self):
+        """Requested routed_experts must be present on successful generations."""
+        bridge = _make_bridge(return_routed_experts=True)
+        bridge._send_request = AsyncMock(
+            return_value=_make_sglang_response([(-0.5, 100)], "stop")
+        )
+
+        req = _make_request(input_ids=[1, 2, 3], max_new_tokens=5)
+        with pytest.raises(RuntimeError, match="return_routed_experts=True"):
+            await bridge.agenerate(req)
+
+    @pytest.mark.asyncio
+    async def test_abort_before_prefill_without_routing_is_allowed(self):
+        """Abort-before-prefill can lack routed_experts and output tokens."""
+        bridge = _make_bridge(return_routed_experts=True, max_resubmit_retries=1)
+        bridge._send_request = AsyncMock(
+            return_value={
+                "meta_info": {
+                    "finish_reason": {
+                        "type": "abort",
+                        "message": "Abort before prefill due to pause",
+                    },
+                },
+            }
+        )
+
+        req = _make_request(input_ids=[1, 2, 3], max_new_tokens=5)
+        resp = await bridge.agenerate(req)
+
+        assert resp.output_tokens == []
+        assert resp.routed_experts is None
+        assert resp.stop_reason == "length"
+
+    @pytest.mark.asyncio
+    async def test_abort_with_tokens_missing_routing_can_recover_on_resubmit(self):
+        """Intermediate aborts may omit routing if a later response covers it."""
+        calls = 0
+        final_routing = np.arange(1, 1 + 5 * 4, dtype=np.int32).reshape(5, 4)
+
+        async def mock_send(http_req, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return _make_sglang_response([(-0.5, 100), (-0.3, 101)], "abort")
+            return _make_sglang_response(
+                [(-0.2, 200)],
+                "stop",
+                routed_experts=final_routing,
+                prompt_tokens=5,
+                completion_tokens=1,
+            )
+
+        bridge = _make_bridge(return_routed_experts=True)
+        bridge._send_request = mock_send
+
+        req = _make_request(input_ids=[1, 2, 3], max_new_tokens=5)
+        resp = await bridge.agenerate(req)
+
+        assert resp.output_tokens == [100, 101, 200]
+        np.testing.assert_array_equal(resp.routed_experts, final_routing)
+
+    @pytest.mark.asyncio
+    async def test_abort_with_tokens_missing_routing_raises_after_retries(self):
+        """R3 cannot return generated tokens without any final routing."""
+        bridge = _make_bridge(return_routed_experts=True, max_resubmit_retries=2)
+        bridge._send_request = AsyncMock(
+            return_value=_make_sglang_response([(-0.5, 100)], "abort")
+        )
+
+        req = _make_request(input_ids=[1, 2, 3], max_new_tokens=5)
+        with pytest.raises(RuntimeError, match="no routed_experts"):
+            await bridge.agenerate(req)
+
+    @pytest.mark.asyncio
+    async def test_routed_experts_resubmit_drops_duplicate_prefix(self):
+        """Resubmitted SGLang routing is stitched without duplicating prompt rows."""
+        calls: list[dict[str, Any]] = []
+        first_routing = np.arange(1, 1 + 4 * 4, dtype=np.int32).reshape(4, 4)
+        second_routing = np.concatenate(
+            [
+                first_routing,
+                np.arange(101, 101 + 4, dtype=np.int32).reshape(1, 4),
+            ],
+            axis=0,
+        )
+
+        async def mock_send(http_req, **kwargs):
+            calls.append(dict(http_req.payload))
+            if len(calls) == 1:
+                return _make_sglang_response(
+                    [(-0.5, 100), (-0.3, 101)],
+                    "abort",
+                    routed_experts=first_routing,
+                    prompt_tokens=3,
+                    completion_tokens=2,
+                )
+            return _make_sglang_response(
+                [(-0.2, 200)],
+                "stop",
+                routed_experts=second_routing,
+                prompt_tokens=5,
+                completion_tokens=1,
+            )
+
+        bridge = _make_bridge(return_routed_experts=True)
+        bridge._send_request = mock_send
+
+        req = _make_request(input_ids=[1, 2, 3], max_new_tokens=5)
+        resp = await bridge.agenerate(req)
+
+        assert calls[0]["return_routed_experts"] is True
+        assert calls[1]["return_routed_experts"] is True
+        assert resp.output_tokens == [100, 101, 200]
+        np.testing.assert_array_equal(resp.routed_experts, second_routing)
+
 
 class TestVLLMBridgeBackend:
     @pytest.mark.asyncio
@@ -487,6 +658,23 @@ class TestVLLMBridgeBackend:
             assert "seed" not in http_req.payload
         else:
             assert http_req.payload["seed"] == seed
+
+    def test_vllm_build_generation_request_forwards_frequency_penalty_and_stop(
+        self,
+    ):
+        """vLLM bridge forwards frequency_penalty and stop like the SGLang bridge."""
+        backend = VLLMBridgeBackend()
+        req = ModelRequest(
+            input_ids=[11, 12],
+            gconfig=GenerationHyperparameters(
+                max_new_tokens=7, frequency_penalty=0.5, stop=["STOP"]
+            ),
+        )
+
+        http_req = backend.build_generation_request(req, with_lora=False, version=0)
+
+        assert http_req.payload["frequency_penalty"] == 0.5
+        assert http_req.payload["stop"] == ["STOP"]
 
     def test_vllm_parse_generation_response_for_chat_format(self):
         """vLLM bridge parses chat logprobs content format."""
