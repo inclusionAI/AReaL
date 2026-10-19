@@ -282,3 +282,37 @@ def test_consumers_share_reductions_without_recapture_or_global_reset(monkeypatc
     assert local_stats["rollout/num_turns/avg"] == 5
     assert local_stats["rollout/num_turns_count"] == 4
     assert local_stats["rollout/num_turns_missing_count"] == 2
+
+
+def test_consuming_turns_does_not_rescan_previous_observations(monkeypatch):
+    """More rejected attempts must not make each subsequent record scan history."""
+
+    class ObservedHistory(list):
+        inspected = 0
+
+        def __iter__(self):
+            self.inspected += len(self)
+            return super().__iter__()
+
+        def __add__(self, other):
+            self.inspected += len(self)
+            return super().__add__(other)
+
+    tracker = DistributedStatsTracker()
+    monkeypatch.setattr(stats_tracker, "get", lambda: tracker)
+    consumer = ConsumedMetrics(publish_to_tracker=True)
+    key = "rollout/num_turns"
+    consumer.consume(SimpleNamespace(metrics={key: [2.0]}))
+    history = ObservedHistory(tracker.stats[key])
+    tracker.stats[key] = history
+    for _ in range(128):
+        consumer.consume(SimpleNamespace(trajectory=None, metrics={key: [4.0, 6.0]}))
+    assert history.inspected == 0
+    result = tracker.export()
+    assert result == {
+        f"{key}/avg": pytest.approx((2 + 128 * 10) / 257),
+        f"{key}/min": 2,
+        f"{key}/max": 6,
+        f"{key}_count": 257,
+    }
+    assert tracker.export() == {}

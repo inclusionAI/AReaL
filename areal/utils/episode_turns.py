@@ -77,9 +77,19 @@ def publish_turn_distribution(
     if tracker is None:
         tracker = stats_tracker.get()
     value = torch.tensor(values, dtype=torch.float32)
-    denominator = f"{key}_count"
-    tracker.denominator(**{denominator: torch.ones_like(value, dtype=torch.bool)})
-    tracker.stat(denominator, reduce_type=ReduceType.AVG_MIN_MAX, **{key: value})
+    # stat() revalidates all previous tensor/denominator pairs on every call.
+    # Consumption can accumulate many rejected attempts before one export, so
+    # retain per-call summaries without revisiting the window's history.
+    tracker.stat_compact(
+        torch.ones_like(value, dtype=torch.bool),
+        ReduceType.AVG_MIN_MAX,
+        **{key: value},
+    )
+    tracker.stat_compact(
+        torch.ones(1, dtype=torch.bool),
+        ReduceType.SUM,
+        **{f"{key}_count": torch.tensor([len(values)], dtype=torch.float64)},
+    )
 
 
 def record_episode_turns(
