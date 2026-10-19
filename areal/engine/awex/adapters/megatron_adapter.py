@@ -1,4 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
+"""Shared AWEX training adapter for AReaL Megatron engines."""
+
 from __future__ import annotations
 
 import gc
@@ -10,45 +12,42 @@ from typing import TYPE_CHECKING
 import httpx
 import torch
 import torch.distributed as dist
-from awex.meta.weight_meta import (
-    ParameterMeta,
-    ParameterReplicaMeta,
-    ParameterShardMeta,
-)
-from awex.sharding.param_sharding import ShardingType
-from awex.sharding.rank_info import RankInfo
+from awex.meta.weight_meta import ParameterMeta
+from awex.models.registry import get_train_weights_converter
+from awex.sharding.param_sharding import get_rank_info_extractor
 from awex.transfer.nccl_comm import batch_send_recv, nccl_build_send_ops
 from awex.transfer.nccl_stream_batch import NcclColocateStreamBatchTransport
 from awex.transfer.transfer_plan import TransferPlan, TransferPlanBuilder, slice_tensor
+from awex.util.cuda_ipc import cuda_ipc_allocation
 from awex.util.tensor_util import (
     cuda_ipc_serialize,
     group_tensors_by_shape_and_dtype,
 )
 
-from areal.engine.megatron_utils.optimizer_chain import (
-    OptimizerResidencyEntry,
-    OptimizerResidencyPlan,
-    build_optimizer_residency_plan,
-    checkpoint_awex_residency,
+from areal.engine.awex.adapters.training_adapter import (
+    AwexTrainingAdapter,
 )
-from areal.utils import logging
-from areal.v2.weight_update.awex import (
-    awex_wu_use_group,
-    fetch_kv_metadata,
-)
-from areal.v2.weight_update.awex.delta_config import (
+from areal.engine.awex.dte.delta_config import (
     DTERuntimeConfig,
     synchronize_wire_dtypes,
     validate_dte_world_size,
 )
-from areal.v2.weight_update.awex.delta_detect import AdamWInversionDetector
-from areal.v2.weight_update.nccl_group import (
+from areal.engine.awex.dte.delta_detect import AdamWInversionDetector
+from areal.engine.awex.transport.dtype import align_send_ops_to_recv_dtype
+from areal.engine.awex.transport.metadata import (
+    awex_wu_use_group,
+    fetch_kv_metadata,
+)
+from areal.engine.awex.transport.nccl_group import (
     init_weights_update_group,
     setup_batch_isend_irecv,
 )
-from areal.v2.weight_update.training_adapter import (
-    AwexTrainingAdapter,
+from areal.engine.awex.utils import (
+    awex_colocate_timeout_s,
+    resolve_physical_gpu_id,
 )
+from areal.engine.megatron_utils.weight_residency import MegatronWeightResidency
+from areal.utils import logging
 
 if TYPE_CHECKING:
     from areal.engine.megatron_engine import MegatronEngine
@@ -56,22 +55,27 @@ if TYPE_CHECKING:
 logger = logging.getLogger("AwexMegatronAdapter")
 
 
+def _get_tf_config(models):
+    if not isinstance(models, (list, tuple)):
+        models = [models]
+    for model in models:
+        for attr in ("transformer_config", "config"):
+            config = getattr(model, attr, None)
+            if config is not None:
+                return config
+    return None
+
+
 class AwexMegatronAdapter(AwexTrainingAdapter):
-    """Awex training adapter for MegatronEngine supporting DP, TP, and PP.
+    """Shared Megatron adapter for v1 colocate and v2 separated transfer."""
 
-    PP: get_named_parameters already yields only the current stage's layers
-    (with globally-correct HF layer indices via get_transformer_layer_offset),
-    so each rank naturally reports and sends only its own subset of parameters.
-    The gateway's _merge_training_meta_by_name unions disjoint PP stage params
-    by name, so the full model is covered across all PP ranks.
-
-    TP: all_gather_param gathers the full tensor on every TP rank before
-    convert_to_hf. dp_replicated=True tells awex that TP ranks within a DP
-    group hold identical full tensors and only one needs to send.
-    """
-
-    def __init__(self, engine: MegatronEngine):
+    def __init__(
+        self,
+        engine: MegatronEngine,
+        residency: MegatronWeightResidency | None = None,
+    ):
         self._engine = engine
+        self._residency = residency or MegatronWeightResidency(engine)
         self._transfer_plan: TransferPlan | None = None
         self._weights_update_group = None
         self._weights_update_group_gloo = None
@@ -79,13 +83,6 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
         self._separation_delta_transport: NcclColocateStreamBatchTransport | None = None
         self._separation_wire_dtypes: tuple[torch.dtype, ...] | None = None
         self._transfer_rank: int | None = None
-        self._offloaded_weights: dict[str, torch.Tensor] = {}
-        self._released_tags: set[str] = set()
-        self._optimizer_residency_plan: OptimizerResidencyPlan | None = None
-        self._ordinary_optimizer_restores: dict[
-            int,
-            list[tuple[dict[str, object], str, torch.Tensor, torch.device]],
-        ] = {}
         self._colocate_lock = threading.Lock()
         self._colocate_admin_api_key: str = "areal-admin-key"
         self._colocate_http_client: httpx.Client | None = None
@@ -93,6 +90,89 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
         self._dte_config = DTERuntimeConfig.from_env()
         self._delta_tracker = None
         self._delta_detector = None
+        self._weight_converter = None
+        self._parameters_meta: list[ParameterMeta] | None = None
+        self._rank_info = None
+        self._legacy_meta_server_addr: str | None = None
+        self._legacy_meta_server_client = None
+        self._legacy_transfer_rank: int | None = None
+        self._legacy_timeout_s: float = awex_colocate_timeout_s()
+        self._legacy_initialized = False
+        self._legacy_ip_address: str | None = None
+        self._legacy_physical_gpu_id: int | None = None
+        self._legacy_infer_world_size: int | None = None
+        self._legacy_num_infer_engines: int | None = None
+        self._legacy_logical_train_rank: int | None = None
+        self._pending_ipc_export: (
+            tuple[list[torch.Tensor], list[torch.Tensor]] | None
+        ) = None
+
+    @property
+    def residency(self) -> MegatronWeightResidency:
+        """Return the shared residency manager used by this adapter."""
+        return self._residency
+
+    @property
+    def _released_tags(self) -> set[str]:
+        return set(self._residency.released_tags)
+
+    def eager_publish_train_info(self, meta_server_addr: str | None) -> None:
+        """Publish train world metadata before the colocated reader starts."""
+        addr = meta_server_addr or os.environ.get("AWEX_META_SERVER_ADDR", "")
+        if not addr:
+            return
+        from areal.models.mcore.qwen4_exp_awex_binding import build_awex_train_info
+
+        is_qwen = self._engine.hf_config.architectures == [
+            "Qwen4ExpForConditionalGeneration"
+        ]
+        rank = dist.get_rank() if dist.is_initialized() else 0
+        world = dist.get_world_size() if dist.is_initialized() else 1
+        if rank != 0 and not is_qwen:
+            return
+        try:
+            from awex.meta.meta_server import MetaServerClient
+
+            host, port = addr.rsplit(":", 1)
+            client = MetaServerClient(host, int(port))
+            if is_qwen:
+                from areal.models.mcore.qwen4_exp_awex_binding import (
+                    actor_frozen_binder,
+                )
+                from areal.models.mcore.qwen4_exp_awex_contract import (
+                    merge_frozen_proofs,
+                )
+
+                binder = actor_frozen_binder(self._engine)
+                record = binder.verify_loaded()
+                if rank == 0 and binder.contract.language_model_only:
+                    record["proof"] = dict(record["proof"])
+                    for name in binder.contract.visual_parameter_names:
+                        record["proof"][name] = binder.checkpoint.verify_source(name)
+                client.put_object(f"qwen4_frozen_actor_{rank}", record)
+                if rank == 0:
+                    records = [
+                        client.get_object(
+                            f"qwen4_frozen_actor_{i}", timeout=awex_colocate_timeout_s()
+                        )
+                        for i in range(world)
+                    ]
+                    proof = merge_frozen_proofs(binder.checkpoint, records)
+                    client.put_object("qwen4_frozen_proof", proof)
+                self._engine._qwen4_awex_frozen_proof = client.get_object(
+                    "qwen4_frozen_proof", timeout=awex_colocate_timeout_s()
+                )
+            if rank == 0:
+                client.put_object(
+                    "awex_train_info", build_awex_train_info(self._engine, world)
+                )
+                logger.info(
+                    "Published verified AWEX training metadata (world_size=%d)", world
+                )
+        except Exception as exc:
+            if is_qwen:
+                raise
+            logger.warning("Eager publish awex_train_info failed: %s", exc)
 
     @property
     def parallelism_strategy(self) -> dict:
@@ -107,49 +187,169 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
             "dp_size": self._engine.data_parallel_world_size,
             "ep_size": mpu.get_expert_model_parallel_world_size(),
             "dp_replicated": tp_size > 1 or cp_size > 1,
+            "parameter_layout": "awex",
         }
 
-    def get_weight_metadata(self) -> list[ParameterMeta]:
-        rank_info = self._build_rank_info()
-        metadata: list[ParameterMeta] = []
+    def configure_model_converter(self, infer_conf: dict) -> None:
+        """Initialize AWEX metadata and converters collectively on train ranks."""
+        if self._weight_converter is not None:
+            return
 
-        for hf_name, tensor in self._iter_hf_params():
-            shape = tuple(tensor.shape)
-            numel = int(tensor.numel())
-            shard_meta = ParameterShardMeta(
-                tp_rank=rank_info.tp_rank,
-                attn_tp_rank=rank_info.attn_tp_rank,
-                pp_rank=rank_info.pp_rank,
-                ep_rank=rank_info.ep_rank,
-                ep_tp_rank=rank_info.ep_tp_rank,
-                global_rank=rank_info.global_rank,
-                world_size=rank_info.world_size,
-                engine_rank=rank_info.engine_rank,
-                cp_rank=rank_info.cp_rank,
-                cp_size=rank_info.cp_size,
-                cp_mode=rank_info.cp_mode,
-                name=hf_name,
-                shape=shape,
-                numel=numel,
-                dtype=tensor.dtype,
-                global_offset=tuple([0] * len(shape)),
-                sharding_type=ShardingType.NO_SHARDING,
-                num_shards=1,
-                sharding_dim=0,
-            )
-            replica = ParameterReplicaMeta(shards=[shard_meta])
-            metadata.append(
-                ParameterMeta(
-                    name=hf_name,
-                    global_numel=numel,
-                    global_shape=shape,
-                    dtype=tensor.dtype,
-                    shards=[shard_meta],
-                    replicas=[replica],
+        from awex.meta.train_meta_resolver import McoreParamMetaResolver
+
+        if isinstance(infer_conf.get("hf_config"), dict):
+            from types import SimpleNamespace
+
+            infer_conf["hf_config"] = SimpleNamespace(**infer_conf["hf_config"])
+
+        if self._engine.hf_config.architectures == ["Qwen4ExpForConditionalGeneration"]:
+            from awex.models.qwen4_exp import register_qwen4_exp_awex
+
+            from areal.models.mcore.qwen4_exp_awex_binding import actor_frozen_binder
+
+            binder = actor_frozen_binder(self._engine)
+            if infer_conf.get("qwen4_exp_frozen_contract") != binder.contract.to_dict():
+                raise ValueError(
+                    "Inference did not confirm the training frozen contract"
                 )
-            )
+            self._qwen4_frozen_binder = binder
+            register_qwen4_exp_awex(mcore_binder=binder)
 
-        return metadata
+        class _EngineShim:
+            def __init__(self, engine: MegatronEngine):
+                self.model = engine.model
+                if not isinstance(self.model, (list, tuple)):
+                    self.model = [self.model]
+                self.hf_config = engine.hf_config
+                self.enable_debug_mode = False
+                self.enable_colocate_mode = False
+                self.engine_name = "mcore"
+                self.config = {}
+                self.meta_server_addr = ""
+
+            def release_memory_occupation(self, tags=None):
+                del tags
+
+            def resume_memory_occupation(self, tags=None):
+                del tags
+
+        resolver = McoreParamMetaResolver(
+            _EngineShim(self._engine), self._engine.hf_config, infer_conf
+        )
+        self._parameters_meta = resolver.get_parameters_meta()
+        self._rank_info = get_rank_info_extractor("mcore")()
+        self._weight_converter = get_train_weights_converter(
+            "mcore",
+            self._engine.hf_config.architectures[0],
+            self._engine.hf_config,
+            self._rank_info,
+            {
+                **infer_conf,
+                "train_pp_stage_layer_id_map": (resolver.get_pp_stage_layer_id_map()),
+            },
+            tf_config=_get_tf_config(self._engine.model),
+        )
+
+    def init_legacy_colocate_weight_update(
+        self,
+        meta_server_addr: str | None = None,
+        pair_name: str = "default",
+        transfer_rank: int = 0,
+        timeout_s: float | None = None,
+    ) -> None:
+        """Initialize the v1 MetaServer-based colocate control plane."""
+        from awex.meta.meta_server import MetaServerClient, start_meta_server
+
+        if not meta_server_addr:
+            meta_server_addr = os.environ.get("AWEX_META_SERVER_ADDR", "")
+        if not meta_server_addr:
+            host, port = start_meta_server()
+            meta_server_addr = f"{host}:{port}"
+            os.environ["AWEX_META_SERVER_ADDR"] = meta_server_addr
+            logger.info("Started MetaServer at %s", meta_server_addr)
+
+        host, port = meta_server_addr.rsplit(":", 1)
+        self._legacy_meta_server_client = MetaServerClient(host, int(port))
+        self._legacy_meta_server_addr = meta_server_addr
+        self._legacy_transfer_rank = transfer_rank
+        self._legacy_timeout_s = (
+            awex_colocate_timeout_s() if timeout_s is None else timeout_s
+        )
+        from areal.models.mcore.qwen4_exp_awex_binding import build_awex_train_info
+
+        train_info = build_awex_train_info(self._engine, dist.get_world_size())
+        if dist.get_rank() == 0:
+            self._legacy_meta_server_client.put_object("awex_train_info", train_info)
+
+        logger.info(
+            "Legacy AWEX colocate initialized: meta_server=%s, "
+            "pair_name=%s, transfer_rank=%d",
+            meta_server_addr,
+            pair_name,
+            transfer_rank,
+        )
+
+    def _lazy_initialize_legacy_colocate(self) -> None:
+        """Finish v1 colocate initialization once live weights are available."""
+        if self._legacy_initialized:
+            return
+        if self._legacy_meta_server_client is None:
+            raise RuntimeError("Legacy AWEX colocate adapter is not initialized")
+
+        from awex.util.common import get_ip_address
+
+        rank = dist.get_rank()
+        self._legacy_ip_address = get_ip_address()
+        self._legacy_physical_gpu_id = resolve_physical_gpu_id(
+            torch.cuda.current_device()
+        )
+
+        infer_conf = self._legacy_meta_server_client.get_object(
+            "infer_conf", timeout=self._legacy_timeout_s
+        )
+        logger.info("Got infer_conf from MetaServer: %s", infer_conf)
+        self.configure_model_converter(infer_conf)
+        assert self._parameters_meta is not None
+        assert self._rank_info is not None
+
+        if rank == 0:
+            self._legacy_meta_server_client.put_object(
+                "training_params_meta", self._parameters_meta
+            )
+            logger.info("Registered training_params_meta with MetaServer")
+
+        self._legacy_infer_world_size = infer_conf["infer_world_size"]
+        self._legacy_logical_train_rank = (
+            self._legacy_infer_world_size + self._rank_info.global_rank
+        )
+        self._legacy_meta_server_client.add_object_to_set(
+            "training_device_rank_entries",
+            (
+                self._legacy_ip_address,
+                self._legacy_physical_gpu_id,
+                self._legacy_logical_train_rank,
+            ),
+        )
+        self._legacy_num_infer_engines = self._legacy_meta_server_client.get_object(
+            "num_infer_engines", timeout=self._legacy_timeout_s
+        )
+        self._legacy_initialized = True
+        logger.info(
+            "Legacy colocate train side initialized: logical_train_rank=%d, "
+            "infer_world_size=%d, train_world_size=%d",
+            self._legacy_logical_train_rank,
+            self._legacy_infer_world_size,
+            self._rank_info.world_size,
+        )
+
+    def get_weight_metadata(self) -> list[ParameterMeta]:
+        if self._parameters_meta is None:
+            raise RuntimeError("AWEX Megatron converter is not configured")
+        # The native resolver gathers every rank into one global metadata list.
+        # Publish it once so the gateway does not merge duplicate replicas.
+        if dist.get_rank() != 0:
+            return []
+        return self._parameters_meta
 
     def get_local_shard_parameters(
         self, required_names: list[str] | None = None
@@ -185,6 +385,7 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
         infer_world_size: int,
         train_world_size: int,
         num_engines: int,
+        timeout_s: float = 300.0,
     ) -> None:
         if self._dte_config.enabled:
             validate_dte_world_size(world_size, infer_world_size, train_world_size)
@@ -192,7 +393,7 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
         self._transfer_rank = transfer_rank
         self._world_size = world_size
 
-        infer_meta, train_meta = fetch_kv_metadata(kv_store_url, pair_name)
+        infer_meta, train_meta = fetch_kv_metadata(kv_store_url, pair_name, timeout_s)
 
         builder = TransferPlanBuilder(
             infer_world_size=infer_world_size,
@@ -261,6 +462,7 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
             self._weights_update_group,
             copy_rank=self._transfer_rank,
         )
+        align_send_ops_to_recv_dtype(send_ops, self._transfer_plan)
         batch_send_recv(
             send_ops=send_ops,
             recv_ops=[],
@@ -322,6 +524,7 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
                 self._weights_update_group,
                 copy_rank=self._transfer_rank,
             )
+            align_send_ops_to_recv_dtype(send_ops, self._transfer_plan)
             batch_send_recv(
                 send_ops=send_ops,
                 recv_ops=[],
@@ -502,117 +705,65 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
             self._colocate_http_client.close()
             self._colocate_http_client = None
 
-    def _build_rank_info(self) -> RankInfo:
-        from megatron.core import parallel_state as mpu
-
-        tp_size = mpu.get_tensor_model_parallel_world_size()
-        tp_rank = mpu.get_tensor_model_parallel_rank()
-        pp_size = mpu.get_pipeline_model_parallel_world_size()
-        pp_rank = mpu.get_pipeline_model_parallel_rank()
-        ep_size = mpu.get_expert_model_parallel_world_size()
-        ep_rank = mpu.get_expert_model_parallel_rank()
-        etp_size = mpu.get_expert_tensor_parallel_world_size()
-        etp_rank = mpu.get_expert_tensor_parallel_rank()
-        cp_size = mpu.get_context_parallel_world_size()
-        cp_rank = mpu.get_context_parallel_rank()
-        local_rank = int(os.environ.get("LOCAL_RANK", self._engine.rank))
-
-        return RankInfo(
-            tp_rank=tp_rank,
-            tp_size=tp_size,
-            pp_rank=pp_rank,
-            pp_size=pp_size,
-            dp_size=self._engine.data_parallel_world_size,
-            dp_rank=self._engine.data_parallel_rank,
-            ep_rank=ep_rank,
-            ep_size=ep_size,
-            ep_tp_rank=etp_rank,
-            ep_tp_size=etp_size,
-            attn_tp_rank=tp_rank,
-            attn_tp_size=tp_size,
-            attn_dp_rank=self._engine.data_parallel_rank,
-            world_size=self._engine.world_size,
-            global_rank=self._engine.rank,
-            local_rank=local_rank,
-            engine_rank=0,
-            is_infer=False,
-            cp_rank=cp_rank,
-            cp_size=cp_size,
-            cp_mode="ring" if cp_size > 1 else "none",
-        )
-
     def _iter_hf_params(
         self,
         theta_by_id: dict[int, torch.Tensor] | None = None,
         consume_overrides: bool = False,
     ):
-        """Yield (hf_name, tensor) for every parameter on this rank.
+        """Yield canonical parameters through AWEX's model registry."""
+        from awex.converter.mcore_converter import get_mcore_model_parameters
 
-        Uses get_named_parameters + all_gather_param + convert_to_hf to produce
-        HF-style per-expert names (e.g. experts.0.gate_proj.weight). The SGLang
-        adapter's _unfuse_params converts SGLang's fused w13/w2 format to the
-        same per-expert names, so both sides match for the transfer plan.
-        """
-        from areal.engine.megatron_utils.megatron import (
-            all_gather_param,
-            convert_to_hf,
-            get_named_parameters,
-        )
+        if self._weight_converter is None or self._rank_info is None:
+            raise RuntimeError("AWEX Megatron converter is not configured")
+        if self._engine.hf_config.architectures == ["Qwen4ExpForConditionalGeneration"]:
+            if getattr(self, "_qwen4_frozen_binder", None) is None:
+                raise RuntimeError(
+                    "Qwen4Exp weight conversion has no validated binding"
+                )
+            self._weight_converter.refresh_frozen_contract()
 
-        num_moe_experts = getattr(self._engine.tf_config, "num_moe_experts", None)
-        model_name = self._engine.hf_config.model_type
-        tie_word_embeddings = getattr(
-            self._engine.hf_config, "tie_word_embeddings", False
-        )
         overrides = theta_by_id if theta_by_id is not None else {}
+        converted_names: set[str] = set()
+        embed_tensor: torch.Tensor | None = None
+        models = self._engine.model
+        if not isinstance(models, (list, tuple)):
+            models = [models]
 
-        for mcore_name, param in get_named_parameters(
-            self._engine.model, num_moe_experts
-        ):
-            src = overrides.get(id(param), param)
-            if src is not param:
-                for attr in (
-                    "tensor_model_parallel",
-                    "partition_dim",
-                    "partition_stride",
+        for vp_stage, model in enumerate(models):
+            for mcore_name, param in get_mcore_model_parameters(model).items():
+                source = overrides.get(id(param), param)
+                for hf_name, tensor in self._weight_converter.convert_param(
+                    mcore_name, source.detach(), vp_stage=vp_stage
                 ):
-                    if hasattr(param, attr):
-                        setattr(src, attr, getattr(param, attr))
-            gathered = all_gather_param(
-                mcore_name,
-                src,
-                fp8_direct_convert=False,
-                quantization_config=None,
-                duplicated_param_names=self._engine._duplicated_param_names,
-            )
-            if not isinstance(gathered, torch.Tensor):
-                gathered = gathered.data
+                    converted_names.add(hf_name)
+                    if hf_name == "model.embed_tokens.weight":
+                        embed_tensor = tensor
+                    yield hf_name, tensor.detach()
+                if consume_overrides:
+                    overrides.pop(id(param), None)
 
-            for hf_name, tensor in convert_to_hf(
-                self._engine.tf_config,
-                model_name,
-                mcore_name,
-                gathered,
-            ):
-                if tie_word_embeddings and hf_name == "lm_head.weight":
-                    continue
-                yield hf_name, tensor.detach()
-            if consume_overrides:
-                overrides.pop(id(param), None)
+        if (
+            getattr(self._engine.hf_config, "tie_word_embeddings", False)
+            and self._rank_info.pp_rank == self._rank_info.pp_size - 1
+            and "lm_head.weight" not in converted_names
+            and embed_tensor is not None
+        ):
+            yield "lm_head.weight", embed_tensor.detach()
 
     def _iter_model_params_for_delta(self):
         """Yield model tensors in the same order used by the HF converter."""
-        from areal.engine.megatron_utils.megatron import get_named_parameters
+        from awex.converter.mcore_converter import get_mcore_model_parameters
 
-        num_moe_experts = getattr(self._engine.tf_config, "num_moe_experts", None)
         seen: set[int] = set()
-        for _mcore_name, param in get_named_parameters(
-            self._engine.model, num_moe_experts
-        ):
-            if id(param) in seen:
-                continue
-            seen.add(id(param))
-            yield param
+        models = self._engine.model
+        if not isinstance(models, (list, tuple)):
+            models = [models]
+        for model in models:
+            for param in get_mcore_model_parameters(model).values():
+                if not isinstance(param, torch.nn.Parameter) or id(param) in seen:
+                    continue
+                seen.add(id(param))
+                yield param
 
     def _convert_hf_with_overrides(
         self, theta_by_id: dict[int, torch.Tensor]
@@ -638,6 +789,146 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
         if hasattr(optimizer, "optimizers"):
             return optimizer.optimizers
         return [optimizer]
+
+    @torch.no_grad()
+    def execute_legacy_colocate_weight_update(self, version: int) -> None:
+        """Publish v1 colocate weights until the reader acknowledges the IPC export."""
+        from awex.util.tensor_util import (
+            release_tensors,
+        )
+
+        if self._legacy_meta_server_client is None:
+            raise RuntimeError("Legacy AWEX colocate adapter is not initialized")
+        if self._pending_ipc_export is not None:
+            raise RuntimeError(
+                "Previous CUDA IPC export is still awaiting reader acknowledgement"
+            )
+
+        torch.cuda.ipc_collect()
+        self._prepare_residency_for_publish()
+
+        self._lazy_initialize_legacy_colocate()
+        parameters = self.get_local_shard_parameters()
+        tensors = list(parameters.values())
+        names = list(parameters.keys())
+        logger.info(
+            "Converted %d params for legacy colocate IPC transfer (version=%d)",
+            len(tensors),
+            version,
+        )
+
+        with cuda_ipc_allocation():
+            group_tensors, metadata = group_tensors_by_shape_and_dtype(tensors)
+        torch.cuda.synchronize()
+
+        live_storages = set()
+        model = self._engine.model
+        for chunk in model if isinstance(model, (list, tuple)) else [model]:
+            for _, param in chunk.named_parameters():
+                live_storages.add(param.untyped_storage().data_ptr())
+            for _, buffer in chunk.named_buffers():
+                live_storages.add(buffer.untyped_storage().data_ptr())
+        owned = [
+            tensor
+            for tensor in tensors
+            if tensor.untyped_storage().data_ptr() not in live_storages
+        ]
+        release_tensors(owned)
+        del tensors, owned
+        parameters.clear()
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        self.release_memory(tags=["weights"])
+
+        assert self._legacy_ip_address is not None
+        assert self._legacy_physical_gpu_id is not None
+        assert self._legacy_logical_train_rank is not None
+        assert self._rank_info is not None
+        key_suffix = (
+            f"_{self._legacy_ip_address}_{self._legacy_physical_gpu_id}_{version}"
+        )
+
+        self._legacy_meta_server_client.add_object_to_set(
+            "all_training_offloaded_weights", self._legacy_logical_train_rank
+        )
+
+        group_shared = [tensor.share_memory_() for tensor in group_tensors]
+        # Keep exported storage alive until the reader has closed its IPC mapping.
+        self._pending_ipc_export = (group_tensors, group_shared)
+        serialized_weights = cuda_ipc_serialize((group_shared, metadata, names))
+        torch.cuda.synchronize()
+
+        serialized_weights_key = f"training_serialized_weights{key_suffix}"
+        writer_version_key = (
+            "awex_writer_version_"
+            f"{self._legacy_ip_address}_{self._legacy_physical_gpu_id}"
+        )
+        self._legacy_meta_server_client.put_object(writer_version_key, version)
+        self._legacy_meta_server_client.put_object(
+            serialized_weights_key,
+            (self._legacy_logical_train_rank, self._rank_info, serialized_weights),
+        )
+
+        update_finished_key = f"weights_update_finished{key_suffix}"
+        try:
+            try:
+                completion = self._legacy_meta_server_client.get_object(
+                    update_finished_key, timeout=self._legacy_timeout_s
+                )
+            except Exception:
+                logger.error(
+                    "Timed out or failed after %ss waiting for inference to "
+                    "consume legacy colocate weights (key=%s)",
+                    self._legacy_timeout_s,
+                    update_finished_key,
+                )
+                raise
+            if isinstance(completion, dict) and not completion.get("ok", True):
+                error = completion.get("error", "unknown inference-side error")
+                raise RuntimeError(
+                    "Inference rejected AWEX weights before IPC release: "
+                    f"version={version}, device={self._legacy_physical_gpu_id}, "
+                    f"error={error}"
+                )
+            self._legacy_meta_server_client.delete_if_exists(update_finished_key)
+            self._legacy_meta_server_client.delete_if_exists(serialized_weights_key)
+        finally:
+            torch.cuda.synchronize()
+
+        # The reader has acknowledged and closed its mapping. Free the packed
+        # tensors before signaling write_finished for the remaining lifecycle.
+        self._pending_ipc_export = None
+        del group_tensors, group_shared
+        gc.collect()
+        torch.cuda.ipc_collect()
+        torch.cuda.empty_cache()
+
+        write_finished_key = f"write_finished{key_suffix}"
+        self._legacy_meta_server_client.put_object(write_finished_key, True)
+        logger.info("Legacy colocate weight update completed: version=%d", version)
+
+    def finish_legacy_colocate_weight_update(self, training_world_size: int) -> None:
+        """Finish the v1 MetaServer handshake and clean its coordination keys."""
+        del training_world_size
+        if self._legacy_meta_server_client is None:
+            raise RuntimeError("Legacy AWEX colocate adapter is not initialized")
+        if self._legacy_num_infer_engines is None:
+            raise RuntimeError("Legacy AWEX colocate adapter is not ready")
+
+        self._legacy_meta_server_client.wait_set_until_size(
+            "finished_weights_update_engines",
+            self._legacy_num_infer_engines,
+            timeout=self._legacy_timeout_s,
+        )
+        dist.barrier(group=self._engine.cpu_group)
+        if dist.get_rank() == 0:
+            self._legacy_meta_server_client.delete_if_exists(
+                "finished_weights_update_engines"
+            )
+            self._legacy_meta_server_client.delete_if_exists(
+                "all_training_offloaded_weights"
+            )
 
     # ── Colocated weight transfer methods ─────────────────────────────────
 
@@ -745,156 +1036,36 @@ class AwexMegatronAdapter(AwexTrainingAdapter):
         if weights_offloaded:
             self.release_memory(tags=["weights"])
 
+    def _prepare_residency_for_publish(self) -> None:
+        """Free optimizer/grad memory before making weights resident."""
+        weights_were_offloaded = self._residency.is_released("weights")
+        self._residency.release_memory(tags=["optimizer"])
+        self._residency.release_grad_memory()
+        if weights_were_offloaded:
+            self._residency.resume_memory(tags=["weights"])
+
     def checkpoint_residency(self, *, with_model: bool, with_optimizer: bool):
         """Temporarily restore only resources required by a checkpoint."""
-        return checkpoint_awex_residency(
-            self,
-            self._engine.optimizer,
+        return self._residency.checkpoint_residency(
             with_model=with_model,
             with_optimizer=with_optimizer,
         )
 
+    def _release_grad_memory(self) -> None:
+        self._residency.release_grad_memory()
+
+    def ensure_grad_buffers(self) -> None:
+        self._residency.ensure_grad_buffers()
+
     def release_memory(self, tags: list[str] | None = None) -> None:
-        """Release GPU memory for specified tags by offloading to CPU.
-
-        Supported tags:
-            - "optimizer": Offload optimizer state tensors (exp_avg, exp_avg_sq, etc.)
-            - "weights": Offload model parameters
-        """
-        tags = tags or ["optimizer", "weights"]
-        tags_to_release = [t for t in tags if t not in self._released_tags]
-        if not tags_to_release:
-            logger.info("release_memory: tags=%s already released, skipping", tags)
-            return
-
-        logger.info("release_memory: offloading tags=%s", tags_to_release)
-
-        if "optimizer" in tags_to_release:
-            self._offload_optimizer_states()
-            self._released_tags.add("optimizer")
-        if "weights" in tags_to_release:
-            self._offload_model_weights()
-            self._released_tags.add("weights")
-
-        torch.cuda.synchronize()
-        gc.collect()
-        torch.cuda.empty_cache()
-
-        logger.info("release_memory: done for tags=%s", tags_to_release)
+        self._residency.release_memory(tags)
 
     def resume_memory(self, tags: list[str] | None = None) -> None:
-        """Resume GPU memory for specified tags by reloading from CPU.
+        self._residency.resume_memory(tags)
 
-        Supported tags:
-            - "optimizer": Reload optimizer state tensors to GPU
-            - "weights": Reload model parameters to GPU
-        """
-        tags = tags or ["optimizer", "weights"]
-        tags_to_resume = [t for t in tags if t in self._released_tags]
-        if not tags_to_resume:
-            logger.info("resume_memory: tags=%s not released, skipping", tags)
-            return
 
-        logger.info("resume_memory: reloading tags=%s", tags_to_resume)
-
-        if "weights" in tags_to_resume:
-            self._reload_model_weights()
-            self._released_tags.discard("weights")
-        if "optimizer" in tags_to_resume:
-            self._reload_optimizer_states()
-            self._released_tags.discard("optimizer")
-        torch.cuda.synchronize()
-        if "optimizer" in tags_to_resume:
-            self._optimizer_residency_plan = None
-            self._ordinary_optimizer_restores.clear()
-        logger.info("resume_memory: done for tags=%s", tags_to_resume)
-
-    def _offload_optimizer_states(self) -> None:
-        """Release managed buffers or migrate ordinary optimizer state to CPU."""
-        plan = build_optimizer_residency_plan(self._engine.optimizer)
-        if self._ordinary_optimizer_restores:
-            raise RuntimeError("stale ordinary optimizer state before AWEX release")
-        ordinary_restores: dict[
-            int,
-            list[tuple[dict[str, object], str, torch.Tensor, torch.device]],
-        ] = {}
-        for index, entry in enumerate(plan.entries):
-            if entry.managed_optimizer is not None:
-                entry.managed_optimizer.offload_to_cpu()
-            else:
-                ordinary_restores[index] = self._release_ordinary_optimizer(entry)
-        self._ordinary_optimizer_restores = ordinary_restores
-        self._optimizer_residency_plan = plan
-        logger.info(
-            "Released optimizer state for %d managed and %d ordinary leaves",
-            sum(entry.managed_optimizer is not None for entry in plan.entries),
-            sum(entry.managed_optimizer is None for entry in plan.entries),
-        )
-
-    def _reload_optimizer_states(self) -> None:
-        """Restore managed buffers and ordinary optimizer state to GPU."""
-        plan = self._optimizer_residency_plan
-        if plan is None:
-            return
-        for index, entry in enumerate(plan.entries):
-            if entry.managed_optimizer is not None:
-                entry.managed_optimizer.restore_from_cpu()
-                continue
-            for state, key, cpu_value, device in self._ordinary_optimizer_restores.get(
-                index, []
-            ):
-                state[key] = cpu_value.to(device, non_blocking=True)
-        logger.info("Restored managed and ordinary optimizer state")
-
-    def _release_ordinary_optimizer(
-        self, entry: OptimizerResidencyEntry
-    ) -> list[tuple[dict[str, object], str, torch.Tensor, torch.device]]:
-        """Mirror AWEX v2's original ordinary optimizer-state migration."""
-        base_optimizer = entry.base_optimizer
-        if base_optimizer is None:
-            return []
-        optimizer_state = getattr(base_optimizer, "state", None)
-        if optimizer_state is None:
-            return []
-        restores: list[tuple[dict[str, object], str, torch.Tensor, torch.device]] = []
-        for state in optimizer_state.values():
-            for key, value in tuple(state.items()):
-                if not isinstance(value, torch.Tensor) or not value.is_cuda:
-                    continue
-                device = value.device
-                cpu_value = value.detach().to("cpu", non_blocking=True)
-                state[key] = torch.empty(0, device="cpu")
-                restores.append((state, key, cpu_value, device))
-        return restores
-
-    def _offload_model_weights(self) -> None:
-        """Move model parameters to CPU, keeping references for reload."""
-        if self._engine.model is None:
-            return
-
-        for name, param in self._engine.model.named_parameters():
-            if param.is_cuda:
-                self._offloaded_weights[name] = param.data.detach().to(
-                    "cpu", non_blocking=True
-                )
-                param.data = torch.empty(0, device="cpu")
-
-        logger.info(
-            "Offloaded %d model weight tensors to CPU",
-            len(self._offloaded_weights),
-        )
-
-    def _reload_model_weights(self) -> None:
-        """Restore model parameters from CPU back to GPU."""
-        if not self._offloaded_weights:
-            return
-        if self._engine.model is None:
-            return
-
-        device = self._engine.device
-        for name, param in self._engine.model.named_parameters():
-            if name in self._offloaded_weights:
-                param.data = self._offloaded_weights[name].to(device, non_blocking=True)
-
-        self._offloaded_weights.clear()
-        logger.info("Reloaded model weights to GPU")
+__all__ = [
+    "AwexMegatronAdapter",
+    "awex_colocate_timeout_s",
+    "resolve_physical_gpu_id",
+]

@@ -29,7 +29,9 @@ parts:
   - caption: Customization
     chapters:
     - file: customization/dataset
+    - file: customization/data_engineering
     - file: customization/agent
+    - file: customization/advantage
   - caption: Algorithms
     chapters:
     - file: algorithms/async

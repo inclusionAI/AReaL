@@ -250,6 +250,40 @@ def _pad_cat_dim0(tensors: list[torch.Tensor], pad_value: float = 0.0) -> torch.
         for i in range(1, ndim):
             max_shape[i - 1] = max(max_shape[i - 1], t.shape[i])
 
+    # Small rollout groups are faster with padding and cat than per-input copies.
+    if len(tensors) >= 16:
+        padded_shape = torch.Size(max_shape)
+        if all(t.shape[1:] == padded_shape for t in tensors):
+            return torch.cat(tensors, dim=0)
+
+        first = tensors[0]
+        if (
+            type(first) is torch.Tensor
+            and not first.is_quantized
+            and all(
+                type(t) is torch.Tensor
+                and t.dtype == first.dtype
+                and t.device == first.device
+                and t.layout == torch.strided
+                and t.is_contiguous()
+                and not t.requires_grad
+                and all(size > 0 for size in t.shape[1:])
+                for t in tensors
+            )
+        ):
+            result = first.new_full(
+                (sum(t.shape[0] for t in tensors), *max_shape), pad_value
+            )
+            offset = 0
+            for t in tensors:
+                slices = (
+                    slice(offset, offset + t.shape[0]),
+                    *(slice(0, size) for size in t.shape[1:]),
+                )
+                result[slices].copy_(t)
+                offset += t.shape[0]
+            return result
+
     padded_tensors = []
     for t in tensors:
         pad_sizes = [max_shape[i - 1] - t.shape[i] for i in range(1, ndim)]
@@ -2065,10 +2099,13 @@ def normalize_rollout_rewards(
     reward_scaling: float = 1.0,
     reward_clip: float = float("inf"),
     unpenalized_rewards: torch.Tensor | None = None,
+    normalization_rewards: torch.Tensor | None = None,
+    require_shaped_references: bool = False,
     reduce_group=None,
 ) -> torch.Tensor:
     """Normalize row scores against one reference per logical rollout.
 
+    Shaped ``normalization_rewards``, when supplied, override raw references.
     Explicit references bypass row-length penalties; all scores share the
     actor's bias, scaling and clipping. Missing references require equal rows.
     """
@@ -2098,10 +2135,31 @@ def normalize_rollout_rewards(
         scores.new_tensor([r if r is not None else 0.0 for r in explicit]),
         row_rewards[starts],
     )
-    equal_rows = row_rewards == reference[member]
-    if unpenalized_rewards is not None:
-        equal_rows &= unpenalized_rewards == unpenalized_rewards[starts][member]
-    invalid_reference = torch.any(~supplied[member] & ~equal_rows)
+    if normalization_rewards is not None:
+        if not isinstance(normalization_rewards, torch.Tensor):
+            raise TypeError("normalization_rewards must be a tensor")
+        if (
+            normalization_rewards.shape != reference.shape
+            or normalization_rewards.device != row_rewards.device
+        ):
+            raise ValueError(
+                "normalization_rewards must match the logical rollout count and reward device"
+            )
+        if not torch.is_floating_point(normalization_rewards):
+            raise TypeError("normalization_rewards must be floating-point")
+        torch._assert_async(
+            torch.all(torch.isfinite(normalization_rewards)),
+            "normalization_rewards must be finite",
+        )
+        reference = normalization_rewards
+        invalid_reference = torch.zeros((), dtype=torch.bool, device=row_rewards.device)
+    else:
+        equal_rows = row_rewards == reference[member]
+        if unpenalized_rewards is not None:
+            equal_rows &= unpenalized_rewards == unpenalized_rewards[starts][member]
+        invalid_reference = torch.any(~supplied[member] & ~equal_rows)
+        if require_shaped_references:
+            invalid_reference |= supplied.any()
     if dist.is_initialized() and (
         norm.mean_level == "batch" or norm.std_level == "batch"
     ):
@@ -2109,7 +2167,8 @@ def normalize_rollout_rewards(
     torch._assert_async(
         ~invalid_reference,
         "Split rollout row rewards differ; supply an explicit rollout_reward "
-        "for reward normalization.",
+        "for reward normalization. Custom outcome shaping of explicit references "
+        "requires normalization_rewards.",
     )
     reference = ((reference + reward_bias) * reward_scaling).clamp(
         min=-reward_clip, max=reward_clip

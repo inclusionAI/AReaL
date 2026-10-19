@@ -249,7 +249,7 @@ class TestRolloutControllerInitialization:
         self, monkeypatch, nnodes, awex
     ):
         from areal.engine import sglang_remote
-        from areal.engine.awex.sglang_plugin import _resolve_transfer_rank
+        from areal.engine.awex.plugins.sglang_plugin import _resolve_transfer_rank
 
         config = create_test_config(backend=f"sglang:d{4 * nnodes}t2")
         scheduler = MockScheduler()

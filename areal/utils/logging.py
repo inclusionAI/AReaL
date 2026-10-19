@@ -75,6 +75,7 @@ LOGGER_COLORS_EXACT = {
     "vLLMEngine": "white",
     # Dataset - green
     "Dataset": "light_green",
+    "DataEngineeringRunner": "light_green",
     "CLEVR70KDataset": "light_green",
     "ViRL39KDataset": "light_green",
     # Trainers - green
@@ -139,8 +140,9 @@ LOGGER_COLORS_EXACT = {
     "R3Replay": "light_cyan",
     "R3Layout": "light_cyan",
     # AWEX weight exchange - cyan (compute backend)
-    "AwexColocate": "light_cyan",
-    "AwexColocateReader": "light_cyan",
+    "AwexMegatronAdapter": "light_cyan",
+    "AwexSGLangAdapter": "light_cyan",
+    "AwexFSDPAdapter": "light_cyan",
     "MegatronResidency": "light_cyan",
     "MOPDTeacherPhase": "light_cyan",
     "AwexSGLangPlugin": "light_cyan",
