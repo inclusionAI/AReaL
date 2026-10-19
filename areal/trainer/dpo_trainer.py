@@ -112,8 +112,11 @@ class DPOTrainer:
 
         self.actor = self._create_actor(config.actor)
 
-        ref_alloc = ModelAllocation.from_str(config.ref.backend, name="ref")
-        self.ref = self._create_ref(config.ref, ref_alloc)
+        # SimPO is reference-free, so no ref model is created or run.
+        self.ref = None
+        if config.actor.loss_type != "simpo":
+            ref_alloc = ModelAllocation.from_str(config.ref.backend, name="ref")
+            self.ref = self._create_ref(config.ref, ref_alloc)
         self._should_offload_ref = config.ref.offload
 
         if is_single_controller() and isinstance(train_dataset, RDataset):
@@ -145,7 +148,8 @@ class DPOTrainer:
         )
 
         self.actor.initialize(addr=None, ft_spec=ft_spec, role="actor")
-        self.ref.initialize(addr=None, ft_spec=ft_spec, role="ref")
+        if self.ref is not None:
+            self.ref.initialize(addr=None, ft_spec=ft_spec, role="ref")
 
         self.valid_dataloader: StatefulDataLoader | None = None
         if config.valid_dataset is not None and valid_dataset is not None:
@@ -231,20 +235,21 @@ class DPOTrainer:
             # Wait for async checkpoint staging to complete before modifying parameters
             self.saver.maybe_wait_for_staging()
 
-            with (
-                stats_tracker.record_timing("ref_logp"),
-                perf_tracer.trace_scope(
-                    "train.ref_logp",
-                    category=Category.COMPUTE,
-                    args={"global_step": global_step},
-                ),
-            ):
-                ref_logps = self.ref.compute_logp(batch)
-                for seq_dict, logp in zip(batch, ref_logps):
-                    seq_dict["ref_logprobs"] = (
-                        logp.unsqueeze(0) if logp.ndim == 1 else logp
-                    )
-                self.ref.get_device_stats().log("ref logp")
+            if self.ref is not None:
+                with (
+                    stats_tracker.record_timing("ref_logp"),
+                    perf_tracer.trace_scope(
+                        "train.ref_logp",
+                        category=Category.COMPUTE,
+                        args={"global_step": global_step},
+                    ),
+                ):
+                    ref_logps = self.ref.compute_logp(batch)
+                    for seq_dict, logp in zip(batch, ref_logps):
+                        seq_dict["ref_logprobs"] = (
+                            logp.unsqueeze(0) if logp.ndim == 1 else logp
+                        )
+                    self.ref.get_device_stats().log("ref logp")
 
             with (
                 stats_tracker.record_timing("train_step"),
@@ -340,7 +345,8 @@ class DPOTrainer:
             self.data_controller.destroy()
         self.stats_logger.close()
         self.actor.destroy()
-        self.ref.destroy()
+        if self.ref is not None:
+            self.ref.destroy()
         perf_tracer.save(force=True)
 
     def _config_perf_tracer(self):
@@ -491,9 +497,12 @@ class DPOTrainer:
         data_generator = cycle_dataloader(self.valid_dataloader, num_cycles=1)
         for _ in range(len(self.valid_dataloader)):
             data = self._load_bcast_from(data_generator)
-            ref_logps = self.ref.compute_logp(data)
-            for seq_dict, logp in zip(data, ref_logps):
-                seq_dict["ref_logprobs"] = logp.unsqueeze(0) if logp.ndim == 1 else logp
+            if self.ref is not None:
+                ref_logps = self.ref.compute_logp(data)
+                for seq_dict, logp in zip(data, ref_logps):
+                    seq_dict["ref_logprobs"] = (
+                        logp.unsqueeze(0) if logp.ndim == 1 else logp
+                    )
             self.actor.evaluate_dpo(data)
 
         dist.barrier(group=self.actor.cpu_group)

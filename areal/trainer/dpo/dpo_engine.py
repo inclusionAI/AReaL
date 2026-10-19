@@ -171,7 +171,10 @@ def compute_dpo_loss(
     device = logprobs.device
     cu_seqlens = input_["cu_seqlens"].to(device=device, dtype=torch.long)
     loss_mask = input_["loss_mask"].bool().to(device=device)
-    ref_logprobs = input_["ref_logprobs"].to(device)
+    if loss_type == "simpo":
+        ref_logprobs = torch.zeros_like(logprobs)
+    else:
+        ref_logprobs = input_["ref_logprobs"].to(device)
 
     valid_pairs = _dpo_valid_pairs(input_).to(device=device)
     if not valid_pairs.any():

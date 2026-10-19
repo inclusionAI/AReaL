@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import math
+
 import pytest
 import torch
 
@@ -14,9 +15,7 @@ def test_simpo_preference_loss_math():
     beta = 2.0
     gamma = 0.5
 
-    loss = dpo_preference_loss(
-        logits, beta=beta, loss_type="simpo", simpo_gamma=gamma
-    )
+    loss = dpo_preference_loss(logits, beta=beta, loss_type="simpo", simpo_gamma=gamma)
     # Expected: -log_sigmoid(beta * logits - gamma)
     expected = -torch.nn.functional.logsigmoid(beta * logits - gamma)
     assert torch.allclose(loss, expected, atol=1e-6)
@@ -27,9 +26,7 @@ def test_simpo_margin_effect():
     beta = 1.0
     gamma = 0.5
 
-    loss = dpo_preference_loss(
-        logits, beta=beta, loss_type="simpo", simpo_gamma=gamma
-    )
+    loss = dpo_preference_loss(logits, beta=beta, loss_type="simpo", simpo_gamma=gamma)
     # -log(sigmoid(-0.5)) = log(1 + exp(0.5))
     expected = math.log(1.0 + math.exp(0.5))
     assert math.isclose(loss.item(), expected, rel_tol=1e-5)
@@ -84,9 +81,7 @@ def test_simpo_length_normalization_distinguishes_verbosity():
     # Rejected: 2 tokens with logp = -2.0 each -> sum = -4.0, avg = -2.0
     cu_seqlens = torch.tensor([0, 4, 6], dtype=torch.long)
     tot_tokens = 6
-    logprobs = torch.tensor(
-        [-1.0, -1.0, -1.0, -1.0, -2.0, -2.0], dtype=torch.float32
-    )
+    logprobs = torch.tensor([-1.0, -1.0, -1.0, -1.0, -2.0, -2.0], dtype=torch.float32)
     ref_logprobs = torch.zeros(tot_tokens, dtype=torch.float32)
     loss_mask = torch.ones(tot_tokens, dtype=torch.bool)
 
@@ -131,3 +126,89 @@ def test_dpo_engine_config_simpo_validation():
     # Invalid loss type should fail
     with pytest.raises(ValueError, match="Unsupported DPO loss_type"):
         DPOEngineConfig(loss_type="unknown")
+
+
+def test_compute_dpo_loss_simpo_without_ref_logprobs_matches_with_ref():
+    cu_seqlens = torch.tensor([0, 4, 6], dtype=torch.long)
+    logprobs = torch.tensor([-1.0, -1.0, -1.0, -1.0, -2.0, -2.0])
+    loss_mask = torch.ones(6, dtype=torch.bool)
+    input_no_ref = {"cu_seqlens": cu_seqlens, "loss_mask": loss_mask}
+    input_with_ref = {**input_no_ref, "ref_logprobs": torch.full((6,), -3.0)}
+
+    loss_no_ref = compute_dpo_loss(
+        logprobs, None, input_no_ref, beta=1.0, loss_type="simpo", simpo_gamma=0.0
+    )
+    loss_with_ref = compute_dpo_loss(
+        logprobs, None, input_with_ref, beta=1.0, loss_type="simpo", simpo_gamma=0.0
+    )
+
+    torch.testing.assert_close(loss_no_ref, loss_with_ref, rtol=0, atol=0)
+
+
+class _RecordingDPOActor:
+    def __init__(self):
+        self.batches = []
+
+    def train_dpo(self, batch):
+        self.batches.append(batch)
+        raise _StopTraining
+
+    def evaluate_dpo(self, batch):
+        self.batches.append(batch)
+
+
+class _StopTraining(Exception):
+    pass
+
+
+def _build_simpo_trainer(monkeypatch):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from areal.trainer import dpo_trainer
+    from areal.trainer.dpo_trainer import DPOTrainer
+
+    monkeypatch.setattr(
+        dpo_trainer.stats_tracker, "record_timing", lambda *a, **k: nullcontext()
+    )
+    monkeypatch.setattr(
+        dpo_trainer.perf_tracer, "trace_scope", lambda *a, **k: nullcontext()
+    )
+
+    trainer = DPOTrainer.__new__(DPOTrainer)
+    trainer.config = SimpleNamespace(total_train_epochs=1, total_train_steps=None)
+    trainer.recover_info = None
+    trainer.train_dataloader = [[{"input_ids": 0}]]
+    trainer.saver = SimpleNamespace(maybe_wait_for_staging=lambda: None)
+    trainer.actor = _RecordingDPOActor()
+    trainer.ref = None
+    trainer._load_bcast_from = lambda data_generator: next(data_generator)
+    trainer._evaluate_before_train = lambda: False
+    return trainer
+
+
+def test_dpo_trainer_simpo_train_step_runs_without_ref(monkeypatch):
+    trainer = _build_simpo_trainer(monkeypatch)
+
+    with pytest.raises(_StopTraining):
+        trainer.train()
+
+    assert trainer.actor.batches == [[{"input_ids": 0}]]
+
+
+def test_dpo_trainer_simpo_evaluate_runs_without_ref(monkeypatch):
+    from types import SimpleNamespace
+
+    from areal.trainer import dpo_trainer
+
+    trainer = _build_simpo_trainer(monkeypatch)
+    trainer.valid_dataloader = [[{"input_ids": 1}]]
+    trainer.actor.cpu_group = None
+    monkeypatch.setattr(dpo_trainer.dist, "barrier", lambda group=None: None)
+    monkeypatch.setattr(
+        dpo_trainer, "current_platform", SimpleNamespace(synchronize=lambda: None)
+    )
+
+    trainer._evaluate_fn()
+
+    assert trainer.actor.batches == [[{"input_ids": 1}]]
