@@ -924,8 +924,10 @@ async def test_arena_legacy_model_failure_requires_usable_proxy_trajectory(
 async def test_failed_proxy_episode_preserves_turn_count_without_export(monkeypatch):
     from types import SimpleNamespace
 
+    from areal.infra.workflow_executor import is_consumed_rollout_metric
     from areal.utils.episode_turns import track_episode_turns
-    from areal.utils.rollout_metrics import ConsumedMetrics, capture_metrics
+    from areal.utils.rollout_metrics import ConsumedMetrics
+    from areal.utils.scalar_capture import capture_scalars
 
     fake_client = _FakeProxyClient()
     fake_client.context_overflow = False
@@ -942,7 +944,7 @@ async def test_failed_proxy_episode_preserves_turn_count_without_export(monkeypa
         workflow_context, "get_aiohttp_session", AsyncMock(return_value=object())
     )
     workflow_context.set(WorkflowContext(task_id=3))
-    with capture_metrics() as metrics:
+    with capture_scalars(select=is_consumed_rollout_metric) as metrics:
         with pytest.raises(RuntimeError, match="harness failed"):
             with track_episode_turns():
                 await workflow.arun_episode(engine=None, data={})

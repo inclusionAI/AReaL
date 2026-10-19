@@ -96,6 +96,11 @@ worker-to-controller RPC transfer do not. Terminal contract errors retain fail-f
 behavior and abort training. This is local queue accounting, not an exactly-once
 protocol across network retries.
 
+The executor explicitly selects which scalar observations travel with task results. The
+capture utility itself has no rollout naming rules. Both controller and SPMD consumers
+use the same tracker reductions; the controller owns an isolated local export window,
+while SPMD retains the actor's existing DP reduction group.
+
 | Metric                                 | Population and denominator                                                                                                               |
 | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `rollout/reward`                       | Mean of actual reward observations from consumed attempts, including rejected attempts. Missing rewards are not filled with zero.        |

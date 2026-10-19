@@ -39,7 +39,8 @@ from areal.experimental.openai.types import (
 )
 from areal.utils.episode_turns import track_episode_turns
 from areal.utils.environ import is_single_controller
-from areal.utils.rollout_metrics import ConsumedMetrics, Metrics, capture_metrics
+from areal.utils.rollout_metrics import ConsumedMetrics
+from areal.utils.scalar_capture import Metrics, capture_scalars
 from areal.utils.rollout_stats import (
     localize_rollout_turn_stats,
     record_rollout_turn_stats,
@@ -56,6 +57,17 @@ if TYPE_CHECKING:
 
 
 _REJECTED_TRAJECTORY_CLEAR_TIMEOUT_SECONDS = 5.0
+
+
+def is_consumed_rollout_metric(key: str) -> bool:
+    """Select task quality metrics; operational/PRM metrics keep export windows.
+
+    The executor owns this compatibility policy for existing workflows using
+    scalar(). Selected observations travel with the task until it is consumed.
+    """
+    return key.startswith(("rollout/", "debug/task/")) and not key.startswith(
+        ("rollout/arena/", "rollout/prm_", "rollout/spec_accept_")
+    )
 
 
 def check_trajectory_format(
@@ -1529,7 +1541,7 @@ class WorkflowExecutor:
                 return None
 
         async def _execute_with_metrics() -> WorkflowTaskResult:
-            with capture_metrics() as metrics:
+            with capture_scalars(select=is_consumed_rollout_metric) as metrics:
                 result = await _execute_workflow()
             if isinstance(result, WorkflowContractFailure):
                 return WorkflowContractFailure(result.message, metrics)

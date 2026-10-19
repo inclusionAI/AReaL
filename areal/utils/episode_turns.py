@@ -1,11 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 """Episode generation observations, independent of retained training rows."""
 
+from __future__ import annotations
+
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from areal.utils.stats_tracker import DistributedStatsTracker
 
 from areal.utils.rollout_stats import HARNESS_OUTCOME_METRIC_CODES
 
@@ -61,13 +66,16 @@ def is_turn_distribution(key: str) -> bool:
     } or name.startswith("num_turns_harness_err/")
 
 
-def publish_turn_distribution(key: str, values: list[float]) -> None:
+def publish_turn_distribution(
+    key: str, values: list[float], *, tracker: DistributedStatsTracker | None = None
+) -> None:
     import torch
 
     from areal.utils import stats_tracker
     from areal.utils.stats_tracker import ReduceType
 
-    tracker = stats_tracker.get()
+    if tracker is None:
+        tracker = stats_tracker.get()
     value = torch.tensor(values, dtype=torch.float32)
     denominator = f"{key}_count"
     tracker.denominator(**{denominator: torch.ones_like(value, dtype=torch.bool)})
@@ -85,7 +93,7 @@ def record_episode_turns(
 
     from areal.infra import workflow_context
     from areal.utils import stats_tracker
-    from areal.utils.rollout_metrics import capture_scalar
+    from areal.utils.scalar_capture import capture_scalar
     from areal.utils.stats_tracker import ReduceType
 
     parent = _EPISODE.get()

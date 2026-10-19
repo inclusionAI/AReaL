@@ -12,7 +12,7 @@ import torch.distributed as dist
 
 from areal.infra.platforms import current_platform
 from areal.utils import logging
-from areal.utils.rollout_metrics import capture_scalar
+from areal.utils.scalar_capture import capture_scalar
 from areal.utils.seqpack import flat2d
 
 logger = logging.getLogger("StatsTracker")

@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
 
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -16,9 +15,11 @@ from areal.infra.workflow_executor import (
     WorkflowExecutor,
     _RolloutResult,
     _RolloutTaskInput,
+    is_consumed_rollout_metric,
 )
 from areal.utils import stats_tracker
-from areal.utils.rollout_metrics import ConsumedMetrics, capture_metrics
+from areal.utils.rollout_metrics import ConsumedMetrics
+from areal.utils.scalar_capture import capture_scalars
 from areal.utils.stats_tracker import DistributedStatsTracker
 
 
@@ -38,7 +39,7 @@ def test_prefetched_and_filtered_rewards_follow_consumed_attempts():
     tracker = DistributedStatsTracker("rollout")
     results = []
     for task_id, rewards in enumerate(([1.0, 0.0], [0.0], [0.9] * 3)):
-        with capture_metrics() as metrics:
+        with capture_scalars(select=is_consumed_rollout_metric) as metrics:
             for reward in rewards:
                 tracker.scalar(reward=reward, harness_error=float(reward == 0))
         results.append(_RolloutResult(task_id, None if task_id == 1 else {}, metrics))
@@ -80,32 +81,11 @@ def test_rpc_transfer_does_not_publish_worker_metrics(trajectory):
     }
 
 
-@pytest.mark.asyncio
-async def test_capture_isolates_concurrent_groups_and_inherits_into_children():
-    """Async group children share only their parent's metrics context."""
-    tracker = DistributedStatsTracker("rollout")
-
-    async def child(reward):
-        await asyncio.sleep(0)
-        tracker.scalar(reward=reward)
-
-    async def group(reward):
-        with capture_metrics() as metrics:
-            await asyncio.gather(child(reward), child(reward))
-        return metrics
-
-    first, second = await asyncio.gather(group(0), group(1))
-    assert first == {"rollout/reward": [0.0, 0.0]}
-    assert second == {"rollout/reward": [1.0, 1.0]}
-    tracker.scalar(reward=0.25)
-    assert tracker.export()["rollout/reward"] == 0.25
-
-
 def test_capture_leaves_eval_operational_and_prm_metrics_in_export_window():
     """The batch buffer only intercepts training quality scalar metrics."""
     tracker = DistributedStatsTracker("rollout")
     evaluation = DistributedStatsTracker("eval-rollout")
-    with capture_metrics() as metrics:
+    with capture_scalars(select=is_consumed_rollout_metric) as metrics:
         tracker.scalar(
             **{
                 "arena/call_success": 1,
@@ -118,17 +98,6 @@ def test_capture_leaves_eval_operational_and_prm_metrics_in_export_window():
     assert metrics == {"rollout/reward": [0.0]}
     assert tracker.export()["rollout/arena/call_success"] == 1
     assert evaluation.export()["eval-rollout/reward"] == 1
-
-
-def test_capture_exception_restores_context_and_preserves_observations():
-    """A failing attempt retains already recorded metrics without leaking scope."""
-    tracker = DistributedStatsTracker("rollout")
-    with pytest.raises(ValueError), capture_metrics() as metrics:
-        tracker.scalar(reward=0)
-        raise ValueError("failed")
-    assert metrics == {"rollout/reward": [0.0]}
-    tracker.scalar(reward=1)
-    assert tracker.export()["rollout/reward"] == 1
 
 
 @pytest.mark.asyncio
@@ -279,3 +248,37 @@ def test_v2_exports_consumed_quality_without_waiting_for_new_completion(monkeypa
     assert stats["rollout/reward_sample_count"] == 2
     assert stats["rollout/group_attempt_count"] == 1
     assert controller.export_stats() == {}
+
+
+def test_consumers_share_reductions_without_recapture_or_global_reset(monkeypatch):
+    """Local and SPMD replay agree while preserving capture/export boundaries."""
+    tracker = DistributedStatsTracker()
+    monkeypatch.setattr(stats_tracker, "get", lambda: tracker)
+    local = ConsumedMetrics()
+    spmd = ConsumedMetrics(publish_to_tracker=True)
+    with capture_scalars(select=is_consumed_rollout_metric) as captured:
+        for values in ([2.0], [4.0, 6.0, 8.0]):
+            result = SimpleNamespace(
+                metrics={
+                    "rollout/num_turns": values,
+                    "rollout/reward": values,
+                    "rollout/accepted": [1.0],
+                    "rollout/num_turns_missing_count": [1.0],
+                    "rollout/num_turns_harness_err": [],
+                }
+            )
+            local.consume(result)
+            spmd.consume(result)
+        tracker.scalar(**{"rollout/rejected": 1})
+    assert captured == {"rollout/rejected": [1.0]}
+    tracker.scalar(operational=7)
+    local_stats = local.export()
+    assert local.export() == {}
+    assert spmd.export() == {}
+    distributed_stats = tracker.export()
+    assert distributed_stats.pop("operational") == 7
+    assert distributed_stats.pop("operational__count") == 1
+    assert local_stats == distributed_stats
+    assert local_stats["rollout/num_turns/avg"] == 5
+    assert local_stats["rollout/num_turns_count"] == 4
+    assert local_stats["rollout/num_turns_missing_count"] == 2

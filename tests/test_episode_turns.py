@@ -7,6 +7,7 @@ import torch
 
 from areal.infra import workflow_context
 from areal.infra.workflow_context import WorkflowContext
+from areal.infra.workflow_executor import is_consumed_rollout_metric
 from areal.utils import stats_tracker
 from areal.utils.episode_turns import (
     count_generated_responses,
@@ -15,8 +16,9 @@ from areal.utils.episode_turns import (
     set_episode_turns,
     track_episode_turns,
 )
-from areal.utils.rollout_metrics import ConsumedMetrics, capture_metrics
+from areal.utils.rollout_metrics import ConsumedMetrics
 from areal.utils.rollout_stats import record_rollout_turn_stats
+from areal.utils.scalar_capture import capture_scalars
 
 
 @pytest.fixture(autouse=True)
@@ -31,7 +33,7 @@ def test_rollout_counts_rejected_attempts_while_train_counts_retained_rows():
     consumer = ConsumedMetrics()
     pending = []
     for turns, accepted in [(2, True), (8, False), (5, True)]:
-        with capture_metrics() as metrics:
+        with capture_scalars(select=is_consumed_rollout_metric) as metrics:
             with track_episode_turns():
                 set_episode_turns(turns)
         pending.append(
@@ -60,7 +62,7 @@ def test_rollout_counts_rejected_attempts_while_train_counts_retained_rows():
 
 
 def test_nested_group_records_each_episode_once_including_failure():
-    with capture_metrics() as metrics:
+    with capture_scalars(select=is_consumed_rollout_metric) as metrics:
         with track_episode_turns():
             with track_episode_turns():
                 observe_generated_response(3)
@@ -81,7 +83,7 @@ def test_nested_group_records_each_episode_once_including_failure():
 
 
 def test_v2_observations_replace_outer_task_and_keep_unknown_status_separate():
-    with capture_metrics() as metrics:
+    with capture_scalars(select=is_consumed_rollout_metric) as metrics:
         with track_episode_turns():
             record_episode_turns(4, require_status=True)
             record_episode_turns(
@@ -120,7 +122,7 @@ def test_raw_cache_counts_retry_and_sibling_responses_once_before_export():
 
 def test_evaluation_does_not_enter_training_capture():
     workflow_context.set(WorkflowContext(is_eval=True))
-    with capture_metrics() as metrics:
+    with capture_scalars(select=is_consumed_rollout_metric) as metrics:
         with track_episode_turns():
             set_episode_turns(3)
     assert metrics == {}
@@ -158,7 +160,7 @@ async def test_builtin_multiturn_emits_one_episode_observation(monkeypatch):
             stop_reason="stop",
         )
 
-    with capture_metrics() as metrics:
+    with capture_scalars(select=is_consumed_rollout_metric) as metrics:
         with track_episode_turns():
             trajectory = await workflow.arun_episode(
                 SimpleNamespace(agenerate=generate), {"messages": []}

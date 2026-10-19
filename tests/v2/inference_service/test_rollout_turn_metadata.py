@@ -27,7 +27,6 @@ from areal.v2.inference_service.controller.workflow import InferenceServiceWorkf
 from areal.v2.inference_service.data_proxy.app import create_app
 from areal.v2.inference_service.data_proxy.config import DataProxyConfig
 from areal.v2.inference_service.data_proxy.session import (
-    ExportTrajectoriesRequest,
     SessionStore,
 )
 
@@ -169,7 +168,10 @@ async def test_export_request_transports_metadata_with_trajectory(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_data_proxy_stamps_each_session_before_merging(monkeypatch, tracker):
+@pytest.mark.parametrize("include_metadata", [False, True])
+async def test_data_proxy_stamps_each_session_before_merging(
+    monkeypatch, tracker, include_metadata
+):
     """Exercise request validation, per-session export, padding, and serialization."""
     config = DataProxyConfig(backend_addr="")
     app = create_app(config)
@@ -190,22 +192,21 @@ async def test_data_proxy_stamps_each_session_before_merging(monkeypatch, tracke
     }
     monkeypatch.setattr(store, "get_session", sessions.get)
     monkeypatch.setattr(RTensor, "remotize", lambda trajectory, node_addr: trajectory)
+    payload = {"session_ids": ["s0", "s1", "s2"], "remove_session": False}
+    if include_metadata:
+        payload["session_metadata"] = {
+            "s0": {"arena_status": "DONE"},
+            "s1": {
+                "arena_status": "HARNESS_FAILED",
+                "harness_outcome_code": "LLM_CONTEXT_WINDOW_EXCEEDED",
+            },
+        }
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.post(
             "/export_trajectories",
             headers={"Authorization": f"Bearer {config.admin_api_key}"},
-            json={
-                "session_ids": ["s0", "s1", "s2"],
-                "remove_session": False,
-                "session_metadata": {
-                    "s0": {"arena_status": "DONE"},
-                    "s1": {
-                        "arena_status": "HARNESS_FAILED",
-                        "harness_outcome_code": "LLM_CONTEXT_WINDOW_EXCEEDED",
-                    },
-                },
-            },
+            json=payload,
         )
 
     assert response.status_code == 200, response.text
@@ -213,6 +214,19 @@ async def test_data_proxy_stamps_each_session_before_merging(monkeypatch, tracke
     torch.testing.assert_close(
         trajectory[ROLLOUT_TURN_COUNT], torch.tensor([2.0, 4.0, 6.0]), rtol=0, atol=0
     )
+    if not include_metadata:
+        torch.testing.assert_close(
+            trajectory[ROLLOUT_HARNESS_OUTCOME],
+            torch.full((3,), -1, dtype=torch.int32),
+            rtol=0,
+            atol=0,
+        )
+        assert all(
+            leaf.metadata == {"thinking_option": "on"}
+            for branch in branches.values()
+            for leaf in branch.values()
+        )
+        return
     assert trajectory[ROLLOUT_HARNESS_OUTCOME][2] == -1
     assert branches["s0"]["a"].metadata == {
         "thinking_option": "on",
@@ -226,15 +240,6 @@ async def test_data_proxy_stamps_each_session_before_merging(monkeypatch, tracke
     assert metrics["rollout/num_turns_harness_err/LLM_CONTEXT_WINDOW_EXCEEDED/avg"] == 4
     assert metrics["rollout/num_turns_no_harness_err_count"] == 1
     assert metrics["rollout/num_turns_harness_err_count"] == 1
-
-
-def test_export_schema_keeps_old_clients_compatible():
-    """Omitting the new optional payload is valid, with no shared default dict."""
-    first = ExportTrajectoriesRequest(session_ids=["s0"])
-    second = ExportTrajectoriesRequest(session_ids=["s1"])
-    first.session_metadata["s0"] = {"arena_status": "DONE"}
-
-    assert second.session_metadata == {}
 
 
 @pytest.mark.asyncio
@@ -305,8 +310,10 @@ async def test_export_empty_trajectory_still_carries_turn_metrics_until_consumpt
     from areal.infra import workflow_context
     from areal.infra.rpc.serialization import serialize_value
     from areal.infra.workflow_context import WorkflowContext
+    from areal.infra.workflow_executor import is_consumed_rollout_metric
     from areal.utils.episode_turns import track_episode_turns
-    from areal.utils.rollout_metrics import ConsumedMetrics, capture_metrics
+    from areal.utils.rollout_metrics import ConsumedMetrics
+    from areal.utils.scalar_capture import capture_scalars
 
     workflow_context.set(WorkflowContext(is_eval=False))
     workflow = _workflow(SimpleNamespace(run=AsyncMock(return_value=0.0)), monkeypatch)
@@ -314,7 +321,7 @@ async def test_export_empty_trajectory_still_carries_turn_metrics_until_consumpt
         return_value={"traj": serialize_value({}), "episode_turns": {"s0": 2, "s1": 7}}
     )
     # _workflow stubs the method for agent tests; exercise the real response path.
-    with capture_metrics() as metrics:
+    with capture_scalars(select=is_consumed_rollout_metric) as metrics:
         with track_episode_turns():
             result = await InferenceServiceWorkflow._export_interactions(
                 workflow, AsyncMock(), ["s0", "s1"], discard_trajectory=True
