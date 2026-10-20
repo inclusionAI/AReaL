@@ -2,9 +2,8 @@
 """Qwen3.5 decision readout for Megatron-Core.
 
 ``PointerHead`` replaces ``GPTModel.output_layer`` on the last pipeline stage.
-It projects each token hidden state with the two dense maps from ``kev``'s
-pointer head and returns ``[S, B, 2 * dp]`` in fp32. Checkpoints are written
-as ``head.pt`` using the same dictionary schema as ``kev.checkpoint.Meta``.
+It projects each token hidden state with two dense maps and returns
+``[S, B, 2 * dp]`` in fp32. Checkpoints are written as ``head.pt``.
 """
 
 import math
@@ -32,9 +31,8 @@ POINTER_HEAD_CHECKPOINT_NAME = "pointer_head.pt"
 class DecisionHeadMeta:
     """On-disk ``head.pt`` record.
 
-    Field names and ``to_dict`` / ``from_dict`` match ``kev.checkpoint.Meta``,
-    including the rule that known fields overwrite ``extra`` on write and that
-    unknown keys survive a read-modify-write round trip.
+    Known fields overwrite ``extra`` on write. Unknown keys survive a
+    read-modify-write round trip.
     """
 
     KNOWN: ClassVar[tuple[str, ...]] = (
@@ -82,7 +80,7 @@ class PointerHead(nn.Module):
 
     Parameters stay in fp32. ``Float16Module`` casts the wrapped trunk with
     ``module.bfloat16()``; this module keeps its own parameters in fp32 so the
-    readout matches ``kev.model.PointerHead``. Megatron DDP buckets parameters
+    readout stays in full precision. Megatron DDP buckets parameters
     by dtype, so the fp32 head gets its own gradient buffer.
 
     When ``config.sequence_parallel`` is set, ``q`` and ``k`` are marked
@@ -237,8 +235,8 @@ def save_decision_pointer_head(
 ) -> str | None:
     """Write ``head.pt`` from the last pipeline stage's tensor- and data-parallel rank 0.
 
-    ``meta`` may be a :class:`DecisionHeadMeta`, a ``kev.checkpoint.Meta``, or a
-    dict. The live fp32 ``q`` / ``k`` state dict is stored under ``head``.
+    ``meta`` may be a :class:`DecisionHeadMeta` or a dict. The live fp32
+    ``q`` / ``k`` state dict is stored under ``head``.
     Other ranks return ``None`` without writing.
     """
     if not _is_checkpoint_writer():
@@ -265,7 +263,7 @@ def load_decision_pointer_head(
     """Load ``head.pt`` or ``pointer_head.pt`` into every attached ``PointerHead``.
 
     Call this on every rank. Only the last pipeline stage owns the head. A
-    ``head.pt`` file is the ``kev`` meta dict (state under ``head``). A
+    ``head.pt`` file is a meta dict (state under ``head``). A
     ``pointer_head.pt`` file is a raw module state dict. After the load, head
     parameters are broadcast across tensor- and context-parallel ranks. A
     missing checkpoint broadcasts the fresh initialization across tensor,
@@ -414,7 +412,7 @@ def _parse_checkpoint(payload: Any, source: str) -> tuple[DecisionHeadMeta, bool
         dp = int(state["q.weight"].shape[0])
         return DecisionHeadMeta(head=state, head_dim=dp), False
     raise ValueError(
-        f"{source} is neither a kev head.pt payload nor a PointerHead state dict."
+        f"{source} is neither a head.pt payload nor a PointerHead state dict."
     )
 
 

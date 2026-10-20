@@ -124,7 +124,7 @@ Question = Noul | Choice | Score
 
 class SystemOneRequest(BaseModel):
     state: JSONContent
-    model: str = "kev-latest"
+    model: str = "decision"
     questions: dict[str, Question] = Field(min_length=1)
     image: str | None = None
 

@@ -2,8 +2,8 @@
 
 This note covers `patch_qwen35_hybrid_lora_specs` in
 `areal/engine/megatron_utils/megatron_bridge_patches.py`: why Gated DeltaNet
-`in_proj` is unfused, and why that unfuse still leaves one adapter where kev
-trains four.
+`in_proj` is unfused, and why that unfuse still leaves one adapter on the
+concatenated mixer instead of four independent ones.
 
 ## Why `in_proj` is unfused
 
@@ -15,19 +15,17 @@ the original patch left `in_proj` fused with the input RMSNorm. A stock
 Qwen3.5 LoRA SFT run therefore freezes every DeltaNet mixer. That is most of
 a Qwen3.5 trunk.
 
-kev's default `--lora_targets all` (and `attn`) adds the mixer linears on a
-hybrid backbone: `in_proj_qkv`, `in_proj_z`, `in_proj_a`, `in_proj_b`, and
-`out_proj`. The `dense` preset is the one that matches stock AReaL: the same
+AReaL's `lora_targets_preset: all` (and `attn`) adds the mixer linears on a
+hybrid backbone: `in_proj` and `out_proj`. The `dense` preset is the same
 attention and MLP matrices, with the DeltaNet projections left out. `qv` does
 not touch them either. `PointerHead` is unrelated. It stays a dense linear
 and is never a LoRA target. Full fine-tuning does not need the unfuse either;
 the fused norm-plus-linear still trains.
 
-kev attaches those adapters with no module surgery. Hugging Face stores the
-mixer as five plain `nn.Linear`s, and PEFT wraps those names. The training
-forward in `kev/npu_qwen35.py` still calls the four input projections
-separately. Concatenating them into one GEMM happens in `fuse()`, after the
-adapter is merged, on a path with no backward.
+Hugging Face stores the mixer as five plain `nn.Linear`s
+(`in_proj_qkv`, `in_proj_z`, `in_proj_a`, `in_proj_b`, `out_proj`), and PEFT
+can wrap those names separately. A Hugging Face training forward still calls
+the four input projections separately.
 
 Megatron-Bridge builds the opposite graph. `get_gated_delta_net_module_spec`
 makes `in_proj` one fused LayerNorm-plus-linear (`fuse_input_layernorm: True`)
@@ -42,51 +40,52 @@ split into `PTNorm` plus `ColumnParallelLinear`. With `unfuse_gdn=True` the
 patch does that split for GDN `in_proj`, and it replaces `out_proj` with a
 plain `RowParallelLinear` so the LoRA wrapper will wrap it.
 
-## One `in_proj` adapter versus kev's four
+## One `in_proj` adapter versus four mixer adapters
 
 The pointer-head plan
 (`qwen3.5_pointerhead_decision_training`) and
 `docs/qwen35-decision-head-plan.md` both stop at this unfuse. Their LoRA
 target list names the fused modules: `in_proj` and `out_proj`, one adapter
-each. That is a real mismatch with kev, and neither plan closes it.
+each. Hugging Face PEFT can instead wrap `in_proj_qkv`, `in_proj_z`,
+`in_proj_b`, and `in_proj_a` as four independent rank-`r` adapters.
 
-kev's `in_proj_qkv`, `in_proj_z`, `in_proj_b`, and `in_proj_a` are four
-independent rank-`r` adapters. Each has its own down-projection. `out_proj`
-is one more, and that one already matches Megatron: both sides have a single
-output projection.
+Those four Hugging Face names are independent rank-`r` adapters. Each has its
+own down-projection. `out_proj` is one more, and that one already matches
+Megatron: both sides have a single output projection.
 
 After the unfuse, Megatron still has one `in_proj` adapter. Its down-projection
 is `r × hidden`, and its up-projection covers the concatenated rows
-`[q, k, v, z, b, a]`. The four slices share one rank-`r` bottleneck. kev
-spends three extra down-projections (`3 × r × hidden`) so a qkv update cannot
-use up the rank that `z`, `b`, and `a` need. `b` and `a` are only
-`num_v_heads` rows, so a shared up-projection puts almost all of the rank
-into qkv. Those two small outputs are the mixer's beta and decay, so the
+`[q, k, v, z, b, a]`. The four slices share one rank-`r` bottleneck. Four
+independent adapters spend three extra down-projections (`3 × r × hidden`) so
+a qkv update cannot use up the rank that `z`, `b`, and `a` need. `b` and `a`
+are only `num_v_heads` rows, so a shared up-projection puts almost all of the
+rank into qkv. Those two small outputs are the mixer's beta and decay, so the
 missing rank is not a small slice of a big matrix.
 
 Megatron-Bridge's PEFT export does not remove the gap. `peft_bridge` slices
 the single up-projection into the four Hugging Face names and writes the same
 down-projection onto all four (`_split_gdn_in_proj_linear_out_weight` in
 `megatron/bridge/models/conversion/peft_bridge.py`). The saved file looks like
-four PEFT modules. The four `lora_A` tensors are copies of one matrix. A kev
-checkpoint has four different down-projections. Loading one into the other
-drops three of them. The split has to exist while the adapter is trained.
+four PEFT modules. The four `lora_A` tensors are copies of one matrix. A
+checkpoint trained with four independent down-projections is not the same
+object. Loading one layout into the other drops three of them. The split has
+to exist while the adapter is trained.
 
-`in_proj_qkv` itself stays one adapter. kev does not give q, k, and v
+`in_proj_qkv` itself stays one adapter. Hugging Face does not give q, k, and v
 separate mixer adapters. Splitting those three would be a second mismatch.
 
 The same pattern already exists for full attention and the MLP, and AReaL
 does not use the fix Megatron-Bridge ships for it. Plain `LoRA` puts one
-adapter on fused `linear_qkv` and one on fused `linear_fc1`. kev targets
-`q_proj`, `k_proj`, `v_proj` and `gate_proj`, `up_proj` separately.
+adapter on fused `linear_qkv` and one on fused `linear_fc1`. Hugging Face PEFT
+targets `q_proj`, `k_proj`, `v_proj` and `gate_proj`, `up_proj` separately.
 `CanonicalLoRA` (`megatron/bridge/peft/canonical_lora.py`) keeps those fused
 base GEMMs and adds separate adapters, then scatters the adapter outputs into
 Megatron's packed row order. AReaL's Megatron hook constructs plain `LoRA`,
 so Qwen3.5 attention and MLP LoRA have this same shared-rank gap. Matching
-kev's full target set means using `CanonicalLoRA` for those projections and
-extending it for the mixer.
+the Hugging Face target set means using `CanonicalLoRA` for those projections
+and extending it for the mixer.
 
-## How to match kev's mixer adapters
+## How to match four mixer adapters
 
 Keep the unfused `ColumnParallelLinear` as the frozen base GEMM. Leave
 `GDNLinearMappingSeparate` on that one weight. Add a wrapper in the style of

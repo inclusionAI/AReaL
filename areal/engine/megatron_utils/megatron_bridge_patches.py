@@ -25,8 +25,7 @@ def patch_qwen35_hybrid_lora_specs(unfuse_gdn: bool = True) -> None:
     ``RowParallelLinear``. The hybrid layer layout itself is preserved.
 
     The resulting ``in_proj`` is still one LoRA adapter on the concatenated
-    qkv/z/b/a matrix. kev trains four independent adapters there. See
-    ``docs/qwen35-gdn-lora.md``.
+    qkv/z/b/a matrix. See ``docs/qwen35-gdn-lora.md``.
     """
     try:
         from megatron.bridge.models.qwen_vl import qwen35_vl_provider

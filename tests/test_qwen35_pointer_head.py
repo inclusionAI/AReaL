@@ -129,42 +129,6 @@ def test_scores_match_dot_product_and_temperature():
     assert torch.allclose(head.score_single(q_decide, k_opts), raw / 2)
 
 
-def test_scores_match_kev_pointer_head():
-    kev_root = "/home/parham/kev"
-    if not os.path.isdir(os.path.join(kev_root, "kev")):
-        pytest.skip("kev checkout is not present")
-    sys.path.insert(0, kev_root)
-    from kev.model import PointerHead as KevPointerHead
-
-    torch.manual_seed(1)
-    reference = KevPointerHead(8, dp=4)
-    head = PointerHead(8, dp=4)
-    head.load_state_dict(reference.state_dict())
-    decide = torch.randn(8)
-    options = torch.randn(6, 8)
-    owner = torch.tensor([0, 0, 1, 1, 1])
-    queries = torch.randn(2, 8)
-    reference.train()
-    head.train()
-    q_one = head.q(decide)
-    k_one = head.k(options)
-    assert torch.allclose(reference(decide, options), head.score_single(q_one, k_one))
-    q_many = head.q(queries)
-    k_many = head.k(options[:5])
-    assert torch.allclose(
-        reference.many(queries, options[:5], owner),
-        head.score_many(q_many, k_many, owner),
-    )
-    reference.temperature = 2.5
-    head.temperature = 2.5
-    reference.eval()
-    head.eval()
-    assert torch.allclose(
-        reference(decide, options),
-        head.score_single(head.q(decide), head.k(options)),
-    )
-
-
 def test_replace_output_layer_only_on_last_stage():
     last = _Stage(post_process=True, with_output=True)
     head = replace_output_layer_with_pointer_head(
@@ -203,7 +167,7 @@ def test_replace_output_layer_only_on_last_stage():
     assert missing.vocab_size == 16
 
 
-def test_head_pt_round_trip_matches_kev_meta(tmp_path):
+def test_head_pt_round_trip(tmp_path):
     torch.manual_seed(2)
     stage = _Stage(post_process=True, with_output=True)
     head = replace_output_layer_with_pointer_head(
@@ -248,23 +212,16 @@ def test_head_pt_round_trip_matches_kev_meta(tmp_path):
         assert torch.equal(fresh_head.state_dict()[key], value.float())
         assert loaded.head[key].dtype == torch.float32
 
-    kev_root = "/home/parham/kev"
-    if os.path.isdir(os.path.join(kev_root, "kev")):
-        sys.path.insert(0, kev_root)
-        from kev.checkpoint import Meta
-
-        kev_meta = Meta.from_dict(
-            torch.load(path, map_location="cpu", weights_only=False)
-        )
-        assert kev_meta.base == meta.base
-        assert kev_meta.lora == 16
-        assert kev_meta.weights == "lora"
-        assert kev_meta.head_dim == 4
-        assert kev_meta.temperature == 2.25
-        assert kev_meta.extra["suite_sha256"] == "deadbeef"
-        again = DecisionHeadMeta.from_dict(kev_meta.to_dict())
-        assert again.to_dict()["args"] == {"lr": 1e-4}
-        assert torch.equal(again.head["q.weight"], head.q.weight.detach().cpu())
+    payload = torch.load(path, map_location="cpu", weights_only=False)
+    again = DecisionHeadMeta.from_dict(payload)
+    assert again.base == meta.base
+    assert again.lora == 16
+    assert again.weights == "lora"
+    assert again.head_dim == 4
+    assert again.temperature == 2.25
+    assert again.extra["suite_sha256"] == "deadbeef"
+    assert again.to_dict()["args"] == {"lr": 1e-4}
+    assert torch.equal(again.head["q.weight"], head.q.weight.detach().cpu())
 
 
 def test_pointer_head_pt_raw_state_dict(tmp_path):
