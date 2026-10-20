@@ -120,6 +120,7 @@ rollout:
     mode: inline
     admin_api_key: ${oc.env:SWE_RL_ADMIN_API_KEY}
     tool_call_parser: qwen3_coder
+    tool_call_parser_allow_recovery: false
     reasoning_parser: qwen3
     chat_template_type: concat
     chat_template_kwargs:

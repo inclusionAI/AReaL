@@ -48,6 +48,7 @@ _GAMEAGENT_OUTCOME_CODE_VALUE_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
 _GAMEAGENT_MODEL_FAILURE_CODES = {
     "AGENT_MAX_TURNS_EXCEEDED",
     "AUTONOMOUS_INCOMPLETE_NO_SHIP",
+    "INVALID_TOOL_JSON",
 }
 _CORE_MODEL_ZERO_FAILURE_MESSAGES = {
     ("LLM_RESPONSE_FAILED", "empty_completion"): (
@@ -802,13 +803,58 @@ class ArenaStreamAgentWorkflow:
         return True
 
     @classmethod
-    def _is_core_agent_zero_failure(cls, raw: Any, receipt: Any) -> bool:
+    def _is_core_invalid_tool_json_failure(cls, raw: Any) -> bool:
+        """Identify the legacy Core error after its label filter drops our code.
+
+        This envelope alone is not model attribution: callers must also have
+        the proxy's session-scoped InvalidToolCallError and a matching receipt.
+        """
+        if not isinstance(raw, dict):
+            return False
+        outcome = raw.get("outcome")
+        harness = raw.get("harness")
+        if not isinstance(outcome, dict) or not isinstance(harness, dict):
+            return False
+        details = outcome.get("details")
+        if not isinstance(details, dict):
+            return False
+        source = outcome.get("source")
+        return (
+            outcome.get("code") == "LLM_RESPONSE_FAILED"
+            and cls._gameagent_outcome_code(raw) == "LLM_RESPONSE_FAILED"
+            and outcome.get("class") == "infrastructure"
+            and isinstance(source, str)
+            and source in {"provider_stream", "provider_http"}
+            and details.get("errorShape") == "object"
+            and details.get("errorType") == "invalid_request_error"
+            and details.get("code") in (None, "invalid_tool_json")
+            and details.get("reason") in (None, "invalid_tool_json")
+            and details.get("eventType")
+            == ("error" if source == "provider_stream" else "http_error")
+            and (source != "provider_http" or details.get("httpStatus") == 422)
+            and harness.get("phase") == "agent"
+            and harness.get("result_status") == "ERROR"
+            and type(harness.get("exit_code")) is int
+            and harness["exit_code"] == 1
+            and harness.get("summary")
+            == "GAMEAGENT_OUTCOME_CODE=LLM_RESPONSE_FAILED "
+            "GAMEAGENT_OUTCOME_CLASS=infrastructure"
+            and raw.get("failure") is None
+        )
+
+    @classmethod
+    def _is_core_agent_zero_failure(
+        cls, raw: Any, receipt: Any, *, invalid_tool_json: bool = False
+    ) -> bool:
         """Require a matching native receipt for model or context exhaustion."""
         message = cls._core_model_zero_failure_message(raw)
         if message is None:
             message = cls._core_context_zero_failure_message(raw)
         context_failure = cls._is_structured_context_failure(raw)
-        if (message is None and not context_failure) or not isinstance(receipt, dict):
+        tool_failure = invalid_tool_json and cls._is_core_invalid_tool_json_failure(raw)
+        if (
+            message is None and not context_failure and not tool_failure
+        ) or not isinstance(receipt, dict):
             return False
         if (
             receipt.get("implementation") != "rust-core-runtime"
@@ -837,6 +883,8 @@ class ArenaStreamAgentWorkflow:
                 )
             )
         ):
+            return False
+        if tool_failure and _HARNESS_SYSTEM_ERROR_PATTERN.search(errors[0]["message"]):
             return False
         expected = raw["outcome"]
         for outcome in (
@@ -1186,7 +1234,11 @@ class ArenaStreamAgentWorkflow:
 
     @classmethod
     def _is_model_attributed_harness_failure(
-        cls, error: ArenaTaskFailedError, *, context_overflow: bool = False
+        cls,
+        error: ArenaTaskFailedError,
+        *,
+        context_overflow: bool = False,
+        invalid_tool_json: bool = False,
     ) -> bool:
         """Select one result family, then apply only that family's admission rules."""
         result = error.result
@@ -1212,7 +1264,9 @@ class ArenaStreamAgentWorkflow:
             result_format == "gameagent"
             and result is not None
             and result.score == 0.0
-            and cls._is_core_agent_zero_failure(raw, error.harness_result)
+            and cls._is_core_agent_zero_failure(
+                raw, error.harness_result, invalid_tool_json=invalid_tool_json
+            )
         ):
             return True
         detail = raw.get("error")
@@ -1256,6 +1310,7 @@ class ArenaStreamAgentWorkflow:
         *,
         context_overflow: bool,
         interaction_count: int,
+        invalid_tool_json: bool = False,
     ) -> str:
         """Retain model-attributed failures using the identified Harness format.
 
@@ -1272,7 +1327,9 @@ class ArenaStreamAgentWorkflow:
             error.status == "HARNESS_FAILED"
             and interaction_count > 0
             and cls._is_model_attributed_harness_failure(
-                error, context_overflow=context_overflow
+                error,
+                context_overflow=context_overflow,
+                invalid_tool_json=invalid_tool_json,
             )
         ):
             return "model_failure_zero"
@@ -1764,6 +1821,7 @@ class ArenaStreamAgentWorkflow:
                         or self._core_model_zero_failure_message(exc.result.raw)
                         is not None
                         or self._is_structured_context_failure(exc.result.raw)
+                        or self._is_core_invalid_tool_json_failure(exc.result.raw)
                     ):
                         try:
                             exc.harness_result = (
