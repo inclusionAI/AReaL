@@ -233,7 +233,8 @@ def test_empty_selected_batch_has_zero_count_not_stale_average(recorded_stats):
     assert "train/num_turns/avg" not in metrics
 
 
-def test_turn_stats_fetch_only_compact_columns(recorded_stats, monkeypatch):
+@pytest.mark.parametrize("classified", [False, True])
+def test_turn_stats_fetch_only_compact_columns(recorded_stats, monkeypatch, classified):
     from areal.infra.rpc.rtensor import RTensor
 
     count_handle, outcome_handle = object(), object()
@@ -244,24 +245,27 @@ def test_turn_stats_fetch_only_compact_columns(recorded_stats, monkeypatch):
         "turn_ids": large_handle,
         "input_ids": large_handle,
     }
+    if not classified:
+        row.pop(ROLLOUT_HARNESS_OUTCOME)
     fetched = []
 
     def localize(payload):
         fetched.append(payload)
-        return [
-            {
-                ROLLOUT_TURN_COUNT: torch.tensor([3.0]),
-                ROLLOUT_HARNESS_OUTCOME: torch.tensor([0], dtype=torch.int32),
-            }
-        ]
+        data = {ROLLOUT_TURN_COUNT: torch.tensor([3.0])}
+        if classified:
+            data[ROLLOUT_HARNESS_OUTCOME] = torch.tensor([0], dtype=torch.int32)
+        return [data]
 
     monkeypatch.setattr(RTensor, "localize", localize)
     record_rollout_turn_stats([row])
 
-    assert fetched == [
-        [{ROLLOUT_TURN_COUNT: count_handle, ROLLOUT_HARNESS_OUTCOME: outcome_handle}]
-    ]
-    assert recorded_stats["train"].export()["train/num_turns/avg"] == 3
+    expected = {ROLLOUT_TURN_COUNT: count_handle}
+    if classified:
+        expected[ROLLOUT_HARNESS_OUTCOME] = outcome_handle
+    assert fetched == [[expected]]
+    stats = recorded_stats["train"].export()
+    assert stats["train/num_turns/avg"] == 3
+    assert stats["train/num_turns_no_harness_err_count"] == int(classified)
 
 
 def test_workflow_without_turn_metadata_does_not_emit_turn_metrics(recorded_stats):
@@ -298,17 +302,34 @@ def test_task_failure_without_harness_error_stays_in_filtered_turns(recorded_sta
     assert metrics["train/num_turns_harness_err_count"] == 0
 
 
-@pytest.mark.parametrize("misalignment", ["missing_outcome", "outcome_shape", "rows"])
+@pytest.mark.parametrize(
+    "misalignment", ["outcome_shape", "rows", "rows_without_outcome"]
+)
 def test_misaligned_turn_metadata_is_rejected(recorded_stats, misalignment):
     row = _trajectory(1.0, 2)
-    if misalignment == "missing_outcome":
-        row.pop(ROLLOUT_HARNESS_OUTCOME)
-    elif misalignment == "outcome_shape":
+    if misalignment == "outcome_shape":
         row[ROLLOUT_HARNESS_OUTCOME] = torch.zeros(2, dtype=torch.int32)
     else:
         row["input_ids"] = torch.ones((2, 5), dtype=torch.int32)
+        if misalignment == "rows_without_outcome":
+            row.pop(ROLLOUT_HARNESS_OUTCOME)
 
     with pytest.raises(ValueError, match="rollout turn"):
         record_rollout_turn_stats([row])
 
     assert not recorded_stats
+
+
+@pytest.mark.parametrize("mixed", [False, True])
+def test_turn_counts_without_harness_classification_are_valid(recorded_stats, mixed):
+    row = {ROLLOUT_TURN_COUNT: torch.tensor([2.0, 4.0])}
+    batch = [row]
+    if mixed:
+        batch.append(_trajectory(0.0, 6, {"arena_status": "HARNESS_FAILED"}))
+    record_rollout_turn_stats(batch)
+    stats = recorded_stats["train"].export()
+    assert stats["train/num_turns_count"] == (3 if mixed else 2)
+    assert stats["train/num_turns/avg"] == (4 if mixed else 3)
+    assert stats["train/num_turns_no_harness_err_count"] == 0
+    assert stats["train/num_turns_harness_err_count"] == (1 if mixed else 0)
+    assert ROLLOUT_HARNESS_OUTCOME not in row

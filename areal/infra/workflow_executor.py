@@ -10,6 +10,7 @@ import threading
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, Protocol
 from collections.abc import Generator
 from collections import deque
@@ -291,6 +292,22 @@ class WorkflowContractFailure:
 
 
 WorkflowTaskResult = _RolloutResult | WorkflowContractFailure
+
+
+def consume_workflow_result(
+    result: WorkflowTaskResult | None, *, metrics: ConsumedMetrics
+) -> WorkflowTaskResult | None:
+    """Publish consumed observations and normalize rejected results for dispatch.
+
+    Contract failures remain visible to the dispatcher's fail-fast handling.
+    Only a rollout result without a trajectory represents a filtered attempt.
+    """
+    if result is None:
+        return None
+    metrics.record(result.metrics)
+    if isinstance(result, _RolloutResult) and result.trajectory is None:
+        return None
+    return result
 
 
 def get_workflow_result_error(
@@ -922,6 +939,7 @@ class WorkflowExecutor:
             BatchTaskDispatcher[_RolloutTaskInput, WorkflowTaskResult] | None
         ) = None
 
+        self._consumed_metrics: ConsumedMetrics | None = None
         self._task_id_generator = TaskIdGenerator()
 
         # Lazy-loaded tokenizer for trajectory dumping
@@ -1245,13 +1263,15 @@ class WorkflowExecutor:
 
         # Create and initialize the dispatcher
         qsize = self.config.queue_size or self.max_concurrent_rollouts * 16
-        self.consumed_metrics = ConsumedMetrics(
+        self._consumed_metrics = ConsumedMetrics(
             publish_to_tracker=not is_single_controller()
         )
         self._dispatcher = BatchTaskDispatcher[_RolloutTaskInput, WorkflowTaskResult](
             max_queue_size=qsize,
             task_factory=self._create_workflow_task,
-            consume_result=self.consumed_metrics.consume,
+            consume_result=partial(
+                consume_workflow_result, metrics=self._consumed_metrics
+            ),
             staleness_manager=self._staleness_manager,
             enable_tracing=self.config.enable_rollout_tracing,
             terminal_error_fn=get_workflow_result_error,
@@ -1260,6 +1280,14 @@ class WorkflowExecutor:
 
         # Initialize the dispatcher's async task runner
         self._dispatcher.initialize(logger=logger)
+
+    def export_consumed_metrics(self) -> dict[str, float]:
+        """Export this consumer's window; SPMD leaves reduction to the actor."""
+        return (
+            self._consumed_metrics.export()
+            if self._consumed_metrics is not None
+            else {}
+        )
 
     def destroy(self):
         """Shutdown the workflow executor and clean up resources.

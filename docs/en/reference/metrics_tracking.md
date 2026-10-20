@@ -101,6 +101,12 @@ capture utility itself has no rollout naming rules. Both controller and SPMD con
 use the same tracker reductions; the controller owns an isolated local export window,
 while SPMD retains the actor's existing DP reduction group.
 
+Retained rows may provide `rollout_num_turns` without `rollout_harness_outcome`. Those
+rows contribute to the overall turn distribution; their Harness classification is
+unknown and they do not contribute to either Harness subgroup. When provided,
+classification metadata must still have one value per row. Episode and row metadata use
+the same classification rules.
+
 | Metric                                 | Population and denominator                                                                                                               |
 | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `rollout/reward`                       | Mean of actual reward observations from consumed attempts, including rejected attempts. Missing rewards are not filled with zero.        |

@@ -329,7 +329,7 @@ async def test_export_empty_trajectory_still_carries_turn_metrics_until_consumpt
     assert result == {}
     buffer = ConsumedMetrics()
     assert buffer.export() == {}
-    buffer.consume(SimpleNamespace(trajectory=None, metrics=metrics))
+    buffer.record(metrics)
     stats = buffer.export()
     assert stats["rollout/num_turns_count"] == 2
     assert stats["rollout/num_turns/avg"] == 4.5

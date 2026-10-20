@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from areal.utils.stats_tracker import DistributedStatsTracker
 
-from areal.utils.rollout_stats import HARNESS_OUTCOME_METRIC_CODES
+from areal.utils.harness_metrics import HARNESS_OUTCOME_CODES, classify_harness_outcome
 
 
 @dataclass
@@ -120,16 +120,11 @@ def record_episode_turns(
     if count is None:
         return
     names = ["num_turns"]
-    status = (metadata or {}).get("arena_status")
-    if status == "HARNESS_FAILED":
-        code = (metadata or {}).get("harness_outcome_code")
-        code = (
-            code
-            if isinstance(code, str) and code in HARNESS_OUTCOME_METRIC_CODES
-            else "OTHER"
-        )
+    outcome = classify_harness_outcome(metadata, require_status=require_status)
+    if outcome > 0:
+        code = HARNESS_OUTCOME_CODES[outcome - 1]
         names.extend(["num_turns_harness_err", f"num_turns_harness_err/{code}"])
-    elif not require_status or (isinstance(status, str) and status.strip()):
+    elif outcome == 0:
         names.append("num_turns_no_harness_err")
     for name in names:
         key = f"{scope}/{name}"

@@ -760,6 +760,13 @@ class RemoteInfEngine(InferenceEngine):
         """Set the workflow executor of the inference engine."""
         self._workflow_executor = workflow_executor
 
+    def export_stats(self) -> dict[str, float]:
+        """Export worker stats and this process's consumed rollout observations."""
+        result = stats_tracker.export_all(reduce_group=None)
+        if self._workflow_executor is not None:
+            result.update(self._workflow_executor.export_consumed_metrics())
+        return result
+
     @property
     def initialized(self) -> bool:
         return self._initialized

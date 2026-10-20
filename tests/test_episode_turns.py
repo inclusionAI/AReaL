@@ -40,8 +40,8 @@ def test_rollout_counts_rejected_attempts_while_train_counts_retained_rows():
             SimpleNamespace(trajectory={} if accepted else None, metrics=metrics)
         )
     assert consumer.export() == {}  # All three are still prefetched.
-    consumer.consume(pending[0])
-    assert consumer.consume(pending[1]) is None
+    consumer.record(pending[0].metrics)
+    consumer.record(pending[1].metrics)
     record_rollout_turn_stats(
         [
             {
@@ -57,7 +57,7 @@ def test_rollout_counts_rejected_attempts_while_train_counts_retained_rows():
     assert train["train/num_turns_count"] == 1
     assert train["train/num_turns/avg"] == 2
     assert consumer.export() == {}
-    consumer.consume(pending[2])
+    consumer.record(pending[2].metrics)
     assert consumer.export()["rollout/num_turns/avg"] == 5
 
 
@@ -75,7 +75,7 @@ def test_nested_group_records_each_episode_once_including_failure():
             with track_episode_turns():
                 pass  # Unknown, not a zero-turn episode.
     consumer = ConsumedMetrics()
-    consumer.consume(SimpleNamespace(trajectory=None, metrics=metrics))
+    consumer.record(metrics)
     result = consumer.export()
     assert result["rollout/num_turns_count"] == 2
     assert result["rollout/num_turns/avg"] == 1.5
@@ -96,7 +96,7 @@ def test_v2_observations_replace_outer_task_and_keep_unknown_status_separate():
             )
             record_episode_turns(None, require_status=True)
     consumer = ConsumedMetrics()
-    consumer.consume(SimpleNamespace(trajectory=None, metrics=metrics))
+    consumer.record(metrics)
     result = consumer.export()
     assert result["rollout/num_turns_count"] == 2
     assert result["rollout/num_turns/avg"] == 3
@@ -162,11 +162,11 @@ async def test_builtin_multiturn_emits_one_episode_observation(monkeypatch):
 
     with capture_scalars(select=is_consumed_rollout_metric) as metrics:
         with track_episode_turns():
-            trajectory = await workflow.arun_episode(
+            await workflow.arun_episode(
                 SimpleNamespace(agenerate=generate), {"messages": []}
             )
     consumer = ConsumedMetrics()
-    consumer.consume(SimpleNamespace(trajectory=trajectory, metrics=metrics))
+    consumer.record(metrics)
     result = consumer.export()
     assert result["rollout/num_turns_count"] == 1
     assert result["rollout/num_turns/avg"] == 2

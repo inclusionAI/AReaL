@@ -1671,7 +1671,7 @@ class RolloutControllerV2:
         """Export and reset statistics recorded by the local workflow executor."""
         result = stats_tracker.export_all()
         if self._workflow_executor is not None:
-            result.update(self._workflow_executor.consumed_metrics.export())
+            result.update(self._workflow_executor.export_consumed_metrics())
         return result
 
     def config_perf_tracer(self, config: Any = None, role: str = "") -> None:

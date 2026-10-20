@@ -8,7 +8,6 @@ Tensor distributions, operational metrics and proxy PRM keep their existing scop
 """
 
 from threading import Lock
-from typing import Protocol, TypeVar
 
 import torch
 
@@ -47,13 +46,6 @@ def _publish_metrics(tracker: DistributedStatsTracker, metrics: Metrics) -> None
             )
 
 
-class _MetricResult(Protocol):
-    metrics: Metrics | None
-
-
-_Result = TypeVar("_Result", bound=_MetricResult)
-
-
 class ConsumedMetrics:
     """Per-consumer buffer; rejected attempts count but pending results do not."""
 
@@ -63,19 +55,15 @@ class ConsumedMetrics:
         self._tracker = None if publish_to_tracker else DistributedStatsTracker()
         self._lock = Lock()
 
-    def consume(self, result: _Result | None) -> _Result | None:
-        if result is None:
-            return None
+    def record(self, metrics: Metrics | None) -> None:
+        """Record consumed observations without interpreting workflow results."""
+        if not metrics:
+            return
         with self._lock, suspend_scalar_capture():
             tracker = (
                 self._tracker if self._tracker is not None else stats_tracker.get()
             )
-            _publish_metrics(tracker, result.metrics or {})
-        return (
-            result
-            if not hasattr(result, "trajectory") or result.trajectory is not None
-            else None
-        )
+            _publish_metrics(tracker, metrics)
 
     def export(self) -> dict[str, float]:
         with self._lock:

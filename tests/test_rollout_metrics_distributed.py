@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from datetime import timedelta
-from types import SimpleNamespace
 
 import pytest
 import torch
@@ -35,16 +34,13 @@ def _check_metrics(rank, rendezvous):
             if empty_rank and rank == 1:
                 rewards, turns, outcomes = [], [], []
             if rewards:
-                buffer.consume(
-                    SimpleNamespace(
-                        trajectory={},
-                        metrics={
-                            "rollout/reward": rewards,
-                            "rollout/num_turns": turns,
-                            "rollout/num_turns_missing_count": [float(rank)],
-                            "rollout/accepted": [1.0],
-                        },
-                    )
+                buffer.record(
+                    {
+                        "rollout/reward": rewards,
+                        "rollout/num_turns": turns,
+                        "rollout/num_turns_missing_count": [float(rank)],
+                        "rollout/accepted": [1.0],
+                    }
                 )
                 record_rollout_turn_stats(
                     [

@@ -12,21 +12,13 @@ import torch
 if TYPE_CHECKING:
     from areal.experimental.openai.types import InteractionWithTokenLogpReward
 
-HARNESS_OUTCOME_METRIC_CODES = frozenset(
-    {
-        "AGENT_MAX_TURNS_EXCEEDED",
-        "AGENT_RUN_TIMEOUT",
-        "AUTONOMOUS_INCOMPLETE_NO_SHIP",
-        "GAMEAGENT_RUN_FAILED",
-        "INVALID_TOOL_JSON",
-        "LLM_CONTEXT_WINDOW_EXCEEDED",
-        "LLM_OUTPUT_TOKEN_LIMIT_EXCEEDED",
-        "LLM_RESPONSE_FAILED",
-        "LLM_RESPONSE_TIMEOUT",
-    }
+from areal.utils.harness_metrics import (
+    HARNESS_OUTCOME_IDS,
+    classify_harness_outcome,
 )
-_OUTCOME_CODES = ("OTHER", *sorted(HARNESS_OUTCOME_METRIC_CODES))
-_OUTCOME_IDS = {code: index + 1 for index, code in enumerate(_OUTCOME_CODES)}
+from areal.utils.harness_metrics import (
+    HARNESS_OUTCOME_METRIC_CODES as HARNESS_OUTCOME_METRIC_CODES,
+)
 
 # One-dimensional row metadata: concat, DP redistribution, and row filtering
 # must slice these exactly like rewards, not like token-aligned tensors.
@@ -101,13 +93,9 @@ def with_rollout_turn_stats(
     else:
         counts = _count_generated_turns(trajectory, interaction)
 
-    outcome_id = 0  # No Harness failure (not necessarily a successful task).
-    status = (metadata or {}).get("arena_status")
-    if require_harness_status and (not isinstance(status, str) or not status.strip()):
-        outcome_id = -1  # Unknown: excluded from both Harness subgroups.
-    elif status == "HARNESS_FAILED":
-        code = metadata.get("harness_outcome_code")
-        outcome_id = _OUTCOME_IDS.get(code, 1) if isinstance(code, str) else 1
+    outcome_id = classify_harness_outcome(
+        metadata, require_status=require_harness_status
+    )
     return {
         **trajectory,
         ROLLOUT_TURN_COUNT: counts,
@@ -125,20 +113,26 @@ def localize_rollout_turn_stats(
     for trajectory in batch:
         if ROLLOUT_TURN_COUNT not in trajectory:
             continue
-        if ROLLOUT_HARNESS_OUTCOME not in trajectory:
-            raise ValueError("rollout turn counts require Harness outcome metadata")
         row = {
             key: trajectory[key]
             for key in (ROLLOUT_TURN_COUNT, ROLLOUT_HARNESS_OUTCOME)
+            if key in trajectory
         }
         rows.append(row)
     localized = RTensor.localize(rows)
     for trajectory, row in zip(
         (traj for traj in batch if ROLLOUT_TURN_COUNT in traj), localized, strict=True
     ):
-        counts, outcomes = row[ROLLOUT_TURN_COUNT], row[ROLLOUT_HARNESS_OUTCOME]
-        if counts.ndim != 1 or outcomes.shape != counts.shape:
+        counts = row[ROLLOUT_TURN_COUNT]
+        outcomes = row.get(ROLLOUT_HARNESS_OUTCOME)
+        if counts.ndim != 1 or (
+            outcomes is not None and outcomes.shape != counts.shape
+        ):
             raise ValueError("rollout turn metadata must have one value per row")
+        if outcomes is None:
+            row[ROLLOUT_HARNESS_OUTCOME] = torch.full_like(
+                counts, -1, dtype=torch.int32
+            )
         input_ids = trajectory.get("input_ids")
         if input_ids is not None and counts.shape[0] != input_ids.shape[0]:
             raise ValueError(
@@ -181,7 +175,7 @@ def record_rollout_turn_stats(
         "num_turns_harness_err": included & (outcomes > 0),
         **{
             f"num_turns_harness_err/{code}": included & (outcomes == outcome_id)
-            for code, outcome_id in _OUTCOME_IDS.items()
+            for code, outcome_id in HARNESS_OUTCOME_IDS.items()
         },
     }
     tracker = stats_tracker.get(scope)

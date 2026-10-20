@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
+from functools import partial
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -15,6 +16,7 @@ from areal.infra.workflow_executor import (
     WorkflowExecutor,
     _RolloutResult,
     _RolloutTaskInput,
+    consume_workflow_result,
     is_consumed_rollout_metric,
 )
 from areal.utils import stats_tracker
@@ -25,7 +27,12 @@ from areal.utils.stats_tracker import DistributedStatsTracker
 
 def dispatcher_with_results(results):
     buffer = ConsumedMetrics()
-    dispatcher = BatchTaskDispatcher(16, Mock(), Mock(), consume_result=buffer.consume)
+    dispatcher = BatchTaskDispatcher(
+        16,
+        Mock(),
+        Mock(),
+        consume_result=partial(consume_workflow_result, metrics=buffer),
+    )
     for result in results:
         dispatcher._active_task_ids.add(result.task_id)
         dispatcher._pending_results[result.task_id] = TimedResult(
@@ -128,7 +135,7 @@ async def test_workflow_quality_survives_rejection_and_failure(outcome, monkeypa
     accepted = outcome == "accepted"
     assert (result.trajectory is not None) == accepted
     buffer = ConsumedMetrics()
-    buffer.consume(result)
+    buffer.record(result.metrics)
     stats = buffer.export()
     assert stats["rollout/group_attempt_count"] == 1
     assert stats["rollout/accepted"] == float(accepted)
@@ -170,13 +177,16 @@ def test_engine_facade_transfers_metrics_and_exports_only_consumed(
     engine_cls = RemoteSGLangEngine if backend == "sglang" else RemotevLLMEngine
     engine = engine_cls.__new__(engine_cls)
     buffer = ConsumedMetrics()
-    inner = Mock()
-    inner._workflow_executor = SimpleNamespace(consumed_metrics=buffer)
+    inner = RemoteInfEngine.__new__(RemoteInfEngine)
+    inner._wait_for_task_result = Mock()
+    executor = WorkflowExecutor.__new__(WorkflowExecutor)
+    executor._consumed_metrics = buffer
+    inner._workflow_executor = executor
     engine._engine = inner
     monkeypatch.setattr(stats_tracker, "export_all", lambda **kwargs: {"system": 2})
     engine._wait_for_task_result(7, timeout=1, raise_timeout=False)
     inner._wait_for_task_result.assert_called_once_with(7, 1, False)
-    buffer.consume(_RolloutResult(0, None, {"rollout/reward": [1, 0, 0]}))
+    buffer.record({"rollout/reward": [1, 0, 0]})
     result = engine.export_stats()
     assert result["rollout/reward"] == pytest.approx(1 / 3)
     assert result["rollout/reward__count"] == 3
@@ -194,7 +204,8 @@ def test_engine_stats_export_before_initialization_remains_supported(
 
     engine_cls = RemoteSGLangEngine if backend == "sglang" else RemotevLLMEngine
     engine = engine_cls.__new__(engine_cls)
-    engine._engine = SimpleNamespace(_workflow_executor=None)
+    engine._engine = RemoteInfEngine.__new__(RemoteInfEngine)
+    engine._engine._workflow_executor = None
     monkeypatch.setattr(stats_tracker, "export_all", lambda **kwargs: {"system": 2})
     assert engine.export_stats() == {"system": 2}
 
@@ -218,7 +229,7 @@ def test_terminal_failure_is_transported_then_counted_once():
         16,
         Mock(),
         Mock(),
-        consume_result=consumer.consume,
+        consume_result=partial(consume_workflow_result, metrics=consumer),
         terminal_error_fn=get_workflow_result_error,
     )
     controller._active_task_ids.add(1)
@@ -238,11 +249,10 @@ def test_v2_exports_consumed_quality_without_waiting_for_new_completion(monkeypa
 
     controller = RolloutControllerV2.__new__(RolloutControllerV2)
     buffer = ConsumedMetrics()
-    controller._workflow_executor = SimpleNamespace(consumed_metrics=buffer)
+    controller._workflow_executor = WorkflowExecutor.__new__(WorkflowExecutor)
+    controller._workflow_executor._consumed_metrics = buffer
     monkeypatch.setattr(stats_tracker, "export_all", lambda **kwargs: {})
-    buffer.consume(
-        _RolloutResult(1, None, {"rollout/reward": [1, 0], "rollout/accepted": [0]})
-    )
+    buffer.record({"rollout/reward": [1, 0], "rollout/accepted": [0]})
     stats = controller.export_stats()
     assert stats["rollout/reward"] == 0.5
     assert stats["rollout/reward_sample_count"] == 2
@@ -267,8 +277,8 @@ def test_consumers_share_reductions_without_recapture_or_global_reset(monkeypatc
                     "rollout/num_turns_harness_err": [],
                 }
             )
-            local.consume(result)
-            spmd.consume(result)
+            local.record(result.metrics)
+            spmd.record(result.metrics)
         tracker.scalar(**{"rollout/rejected": 1})
     assert captured == {"rollout/rejected": [1.0]}
     tracker.scalar(operational=7)
@@ -302,11 +312,11 @@ def test_consuming_turns_does_not_rescan_previous_observations(monkeypatch):
     monkeypatch.setattr(stats_tracker, "get", lambda: tracker)
     consumer = ConsumedMetrics(publish_to_tracker=True)
     key = "rollout/num_turns"
-    consumer.consume(SimpleNamespace(metrics={key: [2.0]}))
+    consumer.record({key: [2.0]})
     history = ObservedHistory(tracker.stats[key])
     tracker.stats[key] = history
     for _ in range(128):
-        consumer.consume(SimpleNamespace(trajectory=None, metrics={key: [4.0, 6.0]}))
+        consumer.record({key: [4.0, 6.0]})
     assert history.inspected == 0
     result = tracker.export()
     assert result == {
@@ -316,3 +326,37 @@ def test_consuming_turns_does_not_rescan_previous_observations(monkeypatch):
         f"{key}_count": 257,
     }
     assert tracker.export() == {}
+
+
+@pytest.mark.parametrize("kind", ["accepted", "filtered", "terminal", "none"])
+def test_consumption_adapter_preserves_workflow_decisions(kind):
+    from areal.infra.workflow_executor import WorkflowContractFailure
+
+    metrics = {"rollout/reward": [0.5]}
+    result = {
+        "accepted": _RolloutResult(1, {}, metrics),
+        "filtered": _RolloutResult(2, None, metrics),
+        "terminal": WorkflowContractFailure("invalid group", metrics),
+        "none": None,
+    }[kind]
+    buffer = ConsumedMetrics()
+    consumed = consume_workflow_result(result, metrics=buffer)
+    if kind in ("filtered", "none"):
+        assert consumed is None
+    else:
+        assert consumed is result
+    stats = buffer.export()
+    assert stats.get("rollout/reward_sample_count", 0) == (0 if kind == "none" else 1)
+
+
+def test_executor_spmd_export_does_not_reset_actor_metrics(monkeypatch):
+    tracker = DistributedStatsTracker()
+    monkeypatch.setattr(stats_tracker, "get", lambda: tracker)
+    executor = WorkflowExecutor.__new__(WorkflowExecutor)
+    executor._consumed_metrics = ConsumedMetrics(publish_to_tracker=True)
+    consume_workflow_result(
+        _RolloutResult(1, {}, {"rollout/reward": [1.0]}),
+        metrics=executor._consumed_metrics,
+    )
+    assert executor.export_consumed_metrics() == {}
+    assert tracker.export()["rollout/reward"] == 1

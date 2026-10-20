@@ -9,6 +9,7 @@ import traceback
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
+from functools import partial
 from threading import Lock
 from typing import Any
 
@@ -56,6 +57,7 @@ from ..workflow_executor import (
     WorkflowContractFailure,
     WorkflowTaskResult,
     _RolloutResult,
+    consume_workflow_result,
     get_workflow_result_error,
     unwrap_workflow_result,
     validate_rollout_group_sizes,
@@ -354,7 +356,9 @@ class RolloutController:
         ](
             max_queue_size=qsize,
             task_factory=self._create_submit_callback,
-            consume_result=self.consumed_metrics.consume,
+            consume_result=partial(
+                consume_workflow_result, metrics=self.consumed_metrics
+            ),
             staleness_manager=self._staleness_manager,
             enable_tracing=self.config.enable_rollout_tracing,
             terminal_error_fn=get_workflow_result_error,
