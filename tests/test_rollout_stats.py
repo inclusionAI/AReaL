@@ -333,3 +333,39 @@ def test_turn_counts_without_harness_classification_are_valid(recorded_stats, mi
     assert stats["train/num_turns_no_harness_err_count"] == 0
     assert stats["train/num_turns_harness_err_count"] == (1 if mixed else 0)
     assert ROLLOUT_HARNESS_OUTCOME not in row
+
+
+def test_eval_row_recording_does_not_scan_history(recorded_stats):
+    """Per-task eval recording must not inspect earlier tasks in the window."""
+
+    class ObservedHistory(list):
+        inspected = 0
+
+        def __iter__(self):
+            self.inspected += len(self)
+            return super().__iter__()
+
+        def __add__(self, other):
+            self.inspected += len(self)
+            return super().__add__(other)
+
+    batch = [
+        _trajectory(1.0, 2),
+        _trajectory(0.0, 4, {"arena_status": "HARNESS_FAILED"}),
+    ]
+    record_rollout_turn_stats(batch, scope="eval-train")
+    tracker = recorded_stats["eval-train"]
+    histories = {key: ObservedHistory(values) for key, values in tracker.stats.items()}
+    tracker.stats.update(histories)
+    for _ in range(64):
+        record_rollout_turn_stats(batch, scope="eval-train")
+    assert all(history.inspected == 0 for history in histories.values())
+
+    metrics = tracker.export()
+    assert metrics["eval-train/num_turns_count"] == 130
+    assert metrics["eval-train/num_turns/avg"] == 3
+    assert metrics["eval-train/num_turns/min"] == 2
+    assert metrics["eval-train/num_turns/max"] == 4
+    assert metrics["eval-train/num_turns_harness_err/OTHER_count"] == 65
+    assert metrics["eval-train/num_turns_harness_err/OTHER/avg"] == 4
+    assert tracker.export() == {}

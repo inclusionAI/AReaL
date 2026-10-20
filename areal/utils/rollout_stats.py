@@ -179,9 +179,9 @@ def record_rollout_turn_stats(
         },
     }
     tracker = stats_tracker.get(scope)
+    # Evaluation records once per accepted task and exports after the full
+    # validation window. Compact records avoid revalidating all previous tasks.
+    ones = torch.ones_like(values)
     for metric, mask in masks.items():
-        denominator = f"{metric}_count"
-        tracker.denominator(**{denominator: mask})
-        tracker.stat(
-            denominator, reduce_type=ReduceType.AVG_MIN_MAX, **{metric: values}
-        )
+        tracker.stat_compact(mask, ReduceType.AVG_MIN_MAX, **{metric: values})
+        tracker.stat_compact(mask, ReduceType.SUM, **{f"{metric}_count": ones})
