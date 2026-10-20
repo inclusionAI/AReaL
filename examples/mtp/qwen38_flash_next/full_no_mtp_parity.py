@@ -7,12 +7,13 @@ import gc
 import json
 import os
 from pathlib import Path
+from typing import Any
 
 import torch
 import torch.distributed as dist
 import yaml
 
-from areal.models.mcore.mcore_bridge_adapter import MCoreBridgeAdapter
+from areal.utils.data import concat_batch
 
 
 def _language_model(model):
@@ -64,10 +65,28 @@ def _global_observation_summary(counts):
     }
 
 
+def _prepare_parity_batch(
+    batch: list[dict[str, Any]] | dict[str, Any],
+) -> dict[str, Any]:
+    """Use production SFT batching before truncating every sample for parity."""
+    if isinstance(batch, list):
+        batch, _ = concat_batch(batch)
+    return {
+        key: value[:, :512].clone()
+        if isinstance(value, torch.Tensor) and value.ndim == 2
+        else value
+        for key, value in batch.items()
+    }
+
+
 @torch.no_grad()
 def compare_full_no_mtp(actor, batch) -> None:
     """Use the actual loaded checkpoint, TP/PP/EP topology and a short fixed input."""
+    fixed = _prepare_parity_batch(batch)
+
     from megatron.core import parallel_state
+
+    from areal.models.mcore.mcore_bridge_adapter import MCoreBridgeAdapter
 
     candidate = actor.model
     was_training = candidate[0].training
@@ -77,13 +96,6 @@ def compare_full_no_mtp(actor, batch) -> None:
     )["comparisons"]["no_mtp_forward"]
     try:
         actor.eval()
-        # Truncate real samples solely for short-sequence forward comparison.
-        fixed = {
-            key: value[:, :512].clone()
-            if isinstance(value, torch.Tensor) and value.ndim == 2
-            else value
-            for key, value in batch.items()
-        }
         outputs = []
 
         def capture(output, inputs):
