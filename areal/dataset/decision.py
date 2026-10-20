@@ -727,6 +727,36 @@ def record_variants(
     return variants
 
 
+def select_labelled_records(
+    records: list[dict],
+    n_per_source: int | None = None,
+    max_records: int | None = None,
+) -> list[dict]:
+    """Keep the first ``n_per_source`` records of each ``_meta.source``.
+
+    ``max_records`` is applied after that cap. File order is preserved so a
+    PoC slice of a frozen suite stays deterministic.
+    """
+    if n_per_source is not None:
+        if n_per_source < 1:
+            raise ValueError("n_per_source must be >= 1")
+        kept: list[dict] = []
+        counts: dict[str, int] = {}
+        for record in records:
+            source = (record.get("_meta") or {}).get("source", "custom")
+            used = counts.get(source, 0)
+            if used >= n_per_source:
+                continue
+            counts[source] = used + 1
+            kept.append(record)
+        records = kept
+    if max_records is not None:
+        if max_records < 1:
+            raise ValueError("max_records must be >= 1")
+        records = records[:max_records]
+    return records
+
+
 def get_decision_sft_dataset(
     path: str,
     split: str | None = None,
@@ -744,6 +774,8 @@ def get_decision_sft_dataset(
     option_isolation: bool = False,
     source: str = "custom",
     verify_suite: bool = True,
+    n_per_source: int | None = None,
+    max_records: int | None = None,
     **_unused,
 ):
     """Load a decision JSONL or frozen suite as one causal row per question.
@@ -759,8 +791,12 @@ def get_decision_sft_dataset(
 
     split = split or "train"
     do_augment = (split == "train") if augment is None else bool(augment)
-    records = load_labelled_path(
-        path, split=split, source=source, verify_suite=verify_suite
+    records = select_labelled_records(
+        load_labelled_path(
+            path, split=split, source=source, verify_suite=verify_suite
+        ),
+        n_per_source=n_per_source,
+        max_records=max_records,
     )
 
     rows: list[dict[str, list]] = []
@@ -834,6 +870,7 @@ __all__ = [
     "load_records",
     "load_suite",
     "load_labelled_path",
+    "select_labelled_records",
     "materialize",
     "is_decision_path",
     "user_tokens",

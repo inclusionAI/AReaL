@@ -22,6 +22,7 @@ from areal.dataset.decision import (
     encode,
     encode_question_rows,
     rows_of,
+    select_labelled_records,
 )
 from areal.engine.megatron_utils.megatron_bridge_patches import (
     patch_qwen35_hybrid_lora_specs,
@@ -499,6 +500,24 @@ def test_npu_head_checkpoint_round_trip(tmp_path):
     assert meta is not None
     torch.testing.assert_close(loaded.q.weight, head.q.weight)
     assert loaded.q.weight.device.type == "npu"
+
+
+def test_select_labelled_records_caps_per_source_then_total():
+    records = [
+        {"_meta": {"source": "yelp"}, "i": 0},
+        {"_meta": {"source": "yelp"}, "i": 1},
+        {"_meta": {"source": "yelp"}, "i": 2},
+        {"_meta": {"source": "boolq"}, "i": 3},
+        {"_meta": {"source": "boolq"}, "i": 4},
+        {"state": "x", "i": 5},
+    ]
+    sliced = select_labelled_records(records, n_per_source=2)
+    assert [row["i"] for row in sliced] == [0, 1, 3, 4, 5]
+    assert [row["i"] for row in select_labelled_records(sliced, max_records=3)] == [
+        0,
+        1,
+        3,
+    ]
 
 
 def test_example_files_wire_decision_megatron_bridge():

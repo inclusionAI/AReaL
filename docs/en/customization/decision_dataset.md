@@ -128,6 +128,8 @@ directory, or contains `decision`.
 | `max_branch` | `1024` | Token budget for one full row (`state` + one question) |
 | `max_length` | from `train_dataset.max_length` | Drop rows longer than this after encoding |
 | `verify_suite` | `true` | Check suite checksums / record counts |
+| `n_per_source` | off | Keep the first N records of each `_meta.source` (PoC / smoke slices) |
+| `max_records` | off | Keep at most this many records after `n_per_source` |
 
 To encode the file **exactly as written**, set `augment: false` (or use a
 non-train split). Validation and test already do that by default.
