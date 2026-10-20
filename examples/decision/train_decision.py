@@ -1,3 +1,20 @@
+"""Qwen3.5 PointerHead decision SFT entrypoint.
+
+Single-NPU PoC:
+
+    MODEL_PATH=/path/to/Qwen3.5-4B-Base \
+    SUITE_PATH=/path/to/decision-suite \
+      bash examples/decision/run_npu_poc.sh
+
+Or, from the repo root:
+
+    python3 examples/decision/train_decision.py \
+        --config examples/decision/qwen3_5_decision_sft_npu_poc.yaml \
+        actor.path=/path/to/Qwen3.5-4B-Base \
+        train_dataset.path=/path/to/train.jsonl \
+        valid_dataset.path=/path/to/development.jsonl
+"""
+
 import sys
 
 from areal import SFTTrainer
