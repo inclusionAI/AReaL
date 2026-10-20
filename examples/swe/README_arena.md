@@ -121,13 +121,12 @@ producers, including `provider_stream` and `provider_http`, with a matching nati
 Harness receipt. Local context-budget outcomes additionally validate the legacy details
 or current `estimatedTokens / inputLimit / reason` format. For
 `whitebox-unified-b-areal`, the training adapter additionally reads
-`whitebox-lifecycle.json`: an explicit `BRIDGE_EXECUTION_DEADLINE` with completed cleanup
-and no existing terminal receipt or conflicting failure outcome retains valid
-interactions with reward zero. External
-termination, incomplete cleanup, generic process kills, and missing or invalid receipts
-remain rejected. Both recovery paths still require usable interactions and are vetoed by
-proxy system errors; they do not turn setup or evaluation failures into zero rewards.
-
+`whitebox-lifecycle.json`: an explicit `BRIDGE_EXECUTION_DEADLINE` with completed
+cleanup and no existing terminal receipt or conflicting failure outcome retains valid
+interactions with reward zero. External termination, incomplete cleanup, generic process
+kills, and missing or invalid receipts remain rejected. Both recovery paths still
+require usable interactions and are vetoed by proxy system errors; they do not turn
+setup or evaluation failures into zero rewards.
 
 ## Per-task reward mappings
 
@@ -145,26 +144,26 @@ arena_streams:
 
 The file must be on persistent storage visible at the same path to the controller and
 rollout workers. During preflight or training dataset setup, AReaL creates it if absent:
-it resolves each `env:<key>@<version>` using Stream `metadata.per_task_bindings`
-and published Env metadata (`source_reward_ref` or `reward_ref`, plus optional
+it resolves each `env:<key>@<version>` using Stream `metadata.per_task_bindings` and
+published Env metadata (`source_reward_ref` or `reward_ref`, plus optional
 `harness_ref`). Conflicting sources fail before rollout. Each distinct reward and
 Harness version must be published, and references must include an exact version.
 
-When Harness bindings are present, they must cover every dataset row. Each task uses
-its pinned Harness in preference to the Stream-level `harness`; its LLM protocol is
-inferred from that Harness using the existing protocol inference rules. Snapshots
-without Harness bindings retain the Stream-level Harness and protocol behavior.
+When Harness bindings are present, they must cover every dataset row. Each task uses its
+pinned Harness in preference to the Stream-level `harness`; its LLM protocol is inferred
+from that Harness using the existing protocol inference rules. Snapshots without Harness
+bindings retain the Stream-level Harness and protocol behavior.
 
 Subsequent starts reuse the snapshot, check exact dataset coverage, verify the pinned
 versions remain published, and check declared Stream bindings for drift. An invalid or
 incomplete existing file is rejected, never regenerated automatically. Keep the same
-file when recovering; use a new run file for a changed dataset or to add Harness pins
-to an older reward-only snapshot. Each rollout validates its row against the snapshot
-and sends the task-specific `reward` and `harness` to Arena. Result audit records
-contain `expected_reward_ref` and `expected_harness`; terminal `score` processing is
-unchanged. Without `reward_mapping_file`, the existing Stream-default behavior is
-unchanged. Harness routing does not certify that a Harness forwards Session Gateway
-headers correctly; that still requires Harness-specific validation.
+file when recovering; use a new run file for a changed dataset or to add Harness pins to
+an older reward-only snapshot. Each rollout validates its row against the snapshot and
+sends the task-specific `reward` and `harness` to Arena. Result audit records contain
+`expected_reward_ref` and `expected_harness`; terminal `score` processing is unchanged.
+Without `reward_mapping_file`, the existing Stream-default behavior is unchanged.
+Harness routing does not certify that a Harness forwards Session Gateway headers
+correctly; that still requires Harness-specific validation.
 
 ## Port provenance and scope
 
