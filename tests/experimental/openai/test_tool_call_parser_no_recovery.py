@@ -8,6 +8,7 @@ import pytest
 
 from areal.api import ModelResponse
 from areal.api.cli_args import AgentConfig
+from areal.experimental.openai import client as client_module
 from areal.experimental.openai import tool_call_parser as parser
 from areal.experimental.openai.client import ArealOpenAI
 
@@ -152,6 +153,93 @@ def test_no_recovery_valid_parallel_and_empty_calls_parse(no_backend, use_respon
     no_backend.assert_not_called()
 
 
+@pytest.mark.parametrize("use_responses", [False, True])
+@pytest.mark.parametrize(
+    "marker", ["<tool_call>", "<function=Bash>", "<parameter=command>", "</parameter>"]
+)
+def test_no_recovery_prefilled_reasoning_markers_allow_valid_call(
+    no_backend, use_responses, marker
+):
+    """Protocol examples in prefilled thinking cannot invalidate a real call."""
+    prefix = f"Discuss {marker} syntax.</think>\nInspecting.\n"
+
+    calls, remaining, reason = _parse(
+        prefix + CALL, use_responses=use_responses, reasoning_prefilled=True
+    )
+
+    function = calls[0] if use_responses else calls[0].function
+    assert function.name == "Bash"
+    assert json.loads(function.arguments) == {"command": "pwd", "timeout": 120}
+    assert remaining == prefix
+    assert reason == "tool_calls"
+    no_backend.assert_not_called()
+
+
+def test_no_recovery_prefilled_reasoning_markers_allow_final_text(no_backend):
+    """A protocol example in thinking is not a malformed final answer."""
+    text = "Discuss <tool_call> syntax.</think>Task complete."
+
+    assert _parse(text, reasoning_prefilled=True) == (None, text, "stop")
+    no_backend.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        CALL.replace("<function=Bash>", "<parameter=Bash>"),
+        CALL.removesuffix("</tool_call>"),
+        CALL + "\n<tool_call>unfinished",
+    ],
+)
+def test_no_recovery_prefilled_reasoning_still_rejects_malformed_call(no_backend, call):
+    """Recognizing the reasoning boundary must not repair malformed calls."""
+    text = "Discuss <parameter=command> syntax.</think>\n" + call
+
+    with pytest.raises(parser.InvalidToolCallError, match="invalid_tool_json"):
+        _parse(text, reasoning_prefilled=True)
+    no_backend.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "value", ["pwd", "literal </think> in code", "<think>literal</think>"]
+)
+def test_no_recovery_prefilled_unclosed_reasoning_preserves_complete_call(
+    no_backend, value
+):
+    """Keep existing support for Qwen calls emitted without a think close."""
+    prefix = "Inspect first.\n"
+
+    calls, remaining, reason = _parse(
+        prefix + CALL.replace("pwd", value), reasoning_prefilled=True
+    )
+
+    assert calls[0].function.name == "Bash"
+    assert json.loads(calls[0].function.arguments)["command"] == value
+    assert remaining == prefix
+    assert reason == "tool_calls"
+    no_backend.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "prompt,expected",
+    [
+        ("assistant\n<think>\n\n", True),
+        ("assistant\n<think>" + " \n" * 40, True),
+        ("assistant\n<think>\n</think>\n", False),
+        ("assistant\n", False),
+        ("", False),
+    ],
+)
+def test_prompt_prefilled_reasoning_uses_actual_token_suffix(prompt, expected):
+    """Inspect the rendered prompt, including default-enabled thinking."""
+    tokenizer = SimpleNamespace(decode=lambda ids: "".join(map(chr, ids)))
+
+    assert (
+        client_module._prompt_prefills_reasoning(tokenizer, list(map(ord, prompt)))
+        is expected
+    )
+
+
 @pytest.mark.parametrize(
     "value",
     [
@@ -160,6 +248,7 @@ def test_no_recovery_valid_parallel_and_empty_calls_parse(no_backend, use_respon
         '<div a="b">x</div>',
         "a < b && c > d",
         "<think>literal</think>",
+        "literal </think> in code",
     ],
 )
 def test_no_recovery_preserves_string_arguments(no_backend, value):
@@ -292,6 +381,103 @@ async def test_no_recovery_client_preserves_response_and_training_cache(
         assert interaction.model_response is model_response
         assert interaction.model_response.output_tokens == [2, 0]
         assert interaction.reward is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("api", ["chat", "stream", "responses"])
+@pytest.mark.parametrize("prefilled", [False, True])
+@pytest.mark.parametrize("malformed", [False, True])
+async def test_no_recovery_client_uses_rendered_reasoning_boundary(
+    monkeypatch, no_backend, api, prefilled, malformed
+):
+    """Both APIs preserve thinking and raw tokens while validating real calls."""
+    prompt = "<|im_start|>assistant\n" + ("<think>\n\n" if prefilled else "")
+    prefix = "Discuss <tool_call> and <parameter=command> syntax.</think>\n"
+    raw = ("" if prefilled else "<think>") + prefix + CALL
+    if malformed:
+        raw += "\n<tool_call>unfinished"
+    tokenizer = SimpleNamespace(
+        eos_token_id=0,
+        pad_token_id=0,
+        decode=lambda ids: "".join(map(chr, ids)),
+        encode=lambda text, **kwargs: list(map(ord, text)),
+    )
+    output_tokens = [*map(ord, raw), 0]
+    model_response = ModelResponse(
+        input_tokens=list(map(ord, prompt)),
+        output_tokens=output_tokens.copy(),
+        output_logprobs=[-0.1] * len(output_tokens),
+        output_versions=[0] * len(output_tokens),
+        stop_reason="stop",
+        tokenizer=tokenizer,
+    )
+    engine = SimpleNamespace(agenerate=AsyncMock(return_value=model_response))
+    monkeypatch.setattr(
+        client_module,
+        "apply_chat_template",
+        lambda *args, **kwargs: list(map(ord, prompt)),
+    )
+    reasoning_states = []
+
+    def split_reasoning(text, reasoning_parser, force_reasoning=None):
+        reasoning_states.append(force_reasoning)
+        if force_reasoning or text.startswith("<think>"):
+            body = text.removeprefix("<think>")
+            return body.split("</think>", 1) if "</think>" in body else (body, "")
+        return "", text
+
+    monkeypatch.setattr(client_module, "split_reasoning", split_reasoning)
+
+    async with ArealOpenAI(
+        engine=engine,
+        tokenizer=tokenizer,
+        api_key="test-key",
+        tool_call_parser="qwen3_coder",
+        reasoning_parser="qwen3",
+        tool_call_parser_allow_recovery=False,
+    ) as client:
+
+        async def request():
+            if api == "responses":
+                return await client.responses.create(
+                    model="test",
+                    input="Run command",
+                    max_output_tokens=len(output_tokens),
+                    tools=[{"type": "function", **tool["function"]} for tool in TOOLS],
+                )
+            return await client.chat.completions.create(
+                model="test",
+                messages=[{"role": "user", "content": "Run command"}],
+                tools=TOOLS,
+                max_completion_tokens=len(output_tokens),
+                stream=api == "stream",
+            )
+
+        if malformed:
+            with pytest.raises(parser.InvalidToolCallError, match="invalid_tool_json"):
+                await request()
+        else:
+            response = await request()
+            if api == "responses":
+                assert any(item.type == "function_call" for item in response.output)
+            elif api == "stream":
+                chunks = [chunk async for chunk in response]
+                assert any(chunk.choices[0].delta.tool_calls for chunk in chunks)
+            else:
+                assert response.choices[0].message.tool_calls[0].function.name == "Bash"
+                assert (
+                    "Discuss <tool_call>"
+                    in response.choices[0].message.reasoning_content
+                )
+
+        interaction = next(reversed(client._cache.values()))
+        assert (
+            interaction.metadata["response_parse"]["tool_call_parse_failed"]
+            is malformed
+        )
+        assert interaction.model_response.output_tokens == output_tokens
+        assert reasoning_states == [prefilled]
+        no_backend.assert_not_called()
 
 
 @pytest.mark.asyncio

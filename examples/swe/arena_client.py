@@ -37,6 +37,8 @@ class ArenaTaskResult:
     artifacts_uri: str | None = None
     trace_id: str | None = None
     computed_at: str | None = None
+    # Optional telemetry is validated separately from the authoritative score.
+    sub_scores: Any = None
 
 
 def _arena_task_type_from_tags(tags: Any) -> str:
@@ -229,6 +231,7 @@ def _parse_task_result(
         artifacts_uri=_optional_string(result_payload, "artifacts_uri"),
         trace_id=_optional_string(result_payload, "trace_id"),
         computed_at=_optional_string(result_payload, "computed_at"),
+        sub_scores=result_payload.get("sub_scores"),
     )
 
 

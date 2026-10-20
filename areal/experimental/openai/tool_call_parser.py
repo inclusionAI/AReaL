@@ -96,14 +96,30 @@ _SGLANG_TO_VLLM_TOOL_PARSER: dict[str, str] = {
 }
 
 
-def _qwen3_coder_has_tool_protocol(text: str) -> bool:
-    """Ignore protocol-like text inside an unfinished leading think block."""
-    content = text
-    if content.lstrip().startswith("<think>"):
-        end = content.find("</think>")
-        if end < 0:
-            return False
-        content = content[end + len("</think>") :]
+def _split_qwen3_coder_reasoning(
+    text: str, *, reasoning_prefilled: bool = False
+) -> tuple[str, str]:
+    """Separate explicit or prompt-prefilled thinking without rewriting it."""
+    explicit_think = text.lstrip().startswith("<think>")
+    if explicit_think or reasoning_prefilled:
+        end = text.find("</think>")
+        if end >= 0:
+            end += len("</think>")
+            return text[:end], text[end:]
+        if explicit_think:
+            return text, ""
+        # Preserve support for calls emitted from prefilled thinking without
+        # a closing tag. Only an observed close establishes this boundary.
+    return "", text
+
+
+def _qwen3_coder_has_tool_protocol(
+    text: str, *, reasoning_prefilled: bool = False
+) -> bool:
+    """Ignore protocol examples inside explicit or prefilled thinking."""
+    _, content = _split_qwen3_coder_reasoning(
+        text, reasoning_prefilled=reasoning_prefilled
+    )
     return _QWEN3_CODER_PROTOCOL_MARKER_RE.search(content) is not None
 
 
@@ -354,6 +370,7 @@ def _process_tool_calls_qwen3_coder_no_recovery(
     tools: list[Any],
     finish_reason: str,
     use_responses: bool = False,
+    reasoning_prefilled: bool = False,
 ) -> tuple[
     list[ChatCompletionMessageFunctionToolCall | ResponseFunctionToolCall] | None,
     str,
@@ -372,15 +389,21 @@ def _process_tool_calls_qwen3_coder_no_recovery(
     Primitive conversion is the same as in the compatibility parser.
     """
     unchanged = (None, text, finish_reason)
-    reasoning_text, content_text = "", text
+    if reasoning_prefilled and not text.lstrip().startswith("<think>"):
+        # A complete call may omit the think close and contain a literal
+        # </think> in its arguments. Preserve that already-valid structure
+        # before using a closing marker to separate prefilled reasoning.
+        parsed = _process_tool_calls_qwen3_coder_no_recovery(
+            text, tools, finish_reason, use_responses
+        )
+        if parsed[0] is not None:
+            return parsed
     # Only a leading reasoning block is structural. A literal <think> inside
     # a string argument must not cause the call to be rewritten or removed.
-    if content_text.lstrip().startswith("<think>"):
-        end = content_text.find("</think>")
-        if end < 0:
-            return unchanged
-        end += len("</think>")
-        reasoning_text, content_text = content_text[:end], content_text[end:]
+    # The caller also knows when that leading block was opened by the prompt.
+    reasoning_text, content_text = _split_qwen3_coder_reasoning(
+        text, reasoning_prefilled=reasoning_prefilled
+    )
 
     content_text = content_text.rstrip().removesuffix("<|im_end|>")
     first_call = content_text.find("<tool_call>")
@@ -683,12 +706,17 @@ def process_tool_calls(
     use_responses: bool = False,
     tokenizer: Any = None,
     tool_call_parser_allow_recovery: bool = True,
+    reasoning_prefilled: bool = False,
 ) -> tuple[
     list[ChatCompletionMessageFunctionToolCall | ResponseFunctionToolCall] | None,
     str,
     str,
 ]:
-    """Process tool calls; optionally disable Qwen3-Coder XML recovery."""
+    """Process tool calls; optionally disable Qwen3-Coder XML recovery.
+
+    ``reasoning_prefilled`` identifies an open think block in the rendered
+    prompt, so strict Qwen parsing can ignore protocol examples in thinking.
+    """
     if not tool_call_parser_allow_recovery:
         if tool_call_parser != "qwen3_coder":
             raise ValueError(
@@ -696,11 +724,17 @@ def process_tool_calls(
                 "tool_call_parser='qwen3_coder'"
             )
         parsed = _process_tool_calls_qwen3_coder_no_recovery(
-            text, tools, finish_reason, use_responses
+            text,
+            tools,
+            finish_reason,
+            use_responses,
+            reasoning_prefilled=reasoning_prefilled,
         )
         tool_calls, _, _ = parsed
         if tool_calls is None and (
-            _qwen3_coder_has_tool_protocol(text)
+            _qwen3_coder_has_tool_protocol(
+                text, reasoning_prefilled=reasoning_prefilled
+            )
             or finish_reason in {"tool_call", "tool_calls", "tool_use"}
         ):
             raise InvalidToolCallError(

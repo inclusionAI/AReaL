@@ -30,6 +30,7 @@ from examples.swe.arena_client import (
     infer_llm_protocol_from_harness,
 )
 from examples.swe.arena_config import load_arena_stream_configs
+from examples.swe.arena_reward_breakdown import arena_reward_metrics
 from examples.swe.arena_reward_mapping import load_harness_mapping, load_reward_mapping
 from examples.swe.arena_types import ArenaRewardRefConfig, ArenaStreamConfig
 
@@ -1427,6 +1428,17 @@ class ArenaStreamAgentWorkflow:
                     f"stream/{stream_config.name}/arena_score": result.score,
                 }
             )
+        if result is not None:
+            reward_metrics = arena_reward_metrics(
+                sub_scores=result.sub_scores, raw=result.raw, score=result.score
+            )
+            metrics.update(reward_metrics)
+            metrics.update(
+                {
+                    f"stream/{stream_config.name}/{key}": value
+                    for key, value in reward_metrics.items()
+                }
+            )
         try:
             _record_arena_metrics(**metrics)
             if result is not None and result.score is not None:
@@ -2158,6 +2170,11 @@ class ArenaStreamAgentWorkflow:
             raw_json = json.dumps(result.raw, ensure_ascii=False, separators=(",", ":"))
             raw_size_bytes = len(raw_json.encode("utf-8"))
             raw_truncated = raw_size_bytes > self.result_dump_max_bytes
+            sub_scores_json = json.dumps(
+                result.sub_scores, ensure_ascii=False, separators=(",", ":")
+            )
+            sub_scores_size_bytes = len(sub_scores_json.encode("utf-8"))
+            sub_scores_truncated = sub_scores_size_bytes > self.result_dump_max_bytes
             record = {
                 "arena_stream_name": stream_config.name,
                 "stream_id": str(data.get("stream_id") or stream_config.stream_id),
@@ -2178,6 +2195,10 @@ class ArenaStreamAgentWorkflow:
                 },
                 "arena_score": result.score,
                 "training_score": training_score,
+                "sub_scores": None if sub_scores_truncated else result.sub_scores,
+                "sub_scores_present": result.sub_scores is not None,
+                "sub_scores_size_bytes": sub_scores_size_bytes,
+                "sub_scores_truncated": sub_scores_truncated,
                 "raw": None if raw_truncated else result.raw,
                 "raw_present": result.raw is not None,
                 "raw_size_bytes": raw_size_bytes,

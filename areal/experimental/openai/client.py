@@ -96,6 +96,23 @@ def _force_reasoning_from_chat_template_kwargs(
     return str(chat_template_kwargs.get("thinking_option", "")).lower() == "on"
 
 
+def _prompt_prefills_reasoning(
+    tokenizer: "PreTrainedTokenizerFast", prompt_token_ids: list[int]
+) -> bool:
+    """Read the actual generation prefix, including default-enabled thinking."""
+    if not prompt_token_ids:
+        return False
+    marker = "<think>"
+    suffix_len = len(marker)
+    while True:
+        suffix = tokenizer.decode(prompt_token_ids[-suffix_len:]).rstrip()
+        if len(suffix) >= len(marker) or suffix_len >= len(prompt_token_ids):
+            return suffix.endswith(marker)
+        # Usually only a few tokens are decoded. Expand only when trailing
+        # whitespace or a split marker prevents identifying the prefix yet.
+        suffix_len *= 2
+
+
 # reset OpenAI keys when using the wrapped client.
 os.environ["OPENAI_API_KEY"] = os.environ.get("OPENAI_API_KEY", "none")
 os.environ["OPENAI_BASE_URL"] = os.environ.get("OPENAI_BASE_URL", "none")
@@ -1317,6 +1334,12 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         # Call inference engine
         response = await self.engine.agenerate(model_request)
         output_text = self.tokenizer.decode(response.output_tokens_without_stop)
+        reasoning_prefilled = (
+            not self.tool_call_parser_allow_recovery
+            and self.tool_call_parser == "qwen3_coder"
+            and bool(self.reasoning_parser)
+            and _prompt_prefills_reasoning(self.tokenizer, prompt_token_ids)
+        )
         # Parse raw output first: prefilled Qwen thinking may enter a tool call
         # without emitting </think>. Splitting first would swallow that call.
         tool_calls = None
@@ -1332,6 +1355,7 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
                     response.stop_reason,
                     tokenizer=self.tokenizer,
                     tool_call_parser_allow_recovery=self.tool_call_parser_allow_recovery,
+                    reasoning_prefilled=reasoning_prefilled,
                 )
         except InvalidToolCallError as e:
             invalid_tool_call_error = e
@@ -1346,7 +1370,8 @@ class AsyncCompletionsWithReward(BaseAsyncCompletions):
         reasoning_text, output_text = split_reasoning(
             output_text,
             self.reasoning_parser,
-            force_reasoning=_force_reasoning_from_chat_template_kwargs(
+            force_reasoning=reasoning_prefilled
+            or _force_reasoning_from_chat_template_kwargs(
                 extra_body.get("chat_template_kwargs")
             ),
         )
@@ -1791,6 +1816,12 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         # Call inference engine
         engine_resp = await self.engine.agenerate(model_request)
         output_text = self.tokenizer.decode(engine_resp.output_tokens_without_stop)
+        reasoning_prefilled = (
+            not self.tool_call_parser_allow_recovery
+            and self.tool_call_parser == "qwen3_coder"
+            and bool(self.reasoning_parser)
+            and _prompt_prefills_reasoning(self.tokenizer, prompt_token_ids)
+        )
 
         # Parse tool calls.
         tool_calls = None
@@ -1807,6 +1838,7 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
                     use_responses=True,
                     tokenizer=self.tokenizer,
                     tool_call_parser_allow_recovery=self.tool_call_parser_allow_recovery,
+                    reasoning_prefilled=reasoning_prefilled,
                 )
         except InvalidToolCallError as e:
             invalid_tool_call_error = e
@@ -1822,7 +1854,8 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
         _, visible_output_text = split_reasoning(
             output_text,
             self.reasoning_parser,
-            force_reasoning=_force_reasoning_from_chat_template_kwargs(
+            force_reasoning=reasoning_prefilled
+            or _force_reasoning_from_chat_template_kwargs(
                 extra_body.get("chat_template_kwargs")
             ),
         )

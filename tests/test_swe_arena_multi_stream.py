@@ -25,10 +25,13 @@ from examples.swe.arena_config import (
     parse_arena_stream_config,
 )
 from examples.swe.arena_preflight import _arena_json, _recent_health, validate_streams
+from examples.swe.arena_reward_breakdown import build_fine64_reward_breakdown
 from examples.swe.train_swe_rl import get_arena_dataset, get_arena_mixture_dataset
 from examples.swe.utils import ArenaRewardRefConfig, ArenaStreamConfig
 
+from areal.infra import workflow_context
 from areal.utils import stats_tracker
+from areal.utils.rollout_metrics import ConsumedMetrics, capture_metrics
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MULTI_STREAM_CONFIG = REPO_ROOT / "examples/swe/arena_multi_stream.yaml"
@@ -629,6 +632,7 @@ def test_workflow_routes_harness_transform_and_raw_metrics(monkeypatch, tmp_path
             task_id="task-b",
             status="DONE",
             score=0.5,
+            sub_scores={"quality": 0.25},
             raw={"exit_code": 0, "reward_txt": "ok"},
             trace_id="trace-b",
         )
@@ -671,15 +675,99 @@ def test_workflow_routes_harness_transform_and_raw_metrics(monkeypatch, tmp_path
     assert stats["rollout/training_score"] == pytest.approx(0.75)
     assert stats["rollout/arena_raw_present"] == 1.0
     assert stats["rollout/stream/b/arena_score"] == pytest.approx(0.5)
+    assert stats["rollout/reward_sub_score/quality"] == pytest.approx(0.25)
+    assert stats["rollout/stream/b/reward_sub_score/quality"] == pytest.approx(0.25)
     dump_files = list((tmp_path / "arena-results").glob("arena_results_*.jsonl"))
     assert len(dump_files) == 1
     dump_record = json.loads(dump_files[0].read_text(encoding="utf-8"))
     assert dump_record["raw"] == {"exit_code": 0, "reward_txt": "ok"}
+    assert dump_record["sub_scores"] == {"quality": 0.25}
     assert dump_record["expected_reward_ref"] == {
         "key": "reward-b",
         "version": "2",
     }
     assert dump_files[0].stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("oversized_field", ["raw", "sub_scores"])
+async def test_workflow_audit_oversized_telemetry_is_truncated(
+    monkeypatch, tmp_path, oversized_field
+):
+    """Each optional telemetry field respects the configured audit size limit."""
+    monkeypatch.setenv("ARENA_OPENAPI_TOKEN", "arena-token")
+    workflow = ArenaStreamAgentWorkflow(
+        econfig={
+            "arena_base_url": "https://arena.example",
+            "arena_streams": [{"name": "fine", "stream_id": "fine"}],
+            "arena_result_dump_dir": str(tmp_path),
+            "arena_result_dump_max_bytes": 64,
+        }
+    )
+    telemetry = {"raw": {"small": 1}, "sub_scores": {"quality": 0.25}}
+    telemetry[oversized_field] = {"oversized": "测" * 64}
+    result = ArenaTaskResult(task_id="task", status="OK", score=0.5, **telemetry)
+
+    await workflow._dump_task_result(
+        {"arena_stream_name": "fine"},
+        workflow._stream_config_for_data({"arena_stream_name": "fine"}),
+        result,
+        training_score=0.5,
+    )
+
+    dump_file = next(tmp_path.glob("arena_results_*.jsonl"))
+    record = json.loads(dump_file.read_text(encoding="utf-8"))
+    other_field = "sub_scores" if oversized_field == "raw" else "raw"
+    assert record[oversized_field] is None
+    assert record[f"{oversized_field}_present"] is True
+    assert record[f"{oversized_field}_truncated"] is True
+    assert record[f"{oversized_field}_size_bytes"] > 64
+    assert record[other_field] == telemetry[other_field]
+    assert record[f"{other_field}_truncated"] is False
+    assert record["arena_score"] == 0.5
+
+
+def test_workflow_breakdown_metrics_follow_consumed_rollouts(monkeypatch):
+    """Telemetry uses the same batch sidecar and step as the episode score."""
+    monkeypatch.setenv("ARENA_OPENAPI_TOKEN", "arena-token")
+    monkeypatch.setattr(workflow_context, "stat_scope", lambda: "rollout")
+    stats_tracker.export_all(reset=True)
+    measured = json.loads(
+        (REPO_ROOT / "tests/fixtures/arena_fine64_reward.json").read_text()
+    )
+    breakdown = build_fine64_reward_breakdown(measured)
+    workflow = ArenaStreamAgentWorkflow(
+        econfig={
+            "arena_base_url": "https://arena.example",
+            "arena_streams": [{"name": "fine", "stream_id": "fine"}],
+        }
+    )
+    workflow._task_result.set(
+        ArenaTaskResult(
+            task_id="task",
+            status="OK",
+            score=0.1482,
+            sub_scores=measured["rule_result"]["sub_scores"],
+            raw={"reward_breakdown": breakdown},
+        )
+    )
+    with capture_metrics() as captured:
+        workflow.record_episode_metrics({"arena_stream_name": "fine"}, 0.1482)
+
+    key = "rollout/reward_breakdown/total/vlm/weight"
+    assert key not in stats_tracker.export_all(reset=True)
+    buffer = ConsumedMetrics()
+    assert buffer.export() == {}
+    buffer.consume(SimpleNamespace(trajectory={}, metrics=captured))
+    exported = buffer.export()
+    assert exported[key] == 0.1
+    assert exported[f"{key}__count"] == 1
+    assert exported["rollout/reward_breakdown/valid"] == 1
+    assert exported["rollout/reward_breakdown/total/vlm/share_of_parent_mean"] == (
+        pytest.approx(0.1 / measured["score"])
+    )
+    assert exported["rollout/stream/fine/reward_breakdown/total/vlm/weight"] == 0.1
+    assert workflow._task_result.get() is None
 
 
 def test_workflow_rejects_row_reward_ref_mismatch(monkeypatch):
