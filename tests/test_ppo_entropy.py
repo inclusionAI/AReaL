@@ -5,6 +5,8 @@ import torch
 
 from areal.api.cli_args import MegatronEngineConfig, PPOActorConfig
 from areal.trainer.ppo.actor import grpo_loss_fn
+from areal.trainer.ppo.loss_reduction import PreparedLossStep
+from areal.utils.functional.loss_aggregation import SequenceMean
 from areal.utils.functional.vocab_parallel import gather_logprobs_entropy
 
 
@@ -178,3 +180,42 @@ def test_grpo_loss_fn_engine_entropy_contributes_logit_gradients():
 
     assert expected_bonus_grad.abs().sum() > 0
     torch.testing.assert_close(bonus_grad, expected_bonus_grad, rtol=1e-5, atol=1e-6)
+
+
+def test_grpo_loss_fn_entropy_bonus_follows_loss_aggregation():
+    """Test that the entropy bonus is reduced like the policy-gradient loss."""
+    input_data = _make_dummy_input()
+    input_data["loss_mask"] = torch.tensor(
+        [[0, 1, 1, 1], [0, 0, 0, 1]], dtype=torch.int32
+    )
+    loss_step = PreparedLossStep(
+        bind=lambda data: SequenceMean(data["loss_mask"].bool())
+    )
+    entropy = torch.tensor(
+        [[1.0, 2.0, 3.0, 4.0], [2.0, 3.0, 4.0, 5.0]], requires_grad=True
+    )
+    coeff = 0.05
+
+    def loss_for(entropy_coeff):
+        return grpo_loss_fn(
+            logprobs=input_data["logprobs"].clone(),
+            entropy=entropy,
+            input_data=input_data,
+            eps_clip=0.2,
+            eps_clip_higher=None,
+            c_clip=None,
+            entropy_coeff=entropy_coeff,
+            loss_step=loss_step,
+        )
+
+    loss_with_bonus = loss_for(coeff)
+    loss_with_bonus.backward()
+
+    # Sequence means are 3.0 (row 0) and 5.0 (row 1), so seq_mean entropy is
+    # 4.0; token_mean would give 14.0 / 4 = 3.5.
+    actual_diff = (loss_with_bonus - loss_for(0.0)).item()
+    assert pytest.approx(actual_diff, abs=1e-5) == coeff * -4.0
+    expected_grad = torch.tensor(
+        [[0.0, -coeff / 6, -coeff / 6, -coeff / 6], [0.0, 0.0, 0.0, -coeff / 2]]
+    )
+    torch.testing.assert_close(entropy.grad, expected_grad, rtol=1e-5, atol=1e-6)
