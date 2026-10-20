@@ -3814,10 +3814,15 @@ class MegatronLMEngine(MegatronEngine):
     """Language model engine for SFT using Megatron backend."""
 
     def __init__(self, config: TrainEngineConfig):
-        from areal.trainer.sft.lm_engine import LMEngine
-
         super().__init__(config)
-        self.lm_engine = LMEngine(self)
+        if getattr(config, "is_decision_model", False):
+            from areal.trainer.sft.decision import DecisionEngine
+
+            self.lm_engine = DecisionEngine(self)
+        else:
+            from areal.trainer.sft.lm_engine import LMEngine
+
+            self.lm_engine = LMEngine(self)
 
     def train_lm(self, data):
         return self.lm_engine.train_lm(data)
