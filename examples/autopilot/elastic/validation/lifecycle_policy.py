@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[4]
 
 
 def validate() -> dict:
-    directory = ROOT / "areal/autopilot"
+    directory = ROOT / "areal/elastic"
     spec = importlib.util.spec_from_file_location(
         "_areal_lifecycle_validation",
         directory / "__init__.py",
@@ -23,7 +23,7 @@ def validate() -> dict:
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
-    from _areal_lifecycle_validation.elastic.policy.cli import run_scenario
+    from _areal_lifecycle_validation.policy.basic.cli import run_scenario
 
     scenario_path = ROOT / "examples/autopilot/elastic/lifecycle_scenario.json"
     base = json.loads(scenario_path.read_text())

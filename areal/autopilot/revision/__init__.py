@@ -1,58 +1,22 @@
 # SPDX-License-Identifier: Apache-2.0
 
-"""Independent, bounded revisions of simulator or joint optimizer code."""
+"""Domain-independent proposal, evaluation orchestration and revision storage."""
 
-from areal.autopilot.revision.agent import CommandRevisionAgent, RevisionAgent
-from areal.autopilot.revision.contracts import Proposal, ProposalRequest
-from areal.autopilot.revision.cycle import PolicyRevisionCycle
-from areal.autopilot.revision.evaluator import AcceptanceCriteria, RevisionEvaluator
-from areal.autopilot.revision.joint_evaluator import (
-    JointOptimizerCriteria,
-    JointOptimizerEvaluator,
-)
-from areal.autopilot.revision.llm import LLMRevisionAgent
-from areal.autopilot.revision.loop import (
-    RevisionLoop,
-    RevisionStore,
-    apply_accepted_revision,
-    load_accepted_model,
-)
-from areal.autopilot.revision.model_adapters import BasicHistoryPredictor
-from areal.autopilot.revision.model_evaluator import (
-    HistoricalCase,
-    HistoricalInput,
-    HistoricalModelEvaluator,
-    HistoricalPrediction,
-    HistoryReport,
-    HistorySpan,
-    ModelAcceptanceCriteria,
-    ModelComparison,
-)
-from areal.autopilot.revision.model_execution import HistoricalSourceEvaluator
+from .agent import CommandRevisionAgent, RevisionAgent
+from .contracts import Proposal, ProposalRequest
+from .execution import CandidateRunner
+from .interfaces import RevisionEvaluator
+from .llm import LLMRevisionAgent
+from .loop import RevisionLoop, RevisionStore
 
 __all__ = [
-    "AcceptanceCriteria",
-    "BasicHistoryPredictor",
     "CommandRevisionAgent",
-    "HistoricalCase",
-    "HistoricalInput",
-    "HistoricalModelEvaluator",
-    "HistoricalPrediction",
-    "HistoricalSourceEvaluator",
-    "HistoryReport",
-    "HistorySpan",
-    "LLMRevisionAgent",
-    "JointOptimizerCriteria",
-    "JointOptimizerEvaluator",
-    "ModelAcceptanceCriteria",
-    "ModelComparison",
+    "RevisionAgent",
     "Proposal",
     "ProposalRequest",
-    "PolicyRevisionCycle",
-    "RevisionAgent",
+    "CandidateRunner",
     "RevisionEvaluator",
+    "LLMRevisionAgent",
     "RevisionLoop",
     "RevisionStore",
-    "apply_accepted_revision",
-    "load_accepted_model",
 ]

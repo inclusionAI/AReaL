@@ -9,22 +9,10 @@ import uuid
 from dataclasses import asdict
 from pathlib import Path
 
-from areal.autopilot.elastic.runtime.state.checkpoint import atomic_json
 from areal.autopilot.revision.agent import RevisionAgent
-from areal.autopilot.revision.contracts import (
-    BASELINE_SOURCE,
-    ProposalRequest,
-    digest,
-    source_digest,
-)
-from areal.autopilot.revision.evaluator import AcceptanceCriteria, RevisionEvaluator
-from areal.autopilot.revision.execution import load_module
-from areal.autopilot.revision.joint_evaluator import (
-    JointOptimizerCriteria,
-    JointOptimizerEvaluator,
-)
-from areal.autopilot.revision.model_evaluator import ModelAcceptanceCriteria
-from areal.autopilot.revision.model_execution import HistoricalSourceEvaluator
+from areal.autopilot.revision.contracts import ProposalRequest, digest, source_digest
+from areal.autopilot.revision.interfaces import RevisionEvaluator
+from areal.utils.atomic import atomic_json
 
 
 class RevisionStore:
@@ -109,36 +97,28 @@ class RevisionLoop:
     def __init__(
         self,
         agent: RevisionAgent,
-        evaluator: RevisionEvaluator
-        | HistoricalSourceEvaluator
-        | JointOptimizerEvaluator,
+        evaluator: RevisionEvaluator,
         root: Path,
         *,
-        criteria: AcceptanceCriteria
-        | ModelAcceptanceCriteria
-        | JointOptimizerCriteria
-        | None = None,
+        criteria=None,
         initial_source: str | None = None,
     ):
         self.agent, self.evaluator = agent, evaluator
         self.store = RevisionStore(root)
-        self.initial_source = initial_source
-        self._evaluator_owns_acceptance = evaluator.target in {
-            "model",
-            "joint_optimizer",
-            "serial_model",
-        }
-        if evaluator.target == "model":
-            if not isinstance(initial_source, str) or not initial_source.strip():
-                raise ValueError(
-                    "Historical model revisions require an explicit initial_source factory"
-                )
+        self.initial_source = (
+            initial_source if initial_source is not None else evaluator.initial_source
+        )
+        if not isinstance(self.initial_source, str) or not self.initial_source.strip():
+            raise ValueError(
+                "Component revisions require an explicit initial_source factory"
+            )
+        self._evaluator_owns_acceptance = evaluator.owns_acceptance
         if self._evaluator_owns_acceptance:
             if criteria is not None and criteria != evaluator.criteria:
                 raise ValueError("Acceptance criteria are frozen by the evaluator")
             self.criteria = evaluator.criteria
         else:
-            self.criteria = criteria or AcceptanceCriteria()
+            self.criteria = criteria or evaluator.criteria
 
     def _public_feedback(self, outcome: dict) -> dict:
         if not self._evaluator_owns_acceptance:
@@ -178,7 +158,7 @@ class RevisionLoop:
             context["initial_sha256"] = source_digest(
                 self.initial_source
                 if self.initial_source is not None
-                else BASELINE_SOURCE[self.evaluator.target]
+                else self.evaluator.initial_source
             )
         return context
 
@@ -200,7 +180,7 @@ class RevisionLoop:
             else (
                 self.initial_source
                 if self.initial_source is not None
-                else BASELINE_SOURCE[self.evaluator.target]
+                else self.evaluator.initial_source
             )
         )
         initial_sha256 = source_digest(source)
@@ -214,13 +194,7 @@ class RevisionLoop:
         )
         if self._evaluator_owns_acceptance and previous_report.exists():
             accepted_report = json.loads(previous_report.read_text())
-            fingerprints = (
-                ("prediction_sha256", "joint_snapshot_sha256")
-                if self.evaluator.target == "model"
-                else ("prediction_sha256",)
-                if self.evaluator.target == "serial_model"
-                else ("selection_sha256",)
-            )
+            fingerprints = self.evaluator.replay_fingerprints
             if accepted_report["valid"] and (
                 not baseline.valid
                 or baseline.candidate_sha256 != accepted_report["candidate_sha256"]
@@ -271,6 +245,7 @@ class RevisionLoop:
                 json.loads(json.dumps(self.evaluator.settings)),
                 tuple(feedback[-4:]),
                 previous_source=previous_source if previous_source != source else None,
+                context=self.evaluator.proposal_context,
             )
             atomic_json(directory / "proposal-request.json", request.to_dict())
             outcome = {
@@ -351,88 +326,3 @@ class RevisionLoop:
         }
         atomic_json(root / "run.json", result)
         return result
-
-
-def apply_accepted_revision(root: Path, profile: dict, settings: dict):
-    """Load one evaluated component at construction time, leaving the other fixed."""
-    from areal.autopilot.elastic.policy.basic.optimizer import BasicOptimizer
-    from areal.autopilot.elastic.policy.basic.simulator import WorkflowSimulator
-    from areal.autopilot.revision.contracts import (
-        deployment_context,
-        lifecycle_profile_digest,
-        workflow_from_profile,
-    )
-    from areal.autopilot.revision.execution import load_source
-
-    store = RevisionStore(root)
-    context = json.loads((store.root / "context.json").read_text())
-    if context["target"] == "model":
-        raise ValueError(
-            "Historical predictors use load_accepted_model, not lifecycle component loading"
-        )
-    if context["target"] == "joint_optimizer":
-        raise ValueError(
-            "Joint optimizer revisions require their fixed offline evaluator"
-        )
-    if context["target"] == "serial_model":
-        raise ValueError(
-            "Serial revisions require their matching executable joint bundle"
-        )
-    expected = deployment_context(profile, settings)
-    if "profile_sha256" in context["deployment_context"]:
-        expected["profile_sha256"] = lifecycle_profile_digest(profile)
-    reference = context["deployment_context"].get("simulator_source")
-    if reference is not None:
-        expected["simulator_source"] = reference
-    if digest(context["deployment_context"]) != digest(expected):
-        raise ValueError(
-            "Accepted revision does not match the model/residency/search contract"
-        )
-    active = store.active()
-    if active is None:
-        raise ValueError("No accepted component revision is available")
-    module = load_module(active[0])
-    workflow = workflow_from_profile(profile)
-    simulator = (
-        WorkflowSimulator(workflow)
-        if reference is None
-        else load_source(reference).build_simulator(workflow)
-    )
-    optimizer = BasicOptimizer(**settings)
-    if context["target"] == "simulator":
-        simulator = module.build_simulator(workflow)
-    else:
-        optimizer = module.build_optimizer(dict(settings))
-    if not callable(getattr(simulator, "evaluate", None)) or not callable(
-        getattr(optimizer, "optimize", None)
-    ):
-        raise ValueError("Accepted revision does not implement its factory contract")
-    return simulator, optimizer
-
-
-def load_accepted_model(root: Path, evaluator: HistoricalSourceEvaluator):
-    """Load one accepted offline predictor in its exact historical factory context."""
-    evaluator.assert_unchanged()
-    store = RevisionStore(root)
-    context = json.loads((store.root / "context.json").read_text())
-    if (
-        context["target"] != "model"
-        or context["benchmark_sha256"] != evaluator.benchmark_sha256
-    ):
-        raise ValueError(
-            "Accepted model belongs to a different historical evaluation context"
-        )
-    active = store.active()
-    if active is None:
-        raise ValueError("No accepted historical model is available")
-    predictor = load_module(active[0]).build_model(
-        evaluator.history.calibration, evaluator.settings
-    )
-    evaluator.assert_unchanged()
-    if not callable(getattr(predictor, "predict", None)):
-        raise ValueError("Accepted model does not implement predict")
-    accepted_report = json.loads((active[0].parent / "evaluation.json").read_text())
-    evaluator.verify_loaded(
-        predictor, accepted_report["metrics"].get("prediction_sha256")
-    )
-    return predictor

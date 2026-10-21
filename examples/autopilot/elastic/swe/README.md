@@ -162,50 +162,13 @@ Keep task data, generated fixtures, model files, reports, kubeconfig, and runtim
 outside Git. The gold patch is used only to validate the environment; it is not an agent
 rollout or a training result.
 
-## Model rollout into the durable queue
+## Native rollout integration
 
-Create a separate CPU environment for the pinned upstream agent:
-
-```bash
-uv venv --python python3.12 "$PROJECT_ROOT/swe/agent-venv"
-uv --no-config pip install --python "$PROJECT_ROOT/swe/agent-venv/bin/python" \
-  openai==2.24.0 openai-agents==0.10.5 pydantic==2.12.5 tenacity loguru pyyaml jinja2
-```
-
-Run from AReaL's CUDA runtime with both checkouts on `PYTHONPATH`. For Docker, use
-`--init --network host`, expose the GPUs, and mount the paths used by both environments
-at the same absolute paths inside the container. Set writable `XDG_CACHE_HOME`,
-`FLASHINFER_WORKSPACE_BASE`, `TRITON_CACHE_DIR`, `TORCHINDUCTOR_CACHE_DIR`, and
-`TVM_FFI_CACHE_DIR`.
-
-```bash
-export PYTHONPATH="$AREAL_ROOT:$SWE_AGENT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
-python "$SETUP/rollout_to_queue.py" --model /path/to/Qwen3-0.6B \
-  --model-revision c1899de289a04d12100db370d81485cdf75e47ca \
-  --fixture "$PROJECT_ROOT/swe/fixture.json" --environment autopilot-swe-bash@0.1.0 \
-  --agent-python "$PROJECT_ROOT/swe/agent-venv/bin/python" \
-  --sandbox-python "$PROJECT_ROOT/swe/client-venv/bin/python" \
-  --queue "$PROJECT_ROOT/swe/trajectory-queue" --output "$PROJECT_ROOT/swe/rollout-001" \
-  --kubectl "$(command -v kubectl)" --kubeconfig "$KUBECONFIG" --device 0
-```
-
-The output directory must be new. The coordinator and v2 guards/router/gateway/data
-proxy have CUDA disabled; only the owned SGLang process sees the selected GPU. The
-upstream SWEAgent receives the issue, tools, and session credentials, never the gold
-patch. `agent-config.yaml` bounds the run to four model turns; an unfinished run grades
-its actual current diff. Success requires a model-selected repository tool and a
-completed grading marker; reward 0 is acceptable and does not establish SWE quality.
-
-Exported RTensors are localized before inference teardown. The outbox and SQLite queue
-store original token IDs, masks, behavior logprobs, policy versions, and rewards as
-values. Version 0 refers to the fixed initial model; no weight update is claimed. The
-outbox can retry enqueue idempotently. Each attempt namespaces sessions with a fresh run
-ID so inference restarts cannot collide. Upstream export is destructive: a crash between
-export and outbox persistence can still lose that rollout. This producer is not yet an
-atomic end-to-end handoff. Only enqueue establishes queue durability.
-
-Reports include the agent trace, patch, grading output, queue status, independent pod
-deletion, and inference-process/GPU cleanup. Do not place reports or credentials in Git.
+The former `rollout_to_queue.py` producer and serial elastic runner were removed.
+Sandbox preparation, grading and trajectory conversion utilities remain available.
+Native SWE workflow/AgentRunnable integration still needs implementation and GPU
+acceptance; use the [native training path](../README.md) for the current lifecycle
+contract. Earlier destructive-export/outbox evidence applies only to the retired runner.
 
 ## Validation
 
@@ -221,6 +184,5 @@ Run the CPU tests from the AReaL repository:
 python -m pytest -q tests/test_autopilot_swe_fixture.py tests/test_elastic_trajectory.py
 ```
 
-The [elastic runner](../README.md) adds PPO consumption, checked weight publication,
-data-triggered training and idle GPU release. Its single-producer gate must cover the
-complete episode through durable enqueue.
+The native online path uses retained export/ack and a durable episode inbox. The real
+SWE sandbox checks above do not validate native PPO, publication or Actor lifecycle.

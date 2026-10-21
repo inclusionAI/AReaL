@@ -1,424 +1,559 @@
 # SPDX-License-Identifier: Apache-2.0
 
+"""Native PPO policy integration with real durable transactions; CPU protocol only."""
+
 import json
-import threading
-from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import asdict, replace
 from types import SimpleNamespace
 
 import pytest
 
-from tests.test_elastic_queued_trainer import StateMachineGroup
+from tests.test_elastic_checkpoint import (
+    _ready_native_episodes,
+    native_lifecycle,  # noqa: F401 -- shared native controller fixture
+)
 
-from areal.autopilot.elastic.loop import ElasticLoop
-from areal.autopilot.elastic.policy import IdleTimeoutPolicy
-from areal.autopilot.elastic.runtime.state.batch_queue import BatchQueue
-from areal.autopilot.elastic.runtime.training.trainer import QueuedTrainer
-
-
-class ProtocolGroup(StateMachineGroup):
-    """Order-sensitive CPU state machine, with observable resource ownership."""
-
-    def __init__(self, root):
-        super().__init__(root)
-        self.starts, self.releases, self.saves, self.updates = [], 0, 0, 0
-
-    def start(self, *, restore=False):
-        self.starts.append(restore)
-        super().start(restore=restore)
-
-    def stop(self):
-        self.releases += int(self.actor is not None)
-        super().stop()
-
-    def validate_trajectory(self, payload):
-        if not payload.get("valid", True):
-            raise ValueError("Invalid trajectory")
-        if payload["policy_version"] != self.step:
-            raise ValueError("Not the current policy")
-
-    def train_trajectory(self, payload):
-        self.validate_trajectory(payload)
-        self.updates += 1
-        return self.update(
-            SimpleNamespace(
-                batch_id=f"episode-{payload['policy_version']}",
-                payload=payload,
-            )
-        )
-
-    def checkpoint(self, *, data_cursor):
-        self.saves += 1
-        return super().checkpoint(data_cursor=data_cursor)
-
-
-class ProtocolPublisher:
-    def __init__(self):
-        self.lock = threading.RLock()
-        self.ready, self.version = False, 0
-        self.failures, self.attempts, self.receipt = 0, [], None
-
-    def initialize(self):
-        self.ready = True
-
-    @contextmanager
-    def episode(self):
-        with self.lock:
-            if not self.ready:
-                raise RuntimeError("Rollout admission is closed")
-            yield self.version
-
-    def publish(self, checkpoint):
-        self.ready = False
-        self.attempts.append(checkpoint)
-        self.version = json.loads((checkpoint / "manifest.json").read_text())[
-            "global_step"
-        ]
-        self.receipt = {"version": self.version}
-        if self.failures:
-            self.failures -= 1
-            raise RuntimeError("Resume failed after writing receipt")
-        self.ready = True
-        return self.receipt
+from areal.autopilot.domains.elastic.native import NativePolicyRuntime
+from areal.autopilot.domains.elastic.policy import PolicyBoundaryBusy, PolicyRequest
+from areal.elastic.contracts import BatchWorkload, HistorySnapshot, TrainingConfig
+from areal.elastic.control.config import ConfigRequest
 
 
 @pytest.fixture
-def setup(tmp_path, request):
-    now = [0.0]
-    group = ProtocolGroup(tmp_path / "checkpoints")
-    queue = BatchQueue(tmp_path / "queue")
-    publisher = ProtocolPublisher()
-    loop = ElasticLoop(
-        QueuedTrainer(group, queue),
-        publisher,
-        policy=getattr(request, "param", IdleTimeoutPolicy(idle_seconds=5)),
-        clock=lambda: now[0],
+def native_policy(request):
+    fixture = request.getfixturevalue("native_lifecycle")
+    fixture.manager.close()
+    runtime = NativePolicyRuntime()
+    manager = fixture.create(runtime)
+    yield manager, runtime, fixture
+    manager.close()
+
+
+def update(manager):
+    _ready_native_episodes(manager, manager.version * 4, manager.version)
+    assert len(manager.next_batch()) == 4
+    manager.actor.updates += 1
+    manager.commit_and_publish(manager.version + 1)
+
+
+def accepted_native_bundle(runtime, root, *, native=True):
+    """Synthetic held-out labels exercise real acceptance, not timing accuracy."""
+    from examples.autopilot.revising import AFFINE_SOURCE
+
+    from areal.autopilot.domains.elastic import RevisionEvaluator
+    from areal.autopilot.domains.elastic.contracts import BASELINE_SOURCE
+    from areal.autopilot.domains.elastic.online import LifecycleRevisionCycle
+    from areal.autopilot.revision import Proposal
+    from areal.elastic.contracts import Measurement
+
+    profile = {
+        **runtime.profile,
+        "measurements": [
+            asdict(Measurement(phase, 1, 100 if phase == "train" else 1, 16))
+            for phase in (
+                "start",
+                "restore",
+                "train",
+                "checkpoint",
+                "publish",
+                "release",
+            )
+        ],
+    }
+    profile["measurements"] = [
+        row for row in profile["measurements"] if row["phase"] != "train"
+    ] + [asdict(Measurement("train", 1, 6, 10)), asdict(Measurement("train", 1, 7, 20))]
+    if not native:
+        for key in (
+            "execution_scope",
+            "native_execution_id",
+            "native_actor_world_size",
+        ):
+            profile.pop(key)
+    work = BatchWorkload(4, 8, 16)
+    observation = replace(
+        runtime.observe(),
+        batch_ready=True,
+        gate_available=True,
+        training_active=True,
+        next_batch=work,
     )
-    loop.start()
-    yield loop, group, queue, publisher, now
-    loop.close()
+    case = {
+        "observation": asdict(observation),
+        "history": asdict(HistorySnapshot()),
+        "phase": "train",
+        "forecast": [{"workload": asdict(work), "wait_seconds": 0}],
+        "plan": [{"config": asdict(TrainingConfig(1)), "release_before": False}],
+        "observed": {"feasible": True, "seconds": 6.6, "total_gpu_seconds": 13.2},
+    }
+    from tests.test_autopilot_revision import runner
+
+    model = RevisionEvaluator(
+        "simulator",
+        profile,
+        [case],
+        settings=runtime.settings,
+        runner=runner.__wrapped__(),
+    )
+    cases = [{"observation": asdict(observation), "history": asdict(HistorySnapshot())}]
+
+    class Agent:
+        def propose(self, request):
+            return Proposal(
+                AFFINE_SOURCE
+                if request.target == "simulator"
+                else BASELINE_SOURCE["optimizer"]
+            )
+
+    result = LifecycleRevisionCycle(
+        model, cases, root, idle_seconds=runtime.owner.options.idle_timeout
+    ).run(Agent(), Agent(), max_model_rounds=1, max_optimizer_rounds=1)
+    assert result["model"]["accepted"], result
+    assert result["bundle"]
+    return result["bundle"]
 
 
-def enqueue(loop, queue):
-    with loop.episode() as version:
-        queue.enqueue(
-            f"episode-{version}",
-            {"policy_version": version, "value": version + 1},
-            policy_version=version,
+def test_native_policy_records_published_updates_and_restores_history(native_policy):
+    manager, runtime, fixture = native_policy
+    for _ in range(3):
+        update(manager)
+    history = runtime.runtime_history.snapshot(3)
+    assert len(history["updates"]) == 3
+    assert [row["weights_version"] for row in history["updates"]] == [1, 2, 3]
+    assert all(row["workload"]["samples"] == 4 for row in history["updates"])
+    assert runtime.observe().committed_samples == 12
+    assert runtime.observe().committed_tokens == 24
+    assert all(not row["missing_phases"] for row in history["updates"])
+    assert {row["phase"] for row in history["updates"][0]["measurements"]} >= {
+        "start",
+        "train",
+        "checkpoint",
+        "publish",
+    }
+    assert manager.rollout is fixture.rollout
+    manager.close()
+    history = runtime.runtime_history.snapshot(3)
+    recovered_runtime = NativePolicyRuntime()
+    recovered = fixture.create(recovered_runtime)
+    try:
+        assert recovered.version == 3 and recovered.actor is None
+        assert recovered_runtime.runtime_history.snapshot(3) == history
+        assert recovered_runtime.observe().committed_tokens == 24
+        update(recovered)
+        assert recovered.actor.updates == 4
+    finally:
+        recovered.close()
+
+
+def test_native_publication_failure_commits_history_once_without_replaying_update(
+    native_policy,
+):
+    manager, runtime, _ = native_policy
+    _ready_native_episodes(manager, 0, 0)
+    manager.next_batch()
+    manager.actor.updates += 1
+    manager.actor.fail_publication = True
+    with pytest.raises(TimeoutError):
+        manager.commit_and_publish(1)
+    assert runtime.runtime_history.snapshot(1)["updates"] == []
+    manager.recover_uncertain(TimeoutError("ack lost"))
+    assert manager.version == manager.actor.updates == 1
+    assert len(runtime.runtime_history.snapshot(1)["updates"]) == 1
+    runtime.published()
+    assert len(runtime.runtime_history.snapshot(1)["updates"]) == 1
+    assert manager.inbox.status()["active_credits"] == 0
+
+
+def test_native_config_rejects_layout_and_placement_before_mutation(native_policy):
+    manager, runtime, fixture = native_policy
+    config = runtime.config_application.executor.config
+    request = ConfigRequest("unchanged", config, 0, 0, "native")
+    receipt = runtime.apply_config(request)
+    assert receipt["status"] == "unchanged"
+    assert runtime.apply_config(request) == receipt
+    assert fixture.actors == [] and manager.actor is None
+    for target in (
+        replace(config, actor_backend="megatron:d1"),
+        replace(config, actor_devices=(7,)),
+        replace(config, rollout_backend="sglang:d2"),
+        replace(config, execution_id="f" * 64),
+    ):
+        with pytest.raises(ValueError, match="fixed"):
+            runtime.apply_config(replace(request, request_id="invalid", target=target))
+    assert runtime.config_application.state()["pending"] is None
+    assert manager.inbox.status()["admission_open"]
+
+
+def test_native_policy_cannot_bypass_batch_or_release_guards(native_policy):
+    manager, runtime, _ = native_policy
+    update(manager)
+    runtime.policy = SimpleNamespace(decide=lambda observation: "release")
+    assert not manager.maybe_suspend(now=manager.ready_since + 59)
+    assert manager.actor is not None
+    assert manager.maybe_suspend(now=manager.ready_since + 121)
+    assert manager.actor is None
+    observation = runtime.observe()
+    from areal.elastic.contracts import ResourceDecision
+
+    with pytest.raises(ValueError, match="prewarm"):
+        runtime._action(
+            ResourceDecision("launch", TrainingConfig(1), True), observation
+        )
+    with pytest.raises(ValueError, match="fixed"):
+        runtime._action(
+            ResourceDecision("reconfigure", TrainingConfig(2), True), observation
         )
 
 
-def test_empty_queue_keeps_gpu_off_and_retains_consumer_ownership(setup):
-    loop, group, queue, publisher, now = setup
-    now[0] = 100
-    assert loop.tick() == "SUSPENDED"
-    assert group.starts == [] and group.saves == group.releases == 0
-    with pytest.raises(BlockingIOError):
-        queue.consumer()
-    loop.close()
-    with queue.consumer():
-        pass
-
-
-def test_trainer_preview_checks_readiness_without_leasing_or_allocating(setup):
-    """Scheduling can inspect a ready trajectory while keeping training suspended."""
-    loop, group, queue, publisher, now = setup
-    trainer = loop.trainer
-    assert trainer.version == 0 and not trainer.is_active
-    assert not trainer.has_pending_batch() and trainer.next_batch_id() is None
-
-    enqueue(loop, queue)
-
-    assert trainer.has_pending_batch()
-    assert trainer.next_batch_id() == trainer.next_batch_id() == "episode-0"
-    assert not trainer.is_active and group.starts == []
-    assert queue.status()["counts"] == dict(pending=1, leased=0, applied=0, committed=0)
-
-
-def test_default_consumption_rechecks_claimed_envelope_before_update(
-    setup, monkeypatch
+def test_native_policy_rejects_legacy_bundle_and_activates_native_acceptance(
+    native_policy, tmp_path
 ):
-    """A validated preview must not authorize a different version at dispatch."""
-    loop, group, queue, publisher, now = setup
-    trainer = loop.trainer
-    enqueue(loop, queue)
-    assert trainer.next_batch_id() == "episode-0"
-    trainer.activate()
-    claim = trainer.consumer.claim
-    monkeypatch.setattr(
-        trainer.consumer, "claim", lambda: replace(claim(), policy_version=1)
-    )
-
-    with pytest.raises(ValueError, match="stale policy version"):
-        trainer.train_next()
-
-    assert group.updates == trainer.version == 0
-    assert queue.status()["counts"]["applied"] == 0
-    with pytest.raises(RuntimeError, match="uncertain"):
-        trainer.train_next()
-
-
-def test_arrival_wakes_and_clean_idle_releases_without_another_checkpoint(setup):
-    loop, group, queue, publisher, now = setup
-    enqueue(loop, queue)
-    assert loop.tick() == "ACTIVE"
-    assert group.step == 1 and group.starts == [False]
-    now[0] = 4.9
-    assert loop.tick() == "ACTIVE"
-    now[0] = 5
-    assert loop.tick() == "SUSPENDED"
-    assert group.releases == group.saves == 1
-    now[0] = 500
-    loop.tick()
-    assert group.releases == group.saves == 1
-    enqueue(loop, queue)
-    loop.tick()
-    assert group.starts == [False, True] and group.step == 2
-    assert group.history == ["episode-0", "episode-1"]
-    assert queue.status()["counts"]["committed"] == 2
-
-
-def test_receipt_before_failed_resume_retries_same_checkpoint_without_release(setup):
-    loop, group, queue, publisher, now = setup
-    publisher.failures = 2
-    enqueue(loop, queue)
-    assert loop.tick() == "PUBLISHING"
-    target = loop.pending_checkpoint
-    assert publisher.receipt == {"version": 1} and not publisher.ready
-    now[0] = 100
-    assert loop.tick() == "PUBLISHING"
-    assert group.actor is not None and group.releases == 0
-    assert loop.tick() == "ACTIVE"
-    assert group.updates == group.saves == 1
-    assert publisher.attempts == [target] * 3
-    # Idle starts after successful publication, not the earlier optimizer call.
-    assert loop.tick() == "ACTIVE"
-    now[0] = 105
-    assert loop.tick() == "SUSPENDED"
-
-
-@pytest.mark.parametrize("envelope,payload", [(2, 2), (0, 1), (0, 0)])
-def test_invalid_fifo_head_fails_before_gpu_activation(setup, envelope, payload):
-    loop, group, queue, publisher, now = setup
-    queue.enqueue(
-        "invalid",
-        {"policy_version": payload, "value": 1, "valid": payload != 0},
-        policy_version=envelope,
-    )
-    with pytest.raises(ValueError):
-        loop.tick()
-    assert loop.state == "FAILED" and not publisher.ready
-    assert group.starts == [] and group.updates == 0
-    assert queue.status()["counts"]["pending"] == 1
-
-
-def test_second_producer_waits_for_durable_enqueue_then_receives_backpressure(setup):
-    loop, group, queue, publisher, now = setup
-    attempted = threading.Event()
-
-    def second():
-        attempted.set()
-        enqueue(loop, queue)
-
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        with loop.episode() as version:
-            future = pool.submit(second)
-            assert attempted.wait(timeout=5) and not future.done()
-            queue.enqueue(
-                "first", {"policy_version": version, "value": 1}, policy_version=version
-            )
-        with pytest.raises(RuntimeError, match="awaiting"):
-            future.result(timeout=5)
-    assert queue.status()["counts"]["pending"] == 1
-    assert group.starts == []
-
-
-def test_slow_episode_does_not_pin_clean_training_gpus_or_allow_early_updates(setup):
-    loop, group, queue, publisher, now = setup
-    enqueue(loop, queue)
-    loop.tick()
-    now[0] = 10
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        with loop.episode() as version:
-            assert version == 1
-            assert pool.submit(loop.tick).result(timeout=5) == "SUSPENDED"
-            assert group.actor is None and group.releases == 1
-            queue.enqueue(
-                "next", {"policy_version": version, "value": 2}, policy_version=version
-            )
-            assert pool.submit(loop.tick).result(timeout=5) == "SUSPENDED"
-            assert publisher.version == 1 and group.updates == 1
-        assert pool.submit(loop.tick).result(timeout=5) == "ACTIVE"
-    assert publisher.version == group.step == 2
-
-
-def test_checkpoint_ack_failure_is_fatal_and_prepare_repairs_without_gpu(
-    setup, monkeypatch
-):
-    loop, group, queue, publisher, now = setup
-    enqueue(loop, queue)
-    monkeypatch.setattr(
-        loop.trainer.consumer,
-        "acknowledge",
-        lambda _: (_ for _ in ()).throw(OSError("lost ack")),
-    )
-    with pytest.raises(OSError, match="lost ack"):
-        loop.tick()
-    assert loop.state == "FAILED" and group.updates == 1
-    loop.close()
-    replacement = ElasticLoop(QueuedTrainer(group, queue), ProtocolPublisher())
+    manager, runtime, fixture = native_policy
+    legacy = accepted_native_bundle(runtime, tmp_path / "legacy", native=False)
+    with pytest.raises(ValueError, match="native execution scope"):
+        runtime.prepare_policy(legacy)
+    bundle = accepted_native_bundle(runtime, tmp_path / "native")
+    assert json.loads(open(bundle).read())["kind"] == "native-async-policy-v1"
+    prepared = runtime.prepare_policy(bundle)
+    _ready_native_episodes(manager, 0, 0)
+    manager.next_batch()
+    request = PolicyRequest("activate", prepared.bundle_id, 0, 0)
+    with pytest.raises(PolicyBoundaryBusy):
+        runtime.apply_policy(request, prepared)
+    manager.actor.updates += 1
+    manager.commit_and_publish(1)
+    request = replace(request, expected_weights_version=1)
+    before = manager.version, manager.actor, fixture.actors[:]
+    receipt = runtime.apply_policy(request, prepared)
+    assert runtime.apply_policy(request, prepared) == receipt
+    assert runtime.policy_generation == 1
+    assert (manager.version, manager.actor, fixture.actors) == before
+    update(manager)
+    assert manager.actor.updates == 2
+    manager.close()
+    restored_runtime = NativePolicyRuntime()
+    restored = fixture.create(restored_runtime)
     try:
-        replacement.start()
-        assert replacement.published_version == group.step == 1
-        assert group.actor is None and group.starts == [False]
-        assert queue.status()["counts"]["committed"] == 1
-        assert replacement.tick() == "SUSPENDED"
-        assert group.updates == 1
+        assert restored_runtime.policy_generation == 1
+        assert restored.version == 2 and restored.actor is None
+        assert len(restored_runtime.history.snapshot().workloads) == 2
     finally:
-        replacement.close()
+        restored.close()
 
 
-def test_failed_release_keeps_consumer_fenced_and_cannot_resume(setup, monkeypatch):
-    loop, group, queue, publisher, now = setup
-    enqueue(loop, queue)
-    loop.tick()
-    now[0] = 10
+def test_native_empty_wait_releases_lock_and_can_be_closed(native_policy, monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    manager, runtime, _ = native_policy
+    polled = threading.Event()
+    original = runtime.poll
+
+    def poll():
+        polled.set()
+        original()
+
+    monkeypatch.setattr(runtime, "poll", poll)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        waiting = executor.submit(manager.next_batch)
+        assert polled.wait(2)
+        manager.close()
+        with pytest.raises(RuntimeError, match="closed"):
+            waiting.result(timeout=2)
+    assert runtime.closed and manager.actor is None
+
+
+def test_native_cleanup_closes_policy_and_consumer_after_admission_disk_failure(
+    native_policy, monkeypatch
+):
+    manager, runtime, fixture = native_policy
+    update(manager)
     with monkeypatch.context() as patch:
         patch.setattr(
-            group, "stop", lambda: (_ for _ in ()).throw(RuntimeError("worker alive"))
+            manager.inbox,
+            "set_admission_open",
+            lambda value: (_ for _ in ()).throw(OSError("disk full")),
         )
-        with pytest.raises(RuntimeError, match="alive"):
-            loop.tick()
-        with pytest.raises(BlockingIOError):
-            queue.consumer()
-        with pytest.raises(RuntimeError, match="uncertain"):
-            loop.trainer.train_next(group.update)
-    loop.close()
-    with queue.consumer(
-        loop.trainer.latest_checkpoint
-        and json.loads((loop.trainer.latest_checkpoint / "manifest.json").read_text())
-    ):
-        pass
+        with pytest.raises(ExceptionGroup, match="cleanup"):
+            manager.close()
+    assert runtime.closed and manager._closed and manager.actor is None
+    recovered = fixture.create(NativePolicyRuntime())
+    recovered.close()
 
 
-def test_shutdown_waits_for_an_inflight_tick_before_teardown(setup, monkeypatch):
-    loop, group, queue, publisher, now = setup
-    enqueue(loop, queue)
-    entered, finish, stop = threading.Event(), threading.Event(), threading.Event()
-    start = group.start
+def test_native_policy_attach_rejects_legacy_checkpoint_before_persisting_state(
+    request,
+):
+    fixture = request.getfixturevalue("native_lifecycle")
+    update(fixture.manager)
+    fixture.manager.close()
+    with pytest.raises(ValueError, match="without policy state"):
+        fixture.create(NativePolicyRuntime())
+    assert not (fixture.manager.root / "policy-application").exists()
+    resumed = fixture.create()
+    assert resumed.version == 1
+    resumed.close()
 
-    def blocked_start(**kwargs):
-        entered.set()
-        assert finish.wait(timeout=5)
-        start(**kwargs)
 
-    monkeypatch.setattr(group, "start", blocked_start)
-    errors = []
+def test_native_uncertain_policy_pointer_recovers_without_closed_admission_deadlock(
+    native_policy, tmp_path, monkeypatch
+):
+    import areal.elastic.control.application as store
 
-    def serve():
-        try:
-            loop.run(stop, poll_seconds=0.01)
-        except BaseException as error:
-            errors.append(error)
+    manager, runtime, _ = native_policy
+    bundle = accepted_native_bundle(runtime, tmp_path / "revision")
+    prepared = runtime.prepare_policy(bundle)
+    original = store.atomic_json
 
-    thread = threading.Thread(target=serve)
-    thread.start()
+    def lost_ack(path, value):
+        original(path, value)
+        if path.name == "active.json" and value["generation"] == 1:
+            raise RuntimeError("lost policy acknowledgement")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "atomic_json", lost_ack)
+        with pytest.raises(RuntimeError, match="acknowledgement"):
+            runtime.apply_policy(
+                PolicyRequest("activate", prepared.bundle_id, 0, 0), prepared
+            )
+    assert runtime.failed and not manager.inbox.status()["admission_open"]
+    with pytest.raises(RuntimeError, match="Recover pending policy"):
+        manager._poll_batch()
+    manager.recover_uncertain(RuntimeError("activation outcome unknown"))
+    assert runtime.policy_generation == 1 and manager.version == 0
+    assert manager.inbox.status()["admission_open"]
+    update(manager)
+    assert manager.actor.updates == 1
+
+
+def test_native_four_gpu_missing_measurement_keeps_fixed_layout_cold_fallback():
+    from tests.test_elastic_basic_policy import model, observation
+
+    from areal.autopilot.domains.elastic.phase import FixedLayoutSimulator
+    from areal.elastic.policy.basic.optimizer import BasicOptimizer
+    from areal.elastic.policy.basic.policy import BasicPolicy
+    from areal.elastic.policy.basic.simulator import MeasuredComponent
+
+    policy = BasicPolicy(
+        FixedLayoutSimulator(replace(model(), train=MeasuredComponent("train")), 4),
+        optimizer=BasicOptimizer(horizon=1, candidate_configs=(TrainingConfig(4),)),
+    )
+    decision = policy.decide(
+        observation(
+            training_active=False,
+            training_config=TrainingConfig(4),
+            has_checkpoint=False,
+            max_train_gpus=4,
+        )
+    )
+    assert decision.action == "launch" and decision.train
+    assert decision.config == TrainingConfig(4)
+
+
+def test_native_history_disk_failure_still_closes_policy_and_releases_consumer(
+    native_policy, monkeypatch
+):
+    manager, runtime, fixture = native_policy
+    update(manager)
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            runtime.runtime_history,
+            "append_boundary",
+            lambda *args, **kwargs: (_ for _ in ()).throw(OSError("history disk full")),
+        )
+        with pytest.raises(ExceptionGroup, match="cleanup"):
+            manager.close()
+    assert runtime.closed and manager._closed
+    assert manager.actor is None and manager.owner is None
+    recovered = fixture.create(NativePolicyRuntime())
+    recovered.close()
+
+
+def test_native_background_revision_uses_committed_host_and_durable_window_budget(
+    native_policy, tmp_path
+):
+    from tests.test_autopilot_revision import runner
+
+    from areal.autopilot.domains.elastic.contracts import BASELINE_SOURCE
+    from areal.autopilot.domains.elastic.online import RuntimeRevisionLoop
+    from areal.autopilot.revision import Proposal
+    from areal.elastic.contracts import Measurement
+
+    manager, runtime, fixture = native_policy
+    manager.close()
+    profile = {
+        **runtime.profile,
+        "measurements": [
+            asdict(Measurement(phase, 1, 1, 8))
+            for phase in (
+                "start",
+                "restore",
+                "train",
+                "checkpoint",
+                "publish",
+                "release",
+            )
+        ],
+    }
+    fixture.config.actor_lifecycle.state_root = str(tmp_path / "measured-run")
+    measured = NativePolicyRuntime(profile=profile)
+    manager = fixture.create(measured)
+
+    class Unchanged:
+        def propose(self, request):
+            return Proposal(BASELINE_SOURCE[request.target])
+
+    measured.revision = RuntimeRevisionLoop(
+        tmp_path / "revision",
+        profile=profile,
+        model_agent=Unchanged(),
+        optimizer_agent=Unchanged(),
+        settings=measured.settings,
+        scope="native-async-v1",
+        horizon=1,
+        max_windows=1,
+        max_model_rounds=1,
+        max_optimizer_rounds=1,
+        idle_seconds=manager.options.idle_timeout,
+        runner=runner.__wrapped__(),
+    )
     try:
-        assert entered.wait(timeout=5)
-        stop.set()
-        assert thread.is_alive() and group.releases == 0
-        with pytest.raises(BlockingIOError):
-            queue.consumer()
+        for _ in range(4):
+            update(manager)
+        measured.poll()
+        assert measured.revision.future is not None
+        measured.revision.future.result(timeout=30)
+        measured.poll()
+        outcome = json.loads(
+            (tmp_path / "revision/window-0001/outcome.json").read_text()
+        )
+        assert outcome["status"] == "unchanged", outcome
+        assert measured.policy_generation == 0 and manager.version == 4
+        for _ in range(4):
+            update(manager)
+        measured.poll()
+        assert len(list((tmp_path / "revision").glob("window-*"))) == 1
+    finally:
+        manager.close()
+    assert measured.closed
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_hermes_entry_preserves_config_arguments_and_optionally_attaches_native_policy(
+    monkeypatch, enabled
+):
+    from examples.hermes import train
+
+    config = object()
+    seen = {}
+
+    def load(args, config_type):
+        seen["args"] = args
+        return config, None
+
+    class Trainer:
+        def __init__(self, actual_config, **kwargs):
+            assert actual_config is config
+            seen.update(kwargs)
+
+        def __enter__(self):
+            return self
+
+        def train(self):
+            seen["trained"] = True
+
+        def __exit__(self, *args):
+            if "elastic_policy" in seen:
+                seen["elastic_policy"].close()
+
+    monkeypatch.setattr(train, "load_expr_config", load)
+    monkeypatch.setattr(train, "PPOTrainer", Trainer)
+    config_args = [
+        "--config",
+        "examples/hermes/config.yaml",
+        "actor_lifecycle.mode=on_demand",
+    ]
+    train.main([*(["--elastic-policy"] if enabled else []), *config_args])
+    assert seen["args"] == config_args and seen["trained"]
+    assert ("elastic_policy" in seen) == enabled
+    if enabled:
+        assert isinstance(seen["elastic_policy"], NativePolicyRuntime)
+        assert seen["elastic_policy"].closed
+
+
+def test_duplicate_policy_owner_rejection_does_not_close_original_trainer(
+    native_policy,
+):
+    from areal import PPOTrainer
+
+    manager, runtime, fixture = native_policy
+    with pytest.raises(ValueError, match="already bound"):
+        PPOTrainer(fixture.config, elastic_policy=runtime)
+    with pytest.raises(ValueError, match="already bound"):
+        fixture.create(runtime)
+    assert not runtime.closed and runtime.owner is manager
+    update(manager)
+    assert manager.version == 1
+
+
+def test_release_after_history_append_failure_uses_current_checkpoint_workload(
+    native_policy, monkeypatch
+):
+    from tests.test_elastic_batch_queue import _receive_episode
+
+    manager, runtime, _ = native_policy
+    update(manager)
+    previous = runtime.runtime_history.snapshot(1)["updates"][0]["workload"]
+    for number in range(4, 8):
+        _receive_episode(manager.inbox, number, version=1, rows=2)
+    manager.next_batch()
+    manager.actor.updates += 1
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            runtime.runtime_history,
+            "append",
+            lambda *args: (_ for _ in ()).throw(OSError("history unavailable")),
+        )
+        with pytest.raises(OSError, match="history unavailable"):
+            manager.commit_and_publish(2)
+    current = runtime._checkpoint_record()["pending"]["workload"]
+    assert current != previous
+    manager.recover_uncertain(OSError("retry history persistence"))
+    snapshot = runtime.runtime_history.snapshot(2)
+    assert snapshot["boundaries"][-1]["weights_version"] == 2
+    assert snapshot["boundaries"][-1]["measurements"][0]["workload"] == current
+    assert snapshot["updates"][-1]["workload"] == current
+    assert manager.version == 2
+
+
+def test_native_public_control_serializes_policy_activation_and_reports_boundary(
+    native_policy,
+):
+    import threading
+
+    from areal.elastic.control.application import PolicyBoundaryBusy
+
+    manager, runtime, _ = native_policy
+    entered, finish = threading.Event(), threading.Event()
+    before = manager.control_snapshot()
+    assert before.boundary_ready and not before.closed
+
+    def lifecycle_operation():
+        with manager.control_operation(blocking=True):
+            entered.set()
+            assert finish.wait(5)
+
+    worker = threading.Thread(target=lifecycle_operation)
+    worker.start()
+    try:
+        assert entered.wait(5)
+        with pytest.raises(PolicyBoundaryBusy, match="busy"):
+            runtime.apply_policy(None, None)
     finally:
         finish.set()
-        thread.join(timeout=5)
-    assert not thread.is_alive() and not errors
-    assert group.updates == group.saves == 1 and group.releases == 0
-    loop.close()
-    assert group.releases == 1
-
-
-@pytest.mark.parametrize(
-    "setup", [SimpleNamespace(decide=lambda _: "train")], indirect=True
-)
-def test_resource_train_decision_cannot_allocate_without_data(setup):
-    loop, group, queue, publisher, now = setup
-
-    assert loop.tick() == "SUSPENDED"
-
-    assert loop.events[-1]["event"] == "DECISION_REJECTED"
-    assert group.starts == [] and group.updates == 0
-
-
-@pytest.mark.parametrize(
-    "setup",
-    [
-        SimpleNamespace(
-            decide=lambda sample: "train" if sample.model_version == 0 else "release"
-        )
-    ],
-    indirect=True,
-)
-def test_resource_release_decision_cannot_skip_pending_data(setup):
-    loop, group, queue, publisher, now = setup
-    enqueue(loop, queue)
-    loop.tick()
-    enqueue(loop, queue)
-
-    assert loop.tick() == "ACTIVE"
-
-    assert loop.events[-1]["event"] == "DECISION_REJECTED"
-    assert group.updates == 1 and group.releases == 0
-
-
-@pytest.mark.parametrize(
-    "setup", [SimpleNamespace(decide=lambda _: "train")], indirect=True
-)
-def test_resource_train_decision_cannot_bypass_episode_gate(setup):
-    loop, group, queue, publisher, now = setup
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        with loop.episode() as version:
-            queue.enqueue(
-                "pending",
-                {"policy_version": version, "value": 1},
-                policy_version=version,
-            )
-            assert pool.submit(loop.tick).result(timeout=5) == "SUSPENDED"
-    assert group.starts == [] and group.updates == 0
-    assert loop.events[-1]["event"] == "DECISION_REJECTED"
-
-
-@pytest.mark.parametrize(
-    "setup", [SimpleNamespace(decide=lambda _: "unknown")], indirect=True
-)
-def test_invalid_resource_action_fails_closed(setup):
-    loop, group, queue, publisher, now = setup
-    with pytest.raises(ValueError, match="Invalid resource decision"):
-        loop.tick()
-    assert loop.state == "FAILED" and not publisher.ready
-    assert group.starts == []
-
-
-@pytest.mark.parametrize("operation", ["train_next", "publish"])
-def test_observation_reflects_current_stage_before_blocking_operation(
-    setup, monkeypatch, operation
-):
-    loop, group, queue, publisher, now = setup
-    target = loop.trainer if operation == "train_next" else publisher
-    original = getattr(target, operation)
-    observed = []
-
-    def capture(*args, **kwargs):
-        observed.append(loop.observe())
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(target, operation, capture)
-    enqueue(loop, queue)
-    loop.tick()
-
-    (sample,) = observed
-    assert sample.state == ("ACTIVE" if operation == "train_next" else "PUBLISHING")
-    assert sample.pending_publication == (operation == "publish")
-    assert sample.training_active and sample.committed
-    assert sample.model_version == (0 if operation == "train_next" else 1)
+        worker.join(timeout=5)
+    assert not worker.is_alive()
+    assert manager.control_snapshot() == before
+    assert runtime.policy_generation == 0 and not runtime.failed
+    manager.fence_admission()
+    assert not manager.inbox.status()["admission_open"]

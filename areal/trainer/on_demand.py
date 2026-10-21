@@ -7,31 +7,46 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
+import threading
 import time
 import uuid
 from collections.abc import Callable
+from contextlib import contextmanager
 from copy import deepcopy
+from functools import wraps
 from pathlib import Path
 from typing import Any
 
-from areal.autopilot.elastic.runtime.processes import (
+from areal.elastic.control.native import ControlBusy, ControlSnapshot
+from areal.elastic.control.policy import ActorPolicyRuntime, validate_unbound_policy
+from areal.elastic.control.processes import (
     OWNER_ENV,
     gpu_processes,
     owned_processes,
     resolve_gpu_uuids,
     stop_owned_processes,
 )
-from areal.autopilot.elastic.runtime.state.batch_queue import QueuedBatch
-from areal.autopilot.elastic.runtime.state.checkpoint import (
+from areal.elastic.state.batch_queue import QueuedBatch
+from areal.elastic.state.checkpoint import (
     CheckpointStore,
     artifact_manifest,
     atomic_json,
     recovery_digest,
 )
-from areal.autopilot.elastic.runtime.state.online import OnlineInbox
+from areal.elastic.state.online import OnlineInbox
 from areal.utils import logging
+from areal.utils.atomic import json_digest
 
 logger = logging.getLogger("RLTrainer")
+
+
+def _serialized(method):
+    @wraps(method)
+    def call(self, *args, **kwargs):
+        with self._lifecycle_lock:
+            return method(self, *args, **kwargs)
+
+    return call
 
 
 def validate_on_demand(config: Any) -> None:
@@ -132,9 +147,19 @@ class OnDemandActor:
     """
 
     def __init__(
-        self, config: Any, ft_spec: Any, actor_factory: Callable[[Any], Any]
+        self,
+        config: Any,
+        ft_spec: Any,
+        actor_factory: Callable[[Any], Any],
+        *,
+        policy_runtime: ActorPolicyRuntime | None = None,
     ) -> None:
+        validate_unbound_policy(policy_runtime)
         self.config, self.ft_spec, self.actor_factory = config, ft_spec, actor_factory
+        self._lifecycle_lock = threading.RLock()
+        self.policy_runtime = policy_runtime
+        self._policy_bound = False
+        self._train_started: float | None = None
         self.options = config.actor_lifecycle
         self.root = Path(self.options.state_root)
         self.root.mkdir(parents=True, exist_ok=True)
@@ -148,9 +173,10 @@ class OnDemandActor:
         self.allocation = ModelAllocation.from_str(config.actor.backend)
         # Hash immutable model files, omitting download-cache bookkeeping.
         base = Path(config.actor.path)
+        self.base_manifest = artifact_manifest(base)
         files = {
             name: digest
-            for name, digest in artifact_manifest(base).items()
+            for name, digest in self.base_manifest.items()
             if name.endswith((".safetensors", ".bin", ".index.json"))
             or name == "config.json"
         }
@@ -199,6 +225,10 @@ class OnDemandActor:
                 self.latest_manifest["global_step"] if self.latest_manifest else 0
             )
             previous = self.root / "state.json"
+            if policy_runtime is None and (self.root / "policy-application").exists():
+                raise ValueError(
+                    "Resume this coordinator with its native policy runtime"
+                )
             if previous.exists():
                 journal = json.loads(previous.read_text())
                 self.generation = journal["generation"]
@@ -215,6 +245,48 @@ class OnDemandActor:
         except BaseException:
             self.consumer.close()
             raise
+
+    def control_snapshot(self) -> ControlSnapshot:
+        with self._lifecycle_lock:
+            published = self.inbox.status()["published_version"]
+            ready = (
+                self.owner is None
+                if self.actor is None
+                else self.ready_since is not None
+            )
+            return ControlSnapshot(
+                self._closed,
+                not self._closed
+                and ready
+                and self.active is None
+                and published == self.version,
+                self.generation,
+                self.version,
+                published,
+                json_digest(
+                    {
+                        "checkpoint": None
+                        if self.latest_path is None
+                        else self.latest_path.name,
+                        "cursor": None
+                        if self.latest_manifest is None
+                        else self.latest_manifest["data_cursor"],
+                        "queue_id": self.inbox.queue.queue_id,
+                    }
+                ),
+            )
+
+    @contextmanager
+    def control_operation(self, *, blocking: bool = False):
+        if not self._lifecycle_lock.acquire(blocking=blocking):
+            raise ControlBusy("Native lifecycle is busy")
+        try:
+            yield self.control_snapshot()
+        finally:
+            self._lifecycle_lock.release()
+
+    def fence_admission(self) -> None:
+        self.inbox.set_admission_open(False)
 
     def _read_latest(self) -> dict[str, Any] | None:
         if not (self.store.root / "latest.json").exists():
@@ -265,6 +337,9 @@ class OnDemandActor:
             self._publish()
         elif self.inbox.status()["published_version"] != self.version:
             self.inbox.confirm_publication(self.version)
+        if self.policy_runtime is not None:
+            self.policy_runtime.bind(self)
+            self._policy_bound = True
         self.inbox.set_admission_open(True)
 
     def _assert_pool_free(self) -> None:
@@ -272,6 +347,7 @@ class OnDemandActor:
         if any(present.get(gpu) for gpu in self.gpu_uuids):
             raise RuntimeError("Actor GPU pool is not confirmed empty")
 
+    @_serialized
     def ensure_actor(self) -> Any:
         if self.actor is not None:
             return self.actor
@@ -310,56 +386,84 @@ class OnDemandActor:
         self.ready_since = time.monotonic()
         self.idle_since = self.ready_since
         self._event("READY", startup_seconds=self.ready_since - self.started_at)
+        if self._policy_bound:
+            self.policy_runtime.record_phase(
+                "restore" if self.latest_path else "start",
+                self.ready_since - self.started_at,
+            )
         return self.actor
 
     def next_batch(self) -> list[dict[str, Any]]:
+        while True:
+            with self._lifecycle_lock:
+                if self._closed:
+                    raise RuntimeError("On-demand coordinator is closed")
+                batch = self._poll_batch()
+            if batch is not None:
+                return batch
+            time.sleep(self.options.poll_interval)
+
+    def _poll_batch(self) -> list[dict[str, Any]] | None:
         from areal.infra.rpc.serialization import deserialize_value
 
         if self.active is not None:
             raise RuntimeError("The previous native PPO update is still active")
-        while not self._closed:
-            if self.inbox.status()["published_version"] != self.version:
-                self.ensure_actor()
-                self._publish()
-            identity = self.inbox.seal_batch(self.version)
-            if identity is not None:
-                self.ensure_actor()
-                batch = self.consumer.claim()
+        if self._policy_bound:
+            self.policy_runtime.poll()
+        if self.inbox.status()["published_version"] != self.version:
+            self.ensure_actor()
+            self._publish()
+        identity = self.inbox.seal_batch(self.version)
+        if identity is not None:
+            if (
+                self._policy_bound
+                and self.policy_runtime.decide(self.consumer.peek()) != "train"
+            ):
+                return None
+            self.ensure_actor()
+            batch = self.consumer.claim()
+            if (
+                batch is None
+                or batch.batch_id != identity
+                or batch.policy_version != self.version
+            ):
+                raise RuntimeError(
+                    "The reserved batch does not match restored Actor progress"
+                )
+            trajectories = [
+                deserialize_value(value) for value in batch.payload["trajectories"]
+            ]
+            for trajectory in trajectories:
+                minimum, maximum = self.inbox._inspect_payload(trajectory)
                 if (
-                    batch is None
-                    or batch.batch_id != identity
-                    or batch.policy_version != self.version
+                    maximum > self.version
+                    or self.version - minimum > self.inbox.max_staleness
                 ):
                     raise RuntimeError(
-                        "The reserved batch does not match restored Actor progress"
+                        "Reserved token versions violate the native training bound"
                     )
-                trajectories = [
-                    deserialize_value(value) for value in batch.payload["trajectories"]
-                ]
-                for trajectory in trajectories:
-                    minimum, maximum = self.inbox._inspect_payload(trajectory)
-                    if (
-                        maximum > self.version
-                        or self.version - minimum > self.inbox.max_staleness
-                    ):
-                        raise RuntimeError(
-                            "Reserved token versions violate the native training bound"
-                        )
-                self.active = batch
-                self.idle_since = None
-                self._event(
-                    "TRAINING",
-                    batch_id=identity,
-                    episode_ids=batch.payload["episode_ids"],
-                )
-                return trajectories
-            self.maybe_suspend()
-            time.sleep(self.options.poll_interval)
-        raise RuntimeError("On-demand coordinator is closed")
+            if self._policy_bound:
+                self.policy_runtime.begin_update(batch, trajectories)
+            self.active = batch
+            self._train_started = time.monotonic()
+            self.idle_since = None
+            self._event(
+                "TRAINING",
+                batch_id=identity,
+                episode_ids=batch.payload["episode_ids"],
+            )
+            return trajectories
+        self.maybe_suspend()
+        return None
 
+    @_serialized
     def commit_and_publish(self, version: int) -> None:
         if self.actor is None or self.active is None or version != self.version + 1:
             raise RuntimeError("No matching native PPO update is ready to commit")
+        if self._policy_bound:
+            self.policy_runtime.record_phase(
+                "train", time.monotonic() - self._train_started
+            )
         self.actor.set_version(version)
         self.consumer.mark_applied(self.active)
         started = time.monotonic()
@@ -373,6 +477,8 @@ class OnDemandActor:
                 version=version,
             )
             atomic_json(path / "coordinator.json", self._capture_cpu())
+            if self._policy_bound:
+                self.policy_runtime.checkpoint_state(path)
 
         generation = self.store.commit(
             step=version,
@@ -393,6 +499,8 @@ class OnDemandActor:
             checkpoint=generation.name,
             checkpoint_seconds=time.monotonic() - started,
         )
+        if self._policy_bound:
+            self.policy_runtime.record_phase("checkpoint", time.monotonic() - started)
         self._publish()
 
     def _publish(self) -> None:
@@ -407,6 +515,9 @@ class OnDemandActor:
                 "Serving replicas have not all acknowledged committed weights"
             )
         self.inbox.confirm_publication(self.version)
+        if self._policy_bound:
+            self.policy_runtime.record_phase("publish", time.monotonic() - started)
+            self.policy_runtime.published()
         self.inbox.set_admission_open(True)
         self.idle_since = time.monotonic()
         self._event(
@@ -415,6 +526,7 @@ class OnDemandActor:
             serving_versions=versions,
         )
 
+    @_serialized
     def maybe_suspend(self, now: float | None = None) -> bool:
         if self.actor is None or self.active is not None:
             return False
@@ -431,12 +543,15 @@ class OnDemandActor:
             or now - self.ready_since < self.options.min_ready_seconds
         ):
             return False
+        if self._policy_bound and self.policy_runtime.decide(None) != "release":
+            return False
         self._release()
         return True
 
     def _release(self) -> None:
         if self.actor is None and self.owner is None:
             return
+        release_started = time.monotonic()
         self._cleanup_event("RELEASING")
         if self.actor is not None:
             # No resource creator may outlive the ownership probe below.
@@ -466,6 +581,10 @@ class OnDemandActor:
         self.actor, self.owner = None, None
         self.ready_since, self.idle_since, self.started_at = None, None, None
         self._cleanup_event("STOPPED", actor_gpu_seconds=gpu_seconds)
+        if self._policy_bound:
+            self.policy_runtime.released(
+                time.monotonic() - release_started, gpu_seconds
+            )
 
     def _confirm_stopped(self) -> None:
         if self.owner is not None and owned_processes(self.owner):
@@ -478,6 +597,7 @@ class OnDemandActor:
         except Exception:
             logger.error("Cannot persist lifecycle cleanup evidence", exc_info=True)
 
+    @_serialized
     def recover_uncertain(self, error: Exception) -> None:
         """Stop the failed generation, then let latest decide whether an update committed."""
         try:
@@ -496,6 +616,8 @@ class OnDemandActor:
             )
         else:
             self._restore_cpu(deepcopy(self._initial_cpu_state))
+        if self._policy_bound:
+            self.policy_runtime.recover()
         if self.inbox.status()["published_version"] != self.version or any(
             version != self.version for version in self.rollout.serving_versions()
         ):
@@ -503,12 +625,35 @@ class OnDemandActor:
             self._publish()
         self.inbox.set_admission_open(True)
 
+    @_serialized
     def close(self) -> None:
         if self._closed:
             return
+        errors = []
         try:
             self.inbox.set_admission_open(False)
-        finally:
+        except Exception as error:
+            errors.append(error)
+        try:
             self._release()
-        self.consumer.close()
-        self._closed = True
+        except Exception as error:
+            if self.actor is not None or self.owner is not None:
+                raise ExceptionGroup(
+                    "Actor release incomplete; retain consumer ownership",
+                    [*errors, error],
+                ) from error
+            # Measurement persistence can fail after release was proved. It must
+            # not keep the queue fence or revision worker alive.
+            errors.append(error)
+        try:
+            if self.policy_runtime is not None and getattr(
+                self.policy_runtime, "owner", self
+            ) in (None, self):
+                self.policy_runtime.close()
+        except Exception as error:
+            errors.append(error)
+        finally:
+            self.consumer.close()
+            self._closed = True
+        if errors:
+            raise ExceptionGroup("Coordinator cleanup incomplete", errors)

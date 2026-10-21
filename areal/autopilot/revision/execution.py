@@ -16,7 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from areal.autopilot.elastic.runtime.state.checkpoint import atomic_json
+from areal.utils.atomic import atomic_json
 
 
 def load_module(path: Path):
@@ -43,12 +43,21 @@ class CandidateRunner:
     timeout_seconds: float = 60
     max_output_bytes: int = 2 << 20
     command: tuple[str, ...] = ()
+    worker_module: str | None = None
 
     def __post_init__(self):
         if not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0:
             raise ValueError("Candidate timeout must be finite and positive")
         if type(self.max_output_bytes) is not int or self.max_output_bytes < 1:
             raise ValueError("Candidate output limit must be positive")
+
+    @property
+    def worker_command(self) -> tuple[str, ...]:
+        if self.command:
+            return self.command
+        if self.worker_module:
+            return (sys.executable, "-m", self.worker_module)
+        raise ValueError("CandidateRunner requires a domain worker or explicit command")
 
     def run(
         self,
@@ -74,10 +83,7 @@ class CandidateRunner:
             with (directory / "worker.log").open("wb") as log:
                 process = subprocess.Popen(
                     [
-                        *(
-                            self.command
-                            or (sys.executable, "-m", "areal.autopilot.revision.worker")
-                        ),
+                        *self.worker_command,
                         str((directory / "request.json").resolve()),
                         str(child_read),
                         str(child_write),

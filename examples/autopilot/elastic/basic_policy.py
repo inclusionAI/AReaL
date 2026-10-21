@@ -6,9 +6,9 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from areal.autopilot.elastic.policy import BasicPolicy, IdleTimeoutPolicy
-from areal.autopilot.elastic.policy.basic.optimizer import BasicOptimizer
-from areal.autopilot.elastic.policy.basic.simulator import (
+from areal.elastic.policy.basic import BasicPolicy, IdleTimeoutPolicy
+from areal.elastic.policy.basic.optimizer import BasicOptimizer
+from areal.elastic.policy.basic.simulator import (
     MeasuredComponent,
     Measurement,
     WorkflowModel,
@@ -46,7 +46,7 @@ def measured_policy(
         )
     )
     if revision_root is not None:
-        from areal.autopilot.revision import apply_accepted_revision
+        from areal.autopilot.domains.elastic import apply_accepted_revision
 
         simulator, optimizer = apply_accepted_revision(
             revision_root,
@@ -60,12 +60,12 @@ def measured_policy(
 
 def measured_joint_policy(profiles: Path, *, compatibility, horizon=2, idle_seconds=30):
     """Explicit profiles for the local serial loop, independent of Expert data."""
-    from areal.autopilot.elastic.policy.basic.online import (
+    from areal.elastic.policy.basic.online import (
         OnlineJointPolicy,
         serial_config,
         serial_model_from_profile,
     )
-    from areal.autopilot.elastic.policy.basic.optimizer import JointOptimizer
+    from areal.elastic.policy.basic.optimizer import JointOptimizer
 
     data = json.loads(profiles.read_text())
     if (

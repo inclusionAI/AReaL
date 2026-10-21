@@ -13,30 +13,20 @@ import pytest
 
 from examples.autopilot.revising import AFFINE_SOURCE, CACHE_SOURCE, demo_inputs
 
-from areal.autopilot.contracts import WorkloadStats
-from areal.autopilot.elastic.policy.basic.cost_model.config import (
-    ActorConfig,
-    ParallelLayout,
-)
-from areal.autopilot.revision import (
+from areal.autopilot.domains.elastic import (
     AcceptanceCriteria,
-    CommandRevisionAgent,
     PolicyRevisionCycle,
-    Proposal,
     RevisionEvaluator,
-    RevisionLoop,
-    RevisionStore,
     apply_accepted_revision,
     load_accepted_model,
 )
-from areal.autopilot.revision.contracts import BASELINE_SOURCE, digest, source_digest
-from areal.autopilot.revision.execution import CandidateRunner
-from areal.autopilot.revision.joint_evaluator import (
+from areal.autopilot.domains.elastic.contracts import BASELINE_SOURCE
+from areal.autopilot.domains.elastic.joint_evaluator import (
     JointOptimizerCriteria,
     JointOptimizerEvaluator,
 )
-from areal.autopilot.revision.model_adapters import ACTOR_BOUNDARY
-from areal.autopilot.revision.model_evaluator import (
+from areal.autopilot.domains.elastic.model_adapters import ACTOR_BOUNDARY
+from areal.autopilot.domains.elastic.model_evaluator import (
     HistoricalCase,
     HistoricalInput,
     HistoricalModelEvaluator,
@@ -44,7 +34,20 @@ from areal.autopilot.revision.model_evaluator import (
     HistorySpan,
     ModelAcceptanceCriteria,
 )
-from areal.autopilot.revision.model_execution import HistoricalSourceEvaluator
+from areal.autopilot.domains.elastic.model_execution import HistoricalSourceEvaluator
+from areal.autopilot.revision import (
+    CommandRevisionAgent,
+    Proposal,
+    RevisionLoop,
+    RevisionStore,
+)
+from areal.autopilot.revision.contracts import digest, source_digest
+from areal.autopilot.revision.execution import CandidateRunner
+from areal.elastic.contracts import WorkloadStats
+from areal.elastic.policy.basic.cost_model.config import (
+    ActorConfig,
+    ParallelLayout,
+)
 
 
 @pytest.fixture
@@ -52,7 +55,7 @@ def runner():
     # Keep these CPU-only subprocess tests independent of AReaL's eager optional
     # infrastructure imports. Full-runtime validation also runs the default worker.
     root = str(Path(__file__).resolve().parents[1])
-    bootstrap = f"import sys,types,runpy; p=types.ModuleType('areal'); p.__path__=[{root!r}+'/areal']; sys.modules['areal']=p; runpy.run_module('areal.autopilot.revision.worker',run_name='__main__')"
+    bootstrap = f"import sys,types,runpy; p=types.ModuleType('areal'); p.__path__=[{root!r}+'/areal']; sys.modules['areal']=p; runpy.run_module('areal.autopilot.domains.elastic.worker',run_name='__main__')"
     return CandidateRunner(command=(sys.executable, "-c", bootstrap))
 
 
@@ -65,7 +68,7 @@ def serial_optimizer_clock(monkeypatch):
     Only this evaluator's clock is replaced; worker execution and subprocess
     timeout enforcement remain real.
     """
-    import areal.autopilot.revision.joint_evaluator as module
+    import areal.autopilot.domains.elastic.joint_evaluator as module
 
     ticks = count()
     monkeypatch.setattr(
@@ -78,110 +81,11 @@ def evaluator(target, runner, **kwargs):
     return RevisionEvaluator(target, profile, cases, runner=runner, **kwargs)
 
 
-def phase_runtime(root):
-    """Real queue/checkpoint protocol with a deterministic measured CPU service."""
-    from tests.test_elastic_loop import ProtocolGroup, ProtocolPublisher
-
-    from areal.autopilot.contracts import BatchWorkload, TrainingConfig
-    from areal.autopilot.elastic.loop import ElasticLoop
-    from areal.autopilot.elastic.policy import BasicPolicy
-    from areal.autopilot.elastic.policy.basic.optimizer import BasicOptimizer
-    from areal.autopilot.elastic.policy.basic.simulator import WorkflowSimulator
-    from areal.autopilot.elastic.runtime.history import RuntimeHistory
-    from areal.autopilot.elastic.runtime.policy import PolicyApplication
-    from areal.autopilot.elastic.runtime.state.batch_queue import BatchQueue
-    from areal.autopilot.elastic.runtime.training.trainer import QueuedTrainer
-    from areal.autopilot.revision.contracts import workflow_from_profile
-
-    now = [0.0]
-    profile, _ = demo_inputs("simulator")
-
-    class Group(ProtocolGroup):
-        @staticmethod
-        def workload(payload):
-            return BatchWorkload(1, payload["tokens"] // 2, payload["tokens"])
-
-        def start(self, *, restore=False):
-            now[0] += 3 if restore else 4
-            super().start(restore=restore)
-
-        def train_trajectory(self, payload):
-            now[0] += 5 + payload["tokens"] / 10
-            return super().train_trajectory(payload)
-
-        def checkpoint(self, *, data_cursor):
-            now[0] += 1
-            return super().checkpoint(data_cursor=data_cursor)
-
-        def stop(self):
-            now[0] += int(self.actor is not None)
-            super().stop()
-
-    class Publisher(ProtocolPublisher):
-        def publish(self, checkpoint):
-            now[0] += 1
-            return super().publish(checkpoint)
-
-    group = Group(root / "checkpoints")
-    group.compatibility = profile["compatibility"]
-    group.training_config, group.pool_devices = TrainingConfig(1), [0]
-    queue = BatchQueue(root / "queue")
-    application = PolicyApplication(
-        root / "policies",
-        compatibility=group.compatibility,
-        execution_context={
-            "queue_id": queue.queue_id,
-            "checkpoint_root": str(group.store.root.resolve()),
-            "inference_gpus": 1,
-        },
-    )
-    history = RuntimeHistory(
-        root / "runtime.json",
-        context={**application.execution_context, "compatibility": group.compatibility},
-    )
-    policy = BasicPolicy(
-        WorkflowSimulator(workflow_from_profile(profile)),
-        optimizer=BasicOptimizer(horizon=1, max_candidates=8),
-    )
-    loop = ElasticLoop(
-        QueuedTrainer(group, queue),
-        Publisher(),
-        policy=policy,
-        policy_application=application,
-        runtime_history=history,
-        clock=lambda: now[0],
-    )
-    loop.start()
-    return loop, group, queue, now, profile
-
-
-def measured_update(loop, queue, now, tokens):
-    with loop.episode() as version:
-        queue.enqueue(
-            str(version),
-            {"policy_version": version, "value": version + 1, "tokens": tokens},
-            policy_version=version,
-        )
-    assert loop.tick() == "ACTIVE"
-    now[0] += 31
-    assert loop.tick() == "SUSPENDED"
-
-
 def accepted_bundle(root, runner):
-    from areal.autopilot.revision.online import LifecycleRevisionCycle, runtime_problems
+    from areal.autopilot.domains.elastic.online import LifecycleRevisionCycle
 
-    loop, _, queue, now, profile = phase_runtime(root / "calibration")
-    try:
-        for tokens in (100, 400, 200, 300):
-            measured_update(loop, queue, now, tokens)
-        evaluation, cases = runtime_problems(
-            profile,
-            loop.runtime_history.snapshot(4),
-            settings={"horizon": 1, "max_candidates": 8},
-            runner=runner,
-        )
-    finally:
-        loop.close()
+    model = phase_evaluator(runner)
+    _, cases = demo_inputs("optimizer")
 
     class Agent:
         def propose(self, request):
@@ -191,230 +95,11 @@ def accepted_bundle(root, runner):
                 else BASELINE_SOURCE["optimizer"]
             )
 
-    result = LifecycleRevisionCycle(evaluation, cases, root / "cycle").run(
+    result = LifecycleRevisionCycle(model, cases, root / "cycle").run(
         Agent(), Agent(), max_model_rounds=1, max_optimizer_rounds=1
     )
     assert result["model"]["accepted"] and not result["optimizer"]["accepted"]
-    return Path(result["bundle"]), evaluation
-
-
-def test_live_policy_activation_preserves_training_history_and_recovers_on_restart(
-    runner, tmp_path
-):
-    from areal.autopilot.elastic.runtime.policy import PolicyRequest
-
-    bundle, _ = accepted_bundle(tmp_path / "revision", runner)
-    loop, group, queue, now, _ = phase_runtime(tmp_path / "execution")
-    try:
-        measured_update(loop, queue, now, 200)
-        previous_history = loop.history
-        snapshot = previous_history.snapshot()
-        prepared = loop.prepare_policy(bundle)
-        before = (group.step, group.starts[:], group.releases, group.saves)
-        request = PolicyRequest("activate", prepared.bundle_id, 0, 1)
-        receipt = loop.apply_policy(request, prepared)
-        assert (
-            loop.history is previous_history
-            and loop._policy.history is previous_history
-        )
-        assert loop.history.snapshot() == snapshot and loop.policy_generation == 1
-        assert (group.step, group.starts, group.releases, group.saves) == before
-        measured_update(loop, queue, now, 300)
-        assert loop.apply_policy(request, prepared) == receipt
-        assert loop.policy_generation == 1 and group.updates == 2
-        persisted = loop.history.snapshot()
-    finally:
-        loop.close()
-    restored, recovered, _, _, _ = phase_runtime(tmp_path / "execution")
-    try:
-        assert (
-            restored.policy_bundle_id == prepared.bundle_id
-            and restored.policy_generation == 1
-        )
-        assert recovered.step == 2 and recovered.updates == 0
-        assert restored.history.snapshot().workloads == persisted.workloads
-        assert (
-            restored.history.snapshot().measurements[: len(persisted.measurements)]
-            == persisted.measurements
-        )
-    finally:
-        restored.close()
-
-
-@pytest.mark.parametrize("after_replace", [False, True])
-def test_policy_pointer_failure_recovers_the_durable_choice_without_training_replay(
-    runner, tmp_path, monkeypatch, after_replace
-):
-    import areal.autopilot.elastic.runtime.policy as module
-
-    bundle, _ = accepted_bundle(tmp_path / "revision", runner)
-    loop, group, queue, now, _ = phase_runtime(tmp_path / "execution")
-    try:
-        measured_update(loop, queue, now, 200)
-        prepared = loop.prepare_policy(bundle)
-        request = module.PolicyRequest("activate", prepared.bundle_id, 0, 1)
-        original = module.atomic_json
-
-        def interrupt(path, value):
-            if path.name == "active.json" and value["generation"] == 1:
-                if after_replace:
-                    original(path, value)
-                raise OSError("policy pointer interruption")
-            original(path, value)
-
-        monkeypatch.setattr(module, "atomic_json", interrupt)
-        with pytest.raises(OSError, match="pointer interruption"):
-            loop.apply_policy(request, prepared)
-        assert loop.state == "FAILED" and not loop.publisher.ready
-        monkeypatch.setattr(module, "atomic_json", original)
-        loop.recover_policy()
-        assert loop.publisher.ready and group.updates == group.step == 1
-        assert loop.policy_generation == int(after_replace)
-        assert (loop.policy_bundle_id == prepared.bundle_id) == after_replace
-        measured_update(loop, queue, now, 300)
-        assert group.updates == group.step == 2
-    finally:
-        loop.close()
-
-
-def test_policy_rejects_stale_requests_changed_sources_and_episode_boundary(
-    runner, tmp_path
-):
-    from areal.autopilot.elastic.runtime.policy import (
-        PolicyBoundaryBusy,
-        PolicyRequest,
-        validate_bundle,
-    )
-
-    bundle, _ = accepted_bundle(tmp_path / "revision", runner)
-    loop, group, queue, now, _ = phase_runtime(tmp_path / "execution")
-    try:
-        prepared = loop.prepare_policy(bundle)
-        with pytest.raises(ValueError, match="Stale"):
-            loop.apply_policy(
-                PolicyRequest("stale", prepared.bundle_id, 0, 1), prepared
-            )
-        with loop.episode():
-            with pytest.raises(PolicyBoundaryBusy):
-                loop.apply_policy(
-                    PolicyRequest("busy", prepared.bundle_id, 0, 0), prepared
-                )
-        value = json.loads(bundle.read_text())
-        value["components"]["simulator"]["source"] += "\n# changed"
-        value["bundle_id"] = digest(
-            {k: v for k, v in value.items() if k != "bundle_id"}
-        )
-        with pytest.raises(ValueError, match="source changed"):
-            validate_bundle(value)
-        assert (
-            loop.publisher.ready and group.starts == [] and loop.policy_generation == 0
-        )
-    finally:
-        loop.close()
-
-
-def test_runtime_revision_cycle_freezes_new_model_then_applies_both_components(
-    runner, tmp_path
-):
-    from areal.autopilot.elastic.runtime.policy import PolicyRequest
-    from areal.autopilot.revision.online import LifecycleRevisionCycle, runtime_problems
-
-    loop, group, queue, now, profile = phase_runtime(tmp_path / "execution")
-    requests = []
-
-    class Agent:
-        def propose(self, request):
-            requests.append(request)
-            return Proposal(
-                AFFINE_SOURCE if request.target == "simulator" else CACHE_SOURCE
-            )
-
-    try:
-        for tokens in (100, 400, 200, 300):
-            measured_update(loop, queue, now, tokens)
-        window = loop.runtime_history.snapshot(4)
-        model, cases = runtime_problems(
-            profile, window, settings={"horizon": 1, "max_candidates": 8}, runner=runner
-        )
-        cycle = LifecycleRevisionCycle(model, cases, tmp_path / "cycle")
-        result = cycle.run(Agent(), Agent(), max_model_rounds=1, max_optimizer_rounds=1)
-        assert result["model"]["accepted"] and result["optimizer"]["accepted"]
-        bundle = Path(result["bundle"])
-        value = json.loads(bundle.read_text())
-        assert value["components"]["simulator"]["source"] == AFFINE_SOURCE
-        assert value["components"]["optimizer"]["source"] == CACHE_SOURCE
-        assert (
-            value["evaluation"]["context"]["deployment_context"]["simulator_source"]
-            == AFFINE_SOURCE
-        )
-        assert all(
-            "observed" not in str(request.calibration.get("validation", {}))
-            for request in requests
-        )
-        prepared = loop.prepare_policy(bundle)
-        loop.apply_policy(PolicyRequest("cycle", prepared.bundle_id, 0, 4), prepared)
-        measured_update(loop, queue, now, 250)
-        assert group.updates == group.step == 5 and loop.policy_generation == 1
-        count = len(requests)
-        assert (
-            cycle.run(Agent(), Agent(), max_model_rounds=1, max_optimizer_rounds=1)
-            == result
-        )
-        assert len(requests) == count
-    finally:
-        loop.close()
-
-
-def test_runtime_revision_background_budget_and_restart_do_not_repeat_agent_calls(
-    runner, tmp_path
-):
-    import time
-
-    from areal.autopilot.revision.online import RuntimeRevisionLoop
-
-    loop, group, queue, now, profile = phase_runtime(tmp_path / "execution")
-    calls = []
-
-    class Agent:
-        def propose(self, request):
-            calls.append(request.target)
-            return Proposal(
-                AFFINE_SOURCE if request.target == "simulator" else CACHE_SOURCE
-            )
-
-    arguments = dict(
-        profile=profile,
-        settings={"horizon": 1, "max_candidates": 8},
-        model_agent=Agent(),
-        optimizer_agent=Agent(),
-        max_windows=1,
-        max_model_rounds=1,
-        max_optimizer_rounds=1,
-        runner=runner,
-    )
-    revision = RuntimeRevisionLoop(tmp_path / "online", **arguments)
-    try:
-        for tokens in (100, 400, 200, 300):
-            measured_update(loop, queue, now, tokens)
-        revision.tick(loop)
-        deadline = time.monotonic() + 30
-        while not list((tmp_path / "online").glob("window-*/outcome.json")):
-            assert time.monotonic() < deadline
-            revision.tick(loop)
-            time.sleep(0.02)
-        assert loop.policy_generation == 1 and calls == ["simulator", "optimizer"]
-        measured_update(loop, queue, now, 250)
-        revision.tick(loop)
-        assert loop.policy_generation == 1 and len(calls) == 2
-    finally:
-        revision.close()
-    recovered = RuntimeRevisionLoop(tmp_path / "online", **arguments)
-    try:
-        recovered.tick(loop)
-        assert len(calls) == 2 and recovered.future is None
-    finally:
-        recovered.close()
-        loop.close()
+    return Path(result["bundle"]), model
 
 
 def phase_evaluator(runner):
@@ -438,7 +123,7 @@ def test_phase_gate_rejects_unscored_cost_and_stateful_estimates(
     runner, tmp_path, kind
 ):
     source = """from dataclasses import replace
-from areal.autopilot.elastic.policy.basic.simulator import Estimate, WorkflowSimulator
+from areal.elastic.policy.basic.simulator import Estimate, WorkflowSimulator
 class Train:
     def __init__(self): self.calls = 0
     def estimate(self, context):
@@ -461,7 +146,7 @@ def build_simulator(workflow):
 def test_phase_handoff_keeps_accounting_fixed_and_reference_queries_frozen(
     runner, tmp_path
 ):
-    from areal.autopilot.revision.phase import build_phase_simulator
+    from areal.autopilot.domains.elastic.phase import build_phase_simulator
 
     model = phase_evaluator(runner)
     source = AFFINE_SOURCE.replace(
@@ -521,7 +206,7 @@ def test_phase_handoff_rejects_parent_worker_environment_drift(
 
 
 def test_model_bundle_cannot_skip_optimizer_revalidation(runner, tmp_path):
-    from areal.autopilot.elastic.runtime.policy import (
+    from areal.autopilot.domains.elastic.policy import (
         export_accepted_policy,
         validate_bundle,
     )
@@ -534,189 +219,6 @@ def test_model_bundle_cannot_skip_optimizer_revalidation(runner, tmp_path):
     value["bundle_id"] = digest({k: v for k, v in value.items() if k != "bundle_id"})
     with pytest.raises(ValueError, match="missing optimizer revalidation"):
         validate_bundle(value)
-
-
-def test_policy_recovery_logging_failure_cannot_reopen_other_recovery_entry(
-    runner, tmp_path, monkeypatch
-):
-    from types import SimpleNamespace
-
-    from areal.autopilot.elastic.runtime.policy import PolicyRequest
-
-    bundle, _ = accepted_bundle(tmp_path / "revision", runner)
-    loop, _, _, _, _ = phase_runtime(tmp_path / "execution")
-    original = loop._record
-
-    def fail_record(event, **kwargs):
-        if event in {"POLICY_APPLIED", "POLICY_RECOVERED"}:
-            raise OSError("journal failure")
-        return original(event, **kwargs)
-
-    try:
-        prepared = loop.prepare_policy(bundle)
-        monkeypatch.setattr(loop, "_record", fail_record)
-        with pytest.raises(OSError, match="journal failure"):
-            loop.apply_policy(
-                PolicyRequest("activation", prepared.bundle_id, 0, 0), prepared
-            )
-        with pytest.raises(OSError, match="journal failure"):
-            loop.recover_policy()
-        assert loop.state == "FAILED" and not loop.publisher.ready
-        loop.config_application = SimpleNamespace()
-        with pytest.raises(RuntimeError, match="pending policy activation"):
-            loop.recover_config()
-        loop.config_application = None
-        with pytest.raises(RuntimeError, match="not running"):
-            loop.tick()
-        monkeypatch.setattr(loop, "_record", original)
-        loop.recover_policy()
-        assert loop.publisher.ready and loop.policy_generation == 1
-    finally:
-        loop.config_application = None
-        monkeypatch.setattr(loop, "_record", original)
-        loop.close()
-
-
-def test_second_window_can_keep_model_and_accept_optimizer_with_new_probes(
-    runner, tmp_path
-):
-    from areal.autopilot.elastic.runtime.policy import PolicyRequest
-    from areal.autopilot.revision.online import LifecycleRevisionCycle, runtime_problems
-
-    bundle, _ = accepted_bundle(tmp_path / "first", runner)
-    loop, group, queue, now, profile = phase_runtime(tmp_path / "execution")
-
-    class Agent:
-        def propose(self, request):
-            return Proposal(
-                AFFINE_SOURCE if request.target == "simulator" else CACHE_SOURCE
-            )
-
-    try:
-        for tokens in (100, 400, 200, 300):
-            measured_update(loop, queue, now, tokens)
-        prepared = loop.prepare_policy(bundle)
-        loop.apply_policy(PolicyRequest("first", prepared.bundle_id, 0, 4), prepared)
-        measured_update(loop, queue, now, 250)
-        model, cases = runtime_problems(
-            profile,
-            loop.runtime_history.snapshot(5),
-            settings={"horizon": 1, "max_candidates": 8},
-            runner=runner,
-        )
-        cycle = LifecycleRevisionCycle(
-            model,
-            cases,
-            tmp_path / "second",
-            initial_model_source=AFFINE_SOURCE,
-            parent_bundle=bundle,
-        )
-        result = cycle.run(Agent(), Agent(), max_model_rounds=1, max_optimizer_rounds=1)
-        assert not result["model"]["accepted"] and result["optimizer"]["accepted"]
-        value = json.loads(Path(result["bundle"]).read_text())
-        assert value["model_verification"]["report"]["valid"]
-        assert value["model_evaluation"]["acceptance"]["accepted"]
-        prepared = loop.prepare_policy(Path(result["bundle"]))
-        loop.apply_policy(PolicyRequest("second", prepared.bundle_id, 1, 5), prepared)
-        measured_update(loop, queue, now, 260)
-        assert loop.policy_generation == 2 and group.step == 6
-    finally:
-        loop.close()
-
-
-def test_revision_shutdown_failure_still_cleans_training_and_inference(
-    tmp_path, monkeypatch
-):
-    import argparse
-    import asyncio
-    import types
-
-    from examples.autopilot.elastic.automatic_swe import run
-    from tests.test_elastic_loop import ProtocolGroup
-
-    import areal.autopilot.revision.online as online
-
-    profile, _ = demo_inputs("simulator")
-    profile_path = tmp_path / "profiles.json"
-    profile_path.write_text(json.dumps(profile))
-    actions = []
-
-    class Group(ProtocolGroup):
-        pool_uuids = ["cpu-protocol"]
-
-        def configure(self, config):
-            self.training_config = config
-
-        def close(self):
-            actions.append("training_closed")
-            self.stop()
-
-    group = Group(tmp_path / "checkpoints")
-    group.compatibility = profile["compatibility"]
-    group.events = []
-
-    class Service:
-        gpu_uuid = "cpu-inference"
-
-        def __init__(self, **kwargs):
-            pass
-
-        def start(self):
-            raise RuntimeError("injected service startup failure")
-
-        def close(self):
-            actions.append("inference_closed")
-            return {"closed": True}
-
-    class Revision:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def close(self, loop):
-            actions.append("revision_closed")
-            raise OSError("injected revision shutdown failure")
-
-    replacements = {
-        "examples.autopilot.elastic.fixtures.groups": {
-            "create_ppo_group": lambda **kwargs: group
-        },
-        "examples.autopilot.elastic.fixtures.inference_service": {
-            "InferenceService": Service
-        },
-        "examples.autopilot.elastic.validation.probes": {"probe_inference": None},
-    }
-    for name, attributes in replacements.items():
-        module = types.ModuleType(name)
-        module.__dict__.update(attributes)
-        monkeypatch.setitem(sys.modules, name, module)
-    monkeypatch.setattr(online, "RuntimeRevisionLoop", Revision)
-    args = argparse.Namespace(
-        output=tmp_path / "output",
-        state_root=tmp_path / "state",
-        model=tmp_path / "model",
-        model_revision="cpu-fixture",
-        model_name="fixture",
-        devices=[0],
-        inference_device=1,
-        policy="basic",
-        profiles=profile_path,
-        initial_train_gpus=1,
-        horizon=1,
-        cost_scope="total",
-        idle_seconds=30,
-        rounds=1,
-        revision_command=["unused-agent"],
-        revision_every_updates=4,
-        max_revision_windows=1,
-        model_revision_rounds=1,
-        optimizer_revision_rounds=1,
-    )
-    with pytest.raises(OSError, match="revision shutdown failure"):
-        asyncio.run(run(args))
-    assert actions == ["revision_closed", "training_closed", "inference_closed"]
-    report = json.loads((args.output / "report.json").read_text())
-    assert report["status"] == "failed" and report["inference_cleanup"]["closed"]
-    assert "service startup failure" in report["error"]
 
 
 @pytest.mark.parametrize(
@@ -775,8 +277,8 @@ def test_loop_rejects_bad_candidate_retries_feedback_and_loads_accepted(
 
 def test_optimizer_cannot_forge_score_or_reference_query_count(runner, tmp_path):
     source = """from dataclasses import replace
-from areal.autopilot.elastic.policy.basic.optimizer import BasicOptimizer
-from areal.autopilot.elastic.policy.basic.simulator import SimulationResult
+from areal.elastic.policy.basic.optimizer import BasicOptimizer
+from areal.elastic.policy.basic.simulator import SimulationResult
 class Forged:
     def __init__(self, settings): self.base=BasicOptimizer(**settings)
     def optimize(self, obs, simulator, history):
@@ -809,13 +311,13 @@ def test_fixed_forecast_horizon_prevents_shorter_data_cheat(runner, tmp_path):
 
 
 def test_optimizer_budget_is_enforced_outside_candidate(runner, tmp_path):
-    source = """from areal.autopilot.elastic.policy.basic.optimizer import BasicOptimizer
+    source = """from areal.elastic.policy.basic.optimizer import BasicOptimizer
 class Excessive:
     def __init__(self, settings): self.settings=settings
     def optimize(self, obs, simulator, history):
         first=BasicOptimizer(**self.settings).optimize(obs, simulator, history)
         if first.plan:
-            try: simulator.evaluate(obs, __import__('areal.autopilot.elastic.policy.basic.simulator',fromlist=['forecast_window']).forecast_window(obs,history,1), first.plan, history)
+            try: simulator.evaluate(obs, __import__('areal.elastic.policy.basic.simulator',fromlist=['forecast_window']).forecast_window(obs,history,1), first.plan, history)
             except ValueError: pass
         return first
 def build_optimizer(settings): return Excessive(settings)
@@ -824,6 +326,31 @@ def build_optimizer(settings): return Excessive(settings)
         "optimizer", runner, settings={"horizon": 1, "max_candidates": 6}
     ).evaluate(source, tmp_path / "candidate")
     assert not report.valid and "search budget exceeded" in str(report.errors).lower()
+
+
+def test_optimizer_fixed_four_gpu_space_fits_two_plan_budget(runner, tmp_path):
+    from areal.elastic.contracts import TrainingConfig
+
+    profile, cases = demo_inputs("optimizer")
+    for row in profile["measurements"]:
+        row["world_size"] = 4
+    for case in cases:
+        case["observation"]["max_train_gpus"] = 4
+        case["observation"]["training_config"] = asdict(TrainingConfig(4))
+    evaluation = RevisionEvaluator(
+        "optimizer",
+        profile,
+        cases,
+        runner=runner,
+        settings={
+            "horizon": 1,
+            "max_candidates": 2,
+            "candidate_configs": (TrainingConfig(4),),
+        },
+    )
+    report = evaluation.evaluate(BASELINE_SOURCE["optimizer"], tmp_path / "baseline")
+    assert report.valid, report.errors
+    assert report.metrics["mean_reference_queries"] <= 2
 
 
 def test_worker_timeout_does_not_activate_candidate(runner, tmp_path):
@@ -880,7 +407,9 @@ def test_calibration_and_context_are_independent_copies(runner):
 
 
 def test_command_agent_roundtrip_uses_structured_json(tmp_path):
-    from areal.autopilot.revision.contracts import ProposalRequest
+    from areal.autopilot.domains.elastic.contracts import (
+        elastic_proposal_request as ProposalRequest,
+    )
 
     command = (
         sys.executable,
@@ -914,7 +443,7 @@ def test_measured_policy_can_construct_with_accepted_component(runner, tmp_path)
 
 
 def test_simulator_must_predict_known_feasibility(runner, tmp_path):
-    source = """from areal.autopilot.elastic.policy.basic.simulator import SimulationResult
+    source = """from areal.elastic.policy.basic.simulator import SimulationResult
 class AlwaysOff:
     def evaluate(self,*args): return SimulationResult(False)
 def build_simulator(workflow): return AlwaysOff()
@@ -1033,7 +562,7 @@ def test_loop_can_repair_an_inaccurate_incumbent_feasibility_prediction(
 def test_invalid_overflow_predictions_produce_json_safe_feedback(runner, tmp_path):
     from dataclasses import asdict
 
-    source = """from areal.autopilot.elastic.policy.basic.simulator import SimulationResult
+    source = """from areal.elastic.policy.basic.simulator import SimulationResult
 class Huge:
     def evaluate(self,obs,forecast,plan,history):
         return SimulationResult(True,1e308,1e308,1e308,1e308,
@@ -1376,7 +905,7 @@ def test_history_feedback_suppresses_small_slices_and_absolute_statistics():
     assert small.feedback()["score"] is None
 
 
-MODEL_SOURCE = """from areal.autopilot.revision.model_evaluator import HistoricalPrediction
+MODEL_SOURCE = """from areal.autopilot.domains.elastic.model_evaluator import HistoricalPrediction
 class Model:
     def __init__(self, scale): self.scale = scale
     def predict(self, inputs):
@@ -1636,19 +1165,21 @@ def test_historical_loop_freezes_settings_provenance_and_initial_factory(
 
 def test_historical_input_json_roundtrip_preserves_rollout_joint_and_initial_state():
     """Nested actor stats, logical packing views and version counters survive IPC."""
-    from areal.autopilot.contracts import BatchWorkload, TrainingConfig
-    from areal.autopilot.elastic.policy.basic.cost_model.rollout import (
+    from areal.autopilot.domains.elastic.model_evaluator import JOINT_BOUNDARY
+    from areal.autopilot.domains.elastic.model_execution import (
+        historical_input_from_dict,
+    )
+    from areal.elastic.contracts import BatchWorkload, TrainingConfig
+    from areal.elastic.policy.basic.cost_model.rollout import (
         RolloutConfig,
         RolloutStage,
         RolloutWorkload,
     )
-    from areal.autopilot.elastic.policy.basic.joint import (
+    from areal.elastic.policy.basic.joint import (
         JointBatch,
         JointConfig,
         JointScenario,
     )
-    from areal.autopilot.revision.model_evaluator import JOINT_BOUNDARY
-    from areal.autopilot.revision.model_execution import historical_input_from_dict
 
     rollout = RolloutConfig(
         "model", "hardware", "runtime", "sampling", 1, 1, 8, 128, 1024, 2
@@ -1692,14 +1223,14 @@ def test_historical_input_json_roundtrip_preserves_rollout_joint_and_initial_sta
 
 def test_historical_worker_receives_no_unsupported_joint_trace(runner, tmp_path):
     """Boundary applicability is resolved before any candidate code sees a trace."""
-    from areal.autopilot.contracts import BatchWorkload, TrainingConfig
-    from areal.autopilot.elastic.policy.basic.cost_model.rollout import RolloutConfig
-    from areal.autopilot.elastic.policy.basic.joint import (
+    from areal.autopilot.domains.elastic.model_evaluator import JOINT_BOUNDARY
+    from areal.elastic.contracts import BatchWorkload, TrainingConfig
+    from areal.elastic.policy.basic.cost_model.rollout import RolloutConfig
+    from areal.elastic.policy.basic.joint import (
         JointBatch,
         JointConfig,
         JointScenario,
     )
-    from areal.autopilot.revision.model_evaluator import JOINT_BOUNDARY
 
     config = JointConfig(
         TrainingConfig(1), RolloutConfig("m", "h", "r", "s", 1, 1, 8, 128, 1024, 1)
@@ -1747,6 +1278,7 @@ def test_historical_source_rejects_reference_queries_even_if_worker_catches_erro
 
     class QueryingRunner:
         command = ()
+        worker_command = ()
         timeout_seconds = 1
         max_output_bytes = 1024
 
@@ -1785,7 +1317,7 @@ def test_historical_source_protected_context_changes_invalidate_execution(
     assert not (tmp_path / "request.json").exists()
 
 
-JOINT_HEURISTIC_SOURCE = """from areal.autopilot.elastic.policy.basic.joint import JointSearchResult
+JOINT_HEURISTIC_SOURCE = """from areal.elastic.policy.basic.joint import JointSearchResult
 class Optimizer:
     def __init__(self, settings): self.candidates = settings["candidates"]
     def optimize(self, scenario, simulator):
@@ -1972,6 +1504,7 @@ def test_joint_optimizer_runtime_is_parent_measured_and_requires_repeatable_choi
     # Independent runs always evaluate the same fixed selections/query counts.
     class ChangingRunner:
         command = ()
+        worker_command = ()
         timeout_seconds = 60
         max_output_bytes = 4096
 
@@ -2081,7 +1614,7 @@ def test_joint_optimizer_resume_rejects_changed_accepted_selections(
 
 
 def joint_scenario_from_store(evaluation):
-    from areal.autopilot.revision.model_execution import joint_scenario_from_dict
+    from areal.autopilot.domains.elastic.model_execution import joint_scenario_from_dict
 
     return joint_scenario_from_dict(json.loads(evaluation._scenarios_json)[0])
 
@@ -2195,7 +1728,7 @@ def test_joint_optimizer_zero_reference_cost_does_not_create_free_regret(
 
 
 JOINT_EXPORT_SOURCE = """
-from areal.autopilot.elastic.policy.basic.joint import JointPrediction
+from areal.elastic.policy.basic.joint import JointPrediction
 class Joint:
     def __init__(self, scale): self.scale = scale
     def evaluate(self, scenario, config):
@@ -2336,7 +1869,7 @@ def test_policy_cycle_recovers_durable_acceptance_without_repeating_agents(
     runner, tmp_path, monkeypatch, boundary
 ):
     """Recover each publication boundary while retaining the original total proposal budget."""
-    import areal.autopilot.revision.cycle as cycle_module
+    import areal.autopilot.domains.elastic.cycle as cycle_module
     import areal.autopilot.revision.loop as loop_module
 
     module = loop_module if boundary in {"active-pointer", "outcome"} else cycle_module
@@ -2528,7 +2061,7 @@ def test_policy_cycle_initial_source_publication_is_atomic_and_never_rewrites(
     runner, tmp_path, monkeypatch
 ):
     """An interrupted source publication is retryable; completed inputs are read-only."""
-    import areal.autopilot.revision.cycle as module
+    import areal.autopilot.domains.elastic.cycle as module
 
     original = module.os.replace
 
@@ -2630,7 +2163,7 @@ def serial_revision_inputs(*, updates=6, compatibility=None):
 
 
 SERIAL_TIMING_SOURCE = """from dataclasses import replace
-from areal.autopilot.elastic.policy.basic.online import serial_model_from_profile, SerialTimingEstimate
+from areal.elastic.policy.basic.online import serial_model_from_profile, SerialTimingEstimate
 class Model:
     def __init__(self, profile): self.base = serial_model_from_profile(profile)
     def predict_timing(self, context):
@@ -2639,7 +2172,7 @@ class Model:
 def build_serial_model(profile): return Model(profile)
 """
 
-SERIAL_SEARCH_SOURCE = """from areal.autopilot.elastic.policy.basic.joint import JointSearchResult
+SERIAL_SEARCH_SOURCE = """from areal.elastic.policy.basic.joint import JointSearchResult
 class Search:
     def __init__(self, settings): self.config = settings['candidates'][-1]
     def optimize(self, scenario, simulator):
@@ -2650,7 +2183,7 @@ def build_joint_optimizer(settings): return Search(settings)
 
 
 def accepted_serial_bundle(root, runner, *, updates=6, compatibility=None):
-    from areal.autopilot.revision.serial import (
+    from areal.autopilot.domains.elastic.serial import (
         SerialRevisionCycle,
         runtime_joint_problems,
     )
@@ -2679,7 +2212,7 @@ def accepted_serial_bundle(root, runner, *, updates=6, compatibility=None):
 def test_serial_model_labels_stay_private_and_episode_source_config_is_preserved(
     runner, tmp_path
 ):
-    from areal.autopilot.revision.serial import runtime_joint_problems
+    from areal.autopilot.domains.elastic.serial import runtime_joint_problems
 
     profile, settings, window = serial_revision_inputs()
     # Final update consumes under a different rollout; generation used the source.
@@ -2716,7 +2249,7 @@ def test_serial_model_labels_stay_private_and_episode_source_config_is_preserved
 def test_serial_timing_rejects_coverage_loss_state_and_worker_drift(
     runner, tmp_path, mode, monkeypatch
 ):
-    from areal.autopilot.revision.serial import runtime_joint_problems
+    from areal.autopilot.domains.elastic.serial import runtime_joint_problems
 
     if mode == "parent-drift":
         monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "parent-only-test-sentinel")
@@ -2730,7 +2263,7 @@ def test_serial_timing_rejects_coverage_loss_state_and_worker_drift(
         "parent-drift": "import os; return SerialTimingEstimate(1 if os.environ.get('CUDA_VISIBLE_DEVICES') == '' else 2)",
     }[mode]
     source = (
-        "from areal.autopilot.elastic.policy.basic.online import SerialTimingEstimate\nclass Model:\n    n=0\n    def predict_timing(self, context):\n        "
+        "from areal.elastic.policy.basic.online import SerialTimingEstimate\nclass Model:\n    n=0\n    def predict_timing(self, context):\n        "
         + body
         + "\ndef build_serial_model(profile): return Model()\n"
     )
@@ -2746,11 +2279,11 @@ def test_serial_cycle_freezes_model_revalidates_search_and_deploys_executable_pr
 ):
     from tests.test_elastic_basic_policy import WORK
 
-    from areal.autopilot.elastic.policy.basic.online import SerialTimingInput
-    from areal.autopilot.elastic.runtime.serial_policy import (
+    from areal.autopilot.domains.elastic.serial_policy import (
         build_serial_policy,
         validate_serial_bundle,
     )
+    from areal.elastic.policy.basic.online import SerialTimingInput
 
     bundle, evaluation, scenarios, profile, settings, window = accepted_serial_bundle(
         tmp_path / "cycle", runner
@@ -2788,11 +2321,11 @@ def test_serial_cycle_freezes_model_revalidates_search_and_deploys_executable_pr
 def test_serial_model_only_revision_revalidates_unchanged_optimizer_and_resumes(
     runner, tmp_path
 ):
-    from areal.autopilot.elastic.runtime.serial_policy import build_serial_policy
-    from areal.autopilot.revision.serial import (
+    from areal.autopilot.domains.elastic.serial import (
         SerialRevisionCycle,
         runtime_joint_problems,
     )
+    from areal.autopilot.domains.elastic.serial_policy import build_serial_policy
 
     profile, settings, window = serial_revision_inputs()
     model, scenarios = runtime_joint_problems(
@@ -2822,123 +2355,12 @@ def test_serial_model_only_revision_revalidates_unchanged_optimizer_and_resumes(
     build_serial_policy(value)
 
 
-@pytest.fixture
-def serial_execution(tmp_path):
-    from tests.test_elastic_recovery import joint_execution
-
-    yield from joint_execution.__wrapped__(tmp_path)
-
-
-@pytest.mark.parametrize("pointer_fault", [False, True])
-@pytest.mark.usefixtures("serial_optimizer_clock")
-def test_joint_policy_activation_hydrates_history_preserves_config_and_recovers(
-    runner, tmp_path, serial_execution, monkeypatch, pointer_fault
-):
-    from tests.test_elastic_recovery import online_episode
-
-    import areal.autopilot.elastic.runtime.policy as storage
-    from areal.autopilot.elastic.policy.basic.online import (
-        OnlineJointPolicy,
-        serial_model_from_profile,
-    )
-    from areal.autopilot.elastic.runtime.history import RuntimeHistory
-    from areal.autopilot.elastic.runtime.policy import PolicyApplication, PolicyRequest
-    from areal.autopilot.elastic.runtime.serial_policy import serial_policy_identity
-    from areal.autopilot.revision.serial import joint_settings
-
-    loop, executor, configs, _, _ = serial_execution
-    bundle, _, _, profile, settings, _ = accepted_serial_bundle(
-        tmp_path / "revision", runner, compatibility=loop.trainer.group.compatibility
-    )
-    loop._policy = OnlineJointPolicy(
-        serial_model_from_profile(profile), joint_settings(settings)
-    )
-    loop.history = loop._policy.history
-    loop.runtime_history = RuntimeHistory(
-        tmp_path / "observations.json",
-        context={
-            "queue_id": loop.trainer.queue.queue_id,
-            "checkpoint_root": str(loop.trainer.group.store.root.resolve()),
-            "compatibility": loop.trainer.group.compatibility,
-        },
-    )
-    loop.policy_application = PolicyApplication(
-        tmp_path / "policy-application",
-        compatibility=profile["compatibility"],
-        execution_context={
-            "queue_id": loop.trainer.queue.queue_id,
-            "checkpoint_root": str(loop.trainer.group.store.root.resolve()),
-            "scope": "serial-joint-timing-v1",
-            "joint_executor": executor.context_id,
-            "max_total_gpus": 4,
-            "joint_policy_identity": serial_policy_identity(
-                profile, settings, horizon=2, idle_seconds=30
-            ),
-        },
-    )
-    for _ in range(2):
-        online_episode(loop, executor)
-        loop.tick()
-    old_history = loop.history
-    snapshot = old_history.snapshot()
-    phases, episodes = loop._policy.phases[:], loop._policy.episodes[:]
-    cursors = loop._policy.through_version, loop._policy._boundary_sequence
-    before = loop.trainer.version, configs.state()["generation"], executor.observe()
-    prepared = loop.prepare_policy(bundle)
-    request = PolicyRequest(
-        "joint-activate", prepared.bundle_id, 0, loop.trainer.version
-    )
-    if pointer_fault:
-        write = storage.atomic_json
-
-        def interrupt(path, value):
-            write(path, value)
-            if path.name == "active.json":
-                raise OSError("Lost joint policy pointer acknowledgement")
-
-        monkeypatch.setattr(storage, "atomic_json", interrupt)
-        with pytest.raises(OSError, match="acknowledgement"):
-            loop.apply_policy(request, prepared)
-        assert loop.state == "FAILED" and not loop.publisher.ready
-        monkeypatch.setattr(storage, "atomic_json", write)
-        loop.recover_policy()
-    else:
-        with loop.episode():
-            from areal.autopilot.elastic.runtime.policy import PolicyBoundaryBusy
-
-            with pytest.raises(PolicyBoundaryBusy):
-                loop.apply_policy(request, prepared)
-        assert loop.policy_generation == 0
-        loop.apply_policy(request, prepared)
-    assert loop.policy_generation == 1 and loop.history is old_history
-    assert loop.history.snapshot() == snapshot
-    assert loop._policy.history is old_history
-    assert (loop._policy.phases, loop._policy.episodes) == (phases, episodes)
-    assert (loop._policy.through_version, loop._policy._boundary_sequence) == cursors
-    assert (
-        loop.trainer.version,
-        configs.state()["generation"],
-        executor.observe(),
-    ) == before
-    online_episode(loop, executor)
-    loop.tick()
-    assert loop.trainer.version == before[0] + 1
-    assert (
-        loop.runtime_history.snapshot(loop.trainer.version)["updates"][-1][
-            "policy_generation"
-        ]
-        == 1
-    )
-    assert loop._policy.last_window.observation.model_version == before[0]
-    assert loop._policy.through_version == loop.trainer.version
-
-
 def test_joint_runtime_optimizer_rejects_swallowed_query_violations(runner, tmp_path):
-    from areal.autopilot.elastic.runtime.serial_policy import VerifiedJointOptimizer
-    from areal.autopilot.revision.serial import (
+    from areal.autopilot.domains.elastic.serial import (
         build_serial_model,
         runtime_joint_problems,
     )
+    from areal.autopilot.domains.elastic.serial_policy import VerifiedJointOptimizer
 
     profile, settings, window = serial_revision_inputs()
     model, scenarios = runtime_joint_problems(
@@ -2959,11 +2381,11 @@ def test_joint_runtime_optimizer_rejects_swallowed_query_violations(runner, tmp_
 def test_joint_next_window_retains_model_acceptance_and_revalidates_under_new_window(
     runner, tmp_path
 ):
-    from areal.autopilot.elastic.runtime.serial_policy import build_serial_policy
-    from areal.autopilot.revision.serial import (
+    from areal.autopilot.domains.elastic.serial import (
         SerialRevisionCycle,
         runtime_joint_problems,
     )
+    from areal.autopilot.domains.elastic.serial_policy import build_serial_policy
 
     parent, _, _, profile, settings, _ = accepted_serial_bundle(
         tmp_path / "first", runner
@@ -3007,12 +2429,12 @@ def test_joint_next_window_retains_model_acceptance_and_revalidates_under_new_wi
 def test_serial_interrupted_baseline_resume_rejects_changed_prediction_fingerprint(
     runner, tmp_path, monkeypatch
 ):
-    from areal.autopilot.revision.serial import runtime_joint_problems
+    from areal.autopilot.domains.elastic.serial import runtime_joint_problems
 
     profile, settings, window = serial_revision_inputs()
     model, _ = runtime_joint_problems(profile, window, settings=settings, runner=runner)
     source = """import os
-from areal.autopilot.elastic.policy.basic.online import serial_model_from_profile, SerialTimingEstimate
+from areal.elastic.policy.basic.online import serial_model_from_profile, SerialTimingEstimate
 class Model:
     def __init__(self,p): self.base=serial_model_from_profile(p)
     def predict_timing(self,c):
@@ -3038,11 +2460,11 @@ def build_serial_model(profile): return Model(profile)
 def test_joint_runtime_optimizer_cannot_block_ready_work_with_empty_selection(
     runner, tmp_path
 ):
-    from areal.autopilot.elastic.runtime.serial_policy import VerifiedJointOptimizer
-    from areal.autopilot.revision.serial import (
+    from areal.autopilot.domains.elastic.serial import (
         build_serial_model,
         runtime_joint_problems,
     )
+    from areal.autopilot.domains.elastic.serial_policy import VerifiedJointOptimizer
 
     profile, settings, window = serial_revision_inputs()
     model, scenarios = runtime_joint_problems(
@@ -3057,107 +2479,100 @@ def test_joint_runtime_optimizer_cannot_block_ready_work_with_empty_selection(
         )
 
 
-@pytest.mark.usefixtures("serial_optimizer_clock")
-def test_joint_background_revision_activates_and_then_automatically_switches_config(
-    runner, tmp_path, serial_execution
-):
-    import time
+def test_revision_core_runs_an_unrelated_domain_without_elastic_imports(tmp_path):
+    """A domain port can accept and resume revisions with Elastic unavailable."""
+    import subprocess
+    import textwrap
 
-    from tests.test_elastic_recovery import online_episode
+    source = textwrap.dedent("""
+        import sys, types, importlib.abc
+        from dataclasses import dataclass
+        from pathlib import Path
+        root, store = map(Path, sys.argv[1:])
+        package = types.ModuleType("areal")
+        package.__path__ = [str(root / "areal")]
+        sys.modules["areal"] = package
+        class BlockDomain(importlib.abc.MetaPathFinder):
+            def find_spec(self, fullname, *args):
+                if fullname.startswith(("areal.elastic", "areal.autopilot.domains")):
+                    raise AssertionError("Unexpected domain dependency: " + fullname)
+        sys.meta_path.insert(0, BlockDomain())
+        from areal.autopilot.revision import RevisionLoop, Proposal, LLMRevisionAgent
+        from areal.autopilot.revision.contracts import EvaluationReport, source_digest
+        @dataclass(frozen=True)
+        class Criteria:
+            def compare(self, candidate, incumbent):
+                return candidate.score < incumbent.score, "measured error"
+        class Evaluator:
+            target = "text-normalizer"
+            benchmark_sha256 = "fixed-text-corpus"
+            initial_source = "error = 2"
+            owns_acceptance = False
+            criteria = Criteria()
+            context = settings = calibration = {}
+            proposal_context = {"api": "normalize(text) -> str", "reference_sources": {}}
+            def evaluate(self, source, directory):
+                directory.mkdir(parents=True, exist_ok=True)
+                (directory / "candidate.py").write_text(source)
+                return EvaluationReport(self.target, source_digest(source), self.benchmark_sha256,
+                                        True, int(source[-1]), {})
+        class Agent:
+            calls = 0
+            def propose(self, request):
+                self.calls += 1
+                assert request.to_dict()["api"] == "normalize(text) -> str"
+                assert "reference_sources" in LLMRevisionAgent("test").messages(request)[1]["content"]
+                return Proposal("error = 1")
+        agent, evaluator = Agent(), Evaluator()
+        result = RevisionLoop(agent, evaluator, store).run(max_rounds=1)
+        assert result["accepted"] == 1 and agent.calls == 1
+        result = RevisionLoop(agent, evaluator, store).run(max_rounds=1)
+        assert result["accepted"] == 0 and result["final_score"] == 1
+        assert not any(n.startswith(("areal.elastic", "areal.autopilot.domains")) for n in sys.modules)
+    """)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            source,
+            str(Path(__file__).resolve().parents[1]),
+            str(tmp_path / "revision"),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
 
-    from areal.autopilot.elastic.policy.basic.online import (
-        OnlineJointPolicy,
-        serial_model_from_profile,
-    )
-    from areal.autopilot.elastic.runtime.history import RuntimeHistory
-    from areal.autopilot.elastic.runtime.policy import PolicyApplication
-    from areal.autopilot.elastic.runtime.serial_policy import serial_policy_identity
-    from areal.autopilot.revision.online import RuntimeRevisionLoop
-    from areal.autopilot.revision.serial import joint_settings
 
-    loop, executor, configs, _, _ = serial_execution
-    profile, settings, _ = serial_revision_inputs(
-        compatibility=loop.trainer.group.compatibility
-    )
-    for phase in profile["phases"]:
-        if phase["phase"] == "publish":
-            phase["seconds"] = 1_000_000
-    loop._policy = OnlineJointPolicy(
-        serial_model_from_profile(profile), joint_settings(settings)
-    )
-    loop.history = loop._policy.history
-    loop.runtime_history = RuntimeHistory(
-        tmp_path / "history.json",
-        context={
-            "queue_id": loop.trainer.queue.queue_id,
-            "checkpoint_root": str(loop.trainer.group.store.root.resolve()),
-            "compatibility": profile["compatibility"],
-        },
-    )
-    loop.policy_application = PolicyApplication(
-        tmp_path / "policies",
-        compatibility=profile["compatibility"],
-        execution_context={
-            "queue_id": loop.trainer.queue.queue_id,
-            "checkpoint_root": str(loop.trainer.group.store.root.resolve()),
-            "scope": "serial-joint-timing-v1",
-            "joint_executor": executor.context_id,
-            "max_total_gpus": 4,
-            "joint_policy_identity": serial_policy_identity(
-                profile, settings, horizon=2, idle_seconds=30
-            ),
-        },
-    )
-    source = """from areal.autopilot.elastic.policy.basic.online import serial_model_from_profile, SerialTimingEstimate
-class Model:
-    def __init__(self,p): self.base=serial_model_from_profile(p)
-    def predict_timing(self,c): return SerialTimingEstimate(0) if c.phase=='publish' else self.base.predict_timing(c)
-def build_serial_model(profile): return Model(profile)
-"""
-    calls = []
+def test_elastic_planning_and_native_controls_import_without_autopilot():
+    """The AReaL capability remains usable without the AutoPilot extension."""
+    import subprocess
+    import textwrap
 
-    class Agent:
-        def propose(self, request):
-            calls.append(request.target)
-            return Proposal(
-                source if request.target == "serial_model" else SERIAL_SEARCH_SOURCE
-            )
-
-    arguments = dict(
-        profile=profile,
-        settings=settings,
-        scope="serial-joint-timing-v1",
-        model_agent=Agent(),
-        optimizer_agent=Agent(),
-        max_windows=1,
-        max_model_rounds=1,
-        max_optimizer_rounds=1,
-        runner=runner,
+    source = textwrap.dedent("""
+        import sys, types, importlib.abc
+        from pathlib import Path
+        p = types.ModuleType("areal")
+        p.__path__ = [str(Path(sys.argv[1]) / "areal")]
+        sys.modules["areal"] = p
+        class BlockAutoPilot(importlib.abc.MetaPathFinder):
+            def find_spec(self, fullname, *args):
+                if fullname.startswith("areal.autopilot"):
+                    raise AssertionError(fullname)
+        sys.meta_path.insert(0, BlockAutoPilot())
+        from areal.elastic.policy import basic as planning, reference
+        from areal.elastic.control import application, config, native
+        from areal.elastic.state import batch_queue, checkpoint, online
+        from areal.elastic.telemetry import history
+        from areal.elastic.policy.basic.online import serial_model_from_profile
+        assert planning.BasicPolicy and reference.Catalog
+        assert not any(n.startswith("areal.autopilot") for n in sys.modules)
+    """)
+    result = subprocess.run(
+        [sys.executable, "-c", source, str(Path(__file__).resolve().parents[1])],
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
-    revision = RuntimeRevisionLoop(tmp_path / "online", **arguments)
-    try:
-        for _ in range(4):
-            online_episode(loop, executor)
-            loop.tick()
-        assert configs.state()["generation"] == 0
-        revision.tick(loop)
-        deadline = time.monotonic() + 30
-        while loop.policy_generation == 0:
-            assert time.monotonic() < deadline
-            revision.tick(loop)
-            time.sleep(0.02)
-        assert calls == ["serial_model", "joint_optimizer"]
-        assert configs.state()["generation"] == 0
-        assert loop._policy.through_version == 5 and len(loop._policy.episodes) == 4
-        online_episode(loop, executor)
-        loop.tick()
-        assert configs.state()["generation"] == 1
-        assert executor.observe().config == loop._policy.optimizer.candidates[-1]
-    finally:
-        revision.close()
-    recovered = RuntimeRevisionLoop(tmp_path / "online", **arguments)
-    try:
-        recovered.tick(loop)
-        assert recovered.future is None and len(calls) == 2
-    finally:
-        recovered.close()
+    assert result.returncode == 0, result.stderr

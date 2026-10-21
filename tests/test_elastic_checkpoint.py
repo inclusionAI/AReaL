@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from areal.autopilot.elastic.runtime.state.checkpoint import (
+from areal.elastic.state.checkpoint import (
     CheckpointStore,
     atomic_json,
 )
@@ -223,7 +223,7 @@ def test_checkpoint_low_space_keeps_existing_checkpoint(tmp_path, monkeypatch):
     store = CheckpointStore(tmp_path, free_space_floor=0)
     previous = commit(store, 1)
     monkeypatch.setattr(
-        "areal.autopilot.elastic.runtime.state.checkpoint.shutil.disk_usage",
+        "areal.elastic.state.checkpoint.shutil.disk_usage",
         lambda path: SimpleNamespace(free=0),
     )
 
@@ -254,9 +254,7 @@ def test_checkpoint_directory_published_without_pointer_can_be_replayed(
         return original(path, value)
 
     with monkeypatch.context() as patch:
-        patch.setattr(
-            "areal.autopilot.elastic.runtime.state.checkpoint.atomic_json", fail_pointer
-        )
+        patch.setattr("areal.elastic.state.checkpoint.atomic_json", fail_pointer)
         with pytest.raises(OSError, match="pointer failure"):
             commit(store, 2)
     assert store.latest({"backend": "d2"})[0] == previous
@@ -306,9 +304,7 @@ def test_checkpoint_retention_keeps_previous_commit_instead_of_newer_orphan(
         original(path, value)
 
     with monkeypatch.context() as patch:
-        patch.setattr(
-            "areal.autopilot.elastic.runtime.state.checkpoint.atomic_json", fail_pointer
-        )
+        patch.setattr("areal.elastic.state.checkpoint.atomic_json", fail_pointer)
         with pytest.raises(OSError):
             commit(store, 2)
     current = commit(store, 2)
@@ -411,14 +407,20 @@ def native_lifecycle(tmp_path, monkeypatch):
     ft_spec = FinetuneSpec(total_train_epochs=1, dataset_size=48, train_batch_size=4)
     coordinator = {"step": 0}
 
-    def create():
-        manager = on_demand.OnDemandActor(config, ft_spec, Actor)
-        manager.bind(
-            rollout,
-            WeightUpdateMeta.from_awex(),
-            capture_cpu=lambda: dict(coordinator),
-            restore_cpu=lambda state: coordinator.update(state),
+    def create(policy_runtime=None):
+        manager = on_demand.OnDemandActor(
+            config, ft_spec, Actor, policy_runtime=policy_runtime
         )
+        try:
+            manager.bind(
+                rollout,
+                WeightUpdateMeta.from_awex(),
+                capture_cpu=lambda: dict(coordinator),
+                restore_cpu=lambda state: coordinator.update(state),
+            )
+        except BaseException:
+            manager.close()
+            raise
         return manager
 
     manager = create()

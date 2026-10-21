@@ -13,18 +13,23 @@ from types import SimpleNamespace
 import pytest
 
 from tests.test_elastic_basic_policy import model, observation
-from tests.test_elastic_loop import ProtocolGroup, ProtocolPublisher
 
-from areal.autopilot.contracts import BatchWorkload, ResourceDecision, TrainingConfig
-from areal.autopilot.elastic.loop import ElasticLoop
-from areal.autopilot.elastic.policy import (
-    ActorCatalog,
-    LifecycleCosts,
-    LifecycleOptimizer,
-    actor_workload,
-    build_actor_policy,
+from areal.autopilot.domains.elastic.contracts import observation_from_dict
+from areal.autopilot.domains.elastic.model_adapters import (
+    JOINT_BOUNDARY,
+    ROLLOUT_BOUNDARY,
+    BasicHistoryPredictor,
 )
-from areal.autopilot.elastic.policy.basic import (
+from areal.autopilot.domains.elastic.model_evaluator import (
+    HistoricalCase,
+    HistoricalInput,
+    HistoricalModelEvaluator,
+    HistoricalPrediction,
+    HistorySpan,
+)
+from areal.elastic.contracts import BatchWorkload, TrainingConfig
+from areal.elastic.policy.basic import (
+    ActorCatalog,
     JointBatch,
     JointConfig,
     JointOptimizer,
@@ -32,6 +37,8 @@ from areal.autopilot.elastic.policy.basic import (
     JointScenario,
     JointSimulator,
     JointTransitionModel,
+    LifecycleCosts,
+    LifecycleOptimizer,
     RolloutConfig,
     RolloutCostModel,
     RolloutProfile,
@@ -39,13 +46,16 @@ from areal.autopilot.elastic.policy.basic import (
     RolloutWorkload,
     TransitionPhase,
     TransitionProfile,
+    actor_workload,
+    build_actor_policy,
 )
-from areal.autopilot.elastic.policy.basic.actor_cost import (
+from areal.elastic.policy.basic.actor_cost import (
     ActorPrediction,
     ActorTrainComponent,
     CompatibleRestore,
 )
-from areal.autopilot.elastic.policy.basic.cost_model import (
+from areal.elastic.policy.basic.cli import run_scenario
+from areal.elastic.policy.basic.cost_model import (
     ActorConfig,
     ActorCostModel,
     ParallelLayout,
@@ -54,7 +64,7 @@ from areal.autopilot.elastic.policy.basic.cost_model import (
     qwen3_30b_a3b,
     trial_config,
 )
-from areal.autopilot.elastic.policy.basic.simulator import (
+from areal.elastic.policy.basic.simulator import (
     ComponentContext,
     ConstantComponent,
     ForecastUpdate,
@@ -64,22 +74,6 @@ from areal.autopilot.elastic.policy.basic.simulator import (
     PlanStep,
     WorkflowSimulator,
     forecast_window,
-)
-from areal.autopilot.elastic.policy.cli import run_scenario
-from areal.autopilot.elastic.runtime.state.batch_queue import BatchQueue
-from areal.autopilot.elastic.runtime.training.trainer import QueuedTrainer
-from areal.autopilot.revision.contracts import observation_from_dict
-from areal.autopilot.revision.model_adapters import (
-    JOINT_BOUNDARY,
-    ROLLOUT_BOUNDARY,
-    BasicHistoryPredictor,
-)
-from areal.autopilot.revision.model_evaluator import (
-    HistoricalCase,
-    HistoricalInput,
-    HistoricalModelEvaluator,
-    HistoricalPrediction,
-    HistorySpan,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -355,7 +349,7 @@ def test_deadline_preserves_faster_prefix_even_when_it_costs_more():
 
     class Timings:
         def estimate(self, context):
-            from areal.autopilot.elastic.policy.basic.simulator import Estimate
+            from areal.elastic.policy.basic.simulator import Estimate
 
             duration = {"slow": 8, "fast": 3, "final": 5}[context.config.profile_id]
             # Last update can only use the terminal profile; first two may use all.
@@ -364,7 +358,7 @@ def test_deadline_preserves_faster_prefix_even_when_it_costs_more():
             return Estimate(duration)
 
     # Exercise the DP's Pareto pruning using three different known workloads.
-    import areal.autopilot.elastic.policy.basic.optimizer as optimizer_module
+    import areal.elastic.policy.basic.optimizer as optimizer_module
 
     forecast = tuple(
         ForecastUpdate(BatchWorkload(samples, 50, 100), 0) for samples in (1, 2, 3)
@@ -475,100 +469,6 @@ def test_bounded_search_retains_all_profiles_and_shortens_lookahead(catalog):
         )
 
 
-@pytest.mark.parametrize("active", [False, True])
-def test_runtime_rejects_named_profile_before_admission_cursor_or_worker_changes(
-    tmp_path, active
-):
-    """Unsupported hybrid proposals leave the running protocol state intact."""
-    queue = BatchQueue(tmp_path / "queue")
-    group = ProtocolGroup(tmp_path / "checkpoints")
-    group.training_config = TrainingConfig(1)
-    trainer = QueuedTrainer(group, queue)
-    publisher = ProtocolPublisher()
-    action = "reconfigure" if active else "launch"
-    config = TrainingConfig(1, "unsupported")
-    policy = SimpleNamespace(decide=lambda obs: ResourceDecision(action, config, True))
-    loop = ElasticLoop(trainer, publisher, policy=policy)
-    try:
-        loop.start()
-        if active:
-            trainer.activate()
-        with loop.episode() as version:
-            queue.enqueue(
-                "one", {"policy_version": version, "value": 1}, policy_version=version
-            )
-        actor, cursor = group.actor, dict(trainer.consumer.cursor)
-        assert publisher.ready
-        loop.tick()
-        assert publisher.ready and group.actor is actor
-        assert trainer.consumer.cursor == cursor
-        assert group.releases == group.updates == group.saves == 0
-        assert loop.events[-1]["event"] == "DECISION_REJECTED"
-        assert loop.events[-1]["profile_id"] == config.profile_id
-        trainer.last_reconfiguration_error = "prior"
-        with pytest.raises(ValueError, match="named actor profiles"):
-            trainer.configure(config)
-        assert group.actor is actor and trainer.last_reconfiguration_error == "prior"
-    finally:
-        loop.close()
-
-
-def test_actor_policy_runs_through_queue_update_checkpoint_and_publication(
-    tmp_path, catalog
-):
-    """CPU protocol executor accepts full profiles; this is not a GPU backend test."""
-
-    class ProfileGroup(ProtocolGroup):
-        def __init__(self, root):
-            super().__init__(root)
-            self.pool_devices = tuple(range(32))
-            self.training_config = catalog.labels["S026"]
-
-        def validate_config(self, config):
-            catalog.actor_config(config)
-
-        def configure(self, config):
-            self.validate_config(config)
-            assert self.actor is None
-            self.training_config = config
-
-        @staticmethod
-        def workload(payload):
-            return actor_workload(
-                WorkloadStats(**payload["stats"]), samples=payload["samples"]
-            )
-
-    queue = BatchQueue(tmp_path / "queue")
-    group = ProfileGroup(tmp_path / "checkpoints")
-    trainer = QueuedTrainer(group, queue)
-    publisher = ProtocolPublisher()
-    policy = build_actor_policy(catalog, lifecycle(), horizon=2)
-    loop = ElasticLoop(trainer, publisher, policy=policy)
-    try:
-        loop.start()
-        for index in range(2):
-            with loop.episode() as version:
-                queue.enqueue(
-                    str(index),
-                    {
-                        "policy_version": version,
-                        "value": index + 1,
-                        "samples": 32,
-                        "stats": asdict(STATS),
-                    },
-                    policy_version=version,
-                )
-            assert loop.tick() == "ACTIVE"
-        assert group.training_config == catalog.labels["S029"]
-        assert trainer.committed_samples == 64 and trainer.committed_tokens == 131072
-        assert trainer.version == publisher.version == 2
-        assert queue.status()["counts"]["committed"] == 2
-        assert group.updates == group.saves == 2
-        assert policy.last_search.prediction.samples == 64
-    finally:
-        loop.close()
-
-
 def test_standalone_lifecycle_cli_runs_without_training_dependencies(tmp_path):
     """The full model/simulator/optimizer chain works with only the stdlib."""
     output = tmp_path / "decision.json"
@@ -576,7 +476,7 @@ def test_standalone_lifecycle_cli_runs_without_training_dependencies(tmp_path):
         [
             sys.executable,
             "-S",
-            str(ROOT / "areal/autopilot/elastic/policy"),
+            str(ROOT / "areal/elastic/policy/basic"),
             str(EXAMPLE),
             "--output",
             str(output),
@@ -614,6 +514,9 @@ def test_frozen_lifecycle_validation_reproduces_all_scenarios():
             / "examples/autopilot/elastic/validation/lifecycle-policy-20261018.json"
         ).read_text()
     )
+    # Keep the dated numeric archive immutable; executor-limit prose evolves.
+    actual.pop("limitations")
+    expected.pop("limitations")
     assert actual == expected
     cases = actual["cases"]
     assert cases["switch_declared"]["decision"]["action"] == "reconfigure"

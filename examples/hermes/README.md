@@ -131,6 +131,11 @@ Proxy gateway available at http://X.X.X.X:PORT
 > [allocation mode reference](../../docs/en/reference/alloc_mode.md) for fields and GPU
 > layout.
 
+For opt-in on-demand Actor lifecycle and AutoPilot flags, see the
+[native elastic training contract](../autopilot/elastic/README.md#run-and-policy-integration).
+This requires an audited fixed GPU layout and persistent state root. GPU acceptance of
+the new lifecycle remains pending; the default resident flow is unchanged.
+
 ### Step 2 — Start the Hermes Agent Service
 
 Same command as the quick start. The agent's env upstream is optional here — once

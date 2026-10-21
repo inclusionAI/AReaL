@@ -8,8 +8,10 @@ import sys
 from dataclasses import asdict, replace
 from pathlib import Path
 
-from areal.autopilot.contracts import BatchWorkload, ElasticObservation, TrainingConfig
-from areal.autopilot.elastic.policy.basic.simulator import (
+from areal.autopilot.domains.elastic import RevisionEvaluator
+from areal.autopilot.revision import CommandRevisionAgent, RevisionLoop
+from areal.elastic.contracts import BatchWorkload, ElasticObservation, TrainingConfig
+from areal.elastic.policy.basic.simulator import (
     ConstantComponent,
     ForecastUpdate,
     HistorySnapshot,
@@ -18,14 +20,9 @@ from areal.autopilot.elastic.policy.basic.simulator import (
     WorkflowModel,
     WorkflowSimulator,
 )
-from areal.autopilot.revision import (
-    CommandRevisionAgent,
-    RevisionEvaluator,
-    RevisionLoop,
-)
 
 AFFINE_SOURCE = """from dataclasses import replace
-from areal.autopilot.elastic.policy.basic.simulator import Estimate, WorkflowSimulator
+from areal.elastic.policy.basic.simulator import Estimate, WorkflowSimulator
 
 class AffineTrain:
     def __init__(self, base):
@@ -48,7 +45,7 @@ def build_simulator(workflow):
 """
 
 CACHE_SOURCE = """from dataclasses import replace
-from areal.autopilot.elastic.policy.basic.optimizer import BasicOptimizer
+from areal.elastic.policy.basic.optimizer import BasicOptimizer
 
 class CachedOptimizer:
     def __init__(self, settings):

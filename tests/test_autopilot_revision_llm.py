@@ -12,13 +12,13 @@ import pytest
 
 from examples.autopilot.revising import AFFINE_SOURCE, demo_inputs
 
-from areal.autopilot.revision import (
-    LLMRevisionAgent,
-    ProposalRequest,
-    RevisionEvaluator,
-    RevisionLoop,
+from areal.autopilot.domains.elastic import RevisionEvaluator
+from areal.autopilot.domains.elastic.contracts import BASELINE_SOURCE, proposal_context
+from areal.autopilot.domains.elastic.contracts import (
+    elastic_proposal_request as ProposalRequest,
 )
-from areal.autopilot.revision.contracts import BASELINE_SOURCE, digest
+from areal.autopilot.revision import LLMRevisionAgent, RevisionLoop
+from areal.autopilot.revision.contracts import digest
 from areal.autopilot.revision.execution import CandidateRunner
 
 
@@ -103,19 +103,17 @@ def test_llm_sends_public_api_calibration_and_feedback_and_records_usage(
     result = agent.propose(request)
     sent = requests[0]
     context = json.loads(sent["messages"][1]["content"])
-    assert context["request"] == json.loads(json.dumps(request.to_dict()))
+    expected = json.loads(json.dumps(request.to_dict()))
+    expected.pop("context")
+    assert context["request"] == expected
     assert context["request"]["previous_source"] == "broken python !"
     assert (
         "class BasicOptimizer"
-        in context["reference_sources"][
-            "areal/autopilot/elastic/policy/basic/optimizer.py"
-        ]
+        in context["reference_sources"]["areal/elastic/policy/basic/optimizer.py"]
     )
     assert (
         "class WorkflowSimulator"
-        in context["reference_sources"][
-            "areal/autopilot/elastic/policy/basic/simulator.py"
-        ]
+        in context["reference_sources"]["areal/elastic/policy/basic/simulator.py"]
     )
     assert "observed" not in context["request"]["calibration"]
     assert "test-credential" not in json.dumps(sent)
@@ -140,7 +138,7 @@ def test_llm_repairs_rejected_source_after_loop_resume(model_endpoint, tmp_path)
         ]
     )
     root = str(Path(__file__).resolve().parents[1])
-    bootstrap = f"import sys,types,runpy; p=types.ModuleType('areal'); p.__path__=[{root!r}+'/areal']; sys.modules['areal']=p; runpy.run_module('areal.autopilot.revision.worker',run_name='__main__')"
+    bootstrap = f"import sys,types,runpy; p=types.ModuleType('areal'); p.__path__=[{root!r}+'/areal']; sys.modules['areal']=p; runpy.run_module('areal.autopilot.domains.elastic.worker',run_name='__main__')"
     profile, cases = demo_inputs("simulator")
     evaluation = RevisionEvaluator(
         "simulator",
@@ -245,7 +243,7 @@ def test_llm_timeout_is_feedback_and_does_not_abort_revision(model_endpoint, tmp
         ]
     )
     root = str(Path(__file__).resolve().parents[1])
-    bootstrap = f"import sys,types,runpy; p=types.ModuleType('areal'); p.__path__=[{root!r}+'/areal']; sys.modules['areal']=p; runpy.run_module('areal.autopilot.revision.worker',run_name='__main__')"
+    bootstrap = f"import sys,types,runpy; p=types.ModuleType('areal'); p.__path__=[{root!r}+'/areal']; sys.modules['areal']=p; runpy.run_module('areal.autopilot.domains.elastic.worker',run_name='__main__')"
     profile, cases = demo_inputs("simulator")
     evaluation = RevisionEvaluator(
         "simulator",
@@ -310,11 +308,18 @@ def test_historical_model_proposal_supplies_matching_factory_and_reference_api()
     data = json.loads(messages[1]["content"])
     assert "build_model" in data["request"]["api"]
     assert "HistoricalInput" in data["request"]["component_api"]
-    assert "areal/autopilot/revision/model_evaluator.py" in data["reference_sources"]
-    assert "areal/autopilot/revision/model_adapters.py" in data["reference_sources"]
+    assert (
+        "areal/autopilot/domains/elastic/model_evaluator.py"
+        in data["reference_sources"]
+    )
+    assert (
+        "areal/autopilot/domains/elastic/model_adapters.py" in data["reference_sources"]
+    )
     assert (
         "final_holdout"
-        in data["reference_sources"]["areal/autopilot/revision/model_evaluator.py"]
+        in data["reference_sources"][
+            "areal/autopilot/domains/elastic/model_evaluator.py"
+        ]
     )
 
 
@@ -332,19 +337,43 @@ def test_joint_optimizer_proposal_supplies_frozen_search_api():
     data = json.loads(proposer().messages(request)[1]["content"])
     assert "build_joint_optimizer" in data["request"]["api"]
     assert "claimed metrics are ignored" in data["request"]["component_api"]
-    assert "areal/autopilot/elastic/policy/basic/joint.py" in data["reference_sources"]
-    assert "areal/autopilot/revision/joint_evaluator.py" in data["reference_sources"]
+    assert "areal/elastic/policy/basic/joint.py" in data["reference_sources"]
+    assert (
+        "areal/autopilot/domains/elastic/joint_evaluator.py"
+        in data["reference_sources"]
+    )
 
 
 def test_serial_model_proposals_receive_the_correct_timing_api_sources():
     from dataclasses import replace
 
-    request = replace(proposal_request(), target="serial_model")
+    request = replace(
+        proposal_request(),
+        target="serial_model",
+        context=proposal_context("serial_model"),
+    )
     messages = proposer().messages(request)
     value = json.loads(messages[1]["content"])
     assert "build_serial_model" in value["request"]["api"]
     assert (
         "SerialTimingInput"
-        in value["reference_sources"]["areal/autopilot/elastic/policy/basic/online.py"]
+        in value["reference_sources"]["areal/elastic/policy/basic/online.py"]
     )
     assert "predict_timing" in messages[0]["content"]
+
+
+def test_llm_domain_reference_sources_are_serialized_once():
+    from dataclasses import replace
+
+    request = replace(
+        proposal_request(),
+        context={
+            "api": "example()",
+            "reference_sources": {"example.py": "UNIQUE_DOMAIN_REFERENCE"},
+            "instructions": "UNIQUE_DOMAIN_INSTRUCTION",
+        },
+    )
+    messages = proposer().messages(request)
+    assert json.dumps(messages).count("UNIQUE_DOMAIN_REFERENCE") == 1
+    assert json.dumps(messages).count("UNIQUE_DOMAIN_INSTRUCTION") == 1
+    assert request.to_dict()["context"] == request.context

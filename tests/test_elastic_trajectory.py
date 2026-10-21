@@ -12,7 +12,7 @@ from examples.autopilot.elastic.swe.process_env import SandboxProcess
 from examples.autopilot.elastic.swe.sandbox_worker import call_tool
 from examples.autopilot.elastic.swe.trajectory import trajectory_payload
 
-from areal.autopilot.elastic.runtime.state.batch_queue import BatchQueue
+from areal.elastic.state.batch_queue import BatchQueue
 
 
 @pytest.fixture

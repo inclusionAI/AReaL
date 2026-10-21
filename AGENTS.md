@@ -46,6 +46,9 @@ uv run python docs/generate_cli_docs.py
 - Run `pre-commit run --all-files` before committing.
 - Follow existing code patterns in the same module.
 - Add tests for new functionality.
+- Batch structure and naming changes, then run relevant tests once at the end. Use
+  static checks while iterating; rerun targeted tests only to diagnose concrete
+  failures.
 - Ask for decisions and clarifications with short, structured options instead of broad
   open-ended questions. Use the platform's native question/clarification tool if
   available.

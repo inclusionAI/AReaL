@@ -9,7 +9,6 @@ import os
 import sys
 import time
 from dataclasses import asdict, dataclass, fields
-from pathlib import Path
 from typing import Literal
 
 from areal.autopilot.revision.contracts import Proposal, ProposalRequest, digest
@@ -18,23 +17,6 @@ SYSTEM_PROMPT = """You revise one AReaL AutoPilot Python component.
 Use the supplied calibration data, incumbent source, previous candidate source and
 aggregate evaluation feedback to propose a concrete improvement. The reference
 sources describe the actual public API; they are read-only context, not files to edit.
-For a simulator, improve prediction accuracy without inventing measurements or
-assuming linear speedup across GPU counts. Prefer composing existing components.
-For a historical model, implement build_model(calibration_cases, settings) and
-predict(HistoricalInput). Reduce historical measurement error without dropping
-coverage. Keep timing boundaries and conditional input modes explicit.
-If calibration declares required_joint_export, preserve the same fitted
-predictor's .joint.evaluate(JointScenario, JointConfig) model export.
-For a serial runtime timing model, implement build_serial_model(profile) and
-predict_timing(SerialTimingInput) -> SerialTimingEstimate. Only calibration labels
-are visible. Predict phase/whole-episode seconds, preserve unknown coverage and
-full configuration identity; fixed code owns all GPU accounting and transitions.
-For an optimizer, reduce reference GPU cost and reference query overhead at the
-same fixed data horizon. Keep resource, transition, publication and search guards.
-For a joint optimizer, implement build_joint_optimizer(settings) and return a
-JointSearchResult from optimize(scenario, simulator). Keep the frozen candidates,
-job-time bound, switch margin and query budget; optimize complete joint configurations.
-The supplied simulator is an evaluate-only reference proxy; do not inspect its internals.
 Return a complete importable module implementing the requested factory. Its only
 inputs at runtime are the factory and method arguments. Use Python standard library
 and the supplied AReaL APIs. Do not read files, environment variables, validation
@@ -80,44 +62,22 @@ class LLMRevisionAgent:
             raise ValueError("Unknown LLM output token parameter")
 
     def messages(self, request: ProposalRequest) -> list[dict]:
-        root = Path(__file__).resolve().parents[1]
-        names = (
-            (
-                "contracts.py",
-                "revision/model_evaluator.py",
-                "revision/model_adapters.py",
-                "revision/model_execution.py",
-            )
-            if request.target == "model"
-            else (
-                "contracts.py",
-                "elastic/policy/basic/online.py",
-                "elastic/policy/basic/joint.py",
-            )
-            if request.target == "serial_model"
-            else (
-                "contracts.py",
-                "elastic/policy/basic/joint.py",
-                "elastic/policy/basic/optimizer.py",
-                "revision/joint_evaluator.py",
-                "elastic/policy/basic/online.py",
-            )
-            if request.target == "joint_optimizer"
-            else (
-                "contracts.py",
-                "elastic/policy/basic/simulator.py",
-                "elastic/policy/basic/optimizer.py",
-            )
-        )
-        references = {
-            "areal/autopilot/" + name: (root / name).read_text() for name in names
-        }
+        public = request.to_dict()
+        public.pop("context")
         return [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT + request.context.get("instructions", ""),
+            },
             {
                 "role": "user",
                 "content": json.dumps(
-                    {"request": request.to_dict(), "reference_sources": references},
+                    {
+                        "request": public,
+                        "reference_sources": request.context.get(
+                            "reference_sources", {}
+                        ),
+                    },
                     allow_nan=False,
                 ),
             },

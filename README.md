@@ -5,19 +5,23 @@ AReaL. Current research scope: configuration cost efficiency for nine Tau2 trial
 
 - [Current progress](PROGRESS.md) and
   [Tau2 plan / company handoff](examples/autopilot/PLAN.md)
-- [Basic policy and actor cost model](areal/autopilot/elastic/policy/README.md)
-- [Offline simulator / optimizer revision](areal/autopilot/revision/README.md)
+- [AReaL Elastic capabilities](areal/elastic/README.md)
+- [Basic planning](areal/elastic/policy/basic/README.md) and
+  [independent Expert](areal/elastic/policy/reference/README.md)
+- [AutoPilot revision](areal/autopilot/revision/README.md) and
+  [Elastic adapter](areal/autopilot/domains/elastic/README.md)
 - [Execution architecture and validation](examples/autopilot/elastic/README.md)
 
-The runtime provides durable queues, checkpoint recovery, weight publication and pure-DP
-training-group resizing. The serial joint policy path applies Actor/Rollout
-configurations and accepted model/optimizer revisions; its M2 evidence uses controlled
-small-model inputs. The independent Expert cost model and simulator provide a frozen
-offline reference. Mixed-layout execution, asynchronous joint-policy validation and Tau2
-performance/quality validation remain future work. Real Tau2 data stays on the company
-computer; repository scenarios are not measurements of those runs. The older
-[M1 report](examples/autopilot/elastic/milestones/m1/README.md) is historical evidence,
-not the current implementation scope.
+Native `PPOTrainer` now owns on-demand Actor lifecycle, durable episode handoff, full
+checkpoint/cursor commit and checked weight publication. Elastic capabilities live in
+`areal.elastic`; domain-independent revision lives in `areal.autopilot.revision`.
+Optional policy, history and accepted revisions attach through
+`areal.autopilot.domains.elastic.native.NativePolicyRuntime`; the former serial executor
+and fixture runner have been removed. Basic and independent Expert cost models, offline
+joint search and historical evidence are retained. Native execution currently uses a
+fixed layout; GPU recovery, asynchronous overlap and GSM8K/Hermes online RL acceptance
+remain pending. Historical M1/M2 runs do not validate this new path. Real Tau2 data
+stays on the company computer; repository scenarios are not those measurements.
 
 ______________________________________________________________________
 

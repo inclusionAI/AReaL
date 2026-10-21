@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 from typing import Any, Literal
 
-from areal.autopilot.elastic.runtime.state.checkpoint import (
+from areal.elastic.state.checkpoint import (
     atomic_json,
     capture_runtime_state,
     recovery_digest,

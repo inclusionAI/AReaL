@@ -30,6 +30,15 @@ def load_namespace(name, root):
         sys.modules[spec.name] = module
 
 
+def load_current_namespace(name):
+    """Current Elastic numerical modules; frozen legacy snapshots keep their loader."""
+    root = Path(__file__).resolve().parents[3] / "areal/elastic"
+    spec = importlib.machinery.ModuleSpec(name, loader=None, is_package=True)
+    module = importlib.util.module_from_spec(spec)
+    module.__path__ = [str(root)]
+    sys.modules[name] = module
+
+
 def freeze_reference(source, destination):
     """Copy numerical source/data, reject concurrent edits, and bind every file."""
     source = source.resolve()
@@ -67,9 +76,8 @@ def freeze_reference(source, destination):
 
 def calibrate_advantage_rows(rows, profile_sha256, steps=(2, 3, 4, 5)):
     """Read labels only from the selected prefix; freeze the observed warm-up."""
-    local_root = Path(__file__).resolve().parents[3] / "areal/autopilot"
-    load_namespace("_r10_structural", local_root)
-    from _r10_structural.elastic.advantage import (
+    load_current_namespace("_r10_structural")
+    from _r10_structural.policy.basic.advantage import (
         apply_advantage_scale,
         fit_advantage_scale,
     )
@@ -185,9 +193,8 @@ def reference_input(
 
     structural_profile = None
     if advantage_profile is not None:
-        local_root = Path(__file__).resolve().parents[3] / "areal/autopilot"
-        load_namespace("_r10_structural", local_root)
-        from _r10_structural.elastic.advantage import (
+        load_current_namespace("_r10_structural")
+        from _r10_structural.policy.basic.advantage import (
             AdvantageProfile,
             estimate_advantage,
         )
@@ -216,9 +223,8 @@ def reference_input(
             raise ValueError(
                 "Counterfactual requires structural advantage without source calibration/fallback"
             )
-        local_root = Path(__file__).resolve().parents[3] / "areal/autopilot"
-        load_namespace("_r10_target", local_root)
-        from _r10_target.elastic.actor_target import (
+        load_current_namespace("_r10_target")
+        from _r10_target.policy.basic.actor_target import (
             actor_target,
             target_auxiliary,
             target_phases,
@@ -546,9 +552,12 @@ def reference_input(
 
 
 def evaluate(data):
-    root = Path(__file__).resolve().parents[3] / "areal/autopilot"
-    load_namespace("_r10_replay", root)
-    from _r10_replay.elastic.replay import GroupArrival, replay_actor, steps_from_dict
+    load_current_namespace("_r10_replay")
+    from _r10_replay.policy.basic.replay import (
+        GroupArrival,
+        replay_actor,
+        steps_from_dict,
+    )
 
     arrivals = tuple(GroupArrival(**a) for a in data["arrivals"])
     observed_gpus = data.get("observed_actor_gpus", 4)
@@ -835,9 +844,10 @@ def main():
         parser.error("--output is required")
     source_paths = (
         Path(__file__).resolve(),
-        Path(__file__).resolve().parents[3] / "areal/autopilot/elastic/replay.py",
-        Path(__file__).resolve().parents[3] / "areal/autopilot/elastic/advantage.py",
-        Path(__file__).resolve().parents[3] / "areal/autopilot/elastic/actor_target.py",
+        Path(__file__).resolve().parents[3] / "areal/elastic/policy/basic/replay.py",
+        Path(__file__).resolve().parents[3] / "areal/elastic/policy/basic/advantage.py",
+        Path(__file__).resolve().parents[3]
+        / "areal/elastic/policy/basic/actor_target.py",
     )
     implementation = {
         p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in source_paths

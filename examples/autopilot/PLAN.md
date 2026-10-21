@@ -2,11 +2,11 @@
 
 范围：S031、S029、T0390、S026、S030、S028、S025、S024、S013。 当前状态统一维护在
 [PROGRESS.md](../../PROGRESS.md)，Expert 细项见
-[专用进度](../../areal/autopilot/elastic/policy/expert_designed/PROGRESS.md)。旧论文 draft 仅作参考。
+[专用进度](../../areal/elastic/policy/reference/PROGRESS.md)。旧论文 draft 仅作参考。
 
-[M2 实现快照](elastic/milestones/m2/README.md) 固定当前代码、验收与边界。
-[架构图](elastic/README.md#policy-and-revision-loops) 区分 policy loop、cost-model revision 和
-optimizer revision；当前联合在线闭环采用严格串行执行。
+[M2 历史快照](../../../artifacts/repository-archive-20261021/files/examples/autopilot/elastic/milestones/m2/README.md)
+保留旧串行执行器的代码身份与证据。 [架构图](elastic/README.md#policy-and-revision-loops) 区分 policy
+loop、cost-model revision 和 optimizer revision；当前执行入口为原生 PPOTrainer，联合配置模型保留作离线参考。
 
 ## 目标与实验约束
 
@@ -70,23 +70,15 @@ dispatch／packing／阶段定义。v1 历史误差不能直接证明 v2 异步�
 现有验收基线为 Qwen3-0.6B＋FSDP＋SGLang 的执行、policy 应用、历史采集与两类 revision。 下一步先接原生在线入口的按需训练，顺序见下节；原生
 SWE／Tau2 的完整 workflow 适配另行推进。 九条 Tau2 的研究范围和 Expert 独立参考职责不变。
 
-已搭建 `runtime/config.py`：完整配置申请、代次／训练版本预检、持久意图／回执及恢复；`ElasticLoop` 显式入口和自动 Actor
-及联合决策共用这条路径。联合适配器支持 v2 FSDP pure-DP Actor 与 SGLang 副本／TP／容量参数，在共享 GPU 池中置换、加载同版权重并联合恢复；
-验证状态见 `PROGRESS.md`。固定 Rollout 与严格串行联合 policy bundle 应用已接入。
+执行统一为 `PPOTrainer → OnDemandActor`；删除旧串行训练器、Rollout 包装和小模型 fixture 入口。 共享
+checkpoint、队列、在线 inbox 与进程所有权移入 `areal/elastic/state/`。
 
-- config：先验证 source→target 能力，在严格队列／权重提交边界关闭
-  admission、执行并核验；失败恢复源配置，状态不确定时保持关闭，不重放已提交训练。 `policy_bundle_id`、`config_generation`
-  与训练权重版本分别记录。
-- policy：不可变 bundle 绑定模型／optimizer 源码、拟合状态和验收身份；预加载后在规划边界整体切换，不确定提交按持久指针恢复。模型更新后先重评
-  optimizer，runtime 历史不清空；切策略不回退权重或重启 GPU。
-- 联合自动：`OnlineJointPolicy → JointOptimizer → SerialJointModel` 使用真实 ready batch
-  与已提交历史预测，自动应用首个完整配置，随后采集实测再规划。 当前严格串行，阶段 profile 按完整配置隔离；Rollout 使用整段 episode 测量。离线异步
-  `.joint.evaluate` 与有限表不直接充当在线模型。
-- 联合 revision：历史 timing evaluator → 冻结可执行模型 → 重验／修订 optimizer → 联合 bundle → 安全激活；
-  双组件独立验收，完整有效历史和双游标持久化。串行 scope 绑定配置白名单、horizon、idle timeout 与执行身份； transition
-  profile／GPU 记账不允许被修订。当前验证只覆盖条件耗时和固定模型搜索。
-- 联合执行：当前要求 whole-episode gate、session 移除和单在途 batch，启动时回读真实 SGLang 参数；失败恢复两侧源配置，清理不确定则保持
-  admission 关闭。后续适配原生 SWE／Tau2 时保留其后端和任务／算法语义，独立验证恢复及布局转换；当前小模型证据仅用于链路验收。
+- `NativePolicyRuntime` 接 Basic 决策、已提交历史和模型／optimizer 独立验收后的 bundle；旧串行 bundle 拒绝部署到原生
+  scope。
+- `ConfigApplication` 保留 CAS、持久意图／回执和恢复；原生 executor 只接受相同固定布局，独立拓扑调整待实现。
+- `RuntimeRevisionLoop` 使用显式 host 协议；按完整 update 划分校准／验收并保留预算。原生首轮限定
+  horizon=1、固定布局，阶段误差验收不代表异步完成时间或收益。
+- Basic／Expert、离线联合模型、历史 evaluator 和证据保留；旧执行器的 GPU 结果不作为原生路径验收。
 
 ## 后续实现：原生按需训练
 
@@ -101,7 +93,7 @@ Actor 代次存活；复用 elastic 机制，不直接套用严格串行的 `Ela
 | 阶段              | 主要改动                                                                                                                                                      | 验收边界                                                                                                                              |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | 1：入口与数据解耦 | `rl_trainer.py` 拆 CPU／Rollout 与 Actor 初始化；从 Rollout 准备 batch；分开数据绑定与权重连接。复用 callback／workflow，补持久轨迹交接、幂等 ID 和有界缓冲。 | 原生入口先提供推理，Actor 无 GPU 进程；完整合格 batch 才唤醒；重复通知与导出响应丢失不丢样本、不重复入队。                            |
-| 2：固定布局闭环   | 抽取 `runtime/training` 生命周期与 checkpoint 机制供原生 trainer 调用；补 v2 完整状态恢复及 AWEX 代次重建联。                                                 | 连续完成三轮启动／训练／发布／释放，Rollout PID 不变；模型、optimizer、LR、RNG、step 与消费游标一致；同布局 FSDP／Megatron 分别验收。 |
+| 2：固定布局闭环   | 原生 OnDemandActor 管理生命周期；共享持久状态置于 elastic/state；补 v2 完整状态恢复及 AWEX 代次重建联。                                                       | 连续完成三轮启动／训练／发布／释放，Rollout PID 不变；模型、optimizer、LR、RNG、step 与消费游标一致；同布局 FSDP／Megatron 分别验收。 |
 | 3：异步服务验收   | 将整段 episode 门禁拆为训练、发布与重配置各自的边界；保留原生 staleness 语义，明确过期轨迹、背压与发布规则。                                                  | Actor 等待／恢复／训练时 Rollout 可推进；发布仅在必要安全窗口暂停；多 batch 与故障恢复不重放已提交 update。                           |
 | 4：独立拓扑调整   | 先验证 Actor DP 调整、Rollout 副本增删，再扩展 TP／PP／EP；重新发现 dispatch topology，重建权重传输计划。                                                     | 每种 source→target 独立声明能力并验证状态恢复；Rollout 副本缩容先排空，TP 改变允许受控重建；不承诺任意布局转换。                      |
 
@@ -164,74 +156,39 @@ CPU 测试扩展现有 trainer、queue、recovery、inference 和 weight-update 
 
 ## 当前接口与文件组织
 
-`feature/autopilot-elastic` 为主线，已整合 Expert 的独立实现、档案和新版 R10 回放；Basic 的在线执行与 revision
-接口保持独立。暂不添加 benchmark、Tau2 实验入口、合成场景文件或新测试文件。联合模型测试扩展现有
-`test_elastic_lifecycle_optimizer.py`；runtime 与 revision 的既有接口保留。整合验证见
-[Milestone 清单](elastic/milestones/preparation-20261021/README.md)。
-
 ```text
-areal/autopilot/
-├── contracts.py                  # 现有公共观测／动作／结果协议
-├── elastic/
-│   ├── policy/
-│   │   ├── basic/                # 被评估、被修订的策略
-│   │   │   ├── cost_model/       # actor / rollout / transition
-│   │   │   ├── joint.py         # 联合配置、固定工作量与结果
-│   │   │   ├── simulator.py      # optimizer 使用的预测模拟器
-│   │   │   ├── optimizer.py      # 配置与生命周期搜索
-│   │   │   └── policy.py         # 生命周期决策 / 离线 JointPolicy.plan
-│   │   └── expert_designed/      # 独立固定参考模型、模拟器与 R10 档案
-│   │       ├── cost_model/
-│   │       │   ├── actor.py      # 专家 actor 性能模型
-│   │       │   ├── rollout.py    # 专家 rollout 性能模型
-│   │       │   └── transition.py # 同步、启停与配置转换成本
-│   │       └── simulator.py      # 工作流状态、时间与 GPU 成本
-│   └── runtime/                 # 执行机制；config.py 管理申请／回执／恢复
-└── revision/
-    ├── contracts.py              # 修订请求和结果约定
-    ├── evaluator.py              # 独立评估、反馈、接受判断
-    ├── model_evaluator.py        # 实际历史输入、模型误差／覆盖验收
-    ├── model_adapters.py         # Basic Actor／Rollout／Joint 预测适配
-    ├── model_execution.py        # 模型工厂、子进程协议与历史验收适配
-    ├── joint_evaluator.py        # 冻结联合模型、配置／开销验收
-    ├── cycle.py                  # 模型→冻结联合模型→optimizer 的离线顺序编排
-    ├── agent.py                  # 根据反馈提出修订
-    └── loop.py                   # 组织修订和验收循环
+areal/trainer/{rl_trainer,on_demand}.py  # 唯一 PPO 执行与生命周期
+areal/elastic/{state,control,telemetry}/ # 持久状态、控制事务与实测
+areal/elastic/policy/basic/             # Basic 模型／simulator／optimizer
+areal/elastic/policy/reference/         # 独立 Expert 对照
+areal/autopilot/revision/               # 通用 proposal／评测编排／接受／store
+areal/autopilot/domains/elastic/        # Elastic evaluator、worker、bundle 与 native bridge
 ```
 
-仅列相关模块，省略现有辅助文件和 `__init__.py`。 expert 不含 optimizer 或 `policy.py`，也不实现
-`SchedulingPolicy`。 两套模型分别持有预测公式与校准参数；专家版本在每组实验中冻结。 evaluator 指导修订，agent 修改 Basic；对比
-Basic 各轮版本与固定 expert 的同口径结果。
-
-Basic 已支持固定窗口上的联合配置枚举：共享推理服务通道、外部等待、Actor 消费、批次 staleness、发布／checkpoint
-和显式切换／收尾成本。各候选保持训练语义与工作量；按总 GPU seconds 搜索，支持完整作业时间上限与候选预算。 详细输入、公式和近似边界见
-[Basic 接口](../../areal/autopilot/elastic/policy/basic/README.md)。 历史模型 evaluator
-已接通候选源码工厂、worker 与 revision loop，支持阶段测量先行、固定划分、误差／覆盖及同样本验收； 给定 packing
-或环境等待的诊断与完整预测明确区分。联合 optimizer 已接通固定模型／场景／预算上的源码修订，支持逐场景成本与搜索开销验收、恢复指纹检查； 两类修订已通过
-`PolicyRevisionCycle` 串联：工厂显式导出 `.joint`，历史预测与联合表双 worker 复核，按新模型重新评估 optimizer；
-阶段恢复保留总轮数预算且不重复已完成的 agent 调用。本地固定 Rollout 的历史采集、自动触发与 bundle 激活已接通；联合自动执行独立接入。
-联合修订部署已接入同一串行 fixture；高精度和收益仍需独立实验。接口和限制见
-[revision](../../areal/autopilot/revision/README.md)。高精度和实际收益需公司端真实数据验证。
+暂不添加 benchmark、Tau2 实验入口、合成场景或新测试文件；扩展既有测试。 Expert 不含 optimizer、不实现调度策略；实验中冻结，Basic
+不依赖其实现。 详细接口与限制见
+[执行文档](elastic/README.md)、[Basic](../../areal/elastic/policy/basic/README.md) 和
+[revision](../../areal/autopilot/revision/README.md)。
 
 ## 代码入口与复核
 
-- [Basic policy](../../areal/autopilot/elastic/policy/README.md)：actor 模型与配置／生命周期搜索。
-- [revision](../../areal/autopilot/revision/README.md)：历史模型与联合配置 optimizer
-  的离线修订、固定上下文验收。
-- [runtime 与历史证据](elastic/README.md)：已验证 pure-DP 执行、SWE 基础设施；当前先在同一小模型环境打通全链路。
-
-以下命令从仓库根目录运行，无需公司数据或模型 API：
+离线模型无需 GPU：
 
 ```bash
-python -S areal/autopilot/elastic/policy examples/autopilot/elastic/lifecycle_scenario.json
+python -S areal/elastic/policy/basic examples/autopilot/elastic/lifecycle_scenario.json
 python tests/run_autopilot_cpu.py -q \
   tests/test_elastic_basic_policy.py tests/test_elastic_lifecycle_optimizer.py \
-  tests/test_autopilot_actor_cost.py tests/test_autopilot_revision.py \
-  tests/test_autopilot_revision_llm.py tests/test_elastic_loop.py \
-  tests/test_elastic_policy.py tests/test_elastic_queued_trainer.py \
+  tests/test_autopilot_actor_cost.py tests/test_autopilot_revision.py
+```
+
+原生协议测试使用完整训练依赖的 Python 环境；fake worker 不能代替 GPU 验收：
+
+```bash
+python -m pytest -q tests/test_elastic_loop.py tests/test_elastic_checkpoint.py \
   tests/test_elastic_batch_queue.py tests/test_elastic_recovery.py
 pre-commit run --all-files
 ```
 
-CPU 回归需要 Python 3.12+、pytest、NumPy、OpenAI SDK 及其 HTTP 依赖；完整 pre-commit 的 CLI
-文档生成还会导入训练依赖。 CPU runner 仅绕过顶层 `areal` 的训练栈导入，不模拟 GPU；真实引擎验证需公司端环境。
+历史结果、文献材料和 R10
+数据已移入[本地归档](../../../artifacts/repository-archive-20261021/README.md)，运行代码、基础 profile
+和必要测试输入保留。 R10 档案测试需显式设置 `AREAL_TEST_EXPERT_CATALOG`；默认测试不依赖此机器的归档目录。后续逐项评估开发期间需回放入库的材料。

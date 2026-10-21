@@ -4,9 +4,9 @@ from dataclasses import FrozenInstanceError, dataclass, fields, replace
 
 import pytest
 
-from areal.autopilot.contracts import WorkloadStats
-from areal.autopilot.elastic.policy import ElasticObservation, IdleTimeoutPolicy
-from areal.autopilot.elastic.policy import expert_designed as expert
+from areal.elastic.contracts import WorkloadStats
+from areal.elastic.policy import reference as expert
+from areal.elastic.policy.basic import ElasticObservation, IdleTimeoutPolicy
 
 
 def observation(**changes):
@@ -1318,7 +1318,11 @@ def test_expert_rpc_v2_response_delivery_waits_for_collector_resume():
 def test_structural_publication_drives_simulator_versions_time_and_residency():
     """Publication components run through the same version/ownership event path."""
     config = _expert_config()
-    raw = expert.Catalog().trial("r10").models(calibrated=False).raw_actor
+    raw = expert.ExpertActorModel(
+        expert.ModelShape(128, 64, 4, 4, 2, 32, 4, 2, 1024),
+        expert.Hardware("unit-only", 100, 1000, 100, 20, 8, 80),
+        "unit-runtime",
+    )
     hardware = replace(raw.hardware, intra_node_gbps=1, intra_latency_us=1)
     raw = replace(raw, hardware=hardware)
     zero = {f.name: 0 for f in fields(expert.PublicationRank)[3:]}

@@ -6,10 +6,16 @@ from dataclasses import replace
 
 import pytest
 
-from areal.autopilot.contracts import BatchWorkload, ElasticObservation, TrainingConfig
-from areal.autopilot.elastic.policy import BasicPolicy, IdleTimeoutPolicy
-from areal.autopilot.elastic.policy.basic.optimizer import BasicOptimizer
-from areal.autopilot.elastic.policy.basic.simulator import (
+from areal.elastic.contracts import BatchWorkload, ElasticObservation, TrainingConfig
+from areal.elastic.policy.basic import BasicPolicy, IdleTimeoutPolicy
+from areal.elastic.policy.basic.optimizer import BasicOptimizer
+from areal.elastic.policy.basic.replay import (
+    ActorPhase,
+    ActorReplayStep,
+    GroupArrival,
+    replay_actor,
+)
+from areal.elastic.policy.basic.simulator import (
     ComponentContext,
     ConstantComponent,
     Estimate,
@@ -24,12 +30,6 @@ from areal.autopilot.elastic.policy.basic.simulator import (
     WorkflowModel,
     WorkflowSimulator,
     forecast_window,
-)
-from areal.autopilot.elastic.replay import (
-    ActorPhase,
-    ActorReplayStep,
-    GroupArrival,
-    replay_actor,
 )
 
 WORK = BatchWorkload(2, 50, 100, 20)
@@ -70,19 +70,19 @@ def model(train=10, restore=5):
 def serial_joint_policy(*, seconds=20, switch=1, max_seconds=None):
     from tests.test_elastic_recovery import rollout_config
 
-    from areal.autopilot.elastic.policy.basic.cost_model.transition import (
+    from areal.elastic.policy.basic.cost_model.transition import (
         JointTransitionModel,
         TransitionPhase,
         TransitionProfile,
     )
-    from areal.autopilot.elastic.policy.basic.joint import JointConfig
-    from areal.autopilot.elastic.policy.basic.online import (
+    from areal.elastic.policy.basic.joint import JointConfig
+    from areal.elastic.policy.basic.online import (
         EpisodeTiming,
         JointPhaseTiming,
         OnlineJointPolicy,
         SerialJointModel,
     )
-    from areal.autopilot.elastic.policy.basic.optimizer import JointOptimizer
+    from areal.elastic.policy.basic.optimizer import JointOptimizer
 
     current = JointConfig(TrainingConfig(2), rollout_config())
     target = JointConfig(TrainingConfig(1), replace(current.rollout, replicas=2))
@@ -163,7 +163,7 @@ def test_online_joint_search_respects_coverage_capacity_deadline_and_switch_cost
     if change == "missing-rollout":
         policy.simulator.episodes = policy.simulator.episodes[:1]
     if change == "missing-transition":
-        from areal.autopilot.elastic.policy.basic.cost_model.transition import (
+        from areal.elastic.policy.basic.cost_model.transition import (
             JointTransitionModel,
         )
 
@@ -208,7 +208,7 @@ def test_online_joint_opaque_rollout_profiles_do_not_scale_to_different_workload
 
 def test_serial_joint_phase_feedback_never_crosses_rollout_configuration():
     """Same Actor count does not make publication timings portable across layouts."""
-    from areal.autopilot.elastic.policy.basic.online import JointPhaseTiming
+    from areal.elastic.policy.basic.online import JointPhaseTiming
 
     policy, current, target = serial_joint_policy()
     policy.history.add_workload(WORK)
@@ -439,18 +439,6 @@ def test_fallback_does_not_override_known_feasibility_or_time_constraints():
         WorkflowSimulator(model()), optimizer=BasicOptimizer(max_seconds=1)
     )
     assert not bounded.decide(observation()).train
-
-
-def test_calibration_rejects_rollback_as_a_successful_target():
-    from types import SimpleNamespace
-
-    from examples.autopilot.elastic.validation.basic_policy import require_target
-
-    trainer = SimpleNamespace(
-        training_config=TrainingConfig(1), last_reconfiguration_error="target failed"
-    )
-    with pytest.raises(RuntimeError, match="not successfully activated"):
-        require_target(trainer, 2)
 
 
 def test_joint_runtime_state_preserves_observations_older_than_bounded_update_archive():

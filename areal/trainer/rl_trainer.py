@@ -34,6 +34,7 @@ from areal.api.cli_args import (
     ValidDatasetConfig,
     vLLMConfig,
 )
+from areal.elastic.control.policy import validate_unbound_policy
 from areal.engine import RemoteSGLangEngine, RemotevLLMEngine
 from areal.infra import (
     LocalScheduler,
@@ -109,7 +110,11 @@ class PPOTrainer:
         config: PPOConfig,
         train_dataset: Dataset | None = None,
         valid_dataset: Dataset | None = None,
+        *,
+        elastic_policy=None,
     ):
+        validate_unbound_policy(elastic_policy)
+        self._elastic_policy = elastic_policy
         self._on_demand = None
         self.actor = None
         self.rollout = None
@@ -140,6 +145,8 @@ class PPOTrainer:
 
         self.config = config
         self._on_demand_mode = config.actor_lifecycle.mode == "on_demand"
+        if self._elastic_policy is not None and not self._on_demand_mode:
+            raise ValueError("elastic_policy requires actor_lifecycle.mode='on_demand'")
         if self._on_demand_mode:
             from areal.trainer.on_demand import validate_on_demand
 
@@ -351,6 +358,7 @@ class PPOTrainer:
                     scheduler=self.scheduler,
                     create_process_group=False,
                 ),
+                policy_runtime=self._elastic_policy,
             )
         else:
             self.actor.initialize(**engine_init_kwargs, role="actor")
@@ -1139,6 +1147,8 @@ class PPOTrainer:
                 self._on_demand.actor is None and self._on_demand.owner is None
             )
         else:
+            if getattr(getattr(self, "_elastic_policy", None), "owner", None) is None:
+                finish("_elastic_policy", "close")
             before = len(errors)
             finish("actor", "destroy")
             actor_released = len(errors) == before

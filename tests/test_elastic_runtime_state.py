@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 import torch
 
-from areal.autopilot.elastic.runtime.state.checkpoint import (
+from areal.elastic.state.checkpoint import (
     capture_runtime_state,
     restore_runtime_state,
 )

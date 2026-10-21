@@ -7,6 +7,7 @@ import bisect
 import copy
 import json
 import math
+import os
 import random
 import runpy
 import shutil
@@ -18,19 +19,24 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from areal.autopilot.elastic.actor_target import (
+from areal.autopilot.domains.elastic.model_adapters import (
+    ACTOR_BOUNDARY,
+    BasicHistoryPredictor,
+)
+from areal.autopilot.domains.elastic.model_evaluator import HistoricalInput
+from areal.elastic.policy import reference as expert
+from areal.elastic.policy.basic.actor_target import (
     actor_target,
     target_auxiliary,
     target_phases,
 )
-from areal.autopilot.elastic.advantage import (
+from areal.elastic.policy.basic.advantage import (
     AdvantageProfile,
     apply_advantage_scale,
     estimate_advantage,
     fit_advantage_scale,
 )
-from areal.autopilot.elastic.policy import expert_designed as expert
-from areal.autopilot.elastic.policy.basic.cost_model import (
+from areal.elastic.policy.basic.cost_model import (
     ActorComponents,
     ActorConfig,
     ActorCostModel,
@@ -44,14 +50,14 @@ from areal.autopilot.elastic.policy.basic.cost_model import (
     qwen3_30b_a3b,
     trial_config,
 )
-from areal.autopilot.elastic.policy.basic.cost_model.calibration import (
+from areal.elastic.policy.basic.cost_model.calibration import (
     Calibration,
     bundled_calibration,
     point_inputs,
     public_validation,
 )
-from areal.autopilot.elastic.policy.basic.cost_model.catalog import DATA, read_data
-from areal.autopilot.elastic.policy.basic.cost_model.components import (
+from areal.elastic.policy.basic.cost_model.catalog import DATA, read_data
+from areal.elastic.policy.basic.cost_model.components import (
     Communications,
     Constant,
     Context,
@@ -59,23 +65,18 @@ from areal.autopilot.elastic.policy.basic.cost_model.components import (
     Optimizer,
     Transformer,
 )
-from areal.autopilot.elastic.policy.basic.cost_model.observability import (
+from areal.elastic.policy.basic.cost_model.observability import (
     actor_trace_times,
     parse_microbatch_log,
     stage_metrics,
     trace_events,
 )
-from areal.autopilot.elastic.policy.basic.cost_model.packing import (
+from areal.elastic.policy.basic.cost_model.packing import (
     _pad,
     balanced_partition,
     ffd,
     plan_workload,
 )
-from areal.autopilot.revision.model_adapters import (
-    ACTOR_BOUNDARY,
-    BasicHistoryPredictor,
-)
-from areal.autopilot.revision.model_evaluator import HistoricalInput
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -83,13 +84,35 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.fixture
 def expert_catalog_copy(tmp_path):
     source = Path(expert.__file__).parent
-    for directory in ("profiles", "trials"):
-        shutil.copytree(source / directory, tmp_path / directory)
+    shutil.copytree(source / "profiles", tmp_path / "profiles")
     return expert.Catalog(tmp_path)
 
 
+def r10_catalog():
+    """Historical inputs are optional; an explicitly selected archive must exist."""
+    selected = os.environ.get("AREAL_TEST_EXPERT_CATALOG")
+    catalog = (
+        expert.Catalog(Path(selected).expanduser()) if selected else expert.Catalog()
+    )
+    if "r10" not in catalog.names("trials"):
+        if selected:
+            pytest.fail(
+                "AREAL_TEST_EXPERT_CATALOG does not contain trials/r10/manifest.json"
+            )
+        pytest.skip(
+            "Optional R10 archive: set AREAL_TEST_EXPERT_CATALOG to run this test"
+        )
+    return catalog
+
+
+@pytest.fixture
+def expert_trial_copy(expert_catalog_copy):
+    shutil.copytree(r10_catalog().root / "trials", expert_catalog_copy.root / "trials")
+    return expert_catalog_copy
+
+
 def test_expert_catalog_archives_resolved_r10_inputs_and_observations():
-    catalog = expert.Catalog()
+    catalog = r10_catalog()
     assert catalog.names("hardware") == ("h20", "h200-sxm-reference")
     assert "r10" in catalog.names("trials")
     trial = catalog.trial("r10")
@@ -119,7 +142,7 @@ def test_expert_catalog_loads_frozen_coefficients_without_fitting(monkeypatch):
 
     monkeypatch.setattr(expert.PhaseCalibration, "fit", no_fit)
     monkeypatch.setattr(expert.AggregateAdvantageModel, "fit", no_fit)
-    trial = expert.Catalog().trial("r10")
+    trial = r10_catalog().trial("r10")
     models = trial.models()
     archived = trial.read("calibration")
     for phase, stored in zip(
@@ -135,11 +158,11 @@ def test_expert_catalog_loads_frozen_coefficients_without_fitting(monkeypatch):
         models.rpc_timing.response_delay(models.rpc_timing.profile, 791, 976).evidence
         == "assumed"
     )
-    assert expert.Catalog().trial("r10").models(calibrated=False).rpc_timing is None
+    assert r10_catalog().trial("r10").models(calibrated=False).rpc_timing is None
 
 
 def test_expert_catalog_preserves_strict_coverage_and_explicit_diagnostic_fallback():
-    trial = expert.Catalog().trial("r10")
+    trial = r10_catalog().trial("r10")
     assembled = trial.models()
     unsupported = []
     for row in trial.read("batch_observations"):
@@ -192,9 +215,9 @@ def test_expert_catalog_preserves_strict_coverage_and_explicit_diagnostic_fallba
 
 @pytest.mark.parametrize("key", ["request_observations", "groups"])
 def test_expert_catalog_rejects_changed_numeric_or_compressed_data(
-    expert_catalog_copy, key
+    expert_trial_copy, key
 ):
-    trial = expert_catalog_copy.trial("r10")
+    trial = expert_trial_copy.trial("r10")
     path = trial.root / trial.manifest()["data"][key]["path"]
     path.write_bytes(path.read_bytes() + b" ")
     with pytest.raises(ValueError, match="content hash mismatch"):
@@ -202,16 +225,16 @@ def test_expert_catalog_rejects_changed_numeric_or_compressed_data(
 
 
 def test_expert_catalog_rejects_profile_changes_and_unreviewed_formulas(
-    expert_catalog_copy, monkeypatch
+    expert_trial_copy, monkeypatch
 ):
-    import areal.autopilot.elastic.policy.expert_designed.catalog as catalog_module
+    import areal.elastic.policy.reference.catalog as catalog_module
 
-    trial = expert_catalog_copy.trial("r10")
+    trial = expert_trial_copy.trial("r10")
     monkeypatch.setattr(catalog_module, "code_revision", lambda: "unreviewed-formula")
     with pytest.raises(ValueError, match="compatibility audit"):
         trial.models()
     assert trial.models(calibrated=False).rpc_timing is None
-    path = expert_catalog_copy.root / "profiles/hardware/h20.json"
+    path = expert_trial_copy.root / "profiles/hardware/h20.json"
     value = json.loads(path.read_text())
     value["values"]["bf16_tflops"] *= 2
     path.write_text(json.dumps(value))
@@ -220,20 +243,20 @@ def test_expert_catalog_rejects_profile_changes_and_unreviewed_formulas(
 
 
 def test_expert_catalog_accepts_new_model_profile_but_rejects_old_calibration(
-    expert_catalog_copy,
+    expert_trial_copy,
 ):
     import hashlib
 
-    path = expert_catalog_copy.root / "profiles/models/qwen3-30b-a3b.json"
+    path = expert_trial_copy.root / "profiles/models/qwen3-30b-a3b.json"
     value = json.loads(path.read_text())
     value["id"] = "another-qwen3-moe"
     value["values"]["shape"]["layers"] += 1
     value["values"]["hf_config"]["num_hidden_layers"] += 1
     other = path.with_name("another-qwen3-moe.json")
     other.write_text(json.dumps(value))
-    assert expert_catalog_copy.model("another-qwen3-moe").layers == 49
-    assert expert_catalog_copy.model("qwen3-30b-a3b").layers == 48
-    trial = expert_catalog_copy.trial("r10")
+    assert expert_trial_copy.model("another-qwen3-moe").layers == 49
+    assert expert_trial_copy.model("qwen3-30b-a3b").layers == 48
+    trial = expert_trial_copy.trial("r10")
     manifest = trial.manifest()
     manifest["profiles"]["model"] = {
         "name": value["id"],
@@ -251,8 +274,8 @@ def test_expert_catalog_rejects_nonlocal_trial_names(name):
         expert.Catalog().trial(name)
 
 
-def test_expert_catalog_rejects_escaped_data_reference(expert_catalog_copy):
-    trial = expert_catalog_copy.trial("r10")
+def test_expert_catalog_rejects_escaped_data_reference(expert_trial_copy):
+    trial = expert_trial_copy.trial("r10")
     manifest = trial.manifest()
     manifest["data"]["workload"]["path"] = "../manifest.json"
     (trial.root / "manifest.json").write_text(json.dumps(manifest))
@@ -273,7 +296,7 @@ def test_expert_catalog_assembles_only_the_hash_verified_profile_snapshot(monkey
         return value
 
     monkeypatch.setattr(expert.Catalog, "profile", changing_profile)
-    trial = expert.Catalog().trial("r10")
+    trial = r10_catalog().trial("r10")
     assembled = trial.models()
     assert assembled.raw_actor.hardware.bf16_tflops == 148
     assert assembled.config.rollout.max_batch_sequences == 4
@@ -281,12 +304,12 @@ def test_expert_catalog_assembles_only_the_hash_verified_profile_snapshot(monkey
 
 
 def test_expert_catalog_rejects_unreviewed_numpy_environment(monkeypatch):
-    import areal.autopilot.elastic.policy.expert_designed.catalog as catalog_module
+    import areal.elastic.policy.reference.catalog as catalog_module
 
     monkeypatch.setattr(
         catalog_module, "numerical_environment", lambda: {"numpy": "unreviewed"}
     )
-    trial = expert.Catalog().trial("r10")
+    trial = r10_catalog().trial("r10")
     with pytest.raises(ValueError, match="compatibility audit"):
         trial.models()
     assert trial.models(calibrated=False).actor.calibration == ()
@@ -353,10 +376,10 @@ def test_expert_fsdp_reads_real_offload_and_optimizer_recipe():
 
 def test_expert_fsdp_packing_and_cpu_work_preserve_microbatch_boundaries(expert_model):
     """PPO calls reset CPU accumulation; checkpointing adds compute, not gathers."""
-    from areal.autopilot.elastic.policy.expert_designed.cost_model._actor.packing import (
+    from areal.elastic.policy.reference.cost_model._actor.packing import (
         plan_workload as expert_plan,
     )
-    from areal.autopilot.elastic.policy.expert_designed.cost_model.fsdp import fsdp_work
+    from areal.elastic.policy.reference.cost_model.fsdp import fsdp_work
 
     workload = WorkloadStats(8, 8 * 129, per_dp_sequence_lengths=((129, 129),) * 4)
     config = _fsdp_cost_config()
@@ -418,16 +441,16 @@ def test_expert_fsdp_missing_host_rates_remains_unknown(expert_model):
 
 def test_expert_fsdp_checkpoint_does_not_gather_a_third_time(expert_model):
     """PyTorch PRE_BACKWARD suppresses checkpoint forward hooks."""
-    from areal.autopilot.elastic.policy.expert_designed.cost_model._actor.components import (
+    from areal.elastic.policy.reference.cost_model._actor.components import (
         Context as ExpertContext,
     )
-    from areal.autopilot.elastic.policy.expert_designed.cost_model._actor.components import (
+    from areal.elastic.policy.reference.cost_model._actor.components import (
         Operators as ExpertOperators,
     )
-    from areal.autopilot.elastic.policy.expert_designed.cost_model._actor.components import (
+    from areal.elastic.policy.reference.cost_model._actor.components import (
         Transformer as ExpertTransformer,
     )
-    from areal.autopilot.elastic.policy.expert_designed.cost_model._actor.packing import (
+    from areal.elastic.policy.reference.cost_model._actor.packing import (
         Microbatch,
     )
 
@@ -529,13 +552,13 @@ def test_expert_fsdp_publish_stages_are_serial_and_unknowns_stay_unknown():
 
 
 def test_expert_fsdp_collectives_use_one_dp_group_and_each_wrap_startup(expert_model):
-    from areal.autopilot.elastic.policy.expert_designed.cost_model._actor.components import (
+    from areal.elastic.policy.reference.cost_model._actor.components import (
         Communications as ExpertCommunications,
     )
-    from areal.autopilot.elastic.policy.expert_designed.cost_model._actor.components import (
+    from areal.elastic.policy.reference.cost_model._actor.components import (
         Context as ExpertContext,
     )
-    from areal.autopilot.elastic.policy.expert_designed.cost_model._actor.components import (
+    from areal.elastic.policy.reference.cost_model._actor.components import (
         Operators as ExpertOperators,
     )
 
@@ -561,19 +584,19 @@ def test_expert_fsdp_collectives_use_one_dp_group_and_each_wrap_startup(expert_m
 
 def test_expert_fsdp_resident_shards_count_foreach_gather_input_copy(expert_model):
     """Torch's resident path packs a BF16 shard before collective copy-in."""
-    from areal.autopilot.elastic.policy.expert_designed.cost_model._actor.components import (
+    from areal.elastic.policy.reference.cost_model._actor.components import (
         Communications as ExpertCommunications,
     )
-    from areal.autopilot.elastic.policy.expert_designed.cost_model._actor.components import (
+    from areal.elastic.policy.reference.cost_model._actor.components import (
         Context as ExpertContext,
     )
-    from areal.autopilot.elastic.policy.expert_designed.cost_model._actor.components import (
+    from areal.elastic.policy.reference.cost_model._actor.components import (
         Operators as ExpertOperators,
     )
-    from areal.autopilot.elastic.policy.expert_designed.cost_model._actor.packing import (
+    from areal.elastic.policy.reference.cost_model._actor.packing import (
         plan_workload as expert_plan,
     )
-    from areal.autopilot.elastic.policy.expert_designed.cost_model.fsdp import fsdp_work
+    from areal.elastic.policy.reference.cost_model.fsdp import fsdp_work
 
     config = _fsdp_cost_config(recompute_logprob=True, n_mbs=2)
     resident = replace(config, offload_params=False)
@@ -1068,7 +1091,7 @@ def test_standalone_cli_runs_with_stdlib_and_catches_bad_inputs(tmp_path):
         [
             sys.executable,
             "-S",
-            str(ROOT / "areal/autopilot/elastic/policy/basic/cost_model"),
+            str(ROOT / "areal/elastic/policy/basic/cost_model"),
             "predict",
             "--trial",
             "S031",
@@ -1087,7 +1110,7 @@ def test_standalone_cli_runs_with_stdlib_and_catches_bad_inputs(tmp_path):
         [
             sys.executable,
             "-S",
-            str(ROOT / "areal/autopilot/elastic/policy/basic/cost_model"),
+            str(ROOT / "areal/elastic/policy/basic/cost_model"),
             "predict",
             "--trial",
             "S031",
@@ -1214,7 +1237,7 @@ def test_megatron_pp_partition_matches_current_source():
     """The backend balances local expert params, so EP4 splits 11/13/13/11."""
     from types import SimpleNamespace
 
-    from areal.autopilot.elastic.policy.basic.cost_model.actor import layer_partition
+    from areal.elastic.policy.basic.cost_model.actor import layer_partition
 
     path = ROOT / "areal/engine/megatron_utils/pipeline_parallel.py"
     tree = ast.parse(path.read_text())
@@ -1269,7 +1292,7 @@ def test_megatron_alignment_expands_capacity_after_ffd():
 
 def test_multiturn_trajectories_are_atomic_dispatch_items():
     """Sequence count need not divide DP when one trajectory contains many rows."""
-    from areal.autopilot.elastic.policy.basic.cost_model.packing import (
+    from areal.elastic.policy.basic.cost_model.packing import (
         dispatch_workload,
     )
 
@@ -1417,7 +1440,7 @@ def _expert_actor_input():
 
 def test_expert_pipeline_uses_dependencies_for_forward_and_one_f_one_b():
     """Two-stage/two-microbatch schedules have independently countable critical paths."""
-    from areal.autopilot.elastic.policy.expert_designed.cost_model.actor import (
+    from areal.elastic.policy.reference.cost_model.actor import (
         _pipeline_time,
     )
 
@@ -1654,13 +1677,13 @@ def test_expert_transition_critical_path_uses_source_target_and_explicit_unknown
 def test_expert_pipeline_config_and_transfers_preserve_backend_boundaries(
     expert_model, monkeypatch
 ):
-    from areal.autopilot.elastic.policy.expert_designed.cost_model._actor.components import (
+    from areal.elastic.policy.reference.cost_model._actor.components import (
         Communications,
         Context,
         Operators,
         Transformer,
     )
-    from areal.autopilot.elastic.policy.expert_designed.cost_model.actor import (
+    from areal.elastic.policy.reference.cost_model.actor import (
         _pipeline_partition,
     )
 
@@ -2294,10 +2317,10 @@ def _runtime_ffd():
 
 def test_expert_ffd_matches_runtime_with_ties_and_ppo_dp_synchronization():
     """Unstable NumPy ties affect PPO membership and synchronized MB counts."""
-    from areal.autopilot.elastic.policy.expert_designed.cost_model._actor.packing import (
+    from areal.elastic.policy.reference.cost_model._actor.packing import (
         ffd as expert_ffd,
     )
-    from areal.autopilot.elastic.policy.expert_designed.cost_model._actor.packing import (
+    from areal.elastic.policy.reference.cost_model._actor.packing import (
         plan_workload as expert_plan,
     )
 
@@ -2349,7 +2372,7 @@ def test_expert_ffd_matches_runtime_with_ties_and_ppo_dp_synchronization():
 
 def test_expert_archon_padding_uses_shared_page_then_backend_alignment():
     """A non-power-of-two page exposes the two runtime rounding operations."""
-    from areal.autopilot.elastic.policy.expert_designed.cost_model._actor.packing import (
+    from areal.elastic.policy.reference.cost_model._actor.packing import (
         _pad as expert_pad,
     )
 
@@ -2369,7 +2392,7 @@ def test_expert_archon_padding_uses_shared_page_then_backend_alignment():
 
 def test_expert_equal_token_summaries_do_not_identify_microbatch_counts():
     """Summary equality is not evidence of equal packing or compute work."""
-    from areal.autopilot.elastic.policy.expert_designed.cost_model._actor.packing import (
+    from areal.elastic.policy.reference.cost_model._actor.packing import (
         plan_workload as expert_plan,
     )
 
@@ -2655,7 +2678,7 @@ def test_expert_observed_summary_uses_same_token_rounding_tolerance(
 
 def test_expert_packing_comparison_rejects_observed_count_leakage(expert_model):
     """An observed minimum must never turn an independent packing error into zero."""
-    from areal.autopilot.elastic.policy.expert_designed.cost_model._actor.packing import (
+    from areal.elastic.policy.reference.cost_model._actor.packing import (
         plan_workload as expert_plan,
     )
 
@@ -2718,10 +2741,10 @@ def _runtime_balanced_partition():
 
 def test_expert_controller_dispatch_preserves_trajectories_and_rectangular_weights():
     """RTensor numel and attended tokens can assign a different heavy trajectory."""
-    from areal.autopilot.elastic.policy.expert_designed.cost_model._actor.packing import (
+    from areal.elastic.policy.reference.cost_model._actor.packing import (
         dispatch_workload,
     )
-    from areal.autopilot.elastic.policy.expert_designed.cost_model._actor.packing import (
+    from areal.elastic.policy.reference.cost_model._actor.packing import (
         plan_workload as expert_plan,
     )
 
@@ -2758,7 +2781,7 @@ def test_expert_controller_dispatch_preserves_trajectories_and_rectangular_weigh
 
 def test_expert_controller_atomic_dispatch_groups_match_runtime():
     """Controller group_size groups consecutive trajectories before DP allocation."""
-    from areal.autopilot.elastic.policy.expert_designed.cost_model._actor.packing import (
+    from areal.elastic.policy.reference.cost_model._actor.packing import (
         dispatch_workload,
     )
 
@@ -2791,10 +2814,10 @@ def test_expert_controller_atomic_dispatch_groups_match_runtime():
 
 def test_expert_redistribution_preserves_runtime_ffd_rank_and_row_order():
     """Multi-controller FFD retains raw bin order and may assign unequal local counts."""
-    from areal.autopilot.elastic.policy.expert_designed.cost_model._actor.packing import (
+    from areal.elastic.policy.reference.cost_model._actor.packing import (
         dispatch_workload,
     )
-    from areal.autopilot.elastic.policy.expert_designed.cost_model._actor.packing import (
+    from areal.elastic.policy.reference.cost_model._actor.packing import (
         plan_workload as expert_plan,
     )
 
@@ -2829,7 +2852,7 @@ def test_expert_redistribution_preserves_runtime_ffd_rank_and_row_order():
 
 def test_expert_atomic_rank_skew_explains_more_mbs_than_global_average():
     """Synthetic S026-scale example: a heavy atomic trajectory survives DP dispatch."""
-    from areal.autopilot.elastic.policy.expert_designed.cost_model._actor.packing import (
+    from areal.elastic.policy.reference.cost_model._actor.packing import (
         plan_workload as expert_plan,
     )
 
@@ -2961,7 +2984,7 @@ def test_expert_count_extrapolation_is_explicit_and_does_not_change_other_bounds
 
 def test_expert_redistribution_checks_runtime_gather_shape_before_assignment():
     """Exact redistribution requires equal input-list sizes on original DP heads."""
-    from areal.autopilot.elastic.policy.expert_designed.cost_model._actor.packing import (
+    from areal.elastic.policy.reference.cost_model._actor.packing import (
         dispatch_workload,
     )
 
@@ -3397,7 +3420,7 @@ def test_r10_common_error_denominator_and_cancellation():
 
 @pytest.mark.parametrize("backend", ["megatron", "archon"])
 def test_expert_target_uses_fresh_model_and_explicit_optimizer(backend):
-    assembled = expert.Catalog().trial("r10").models()
+    assembled = r10_catalog().trial("r10").models()
     document = json.loads(
         (
             ROOT / f"examples/autopilot/elastic/profiles/r10-{backend}-dp4-prior.json"
@@ -3444,7 +3467,7 @@ def test_expert_h200_catalog_is_separate_from_machine_and_h20_calibration():
     assert hardware.intra_node_gbps == 450
     with pytest.raises(ValueError, match="another GPU"):
         catalog.hardware("h200-sxm-reference", "h20-8gpu-r10")
-    assembled = catalog.trial("r10").models()
+    assembled = r10_catalog().trial("r10").models()
     document = json.loads(
         (
             ROOT / "examples/autopilot/elastic/profiles/r10-archon-dp4-prior.json"
@@ -3546,7 +3569,7 @@ def test_expert_target_reports_no_accuracy_without_target_measurements():
     "mesh", [{"dp": 4, "tp": 2}, {"dp": 1, "tp": 2, "cp": 2, "ep": 2}]
 )
 def test_archon_target_rejects_unmodeled_expert_tp_or_invalid_mesh(mesh):
-    assembled = expert.Catalog().trial("r10").models()
+    assembled = r10_catalog().trial("r10").models()
     doc = json.loads(
         (
             ROOT / "examples/autopilot/elastic/profiles/r10-archon-dp4-prior.json"
@@ -3846,7 +3869,7 @@ def test_publication_archon_uses_legacy_bucket_ack_not_v2_awex(publication_case)
 
 
 def test_r10_publication_archives_actual_peer_geometry_without_timing_fit():
-    assembled = expert.Catalog().trial("r10").models(calibrated=False)
+    assembled = r10_catalog().trial("r10").models(calibrated=False)
     document = json.loads(
         (
             ROOT
