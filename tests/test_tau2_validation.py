@@ -50,11 +50,13 @@ def test_compatibility_validator_keeps_existing_validity_rules():
 def test_tau2_validation_error_names_the_concrete_participant():
     pytest.importorskip("tau2")
 
-    # Importing the example utilities installs the compatibility patch on the
-    # fork's shared participant-message base class.
-    from tau2.data_model.message import AssistantMessage, UserMessage
+    from tau2.data_model.message import (
+        AssistantMessage,
+        ParticipantMessageBase,
+        UserMessage,
+    )
 
-    from examples.tau2 import utils  # noqa: F401
+    install_participant_message_validation_patch(ParticipantMessageBase)
 
     with pytest.raises(ValueError, match="^UserMessage must have either content"):
         UserMessage(role="user").validate()
