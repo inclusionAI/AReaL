@@ -4,6 +4,7 @@
 # Adapted from slime
 
 import re
+from fnmatch import fnmatchcase
 
 import torch
 
@@ -68,6 +69,35 @@ def _quantize_param(
 
 
 def quantize_params(
+    megatron_name: str,
+    converted_named_params: list[tuple[str, torch.Tensor]],
+    quantization_config: dict[str, int | str | list[str]] | None,
+    scale_dtype: torch.dtype = torch.bfloat16,
+) -> list[tuple[str, torch.Tensor]]:
+    """Quantize eligible weights, honoring HF's explicit module exclusions."""
+    excluded = (quantization_config or {}).get("modules_to_not_convert") or []
+    result = []
+    for name, param in converted_named_params:
+        module_name = name.removesuffix(".weight")
+        # Exclusions may name a full module/subtree, a glob, or a component.
+        if any(
+            module_name == entry
+            or module_name.startswith(entry + ".")
+            or entry in module_name.split(".")
+            or fnmatchcase(module_name, entry)
+            for entry in excluded
+        ):
+            result.append((name, param))
+        else:
+            result.extend(
+                _quantize_params(
+                    megatron_name, [(name, param)], quantization_config, scale_dtype
+                )
+            )
+    return result
+
+
+def _quantize_params(
     megatron_name: str,
     converted_named_params: list[tuple[str, torch.Tensor]],
     quantization_config: dict[str, int | str | list[str]] | None,

@@ -1297,6 +1297,32 @@ def convert_to_hf(
         List of (name, tensor) tuples in HuggingFace format. For FP8 quantization,
         returns both quantized weight and scale tensors.
     """
+    if model_name in (
+        "glm5_next",
+        "glm5_next_text",
+        "glm5_next_lora",
+        "glm5_next_text_lora",
+    ):
+        if model_name.endswith("_lora") or fp8_direct_convert:
+            raise ValueError(
+                "GLM-5.3 weight updates require BF16 actor weights without LoRA"
+            )
+        if bridge is None:
+            raise ValueError("GLM-5.3 HF conversion requires its model bridge")
+        if "_extra_state" in name:
+            return []
+        while name.startswith("module."):
+            name = name.removeprefix("module.")
+        hf_names, hf_tensors = bridge._weight_to_hf_format(name, param)
+        converted = [
+            (n, t.contiguous()) for n, t in zip(hf_names, hf_tensors, strict=True)
+        ]
+        return quantize_params(
+            name,
+            converted,
+            getattr(bridge.hf_config, "quantization_config", quantization_config),
+        )
+
     if is_bailing_v3(hf_config) or model_name == "bailing_moe_v3":
         validate_bailing_v3_weight_update(
             hf_config,

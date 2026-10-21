@@ -932,7 +932,26 @@ class MegatronEngine(TrainEngine):
                 self.config.path, trust_remote_code=True
             )
             architectures = getattr(hf_config, "architectures", None) or []
-            if "BailingMoeV3ForCausalLM" in architectures:
+            if "Glm5NextForConditionalGeneration" in architectures:
+                from areal.models.mcore.glm5_next_bridge import Glm5NextBridge
+
+                if self.mcore_config.enable_mtp:
+                    raise ValueError("GLM-5.3 mbridge does not support enable_mtp")
+                if self.mcore_config.use_mbridge_save:
+                    raise ValueError(
+                        "GLM-5.3 requires use_mbridge_save=False to preserve FP8 checkpoint metadata"
+                    )
+                if (
+                    self.dtype != torch.bfloat16
+                    or self.mcore_config.fp8_config is not None
+                ):
+                    raise ValueError(
+                        "GLM-5.3 requires a BF16 actor without FP8 training"
+                    )
+                if self.config.is_critic:
+                    raise ValueError("GLM-5.3 critic training is not supported")
+                self.bridge = Glm5NextBridge(hf_config)
+            elif "BailingMoeV3ForCausalLM" in architectures:
                 if self.mcore_config.enable_mtp:
                     raise ValueError(
                         "BailingMoeV3 mbridge does not support enable_mtp; "
@@ -3714,6 +3733,11 @@ class MegatronEngine(TrainEngine):
         base_model_path: str | None = None,
     ) -> None:
         assert self.model is not None, "Model is not initialized."
+        is_glm5_next = self.hf_config.model_type == "glm5_next"
+        if is_glm5_next and os.path.realpath(path) == os.path.realpath(
+            base_model_path or self.config.path
+        ):
+            raise ValueError("GLM-5.3 export must not overwrite its source checkpoint")
         os.makedirs(path, exist_ok=True)
 
         if self.bridge_cls == "megatron-bridge":
@@ -3796,6 +3820,26 @@ class MegatronEngine(TrainEngine):
 
             if self.config.is_critic:
                 save_critic_value_head(self.model, path)
+
+        if is_glm5_next:
+            export_error = [None]
+            if dist.get_rank() == 0:
+                from areal.models.mcore.glm5_next_checkpoint import (
+                    copy_glm5_next_vision_weights,
+                )
+
+                try:
+                    copy_glm5_next_vision_weights(
+                        base_model_path or self.config.path, path
+                    )
+                except Exception as error:
+                    export_error[0] = f"{type(error).__name__}: {error}"
+            # Propagate writer failures before peers enter the final barrier.
+            dist.broadcast_object_list(export_error, src=0, group=self.cpu_group)
+            if export_error[0] is not None:
+                raise RuntimeError(
+                    f"GLM-5.3 checkpoint finalization failed: {export_error[0]}"
+                )
 
         if dist.get_rank() == 0:
             if tokenizer is not None:

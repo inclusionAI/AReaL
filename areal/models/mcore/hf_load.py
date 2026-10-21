@@ -473,6 +473,14 @@ def _weight_to_mcore_tp(
         or "self_attention.conv1d.weight" in mcore_weights_name
     ):
         res = _merge_kda_fused_weight(hf_weights_safe_slice, tp_rank, tp_size)
+    elif "Glm5NextForConditionalGeneration" in (
+        getattr(hf_config, "architectures", None) or ()
+    ) and mcore_weights_name.endswith("self_attention.kda.conv1d.weight"):
+        # GLM KDA is replicated across TP. Merge the complete Q/K/V convolutions,
+        # unlike Bailing's sharded fused convolution.
+        res = torch.cat([x[:] for x in hf_weights_safe_slice], dim=0).contiguous()
+        if list(res.shape) != mcore_param_shape:
+            raise ValueError("GLM-5.3 fused KDA convolution shape mismatch")
     else:
         res = _slice_generic_weight(
             mcore_param_shape, hf_weights_safe_slice, tp_rank, tp_size
@@ -572,6 +580,10 @@ def _load_weight_with_bridge_worker(
             "mlp.router.expert_bias" in local_name
             or "self_attention.dt_bias" in local_name
             or "self_attention.A_log" in local_name
+            or (
+                "Glm5NextForConditionalGeneration"
+                in (getattr(bridge.hf_config, "architectures", None) or ())
+            )
         ):
             target_dtype = torch.float32
 

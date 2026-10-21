@@ -126,6 +126,162 @@ def patched_checkpointer():
         yield mod, manager, queue
 
 
+def test_checkpointer_import_without_save_factory_succeeds(monkeypatch):
+    """MCore's torch-dist-only API no longer exports a save factory."""
+    mod = _import_checkpointer()
+    monkeypatch.delattr(
+        mod.checkpoint_serialization, "get_default_save_sharded_strategy"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "_checkpointer_import_test", mod.__file__
+    )
+
+    spec.loader.exec_module(importlib.util.module_from_spec(spec))
+
+
+@pytest.mark.parametrize("factory_api", [True, False], ids=["stock", "torch-dist-only"])
+@pytest.mark.parametrize("async_save", [False, True], ids=["sync", "async"])
+def test_save_strategy_api_preserves_async_dispatch(
+    monkeypatch, tmp_path, factory_api, async_save
+):
+    """Both strategy APIs use fully parallel torch-dist and MCore async requests."""
+    mod = _import_checkpointer()
+    strategy = object()
+    strategy_calls = []
+    request = object()
+    dp_group = object()
+    wrapped_strategy = object()
+    state = {"model": object()}
+
+    def get_default_save_sharded_strategy(backend="torch_dist", version=1):
+        strategy_calls.append((backend, version))
+        return strategy
+
+    serialization = types.SimpleNamespace()
+    if factory_api:
+        serialization.get_default_save_sharded_strategy = (
+            get_default_save_sharded_strategy
+        )
+    else:
+        strategy_module = types.ModuleType(
+            "megatron.core.dist_checkpointing.strategies.torch"
+        )
+        strategy_module.TorchDistSaveShardedStrategy = get_default_save_sharded_strategy
+        monkeypatch.setitem(sys.modules, strategy_module.__name__, strategy_module)
+    monkeypatch.setattr(mod, "checkpoint_serialization", serialization)
+    monkeypatch.setattr(
+        mod.mpu, "get_data_parallel_group", lambda *, with_context_parallel: dp_group
+    )
+    wrapper = MagicMock(return_value=wrapped_strategy)
+    monkeypatch.setattr(mod, "FullyParallelSaveStrategyWrapper", wrapper)
+
+    # Strict signature: passing the removed common_strategy argument fails,
+    # and omitting async_strategy would silently select the incompatible NVRx.
+    def save(
+        sharded_state_dict,
+        checkpoint_dir,
+        sharded_strategy=None,
+        validate_access_integrity=True,
+        async_sharded_save=False,
+        preprocess_common_before_consistancy_check=None,
+        content_metadata=None,
+        async_strategy="nvrx",
+        verify_integrity=False,
+    ):
+        assert sharded_state_dict is state
+        assert checkpoint_dir == tmp_path
+        assert sharded_strategy is wrapped_strategy
+        assert validate_access_integrity is True
+        assert async_sharded_save is async_save
+        assert async_strategy == ("mcore" if async_save else "nvrx")
+        return request if async_sharded_save else None
+
+    monkeypatch.setattr(mod.dist_checkpointing, "save", save, raising=False)
+
+    result = mod.save_dist_checkpointing(state, tmp_path, async_save=async_save)
+
+    assert result is (request if async_save else None)
+    assert strategy_calls == [("torch_dist", 1)]
+    wrapper.assert_called_once_with(strategy, dp_group)
+
+
+@pytest.mark.parametrize("factory_api", [True, False], ids=["stock", "torch-dist-only"])
+def test_load_strategy_factory_or_class_receives_correct_arguments(
+    monkeypatch, tmp_path, factory_api
+):
+    """A checkpoint path must never become the new constructor's cache flag."""
+    mod = _import_checkpointer()
+    factory_paths = []
+    constructed = []
+    dp_group = object()
+    state = {"model": object()}
+    loaded = {"model": object()}
+
+    class TorchDistLoadShardedStrategy:
+        def __init__(self, cache_metadata=False, checkpoint_name=None):
+            assert cache_metadata is False
+            assert checkpoint_name is None
+            constructed.append(self)
+
+    def get_default_load_sharded_strategy(checkpoint_dir):
+        factory_paths.append(checkpoint_dir)
+        return TorchDistLoadShardedStrategy()
+
+    factory = (
+        get_default_load_sharded_strategy
+        if factory_api
+        else TorchDistLoadShardedStrategy
+    )
+    monkeypatch.setattr(
+        mod,
+        "checkpoint_serialization",
+        types.SimpleNamespace(get_default_load_sharded_strategy=factory),
+    )
+    monkeypatch.setattr(
+        mod.mpu, "get_data_parallel_group", lambda *, with_context_parallel: dp_group
+    )
+    wrapper = MagicMock()
+    monkeypatch.setattr(mod, "FullyParallelLoadStrategyWrapper", wrapper)
+
+    def load(sharded_state_dict, checkpoint_dir, sharded_strategy=None):
+        assert sharded_state_dict is state
+        assert checkpoint_dir == tmp_path
+        assert sharded_strategy is wrapper.return_value
+        return loaded
+
+    monkeypatch.setattr(mod.dist_checkpointing, "load", load, raising=False)
+
+    assert mod.load_dist_checkpointing(state, tmp_path) is loaded
+    assert factory_paths == ([tmp_path] if factory_api else [])
+    assert len(constructed) == 1
+    wrapper.assert_called_once_with(constructed[0], dp_group)
+
+
+@pytest.mark.parametrize("args", [[], ()])
+def test_async_request_without_local_writes_preserves_finalize(args):
+    """A rank with no assigned writes still participates in finalization."""
+    mod = _import_checkpointer()
+    finalize = MagicMock()
+    request = types.SimpleNamespace(
+        async_fn=None, async_fn_args=args, preload_fn=None, finalize_fns=[finalize]
+    )
+
+    assert mod._inspect_retained_payload(request) == []
+    assert request.finalize_fns == [finalize]
+    finalize.assert_not_called()
+
+
+@pytest.mark.parametrize("callback", ["async_fn", "preload_fn"])
+def test_async_request_empty_args_with_pending_work_is_rejected(callback):
+    """Only a genuine no-op may bypass retained-payload validation."""
+    mod = _import_checkpointer()
+    request = types.SimpleNamespace(async_fn=None, async_fn_args=[], preload_fn=None)
+    setattr(request, callback, MagicMock())
+
+    with pytest.raises(mod._UnsupportedMCoreAsyncLayout, match="three async_fn_args"):
+        mod._inspect_retained_payload(request)
+
+
 def test_async_disabled_creates_no_queue():
     mod = _import_checkpointer()
     with patch("torch.distributed.get_rank", return_value=0):

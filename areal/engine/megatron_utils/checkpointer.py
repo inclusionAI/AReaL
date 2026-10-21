@@ -26,11 +26,8 @@ import numpy as np
 import torch
 import torch.distributed
 from megatron.core import dist_checkpointing, mpu, tensor_parallel
+from megatron.core.dist_checkpointing import serialization as checkpoint_serialization
 from megatron.core.dist_checkpointing.mapping import ShardedObject
-from megatron.core.dist_checkpointing.serialization import (
-    get_default_load_sharded_strategy,
-    get_default_save_sharded_strategy,
-)
 from megatron.core.dist_checkpointing.strategies.async_utils import (
     AsyncCallsQueue,
     AsyncRequest,
@@ -126,6 +123,15 @@ def _inspect_retained_payload(async_request: AsyncRequest) -> list[list]:
     # TODO(agent): Revalidate this internal contract when MCore's async
     # checkpoint request or write-bucket layout changes.
     args = getattr(async_request, "async_fn_args", None)
+    if (
+        isinstance(args, (list, tuple))
+        and not args
+        and getattr(async_request, "async_fn", object()) is None
+        and getattr(async_request, "preload_fn", object()) is None
+    ):
+        # Fully parallel saves can assign no local writes to a rank. Such
+        # requests still participate in collective finalization.
+        return []
     if not isinstance(args, (list, tuple)) or len(args) != 3:
         raise unsupported("expected three async_fn_args")
 
@@ -190,7 +196,19 @@ def save_dist_checkpointing(
 ) -> AsyncRequest | None:
     validate_sharding_integrity = True
     # Get checkpointing strategies
-    save_strategy = get_default_save_sharded_strategy("torch_dist")
+    save_factory = getattr(
+        checkpoint_serialization, "get_default_save_sharded_strategy", None
+    )
+    if save_factory is not None:
+        save_strategy = save_factory("torch_dist")
+    else:
+        # Newer MCore runtimes removed the factory after dropping other
+        # checkpoint backends. Keep the factory path for stock releases.
+        from megatron.core.dist_checkpointing.strategies.torch import (
+            TorchDistSaveShardedStrategy,
+        )
+
+        save_strategy = TorchDistSaveShardedStrategy()
     save_strategy = FullyParallelSaveStrategyWrapper(
         save_strategy, mpu.get_data_parallel_group(with_context_parallel=True)
     )
@@ -216,7 +234,13 @@ def save_dist_checkpointing(
 
 def load_dist_checkpointing(sharded_state_dict, ckpt_dir):
     # Get checkpointing strategies
-    load_strategy = get_default_load_sharded_strategy(ckpt_dir)
+    load_factory = checkpoint_serialization.get_default_load_sharded_strategy
+    if isinstance(load_factory, type):
+        # Newer runtimes alias the factory to TorchDistLoadShardedStrategy.
+        # Its first argument is cache_metadata, not a checkpoint directory.
+        load_strategy = load_factory()
+    else:
+        load_strategy = load_factory(ckpt_dir)
     load_strategy = FullyParallelLoadStrategyWrapper(
         load_strategy, mpu.get_data_parallel_group(with_context_parallel=True)
     )
