@@ -73,6 +73,7 @@ class _Upstream:
     base_url: str
     api_key: str
     model: str
+    episode: dict[str, Any] | None = None
 
     @classmethod
     def from_inference(cls, meta: dict[str, Any]) -> _Upstream | None:
@@ -87,7 +88,12 @@ class _Upstream:
         if not base_url or not api_key:
             return None
         model = meta.get("model") or "default"
-        return cls(base_url=base_url.rstrip("/"), api_key=api_key, model=model)
+        return cls(
+            base_url=base_url.rstrip("/"),
+            api_key=api_key,
+            model=model,
+            episode=dict(meta["episode"]) if meta.get("episode") is not None else None,
+        )
 
     @classmethod
     def from_env(cls) -> _Upstream | None:
@@ -105,6 +111,75 @@ class _SessionState:
     agent: Any  # Hermes ``AIAgent`` instance.
     upstream: _Upstream | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+class GSM8KAgent:
+    """One math completion through Agent Service and the captured RL upstream.
+
+    Supply the existing GSM8K dataset's formatted prompt as ``message`` and
+    generation settings as ``metadata['generation']``. The caller keeps the
+    gold answer, scores the returned text with ``gsm8k_reward_fn``, and submits
+    that reward with this response's ``completion_id`` and episode identity.
+    """
+
+    async def run(
+        self, request: AgentRequest, *, emitter: EventEmitter
+    ) -> AgentResponse:
+        from openai import AsyncOpenAI
+
+        metadata = request.metadata or {}
+        upstream = _Upstream.from_inference(metadata.get("areal_inference") or {})
+        if upstream is None:
+            raise ValueError("GSM8KAgent requires explicit AReaL inference routing")
+        generation = metadata.get("generation")
+        if not isinstance(generation, dict) or (
+            set(generation) - {"max_tokens", "temperature", "top_p", "seed"}
+        ):
+            raise ValueError("generation requires explicit supported sampling settings")
+        if (
+            type(generation.get("max_tokens")) is not int
+            or generation["max_tokens"] < 1
+        ):
+            raise ValueError("generation.max_tokens must be a positive integer")
+        if not request.message or request.history:
+            raise ValueError("Each GSM8K episode requires one independent prompt")
+        messages = [{"role": "user", "content": request.message}]
+        extra = (
+            {"extra_body": {"areal_episode": upstream.episode}}
+            if upstream.episode is not None
+            else {}
+        )
+        # A retry after an uncertain completion can produce a second sample;
+        # leave retry/abort decisions to the episode protocol instead.
+        async with AsyncOpenAI(
+            base_url=upstream.base_url,
+            api_key=upstream.api_key,
+            timeout=120.0,
+            max_retries=0,
+        ) as client:
+            completion = await client.chat.completions.create(
+                model=upstream.model,
+                messages=messages,
+                n=1,
+                **generation,
+                **extra,
+            )
+        if len(completion.choices) != 1:
+            raise RuntimeError("A GSM8K episode requires exactly one completion")
+        choice = completion.choices[0]
+        text = choice.message.content
+        if text is None:
+            raise RuntimeError("The math completion contains no answer text")
+        await emitter.emit_delta(text)
+        return AgentResponse(
+            summary=text,
+            metadata={
+                "completion_id": completion.id,
+                "finish_reason": choice.finish_reason,
+                "usage": completion.usage.model_dump() if completion.usage else None,
+                "areal_episode": upstream.episode,
+            },
+        )
 
 
 class HermesAgent:
@@ -144,6 +219,11 @@ class HermesAgent:
         """
         from run_agent import AIAgent  # type: ignore[import-not-found]
 
+        kwargs = (
+            {"request_overrides": {"extra_body": {"areal_episode": upstream.episode}}}
+            if upstream.episode is not None
+            else {}
+        )
         return AIAgent(
             base_url=upstream.base_url,
             api_key=upstream.api_key,
@@ -156,6 +236,7 @@ class HermesAgent:
             skip_context_files=True,
             skip_memory=True,
             session_db=None,
+            **kwargs,
         )
 
     async def _session_lock(self, session_key: str) -> asyncio.Lock:
@@ -240,11 +321,20 @@ class HermesAgent:
         routes to the new endpoint/key.
         """
         inf_meta = (request.metadata or {}).get("areal_inference")
+        state = self._sessions.get(request.session_key)
+        if (
+            state is not None
+            and state.upstream is not None
+            and state.upstream.episode is not None
+            and not (inf_meta or {}).get("episode")
+        ):
+            raise RuntimeError(
+                "Every on-demand Hermes turn requires an episode identity"
+            )
         upstream = (
             _Upstream.from_inference(inf_meta) if inf_meta else None
         ) or self._env_upstream
 
-        state = self._sessions.get(request.session_key)
         if state is None:
             if upstream is None:
                 raise RuntimeError(
@@ -275,6 +365,10 @@ class HermesAgent:
         """
         lock = await self._session_lock(state.session_key)
         async with lock:
+            if self._sessions.get(state.session_key) is not state:
+                raise RuntimeError(
+                    "This turn's Hermes instance was replaced by a newer episode"
+                )
             return await asyncio.to_thread(
                 state.agent.run_conversation,
                 message,

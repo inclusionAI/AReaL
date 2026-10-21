@@ -1,0 +1,438 @@
+# SPDX-License-Identifier: Apache-2.0
+
+"""Propose, evaluate, accept or retry immutable simulator/optimizer revisions."""
+
+import fcntl
+import json
+import os
+import uuid
+from dataclasses import asdict
+from pathlib import Path
+
+from areal.autopilot.elastic.runtime.state.checkpoint import atomic_json
+from areal.autopilot.revision.agent import RevisionAgent
+from areal.autopilot.revision.contracts import (
+    BASELINE_SOURCE,
+    ProposalRequest,
+    digest,
+    source_digest,
+)
+from areal.autopilot.revision.evaluator import AcceptanceCriteria, RevisionEvaluator
+from areal.autopilot.revision.execution import load_module
+from areal.autopilot.revision.joint_evaluator import (
+    JointOptimizerCriteria,
+    JointOptimizerEvaluator,
+)
+from areal.autopilot.revision.model_evaluator import ModelAcceptanceCriteria
+from areal.autopilot.revision.model_execution import HistoricalSourceEvaluator
+
+
+class RevisionStore:
+    """One target and one fixed evaluation context per store; atomic active pointer."""
+
+    def __init__(self, root: Path):
+        self.root = root.resolve()
+        self.root.mkdir(parents=True, exist_ok=True)
+
+    def active(self) -> tuple[Path, dict] | None:
+        pointer = self.root / "active.json"
+        if not pointer.exists():
+            return None
+        value = json.loads(pointer.read_text())
+        path = (self.root / value["source"]).resolve()
+        if (
+            not path.is_relative_to(self.root)
+            or not path.is_file()
+            or source_digest(path.read_text()) != value["source_sha256"]
+        ):
+            raise ValueError("Accepted revision source is missing or changed")
+        report = json.loads((path.parent / "evaluation.json").read_text())
+        acceptance = json.loads((path.parent / "acceptance.json").read_text())
+        context = json.loads((self.root / "context.json").read_text())
+        if (
+            acceptance.get("accepted") is not True
+            or acceptance.get("candidate_sha256") != value["source_sha256"]
+            or acceptance.get("benchmark_sha256") != report["benchmark_sha256"]
+            or report["target"] != context["target"]
+            or not report["valid"]
+            or report["candidate_sha256"] != value["source_sha256"]
+            or report["benchmark_sha256"] != context["benchmark_sha256"]
+            or value["benchmark_sha256"] != context["benchmark_sha256"]
+        ):
+            raise ValueError("Accepted revision does not match its evaluation")
+        return path, value
+
+    def promote(self, path: Path, report: dict) -> None:
+        if (
+            not report["valid"]
+            or source_digest(path.read_text()) != report["candidate_sha256"]
+        ):
+            raise ValueError("Only a verified candidate can be promoted")
+        context = json.loads((self.root / "context.json").read_text())
+        acceptance = json.loads((path.parent / "acceptance.json").read_text())
+        stored_report = json.loads((path.parent / "evaluation.json").read_text())
+        active = self.active()
+        parent_sha = (
+            active[1]["source_sha256"]
+            if active
+            else json.loads((self.root / "baseline.json").read_text())[
+                "candidate_sha256"
+            ]
+        )
+        if (
+            acceptance.get("accepted") is not True
+            or acceptance.get("parent_sha256") != parent_sha
+            or acceptance.get("candidate_sha256") != report["candidate_sha256"]
+            or acceptance.get("benchmark_sha256") != context["benchmark_sha256"]
+            or digest(stored_report) != digest(report)
+        ):
+            raise ValueError("Candidate has no matching acceptance receipt")
+        # evaluation.json is durable before active points at this generation.
+        descriptor = os.open(path.parent.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        atomic_json(
+            self.root / "active.json",
+            {
+                "source": str(path.relative_to(self.root)),
+                "source_sha256": report["candidate_sha256"],
+                "target": report["target"],
+                "benchmark_sha256": report["benchmark_sha256"],
+                "score": report["score"],
+            },
+        )
+
+
+class RevisionLoop:
+    def __init__(
+        self,
+        agent: RevisionAgent,
+        evaluator: RevisionEvaluator
+        | HistoricalSourceEvaluator
+        | JointOptimizerEvaluator,
+        root: Path,
+        *,
+        criteria: AcceptanceCriteria
+        | ModelAcceptanceCriteria
+        | JointOptimizerCriteria
+        | None = None,
+        initial_source: str | None = None,
+    ):
+        self.agent, self.evaluator = agent, evaluator
+        self.store = RevisionStore(root)
+        self.initial_source = initial_source
+        self._evaluator_owns_acceptance = evaluator.target in {
+            "model",
+            "joint_optimizer",
+            "serial_model",
+        }
+        if evaluator.target == "model":
+            if not isinstance(initial_source, str) or not initial_source.strip():
+                raise ValueError(
+                    "Historical model revisions require an explicit initial_source factory"
+                )
+        if self._evaluator_owns_acceptance:
+            if criteria is not None and criteria != evaluator.criteria:
+                raise ValueError("Acceptance criteria are frozen by the evaluator")
+            self.criteria = evaluator.criteria
+        else:
+            self.criteria = criteria or AcceptanceCriteria()
+
+    def _public_feedback(self, outcome: dict) -> dict:
+        if not self._evaluator_owns_acceptance:
+            return outcome
+        return {
+            **outcome.get("feedback", {}),
+            **{
+                k: outcome[k]
+                for k in (
+                    "round",
+                    "status",
+                    "reason",
+                    "parent_sha256",
+                    "candidate_sha256",
+                )
+                if k in outcome
+            },
+        }
+
+    def run(self, *, max_rounds: int = 3, stop_after_accept: bool = True) -> dict:
+        if type(max_rounds) is not int or max_rounds < 1:
+            raise ValueError("Revision rounds must be positive")
+        with (self.store.root / "revision.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return self._run(max_rounds, stop_after_accept)
+
+    @property
+    def context(self) -> dict:
+        context = {
+            "format_version": 1,
+            "target": self.evaluator.target,
+            "benchmark_sha256": self.evaluator.benchmark_sha256,
+            "deployment_context": self.evaluator.context,
+            "criteria": asdict(self.criteria),
+        }
+        if self._evaluator_owns_acceptance:
+            context["initial_sha256"] = source_digest(
+                self.initial_source
+                if self.initial_source is not None
+                else BASELINE_SOURCE[self.evaluator.target]
+            )
+        return context
+
+    def _run(self, max_rounds: int, stop_after_accept: bool) -> dict:
+        root, context = self.store.root, self.context
+        if (root / "context.json").exists():
+            if json.loads((root / "context.json").read_text()) != context:
+                raise ValueError(
+                    "Revision store belongs to another fixed evaluation context"
+                )
+        else:
+            atomic_json(root / "context.json", context)
+        attempts = root / "attempts"
+        attempts.mkdir(exist_ok=True)
+        active = self.store.active()
+        source = (
+            active[0].read_text()
+            if active
+            else (
+                self.initial_source
+                if self.initial_source is not None
+                else BASELINE_SOURCE[self.evaluator.target]
+            )
+        )
+        initial_sha256 = source_digest(source)
+        baseline = self.evaluator.evaluate(
+            source, root / f"baseline-{uuid.uuid4().hex}"
+        )
+        previous_report = (
+            active[0].parent / "evaluation.json"
+            if active is not None
+            else root / "baseline.json"
+        )
+        if self._evaluator_owns_acceptance and previous_report.exists():
+            accepted_report = json.loads(previous_report.read_text())
+            fingerprints = (
+                ("prediction_sha256", "joint_snapshot_sha256")
+                if self.evaluator.target == "model"
+                else ("prediction_sha256",)
+                if self.evaluator.target == "serial_model"
+                else ("selection_sha256",)
+            )
+            if accepted_report["valid"] and (
+                not baseline.valid
+                or baseline.candidate_sha256 != accepted_report["candidate_sha256"]
+                or baseline.benchmark_sha256 != accepted_report["benchmark_sha256"]
+                or any(
+                    baseline.metrics.get(key) != accepted_report["metrics"].get(key)
+                    for key in fingerprints
+                )
+            ):
+                raise ValueError(
+                    "Accepted component predictions/selections changed since acceptance"
+                    if active is not None
+                    else "Incumbent predictions/selections changed since baseline evaluation"
+                )
+        atomic_json(root / "baseline.json", asdict(baseline))
+        if not baseline.valid:
+            raise ValueError(f"Incumbent failed evaluation: {baseline.errors}")
+        previous = []
+        previous_source = None
+        for directory in sorted(attempts.glob("round-*")):
+            if (directory / "outcome.json").exists():
+                previous.append(json.loads((directory / "outcome.json").read_text()))
+                if (directory / "proposal.json").exists():
+                    previous_source = json.loads(
+                        (directory / "proposal.json").read_text()
+                    )["source"]
+        seen = {initial_sha256, *(item.get("candidate_sha256") for item in previous)}
+        baseline_feedback = (
+            self.evaluator.feedback(baseline)
+            if self._evaluator_owns_acceptance
+            else {"score": baseline.score, "metrics": baseline.metrics}
+        )
+        feedback = [
+            {"status": "incumbent", **baseline_feedback},
+            *(self._public_feedback(o) for o in previous[-3:]),
+        ]
+        outcomes = []
+        for _ in range(max_rounds):
+            round_number = len(list(attempts.glob("round-*"))) + 1
+            directory = attempts / f"round-{round_number:04d}-{uuid.uuid4().hex[:8]}"
+            directory.mkdir()
+            request = ProposalRequest(
+                self.evaluator.target,
+                round_number,
+                source,
+                source_digest(source),
+                self.evaluator.calibration,
+                json.loads(json.dumps(self.evaluator.settings)),
+                tuple(feedback[-4:]),
+                previous_source=previous_source if previous_source != source else None,
+            )
+            atomic_json(directory / "proposal-request.json", request.to_dict())
+            outcome = {
+                "round": round_number,
+                "status": "rejected",
+                "parent_sha256": source_digest(source),
+            }
+            try:
+                proposal = self.agent.propose(request)
+            except Exception as error:
+                outcome.update(reason=f"{type(error).__name__}: {error}")
+            else:
+                try:
+                    previous_source = proposal.source
+                    candidate_sha = source_digest(proposal.source)
+                    outcome["candidate_sha256"] = candidate_sha
+                    atomic_json(directory / "proposal.json", asdict(proposal))
+                    if candidate_sha in seen:
+                        outcome["reason"] = "Duplicate candidate"
+                    else:
+                        seen.add(candidate_sha)
+                        report = self.evaluator.evaluate(proposal.source, directory)
+                        atomic_json(directory / "evaluation.json", asdict(report))
+                        accepted, reason = (
+                            self.evaluator.compare(report, baseline)
+                            if self._evaluator_owns_acceptance
+                            else self.criteria.compare(report, baseline)
+                        )
+                        outcome.update(
+                            reason=reason,
+                            score=report.score,
+                            metrics=report.metrics,
+                            errors=list(report.errors),
+                        )
+                        if self._evaluator_owns_acceptance:
+                            outcome["feedback"] = self.evaluator.feedback(report)
+                        if accepted:
+                            path = directory / "candidate.py"
+                            # Runner materializes the exact source that was evaluated.
+                            if source_digest(path.read_text()) != candidate_sha:
+                                raise ValueError(
+                                    "Candidate source changed during evaluation"
+                                )
+                            with path.open("rb") as stream:
+                                os.fsync(stream.fileno())
+                            atomic_json(
+                                directory / "acceptance.json",
+                                {
+                                    "accepted": True,
+                                    "parent_sha256": outcome["parent_sha256"],
+                                    "candidate_sha256": candidate_sha,
+                                    "benchmark_sha256": report.benchmark_sha256,
+                                },
+                            )
+                            self.store.promote(path, asdict(report))
+                            source, baseline = proposal.source, report
+                            outcome["status"] = "accepted"
+                except OSError:
+                    raise
+                except Exception as error:
+                    outcome.update(reason=f"{type(error).__name__}: {error}")
+            atomic_json(directory / "outcome.json", outcome)
+            feedback.append(self._public_feedback(outcome))
+            outcomes.append(outcome)
+            if outcome["status"] == "accepted" and stop_after_accept:
+                break
+        active = self.store.active()
+        result = {
+            "target": self.evaluator.target,
+            "benchmark_sha256": self.evaluator.benchmark_sha256,
+            "initial_sha256": initial_sha256,
+            "incumbent_sha256": source_digest(source),
+            "active_source": None if active is None else str(active[0]),
+            "accepted": sum(x["status"] == "accepted" for x in outcomes),
+            "rounds": outcomes,
+            "final_score": baseline.score,
+            "final_metrics": baseline.metrics,
+        }
+        atomic_json(root / "run.json", result)
+        return result
+
+
+def apply_accepted_revision(root: Path, profile: dict, settings: dict):
+    """Load one evaluated component at construction time, leaving the other fixed."""
+    from areal.autopilot.elastic.policy.basic.optimizer import BasicOptimizer
+    from areal.autopilot.elastic.policy.basic.simulator import WorkflowSimulator
+    from areal.autopilot.revision.contracts import (
+        deployment_context,
+        lifecycle_profile_digest,
+        workflow_from_profile,
+    )
+    from areal.autopilot.revision.execution import load_source
+
+    store = RevisionStore(root)
+    context = json.loads((store.root / "context.json").read_text())
+    if context["target"] == "model":
+        raise ValueError(
+            "Historical predictors use load_accepted_model, not lifecycle component loading"
+        )
+    if context["target"] == "joint_optimizer":
+        raise ValueError(
+            "Joint optimizer revisions require their fixed offline evaluator"
+        )
+    if context["target"] == "serial_model":
+        raise ValueError(
+            "Serial revisions require their matching executable joint bundle"
+        )
+    expected = deployment_context(profile, settings)
+    if "profile_sha256" in context["deployment_context"]:
+        expected["profile_sha256"] = lifecycle_profile_digest(profile)
+    reference = context["deployment_context"].get("simulator_source")
+    if reference is not None:
+        expected["simulator_source"] = reference
+    if digest(context["deployment_context"]) != digest(expected):
+        raise ValueError(
+            "Accepted revision does not match the model/residency/search contract"
+        )
+    active = store.active()
+    if active is None:
+        raise ValueError("No accepted component revision is available")
+    module = load_module(active[0])
+    workflow = workflow_from_profile(profile)
+    simulator = (
+        WorkflowSimulator(workflow)
+        if reference is None
+        else load_source(reference).build_simulator(workflow)
+    )
+    optimizer = BasicOptimizer(**settings)
+    if context["target"] == "simulator":
+        simulator = module.build_simulator(workflow)
+    else:
+        optimizer = module.build_optimizer(dict(settings))
+    if not callable(getattr(simulator, "evaluate", None)) or not callable(
+        getattr(optimizer, "optimize", None)
+    ):
+        raise ValueError("Accepted revision does not implement its factory contract")
+    return simulator, optimizer
+
+
+def load_accepted_model(root: Path, evaluator: HistoricalSourceEvaluator):
+    """Load one accepted offline predictor in its exact historical factory context."""
+    evaluator.assert_unchanged()
+    store = RevisionStore(root)
+    context = json.loads((store.root / "context.json").read_text())
+    if (
+        context["target"] != "model"
+        or context["benchmark_sha256"] != evaluator.benchmark_sha256
+    ):
+        raise ValueError(
+            "Accepted model belongs to a different historical evaluation context"
+        )
+    active = store.active()
+    if active is None:
+        raise ValueError("No accepted historical model is available")
+    predictor = load_module(active[0]).build_model(
+        evaluator.history.calibration, evaluator.settings
+    )
+    evaluator.assert_unchanged()
+    if not callable(getattr(predictor, "predict", None)):
+        raise ValueError("Accepted model does not implement predict")
+    accepted_report = json.loads((active[0].parent / "evaluation.json").read_text())
+    evaluator.verify_loaded(
+        predictor, accepted_report["metrics"].get("prediction_sha256")
+    )
+    return predictor

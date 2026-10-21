@@ -339,10 +339,12 @@ def create_app(config: GatewayConfig) -> FastAPI:
         )
 
     # =========================================================================
-    # POST /rl/set_reward — session key or admin key (HITL)
+    # Session-affine reward and episode lifecycle operations.
     # =========================================================================
 
     @app.post("/rl/set_reward")
+    @app.post("/rl/current_episode")
+    @app.post("/rl/abort_episode")
     async def set_reward(request: Request):
         token = extract_bearer_token(request)
         body = await request.body()
@@ -359,7 +361,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
             worker_addr = await query_router(
                 config.router_addr,
                 token,
-                "/rl/set_reward",
+                request.url.path,
                 config.router_timeout,
                 admin_api_key=config.admin_api_key,
                 model=model,
@@ -369,7 +371,7 @@ def create_app(config: GatewayConfig) -> FastAPI:
             return _router_error_response(exc)
 
         resp = await forward_request(
-            f"{worker_addr}/rl/set_reward",
+            f"{worker_addr}{request.url.path}",
             body,
             headers,
             config.forward_timeout,
@@ -523,7 +525,11 @@ def create_app(config: GatewayConfig) -> FastAPI:
             client=_client(),
         )
 
-        if resp.status_code == 200 and group_id is not None:
+        if (
+            resp.status_code == 200
+            and group_id is not None
+            and body_json.get("remove_session", True)
+        ):
             await revoke_session_in_router(
                 config.router_addr,
                 config.admin_api_key,

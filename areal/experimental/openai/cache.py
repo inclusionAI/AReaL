@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
+from __future__ import annotations
+
 import hashlib
 import json
 import os
@@ -7,6 +9,7 @@ import threading
 import time
 from collections import OrderedDict, defaultdict
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
@@ -76,6 +79,17 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
         )
         memo[id(self)] = new
         return new
+
+    def snapshot(self) -> InteractionCache:
+        """Copy export-mutable state without copying models or tokenizers."""
+        result = InteractionCache(
+            session_id=self._session_id, prefix_matcher=self._prefix_matcher
+        )
+        for key, value in copy_interactions(dict(self)).items():
+            OrderedDict.__setitem__(result, key, value)
+        result._apply_reward_discount_called = self._apply_reward_discount_called
+        result._total_reward = self._total_reward
+        return result
 
     @property
     def last_interaction_id(self) -> str:
@@ -268,6 +282,23 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
 
                 current_reward = current_reward * turn_discount + interaction.reward
                 interaction.reward = current_reward
+                if interaction._cache is not None:
+                    # Parent tensors may already have been materialized while
+                    # assembling a multi-turn child. Keep the scalar metadata
+                    # equal to a fresh to_tensor_dict() after discounting.
+                    interaction._cache["rewards"] = torch.tensor(
+                        [float(current_reward)]
+                    )
+                    original_reward = interaction.original_reward
+                    interaction._cache["original_rewards"] = torch.tensor(
+                        [
+                            float(
+                                current_reward
+                                if original_reward is None
+                                else original_reward
+                            )
+                        ]
+                    )
         return dict(**self)
 
     def __setitem__(
@@ -448,6 +479,8 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
         ValueError
             If an unsupported ``style`` is provided.
         """
+        if style not in ("concat", "individual"):
+            raise ValueError(f"Invalid export interactions style {style}")
         if drop_retry_orphans:
             self.drop_retry_orphans()
         if reward_discount is not None and not self._apply_reward_discount_called:
@@ -509,3 +542,27 @@ class InteractionCache(OrderedDict[str, InteractionWithTokenLogpReward]):
             return dict(**complete_cache)
         else:
             raise ValueError(f"Invalid export interactions style {style}")
+
+
+def copy_interactions(
+    interactions: dict[str, InteractionWithTokenLogpReward],
+) -> dict[str, InteractionWithTokenLogpReward]:
+    """Isolate rewards, parent links and tensor-cache entries for one export.
+
+    Export only reads the response tensors and tokenizer. Sharing these avoids
+    cloning a tokenizer or copying large tensors on every retained peek.
+    """
+    copies: dict[int, InteractionWithTokenLogpReward] = {}
+
+    def clone(value: InteractionWithTokenLogpReward) -> InteractionWithTokenLogpReward:
+        if id(value) not in copies:
+            copied = replace(
+                value,
+                parent=None,
+                _cache=dict(value._cache) if value._cache is not None else None,
+            )
+            copies[id(value)] = copied
+            copied.parent = clone(value.parent) if value.parent is not None else None
+        return copies[id(value)]
+
+    return {key: clone(value) for key, value in interactions.items()}

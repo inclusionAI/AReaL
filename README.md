@@ -1,3 +1,26 @@
+# AReaL AutoPilot: Elastic Training
+
+Elastic training infrastructure and offline policy revision for agentic RL, built on
+AReaL. Current research scope: configuration cost efficiency for nine Tau2 trials.
+
+- [Current progress](PROGRESS.md) and
+  [Tau2 plan / company handoff](examples/autopilot/PLAN.md)
+- [Basic policy and actor cost model](areal/autopilot/elastic/policy/README.md)
+- [Offline simulator / optimizer revision](areal/autopilot/revision/README.md)
+- [Execution architecture and validation](examples/autopilot/elastic/README.md)
+
+The runtime provides durable queues, checkpoint recovery, weight publication and pure-DP
+training-group resizing. The serial joint policy path applies Actor/Rollout
+configurations and accepted model/optimizer revisions; its M2 evidence uses controlled
+small-model inputs. The independent Expert cost model and simulator provide a frozen
+offline reference. Mixed-layout execution, asynchronous joint-policy validation and Tau2
+performance/quality validation remain future work. Real Tau2 data stays on the company
+computer; repository scenarios are not measurements of those runs. The older
+[M1 report](examples/autopilot/elastic/milestones/m1/README.md) is historical evidence,
+not the current implementation scope.
+
+______________________________________________________________________
+
 <h1 align="center">
 <em>AReaL</em>: A Large-Scale Asynchronous Reinforcement Learning System
 </h1>

@@ -216,12 +216,18 @@ class InfBridge:
                 remaining,
             )
 
+            # A publication may advance the bridge version while this request
+            # is in flight. Attribute this attempt's tokens to its dispatch
+            # version; an abort/resubmit snapshots the new version separately.
+            generation_version = self._version
             data = await self._send_request(http_req)
             result = self.backend.parse_generation_response(data)
 
             accumulated_tokens.extend(result.output_tokens)
             accumulated_logprobs.extend(result.output_logprobs)
-            accumulated_versions.extend([self._version] * len(result.output_tokens))
+            accumulated_versions.extend(
+                [generation_version] * len(result.output_tokens)
+            )
             stop_reason = cast(_StopReason, result.stop_reason)
 
             if result.routed_experts is not None:

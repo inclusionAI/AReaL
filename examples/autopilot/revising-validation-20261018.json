@@ -1,0 +1,106 @@
+{
+  "date": "2026-10-18",
+  "status": "passed",
+  "scope": "basic component code revising loop, CPU only",
+  "source": {
+    "python_files_checked": 64,
+    "python_sha256": "d2060554077968000709f1a158178c8b36306a43b08018f6249e3a5e2703f372",
+    "local_matches_test_snapshot": true
+  },
+  "cpu_regression": {
+    "passed": 236,
+    "skipped": 1,
+    "skip_reason": "CUDA unavailable/hidden"
+  },
+  "integration": {
+    "default_candidate_workers": true,
+    "external_json_agent_commands": true,
+    "custom_command_override_verified": true,
+    "simulator_resume_preserved_active_pointer": true,
+    "accepted_factories_loaded_into_basic_policy": true,
+    "heldout_labels_absent_from_candidate_requests": true,
+    "source_read_only": true,
+    "network": "none",
+    "gpu_requested": false
+  },
+  "simulator": {
+    "accepted_source_sha256": "90a87940786c16d526b1ca6f82b7ff0a2838f3f0a43e99c34dc0ac4a94d51bb2",
+    "benchmark_sha256": "eae0074c9f5e9b98f46b7225d417c1fbbf8d791219d47e1f9d360a426e6b2ab4",
+    "baseline_score": 0.07988179196316453,
+    "accepted_score": 2.819614030794048e-17,
+    "baseline_metrics": {
+      "mean_relative_error": 0.07988179196316453,
+      "feasibility_errors": 0,
+      "cases": 7
+    },
+    "accepted_metrics": {
+      "mean_relative_error": 2.819614030794048e-17,
+      "feasibility_errors": 0,
+      "cases": 7
+    }
+  },
+  "optimizer": {
+    "accepted_source_sha256": "f62fbf9d77cf6e4f1dd946045be96b1cd097bd1f29eb63f039971caa9a5ce688",
+    "benchmark_sha256": "d38a6fa370c15fb99aa40347623fffa770c60b21cc239a922deb20514dbed73b",
+    "baseline_score": 1.04,
+    "accepted_score": 1.03,
+    "baseline_metrics": {
+      "mean_gpu_seconds": 128.1,
+      "mean_wall_seconds": 54.7,
+      "mean_update_start_delay_seconds": 2.1,
+      "mean_transition_seconds": 6.0,
+      "mean_completed_samples": 1.6,
+      "mean_effective_tokens": 220.0,
+      "mean_relative_oracle_cost": 1.0,
+      "mean_reference_queries": 28.8,
+      "mean_query_fraction": 0.8,
+      "max_optimizer_seconds": 0.019694456015713513,
+      "cases": 5
+    },
+    "accepted_metrics": {
+      "mean_gpu_seconds": 128.1,
+      "mean_wall_seconds": 54.7,
+      "mean_update_start_delay_seconds": 2.1,
+      "mean_transition_seconds": 6.0,
+      "mean_completed_samples": 1.6,
+      "mean_effective_tokens": 220.0,
+      "mean_relative_oracle_cost": 1.0,
+      "mean_reference_queries": 21.6,
+      "mean_query_fraction": 0.6,
+      "max_optimizer_seconds": 0.01955520606134087,
+      "cases": 5
+    }
+  },
+  "deployment": {
+    "scope": "synthetic CPU; external JSON agent commands; no LLM provider or GPU claim",
+    "simulator": {
+      "accepted": true,
+      "heldout_relative_error": 2.819614030794048e-17,
+      "loaded_prediction_seconds": 31.0
+    },
+    "optimizer": {
+      "accepted": true,
+      "decision": {
+        "action": "launch",
+        "config": {
+          "world_size": 2
+        },
+        "train": true,
+        "reason": "Lowest measured forecast cost"
+      },
+      "baseline_calls": 36,
+      "revised_calls": 18,
+      "mean_reference_gpu_seconds": 128.1
+    }
+  },
+  "cleanup": {
+    "stopped_test_containers_removed": true,
+    "both_revision_locks_reacquired": true
+  },
+  "limits": [
+    "Synthetic cases and deterministic code proposers; no LLM-provider quality claim.",
+    "Optimizer costs are fixed-reference predictions, not actual GPU savings or reward measurements.",
+    "One target per store; accepted code loads only at construction, with no automatic live or joint-component replacement.",
+    "Trusted Python subprocesses are failure isolation, not a hostile-code sandbox; adaptive validation requires a separate final audit set."
+  ]
+}

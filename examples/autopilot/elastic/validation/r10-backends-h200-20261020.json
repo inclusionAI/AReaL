@@ -1,0 +1,189 @@
+{
+  "date": "2026-10-20",
+  "status": "passed_cpu_contracts_not_target_accuracy",
+  "scope": "Independent frozen Expert backend/hardware integration against fixed R10 arrivals; no new training",
+  "commits": {
+    "expert_archive": "ab3a4d5b",
+    "r10_replay": "cc457948"
+  },
+  "implementation_sha256": {
+    "replay_r10.py": "635d16c593eecfdfcd7bae2f663eda98f2a9d93f0f4fbdb2c2e740941e1df512",
+    "replay.py": "216b6fb03a5241c422fbf1ed9e3e6486c309f2f412eb72bfe37d3722bf38eff6",
+    "advantage.py": "313b95f7392de455c5f54c9cfa6a2989f26fbd15e8363976e17ac84469d9a0e2",
+    "actor_target.py": "ffb051399659b327af100348d58287687b01801042b3878be497cd58aa0e2292"
+  },
+  "source_reference": {
+    "archive": {
+      "trial": "r10",
+      "profiles": 5,
+      "data_files": 14,
+      "configuration": "cfea5974f1952ded3163cea106e668ee5cca57dc172f5395aecbcf31d824ec44"
+    },
+    "code_revision": "f4e4d10fc25ea03858808ea1540e97ba7d552a5e1efbb77665519449ac28ed08",
+    "numerical_environment": {
+      "numpy": "1.26.4"
+    },
+    "manifest_sha256": "3f58ab32e3cd8c872bc35405b6131aa72be5c9deb048dad4bc464b59285450e9"
+  },
+  "cases": {
+    "original": {
+      "status": "unsupported",
+      "actor_gpus": 4,
+      "seconds": null,
+      "actor_gpu_hours": null,
+      "feasibility": null,
+      "static_memory_gb": [],
+      "accuracy_status": "source-validation"
+    },
+    "original-repeat": {
+      "status": "unsupported",
+      "actor_gpus": 4,
+      "seconds": null,
+      "actor_gpu_hours": null,
+      "feasibility": null,
+      "static_memory_gb": [],
+      "accuracy_status": "source-validation"
+    },
+    "megatron-h20": {
+      "status": "unsupported",
+      "actor_gpus": 4,
+      "seconds": null,
+      "actor_gpu_hours": null,
+      "feasibility": "infeasible",
+      "static_memory_gb": [
+        183.192723456
+      ],
+      "accuracy_status": "not_scored"
+    },
+    "megatron-h200": {
+      "status": "unsupported",
+      "actor_gpus": 4,
+      "seconds": null,
+      "actor_gpu_hours": null,
+      "feasibility": "infeasible",
+      "static_memory_gb": [
+        183.192723456
+      ],
+      "accuracy_status": "not_scored"
+    },
+    "megatron-8gpu": {
+      "status": "complete",
+      "actor_gpus": 8,
+      "seconds": 1590.9720086046425,
+      "actor_gpu_hours": 3.535493352454761,
+      "feasibility": "unknown",
+      "static_memory_gb": [
+        91.596361728
+      ],
+      "accuracy_status": "not_scored"
+    },
+    "archon-h20": {
+      "status": "unsupported",
+      "actor_gpus": 4,
+      "seconds": null,
+      "actor_gpu_hours": null,
+      "feasibility": "infeasible",
+      "static_memory_gb": [
+        122.128482304
+      ],
+      "accuracy_status": "not_scored"
+    },
+    "archon-h200": {
+      "status": "unsupported",
+      "actor_gpus": 4,
+      "seconds": null,
+      "actor_gpu_hours": null,
+      "feasibility": "unknown",
+      "static_memory_gb": [
+        122.128482304
+      ],
+      "accuracy_status": "not_scored"
+    },
+    "archon-8gpu": {
+      "status": "complete",
+      "actor_gpus": 8,
+      "seconds": 1591.0017081984704,
+      "actor_gpu_hours": 3.5355593515521564,
+      "feasibility": "unknown",
+      "static_memory_gb": [
+        61.064241152
+      ],
+      "accuracy_status": "not_scored"
+    },
+    "missing-auxiliary": {
+      "status": "unsupported",
+      "actor_gpus": 8,
+      "seconds": null,
+      "actor_gpu_hours": null,
+      "feasibility": "unknown",
+      "static_memory_gb": [
+        91.596361728
+      ],
+      "accuracy_status": "not_scored"
+    },
+    "missing-broadcast": {
+      "status": "unsupported",
+      "actor_gpus": 8,
+      "seconds": null,
+      "actor_gpu_hours": null,
+      "feasibility": "unknown",
+      "static_memory_gb": [
+        91.596361728
+      ],
+      "accuracy_status": "not_scored"
+    },
+    "fsdp-h200": {
+      "status": "unsupported",
+      "actor_gpus": 4,
+      "seconds": null,
+      "actor_gpu_hours": null,
+      "feasibility": "unknown",
+      "static_memory_gb": [
+        0.0
+      ],
+      "accuracy_status": "not_scored"
+    }
+  },
+  "checks": {
+    "source_numeric_regression_unchanged": true,
+    "repeat_byte_identical": true,
+    "same_arrivals_and_logical_work": true,
+    "no_source_calibration_or_target_accuracy_claim": true,
+    "infeasible_targets_have_no_cost": true,
+    "missing_auxiliary_or_broadcast_has_no_cost": true,
+    "explicit_actor8_scenarios_complete_and_gpu_integral_matches": true,
+    "mp_full_dp_local_work_with_eight_workers": true,
+    "h200_effective_hbm_prior_and_no_h20_fit": true,
+    "illegal_or_unmodeled_mesh_and_source_calibration_flags_rejected": "unit tests"
+  },
+  "cpu_tests": {
+    "passed": 319,
+    "command": "python tests/run_autopilot_cpu.py tests/test_autopilot_actor_cost.py tests/test_elastic_basic_policy.py tests/test_elastic_policy.py -q"
+  },
+  "hardware_sources": [
+    "https://www.nvidia.com/en-us/data-center/h200/"
+  ],
+  "artifacts": "r10-backends-h200-20261020-i0z0ytyp/verified",
+  "report_sha256": {
+    "original": "0d3e8d4626cda762b8e55acad23f0848cad3ddb78c2140c53da1d100f6301c53",
+    "original-repeat": "0d3e8d4626cda762b8e55acad23f0848cad3ddb78c2140c53da1d100f6301c53",
+    "megatron-h20": "fd425cd49fd0b751ae541cb97b1cbd682627831b75e1c9eb496c67da1e160ad8",
+    "megatron-h200": "5fe48a4788e58c24e1f579dfa44ba6a01c9dd724dfb3f4accbd52267f7c3bb32",
+    "megatron-8gpu": "0a160b1a7057f56a907b5ae9b07e6c2b58c9f254aae10206ea2a0687556188db",
+    "archon-h20": "02a5579c1b031d771c9ceacffb9d651d7f384cb1b54a4bdf4ccf510b804fd264",
+    "archon-h200": "1ecdb30095e1fadce4173bb4a7311957a5d4127282aad14222495a02c9e81beb",
+    "archon-8gpu": "3bf9012bf3bbdf7e3d04477e6f1b1a158a9eeb7604ead3ae8d096267bbc2c991",
+    "missing-auxiliary": "9126e2053428dbc8e2120cafca78a32c0e12bc8180949440170a69c21bc35883",
+    "missing-broadcast": "014ee4648974e4477506836d9f7c1f388181845299f2c23b43240bd46fb9fc0a",
+    "fsdp-h200": "f63e84a05ee7bffff2a3e030c5991974b5dab89619b3186d3e97e3d18c714b92"
+  },
+  "limitations": [
+    "Target stage times are uncalibrated priors, no Megatron/Archon/H200 accuracy or benefit claim",
+    "Actor8 cases use explicit unmeasured publish/save/broadcast scenario priors and require twelve total GPUs with fixed Rollout4",
+    "Static memory excludes activations and buffers; passing lower bound leaves feasibility unknown",
+    "H200 SXM specifications and an assumed 8-GPU topology; not company hardware telemetry or NVL",
+    "Unsupported: non-FSDP CPU offload, ETP, interleaved/virtual pipeline, Archon expert TP without EP, multiple Actor nodes",
+    "No target timing labels: source FSDP/H20 timings are not used for fitting or target accuracy scoring",
+    "No rollout feedback, quality verification, online config apply or GPU price conversion"
+  ]
+}

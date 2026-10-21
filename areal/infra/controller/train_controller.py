@@ -188,7 +188,7 @@ class TrainController:
 
     def __init__(
         self,
-        train_engine: type[TrainEngine],
+        train_engine: type[TrainEngine] | str,
         config: TrainEngineConfig,
         scheduler: Scheduler,
     ):
@@ -309,12 +309,19 @@ class TrainController:
 
         # Construct engine class import path for dynamic loading on workers
         # Workers will import and instantiate the engine class using this path
+        # An import path keeps GPU backend imports inside workers. Existing
+        # callers can continue passing the engine class directly.
         engine_class = self.train_engine
+        engine_path = (
+            engine_class
+            if isinstance(engine_class, str)
+            else f"{engine_class.__module__}.{engine_class.__name__}"
+        )
 
         # Create and initialize engines on workers
         run_async_task(
             self._async_create_engines,
-            f"{engine_class.__module__}.{engine_class.__name__}",
+            engine_path,
         )
         run_async_task(self._async_initialize_engines, ft_spec, **kwargs)
 

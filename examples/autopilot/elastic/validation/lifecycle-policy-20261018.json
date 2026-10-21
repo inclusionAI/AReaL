@@ -1,0 +1,536 @@
+{
+  "kind": "synthetic_offline_validation",
+  "scenario_sha256": "652a6f9564f89a9c342c0939eaeb6c7e4073d750c8390910014e043407280f86",
+  "assumptions": "Synthetic what-if assumptions, not measurements; workload is synthetic too. H200/8-GPU node is user-specified, inter-node bandwidth uses the configurable reference preset.",
+  "actor_profiles": [
+    {
+      "config": {
+        "world_size": 32,
+        "profile_id": "actor-7bb162b6cf6ba1086e2b8a9bd4bd17fb30ddd33292f3cebc143524939692b9c9"
+      },
+      "aliases": [
+        "S031",
+        "S030",
+        "S013"
+      ],
+      "stages_seconds": {
+        "recompute_logp": 2.7408463550529203,
+        "compute_advantage": 0.00020268865641025639,
+        "train_step": 10.48717499572621
+      }
+    },
+    {
+      "config": {
+        "world_size": 32,
+        "profile_id": "actor-d77460f1558836b58e1100ae994f85f263a00ee1aed9d4f7a6a4338003f46f9b"
+      },
+      "aliases": [
+        "S029",
+        "S028"
+      ],
+      "stages_seconds": {
+        "recompute_logp": 0.9879699162305878,
+        "compute_advantage": 0.00020268865641025639,
+        "train_step": 3.4107141406329355
+      }
+    },
+    {
+      "config": {
+        "world_size": 32,
+        "profile_id": "actor-ce8165acca8f697ec3212b0f8cd5659ad74008400a9294ae08d70821b43f55df"
+      },
+      "aliases": [
+        "S026"
+      ],
+      "stages_seconds": {
+        "recompute_logp": 2.6031901168357123,
+        "compute_advantage": 0.00020033608205128204,
+        "train_step": 9.808584508656747
+      }
+    },
+    {
+      "config": {
+        "world_size": 32,
+        "profile_id": "actor-24e33ac2b357edbd75c28a40331abc7d39a23674b77a3234b997ec92c004ce5a"
+      },
+      "aliases": [
+        "T0390",
+        "S025",
+        "S024"
+      ],
+      "stages_seconds": {
+        "recompute_logp": 1.374166274166652,
+        "compute_advantage": 0.0002013443282051282,
+        "train_step": 4.825752671481191
+      }
+    }
+  ],
+  "cases": {
+    "cold_ready": {
+      "scenario_changes": {},
+      "decision": {
+        "action": "launch",
+        "config": {
+          "world_size": 32,
+          "profile_id": "actor-d77460f1558836b58e1100ae994f85f263a00ee1aed9d4f7a6a4338003f46f9b"
+        },
+        "train": true,
+        "reason": "Lowest lifecycle GPU cost"
+      },
+      "selected_aliases": [
+        "S029",
+        "S028"
+      ],
+      "evaluated": 72,
+      "rejected": [
+        "Checkpoint restore between these profiles is not declared compatible"
+      ],
+      "plan": [
+        {
+          "config": {
+            "world_size": 32,
+            "profile_id": "actor-d77460f1558836b58e1100ae994f85f263a00ee1aed9d4f7a6a4338003f46f9b"
+          },
+          "release_before": false,
+          "aliases": [
+            "S029",
+            "S028"
+          ]
+        },
+        {
+          "config": {
+            "world_size": 32,
+            "profile_id": "actor-d77460f1558836b58e1100ae994f85f263a00ee1aed9d4f7a6a4338003f46f9b"
+          },
+          "release_before": true,
+          "aliases": [
+            "S029",
+            "S028"
+          ]
+        },
+        {
+          "config": {
+            "world_size": 32,
+            "profile_id": "actor-d77460f1558836b58e1100ae994f85f263a00ee1aed9d4f7a6a4338003f46f9b"
+          },
+          "release_before": true,
+          "aliases": [
+            "S029",
+            "S028"
+          ]
+        }
+      ],
+      "prediction": {
+        "seconds": 309.19666023655986,
+        "training_gpu_seconds": 2342.293127569914,
+        "inference_gpu_seconds": 2473.573281892479,
+        "total_gpu_seconds": 4815.866409462393,
+        "samples": 96,
+        "effective_tokens": 196608
+      }
+    },
+    "long_idle": {
+      "scenario_changes": {
+        "observation": {
+          "current_profile": "S029",
+          "batch_ready": false
+        },
+        "history": [
+          {
+            "samples": 32,
+            "rollout_seconds": 120,
+            "stats": {
+              "n_seqs": 128,
+              "sequence_tokens": 262144,
+              "max_seq_len": 8192,
+              "min_seq_len": 512,
+              "loss_tokens": 65536
+            }
+          }
+        ]
+      },
+      "decision": {
+        "action": "release",
+        "config": null,
+        "train": false,
+        "reason": "Release during predicted idle interval"
+      },
+      "selected_aliases": [],
+      "evaluated": 24,
+      "rejected": [
+        "Checkpoint restore between these profiles is not declared compatible"
+      ],
+      "plan": [
+        {
+          "config": {
+            "world_size": 32,
+            "profile_id": "actor-d77460f1558836b58e1100ae994f85f263a00ee1aed9d4f7a6a4338003f46f9b"
+          },
+          "release_before": true,
+          "aliases": [
+            "S029",
+            "S028"
+          ]
+        },
+        {
+          "config": {
+            "world_size": 32,
+            "profile_id": "actor-d77460f1558836b58e1100ae994f85f263a00ee1aed9d4f7a6a4338003f46f9b"
+          },
+          "release_before": true,
+          "aliases": [
+            "S029",
+            "S028"
+          ]
+        },
+        {
+          "config": {
+            "world_size": 32,
+            "profile_id": "actor-d77460f1558836b58e1100ae994f85f263a00ee1aed9d4f7a6a4338003f46f9b"
+          },
+          "release_before": true,
+          "aliases": [
+            "S029",
+            "S028"
+          ]
+        }
+      ],
+      "prediction": {
+        "seconds": 426.19666023655986,
+        "training_gpu_seconds": 2310.293127569914,
+        "inference_gpu_seconds": 3409.573281892479,
+        "total_gpu_seconds": 5719.866409462393,
+        "samples": 96,
+        "effective_tokens": 196608
+      }
+    },
+    "short_idle": {
+      "scenario_changes": {
+        "observation": {
+          "current_profile": "S029",
+          "batch_ready": false
+        },
+        "history": [
+          {
+            "samples": 32,
+            "rollout_seconds": 1,
+            "stats": {
+              "n_seqs": 128,
+              "sequence_tokens": 262144,
+              "max_seq_len": 8192,
+              "min_seq_len": 512,
+              "loss_tokens": 65536
+            }
+          }
+        ]
+      },
+      "decision": {
+        "action": "keep",
+        "config": {
+          "world_size": 32,
+          "profile_id": "actor-d77460f1558836b58e1100ae994f85f263a00ee1aed9d4f7a6a4338003f46f9b"
+        },
+        "train": false,
+        "reason": "Retain current profile"
+      },
+      "selected_aliases": [
+        "S029",
+        "S028"
+      ],
+      "evaluated": 24,
+      "rejected": [
+        "Checkpoint restore between these profiles is not declared compatible"
+      ],
+      "plan": [
+        {
+          "config": {
+            "world_size": 32,
+            "profile_id": "actor-d77460f1558836b58e1100ae994f85f263a00ee1aed9d4f7a6a4338003f46f9b"
+          },
+          "release_before": false,
+          "aliases": [
+            "S029",
+            "S028"
+          ]
+        },
+        {
+          "config": {
+            "world_size": 32,
+            "profile_id": "actor-d77460f1558836b58e1100ae994f85f263a00ee1aed9d4f7a6a4338003f46f9b"
+          },
+          "release_before": false,
+          "aliases": [
+            "S029",
+            "S028"
+          ]
+        },
+        {
+          "config": {
+            "world_size": 32,
+            "profile_id": "actor-d77460f1558836b58e1100ae994f85f263a00ee1aed9d4f7a6a4338003f46f9b"
+          },
+          "release_before": false,
+          "aliases": [
+            "S029",
+            "S028"
+          ]
+        }
+      ],
+      "prediction": {
+        "seconds": 33.19666023655981,
+        "training_gpu_seconds": 1062.2931275699138,
+        "inference_gpu_seconds": 265.57328189247846,
+        "total_gpu_seconds": 1327.8664094623923,
+        "samples": 96,
+        "effective_tokens": 196608
+      }
+    },
+    "switch_declared": {
+      "scenario_changes": {
+        "observation": {
+          "current_profile": "S026"
+        },
+        "workload": {
+          "samples": 32,
+          "rollout_seconds": 0,
+          "stats": {
+            "n_seqs": 128,
+            "sequence_tokens": 262144,
+            "max_seq_len": 8192,
+            "min_seq_len": 512,
+            "loss_tokens": 65536
+          }
+        },
+        "compatible_transitions": [
+          [
+            "S026",
+            "S029"
+          ]
+        ]
+      },
+      "decision": {
+        "action": "reconfigure",
+        "config": {
+          "world_size": 32,
+          "profile_id": "actor-d77460f1558836b58e1100ae994f85f263a00ee1aed9d4f7a6a4338003f46f9b"
+        },
+        "train": true,
+        "reason": "Lower lifecycle GPU cost"
+      },
+      "selected_aliases": [
+        "S029",
+        "S028"
+      ],
+      "evaluated": 40,
+      "rejected": [
+        "Checkpoint restore between these profiles is not declared compatible"
+      ],
+      "plan": [
+        {
+          "config": {
+            "world_size": 32,
+            "profile_id": "actor-d77460f1558836b58e1100ae994f85f263a00ee1aed9d4f7a6a4338003f46f9b"
+          },
+          "release_before": false,
+          "aliases": [
+            "S029",
+            "S028"
+          ]
+        },
+        {
+          "config": {
+            "world_size": 32,
+            "profile_id": "actor-d77460f1558836b58e1100ae994f85f263a00ee1aed9d4f7a6a4338003f46f9b"
+          },
+          "release_before": false,
+          "aliases": [
+            "S029",
+            "S028"
+          ]
+        },
+        {
+          "config": {
+            "world_size": 32,
+            "profile_id": "actor-d77460f1558836b58e1100ae994f85f263a00ee1aed9d4f7a6a4338003f46f9b"
+          },
+          "release_before": false,
+          "aliases": [
+            "S029",
+            "S028"
+          ]
+        }
+      ],
+      "prediction": {
+        "seconds": 44.19666023655981,
+        "training_gpu_seconds": 1414.2931275699138,
+        "inference_gpu_seconds": 353.57328189247846,
+        "total_gpu_seconds": 1767.8664094623923,
+        "samples": 96,
+        "effective_tokens": 196608
+      }
+    },
+    "switch_after_gap": {
+      "scenario_changes": {
+        "observation": {
+          "current_profile": "S026"
+        },
+        "compatible_transitions": [
+          [
+            "S026",
+            "S029"
+          ]
+        ]
+      },
+      "decision": {
+        "action": "keep",
+        "config": {
+          "world_size": 32,
+          "profile_id": "actor-ce8165acca8f697ec3212b0f8cd5659ad74008400a9294ae08d70821b43f55df"
+        },
+        "train": true,
+        "reason": "Retain current profile"
+      },
+      "selected_aliases": [
+        "S026"
+      ],
+      "evaluated": 40,
+      "rejected": [
+        "Checkpoint restore between these profiles is not declared compatible"
+      ],
+      "plan": [
+        {
+          "config": {
+            "world_size": 32,
+            "profile_id": "actor-ce8165acca8f697ec3212b0f8cd5659ad74008400a9294ae08d70821b43f55df"
+          },
+          "release_before": false,
+          "aliases": [
+            "S026"
+          ]
+        },
+        {
+          "config": {
+            "world_size": 32,
+            "profile_id": "actor-d77460f1558836b58e1100ae994f85f263a00ee1aed9d4f7a6a4338003f46f9b"
+          },
+          "release_before": true,
+          "aliases": [
+            "S029",
+            "S028"
+          ]
+        },
+        {
+          "config": {
+            "world_size": 32,
+            "profile_id": "actor-d77460f1558836b58e1100ae994f85f263a00ee1aed9d4f7a6a4338003f46f9b"
+          },
+          "release_before": true,
+          "aliases": [
+            "S029",
+            "S028"
+          ]
+        }
+      ],
+      "prediction": {
+        "seconds": 302.2097484526144,
+        "training_gpu_seconds": 2118.71195048366,
+        "inference_gpu_seconds": 2417.6779876209152,
+        "total_gpu_seconds": 4536.389938104576,
+        "samples": 96,
+        "effective_tokens": 196608
+      }
+    },
+    "switch_undeclared": {
+      "scenario_changes": {
+        "observation": {
+          "current_profile": "S026"
+        }
+      },
+      "decision": {
+        "action": "keep",
+        "config": {
+          "world_size": 32,
+          "profile_id": "actor-ce8165acca8f697ec3212b0f8cd5659ad74008400a9294ae08d70821b43f55df"
+        },
+        "train": true,
+        "reason": "Retain current profile"
+      },
+      "selected_aliases": [
+        "S026"
+      ],
+      "evaluated": 24,
+      "rejected": [
+        "Checkpoint restore between these profiles is not declared compatible"
+      ],
+      "plan": [
+        {
+          "config": {
+            "world_size": 32,
+            "profile_id": "actor-ce8165acca8f697ec3212b0f8cd5659ad74008400a9294ae08d70821b43f55df"
+          },
+          "release_before": false,
+          "aliases": [
+            "S026"
+          ]
+        },
+        {
+          "config": {
+            "world_size": 32,
+            "profile_id": "actor-ce8165acca8f697ec3212b0f8cd5659ad74008400a9294ae08d70821b43f55df"
+          },
+          "release_before": true,
+          "aliases": [
+            "S026"
+          ]
+        },
+        {
+          "config": {
+            "world_size": 32,
+            "profile_id": "actor-ce8165acca8f697ec3212b0f8cd5659ad74008400a9294ae08d70821b43f55df"
+          },
+          "release_before": true,
+          "aliases": [
+            "S026"
+          ]
+        }
+      ],
+      "prediction": {
+        "seconds": 318.23592488472354,
+        "training_gpu_seconds": 2631.5495963111525,
+        "inference_gpu_seconds": 2545.8873990777884,
+        "total_gpu_seconds": 5177.436995388941,
+        "samples": 96,
+        "effective_tokens": 196608
+      }
+    },
+    "time_bound": {
+      "scenario_changes": {
+        "optimizer": {
+          "horizon": 3,
+          "cost_scope": "total",
+          "switch_margin": 0.05,
+          "max_seconds": 0.001
+        }
+      },
+      "decision": {
+        "action": "keep",
+        "config": null,
+        "train": false,
+        "reason": "No feasible lifecycle plan"
+      },
+      "selected_aliases": [],
+      "evaluated": 8,
+      "rejected": [
+        "Forecast exceeds time bound"
+      ],
+      "plan": [],
+      "prediction": null
+    }
+  },
+  "limitations": [
+    "Actor model is sparsely calibrated; H200/Archon timings are not cluster measurements.",
+    "Lifecycle seconds and transition compatibility are explicit scenario inputs.",
+    "No reward or real elastic savings are validated by this simulation.",
+    "Existing GPU TrainGroup executes pure-DP layouts only and rejects named profiles."
+  ]
+}

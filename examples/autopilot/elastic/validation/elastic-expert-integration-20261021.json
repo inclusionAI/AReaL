@@ -1,0 +1,278 @@
+{
+  "date": "2026-10-21",
+  "status": "passed",
+  "scope": "Expert merged into Elastic; CPU conditional replay and protocol regression only",
+  "sources": {
+    "elastic": "5d119b99",
+    "expert": "09adf2b5"
+  },
+  "environment": {
+    "python": "3.12.14",
+    "numpy": "1.26.4",
+    "torch": "2.10.0",
+    "platform": "macOS arm64"
+  },
+  "cpu": {
+    "passed": 634,
+    "skipped": 1,
+    "failures": 0,
+    "errors": 0,
+    "skip_reason": "CUDA is unavailable",
+    "seconds": 103.698,
+    "command": "python tests/run_autopilot_cpu.py -q tests/test_elastic_basic_policy.py tests/test_elastic_lifecycle_optimizer.py tests/test_autopilot_actor_cost.py tests/test_autopilot_revision.py tests/test_autopilot_revision_llm.py tests/test_elastic_loop.py tests/test_elastic_policy.py tests/test_elastic_queued_trainer.py tests/test_elastic_batch_queue.py tests/test_elastic_recovery.py tests/test_elastic_runtime_state.py"
+  },
+  "r10": {
+    "legacy": {
+      "alignment": {
+        "max_boundary_error_seconds": 0.0287044015808533,
+        "finish_error_seconds": -0.025854441635374315,
+        "observed_actor_gpu_hours": 2.0105467888888886,
+        "tolerance_seconds": 0.05951888656616211,
+        "passed": true
+      },
+      "development_validation": {
+        "recompute_logp": {
+          "covered": 8,
+          "total": 11,
+          "evidence_counts": {
+            "calibrated": 8
+          },
+          "wape": 0.011067026009057143
+        },
+        "compute_advantage": {
+          "covered": 8,
+          "total": 11,
+          "evidence_counts": {
+            "calibrated": 8
+          },
+          "wape": 0.11323150432019397
+        },
+        "train_step": {
+          "covered": 8,
+          "total": 11,
+          "evidence_counts": {
+            "calibrated": 8
+          },
+          "wape": 0.0556648093075253
+        },
+        "update_weights": {
+          "covered": 11,
+          "total": 11,
+          "evidence_counts": {
+            "calibrated": 11
+          },
+          "wape": 0.03453430908502758
+        }
+      },
+      "prediction_window": {
+        "observed_prefix_steps": [],
+        "start_seconds": 0.0,
+        "first_predicted_step": 1,
+        "measured_seconds": 1809.4662555583645,
+        "predicted_seconds": 1813.645057650239,
+        "measured_actor_gpu_hours": 2.010518061731516,
+        "predicted_actor_gpu_hours": 2.0151611751669325
+      },
+      "common_validation": {
+        "steps": [
+          6,
+          7,
+          8,
+          10,
+          12,
+          13,
+          14,
+          15
+        ],
+        "actor_measured_seconds": 472.904154,
+        "phases": {
+          "recompute_logp": {
+            "wape": 0.011067026009057143,
+            "absolute_error_over_actor_total": 0.0006941882148922987
+          },
+          "compute_advantage": {
+            "wape": 0.11323150432019397,
+            "absolute_error_over_actor_total": 0.0019550757158689693
+          },
+          "train_step": {
+            "wape": 0.0556648093075253,
+            "absolute_error_over_actor_total": 0.051212070127027935
+          }
+        },
+        "actor_total_wape": 0.05043966530944505
+      },
+      "expert_strict_replay": {
+        "status": "unsupported",
+        "unsupported_steps": [
+          9,
+          11,
+          16
+        ],
+        "seconds": null,
+        "actor_gpu_hours": null,
+        "reason": "Full-window cost is unknown; incomplete work is not scored"
+      },
+      "diagnostic_seconds": 1813.645057650239,
+      "measured_seconds": 1809.4662555583645,
+      "implementation_sha256": {
+        "replay_r10.py": "6add091e88c101d5c674b1e86b088323cb11e80fec546b9383d061166c974fb5",
+        "replay.py": "216b6fb03a5241c422fbf1ed9e3e6486c309f2f412eb72bfe37d3722bf38eff6",
+        "advantage.py": "313b95f7392de455c5f54c9cfa6a2989f26fbd15e8363976e17ac84469d9a0e2",
+        "actor_target.py": "ffb051399659b327af100348d58287687b01801042b3878be497cd58aa0e2292"
+      },
+      "reference": {
+        "archive": {
+          "trial": "r10",
+          "profiles": 5,
+          "data_files": 14,
+          "configuration": "cfea5974f1952ded3163cea106e668ee5cca57dc172f5395aecbcf31d824ec44"
+        },
+        "code_revision": "1a80cf1ecb9865e7e3d5c75d429991c7a7e3f3ee7a9c42a23f93627b2bc89a25",
+        "numerical_environment": {
+          "numpy": "1.26.4"
+        },
+        "manifest_sha256": "b84c387e0f5ddfe73802c93a22a787df63673062de556e8c61b09d99b7c199cd"
+      }
+    },
+    "structural": {
+      "alignment": {
+        "max_boundary_error_seconds": 0.0287044015808533,
+        "finish_error_seconds": -0.025854441635374315,
+        "observed_actor_gpu_hours": 2.0105467888888886,
+        "tolerance_seconds": 0.05951888656616211,
+        "passed": true
+      },
+      "development_validation": {
+        "recompute_logp": {
+          "covered": 8,
+          "total": 11,
+          "evidence_counts": {
+            "calibrated": 8
+          },
+          "wape": 0.011067026009057143
+        },
+        "compute_advantage": {
+          "covered": 11,
+          "total": 11,
+          "evidence_counts": {
+            "assumed": 1,
+            "calibrated": 10
+          },
+          "wape": 0.04561985783697055
+        },
+        "train_step": {
+          "covered": 8,
+          "total": 11,
+          "evidence_counts": {
+            "calibrated": 8
+          },
+          "wape": 0.0556648093075253
+        },
+        "update_weights": {
+          "covered": 11,
+          "total": 11,
+          "evidence_counts": {
+            "calibrated": 11
+          },
+          "wape": 0.03453430908502758
+        }
+      },
+      "prediction_window": {
+        "observed_prefix_steps": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "start_seconds": 578.5586375679017,
+        "first_predicted_step": 6,
+        "measured_seconds": 1230.9076179904628,
+        "predicted_seconds": 1235.0881733661531,
+        "measured_actor_gpu_hours": 1.3676751311005142,
+        "predicted_actor_gpu_hours": 1.372320192629059
+      },
+      "common_validation": {
+        "steps": [
+          6,
+          7,
+          8,
+          10,
+          12,
+          13,
+          14,
+          15
+        ],
+        "actor_measured_seconds": 472.904154,
+        "phases": {
+          "recompute_logp": {
+            "wape": 0.011067026009057143,
+            "absolute_error_over_actor_total": 0.0006941882148922987
+          },
+          "compute_advantage": {
+            "wape": 0.05640470850257127,
+            "absolute_error_over_actor_total": 0.0009738939398191701
+          },
+          "train_step": {
+            "wape": 0.0556648093075253,
+            "absolute_error_over_actor_total": 0.051212070127027935
+          }
+        },
+        "actor_total_wape": 0.050704058387217955
+      },
+      "expert_strict_replay": {
+        "status": "unsupported",
+        "unsupported_steps": [
+          9,
+          11,
+          16
+        ],
+        "seconds": null,
+        "actor_gpu_hours": null,
+        "reason": "Full-window cost is unknown; incomplete work is not scored"
+      },
+      "diagnostic_seconds": 1813.6468109340547,
+      "measured_seconds": 1809.4662555583645,
+      "implementation_sha256": {
+        "replay_r10.py": "6add091e88c101d5c674b1e86b088323cb11e80fec546b9383d061166c974fb5",
+        "replay.py": "216b6fb03a5241c422fbf1ed9e3e6486c309f2f412eb72bfe37d3722bf38eff6",
+        "advantage.py": "313b95f7392de455c5f54c9cfa6a2989f26fbd15e8363976e17ac84469d9a0e2",
+        "actor_target.py": "ffb051399659b327af100348d58287687b01801042b3878be497cd58aa0e2292"
+      },
+      "reference": {
+        "archive": {
+          "trial": "r10",
+          "profiles": 5,
+          "data_files": 14,
+          "configuration": "cfea5974f1952ded3163cea106e668ee5cca57dc172f5395aecbcf31d824ec44"
+        },
+        "code_revision": "1a80cf1ecb9865e7e3d5c75d429991c7a7e3f3ee7a9c42a23f93627b2bc89a25",
+        "numerical_environment": {
+          "numpy": "1.26.4"
+        },
+        "manifest_sha256": "b84c387e0f5ddfe73802c93a22a787df63673062de556e8c61b09d99b7c199cd"
+      }
+    }
+  },
+  "merge_invariants": {
+    "elastic_runtime_and_basic_code_unchanged": true,
+    "expert_numerical_code_and_calibration_archives_unchanged": true,
+    "shared_contracts_and_actor_replay_identical_in_source_branches": true,
+    "both_branches_test_definitions_preserved": true
+  },
+  "test_stability": {
+    "serial_protocol_tests": "Fixture-local evaluator clock isolates process-startup jitter; production criteria and real-clock timing tests unchanged.",
+    "timing_test": "Intentional slow-optimizer delay increased from 80ms to 250ms to separate it from process-startup noise."
+  },
+  "pre_commit": {
+    "command": "pre-commit run --all-files",
+    "status": "passed",
+    "cli_documentation_generation": "passed"
+  },
+  "limits": [
+    "No integrated GPU or training-quality/cost-benefit acceptance in this run.",
+    "R10 fixed observed arrivals and original batch membership; auxiliary timings remain conditional.",
+    "Strict logp/train steps 9/11/16 remain unsupported; diagnostic costs do not expand strict coverage.",
+    "New prefix-calibrated default and explicit legacy baseline are distinct modes."
+  ]
+}

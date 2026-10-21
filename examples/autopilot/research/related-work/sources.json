@@ -1,0 +1,634 @@
+{
+  "checked_date": "2026-10-21",
+  "review_scope": "Two questions, each with direct / level-1 / level-2 relevance",
+  "counts": {
+    "unique_papers": 36,
+    "newly_added": 7,
+    "r1_direct": 12,
+    "r1_level_1": 7,
+    "r1_level_2": 5,
+    "r2_complete_direct_empirical_match_confirmed": 0
+  },
+  "papers": [
+    {
+      "key": "streamrl",
+      "title": "StreamRL: Scalable, Heterogeneous, and Elastic RL for LLMs with Disaggregated Stream Generation",
+      "version": "2504.15930v1",
+      "first_submitted": "2025/04/22",
+      "version_date": "2025/04/22",
+      "abstract_url": "https://arxiv.org/abs/2504.15930v1",
+      "fulltext_url": "https://arxiv.org/html/2504.15930v1",
+      "html_sha256": "63e9fb86304139de74769feb11f69aad8ad4aeb0eb2bd214c307632bd22d7c4b",
+      "scope": "Selected sections; see EVIDENCE.md. No experimental reproduction.",
+      "relevance": {
+        "r1": "level-1",
+        "r2": "not-core"
+      }
+    },
+    {
+      "key": "dynatrain",
+      "title": "DynaTrain: Fast Online Parallelism Switching for Elastic LLM Training",
+      "version": "2605.18815v1",
+      "first_submitted": "2026/05/12",
+      "version_date": "2026/05/12",
+      "abstract_url": "https://arxiv.org/abs/2605.18815v1",
+      "fulltext_url": "https://arxiv.org/html/2605.18815v1",
+      "html_sha256": "8565113e7dad3c14d60d168589b421362565f329ab2a69bc81550aa2c986bc19",
+      "scope": "Selected sections; see EVIDENCE.md. No experimental reproduction.",
+      "relevance": {
+        "r1": "level-2",
+        "r2": "not-core"
+      }
+    },
+    {
+      "key": "areal",
+      "title": "AReaL: A Large-Scale Asynchronous Reinforcement Learning System for Language Reasoning",
+      "version": "2505.24298v5",
+      "first_submitted": "2025/05/30",
+      "version_date": "2026/03/02",
+      "abstract_url": "https://arxiv.org/abs/2505.24298v5",
+      "fulltext_url": "https://arxiv.org/html/2505.24298v5",
+      "html_sha256": "b09117c9513659bf568cd710d9982ac18caf644c56cd2b290926b4592470ff2b",
+      "scope": "Selected sections; see EVIDENCE.md. No experimental reproduction.",
+      "relevance": {
+        "r1": "background",
+        "r2": "not-core"
+      }
+    },
+    {
+      "key": "areal2",
+      "title": "Next-Generation Agentic Reinforcement Learning Systems Enable Self-Evolving Agents",
+      "version": "2607.01120v2",
+      "first_submitted": "2026/07/01",
+      "version_date": "2026/07/02",
+      "abstract_url": "https://arxiv.org/abs/2607.01120v2",
+      "fulltext_url": "https://arxiv.org/html/2607.01120v2",
+      "html_sha256": "b8ef2873145c70af99396064f3e731f16428fd20edff3bddda331bb3fee45ec6",
+      "scope": "Selected sections; see EVIDENCE.md. No experimental reproduction.",
+      "relevance": {
+        "r1": "background",
+        "r2": "direct-scene-comparator"
+      },
+      "full_llm_system_policy_revision_evidence": "Not confirmed in reviewed sections; see the bounded search in SEARCH.md"
+    },
+    {
+      "key": "agentlightning",
+      "title": "Agent Lightning: Train ANY AI Agents with Reinforcement Learning",
+      "version": "2508.03680v1",
+      "first_submitted": "2025/08/05",
+      "version_date": "2025/08/05",
+      "abstract_url": "https://arxiv.org/abs/2508.03680v1",
+      "fulltext_url": "https://arxiv.org/html/2508.03680v1",
+      "html_sha256": "176d7571aff2b5710d3e3d33843ed1938abe45b3cb7b88bd78417611b8c8fbce",
+      "scope": "Selected sections; see EVIDENCE.md. No experimental reproduction.",
+      "relevance": {
+        "r1": "background",
+        "r2": "not-core"
+      }
+    },
+    {
+      "key": "hybridflow",
+      "title": "HybridFlow: A Flexible and Efficient RLHF Framework",
+      "version": "2409.19256v2",
+      "first_submitted": "2024/09/28",
+      "version_date": "2024/10/02",
+      "abstract_url": "https://arxiv.org/abs/2409.19256v2",
+      "fulltext_url": "https://arxiv.org/html/2409.19256v2",
+      "html_sha256": "d4951fd04519bdda5a77b4dc063408e11935f686d67107aa97a41094fc996093",
+      "scope": "Selected sections; see EVIDENCE.md. No experimental reproduction.",
+      "relevance": {
+        "r1": "level-1",
+        "r2": "not-core"
+      }
+    },
+    {
+      "key": "realhf",
+      "title": "ReaL: Efficient RLHF Training of Large Language Models with Parameter Reallocation",
+      "version": "2406.14088v2",
+      "first_submitted": "2024/06/20",
+      "version_date": "2025/04/24",
+      "abstract_url": "https://arxiv.org/abs/2406.14088v2",
+      "fulltext_url": "https://arxiv.org/html/2406.14088v2",
+      "html_sha256": "bea05b72deed8f1e269072538503c83f7d3396fedfcd34e620eabb67066c34f7",
+      "scope": "Selected sections; see EVIDENCE.md. No experimental reproduction.",
+      "relevance": {
+        "r1": "level-1",
+        "r2": "not-core"
+      }
+    },
+    {
+      "key": "libra",
+      "title": "Libra: Efficient Resource Management for Agentic RL Post-Training",
+      "version": "2606.03077v3",
+      "first_submitted": "2026/06/02",
+      "version_date": "2026/09/16",
+      "abstract_url": "https://arxiv.org/abs/2606.03077v3",
+      "fulltext_url": "https://arxiv.org/html/2606.03077v3",
+      "html_sha256": "d5910abfb80e9b7a0434f1114b3351da0660e02c448dd0632365fa0727513398",
+      "scope": "Selected sections; see EVIDENCE.md. No experimental reproduction.",
+      "relevance": {
+        "r1": "direct",
+        "r2": "direct-scene-comparator"
+      },
+      "full_llm_system_policy_revision_evidence": "Not confirmed in reviewed sections; see the bounded search in SEARCH.md",
+      "online_scope": "Training-time generation of agentic trajectories; deployed user-stream benefit not established by the cited evaluation"
+    },
+    {
+      "key": "nereus",
+      "title": "Nereus: Adaptive Parallelism for LLM Post-Training",
+      "version": "2609.34645v1",
+      "first_submitted": "2026/09/28",
+      "version_date": "2026/09/28",
+      "abstract_url": "https://arxiv.org/abs/2609.34645v1",
+      "fulltext_url": "https://arxiv.org/html/2609.34645v1",
+      "html_sha256": "786e468b89dbe38c48a86e394e3a6850fa551c62c9c735a3b2aa307f4e266a93",
+      "scope": "Selected sections; see EVIDENCE.md. No experimental reproduction.",
+      "relevance": {
+        "r1": "level-1",
+        "r2": "level-1"
+      }
+    },
+    {
+      "key": "qwengyre",
+      "title": "QwenGyre: An Elastic Reinforcement Learning Framework for Training xLong-Horizon Agents",
+      "version": "2609.33848v1",
+      "first_submitted": "2026/09/27",
+      "version_date": "2026/09/27",
+      "abstract_url": "https://arxiv.org/abs/2609.33848v1",
+      "fulltext_url": "https://arxiv.org/html/2609.33848v1",
+      "html_sha256": "0a09b7d297ab56c023a20361a1bab797eee61a130062db314ee51cf9a7ac5bff",
+      "scope": "Selected sections; see EVIDENCE.md. No experimental reproduction.",
+      "relevance": {
+        "r1": "direct",
+        "r2": "direct-scene-comparator"
+      },
+      "full_llm_system_policy_revision_evidence": "Not confirmed in reviewed sections; see the bounded search in SEARCH.md",
+      "online_scope": "Training-time generation of agentic trajectories; deployed user-stream benefit not established by the cited evaluation"
+    },
+    {
+      "key": "seamlessflow",
+      "title": "SeamlessFlow: A Trainer Agent Isolation RL Framework Achieving Bubble-Free Pipelines via Tag Scheduling",
+      "version": "2508.11553v1",
+      "first_submitted": "2025/08/15",
+      "version_date": "2025/08/15",
+      "abstract_url": "https://arxiv.org/abs/2508.11553v1",
+      "fulltext_url": "https://arxiv.org/html/2508.11553v1",
+      "html_sha256": "93cfa23c655123970e99fff660e44acbefb9984b85e92030f51a1c371413842e",
+      "scope": "Selected sections; see EVIDENCE.md. No experimental reproduction.",
+      "relevance": {
+        "r1": "direct",
+        "r2": "direct-scene-comparator"
+      },
+      "full_llm_system_policy_revision_evidence": "Not confirmed in reviewed sections; see the bounded search in SEARCH.md",
+      "online_scope": "Training-time generation of agentic trajectories; deployed user-stream benefit not established by the cited evaluation"
+    },
+    {
+      "key": "rlhfless",
+      "title": "RLHFless: Serverless Computing for Efficient RLHF",
+      "version": "2602.22718v1",
+      "first_submitted": "2026/02/26",
+      "version_date": "2026/02/26",
+      "abstract_url": "https://arxiv.org/abs/2602.22718v1",
+      "fulltext_url": "https://arxiv.org/html/2602.22718v1",
+      "html_sha256": "0f6231a066429c1532850d411939f6015e080c2c47681858c5c65404324b3cc4",
+      "scope": "Selected sections; see EVIDENCE.md. No experimental reproduction.",
+      "relevance": {
+        "r1": "level-1",
+        "r2": "not-core"
+      }
+    },
+    {
+      "key": "rose",
+      "title": "ROSE: Rollout On Serving GPUs via Cooperative Elasticity for Agentic RL",
+      "version": "2605.06534v2",
+      "first_submitted": "2026/05/07",
+      "version_date": "2026/05/20",
+      "abstract_url": "https://arxiv.org/abs/2605.06534v2",
+      "fulltext_url": "https://arxiv.org/html/2605.06534v2",
+      "html_sha256": "43e730ec7a49c847f823b830a02369aad2ecd793dfe0d74072627d5e7303a030",
+      "scope": "Selected sections; see EVIDENCE.md. No experimental reproduction.",
+      "relevance": {
+        "r1": "direct",
+        "r2": "direct-scene-comparator"
+      },
+      "full_llm_system_policy_revision_evidence": "Not confirmed in reviewed sections; see the bounded search in SEARCH.md",
+      "online_scope": "Training-time generation of agentic trajectories; deployed user-stream benefit not established by the cited evaluation"
+    },
+    {
+      "key": "tiderl",
+      "title": "TideRL: Boosting Agentic RL Goodput with Readiness-Aware Scheduling",
+      "version": "2608.10402v1",
+      "first_submitted": "2026/08/11",
+      "version_date": "2026/08/11",
+      "abstract_url": "https://arxiv.org/abs/2608.10402v1",
+      "fulltext_url": "https://arxiv.org/html/2608.10402v1",
+      "html_sha256": "0107d773b249fec0575535f30334b920aace2cfb0e420b97a855fd7407526cd0",
+      "scope": "Selected sections; see EVIDENCE.md. No experimental reproduction.",
+      "relevance": {
+        "r1": "direct",
+        "r2": "direct-scene-comparator"
+      },
+      "full_llm_system_policy_revision_evidence": "Not confirmed in reviewed sections; see the bounded search in SEARCH.md",
+      "online_scope": "Training-time generation of agentic trajectories; deployed user-stream benefit not established by the cited evaluation"
+    },
+    {
+      "key": "pearl",
+      "title": "PEARL: Adaptive Prefill-Decode Execution with Elasticity for Agentic Reinforcement Learning",
+      "version": "2609.35158v1",
+      "first_submitted": "2026/09/28",
+      "version_date": "2026/09/28",
+      "abstract_url": "https://arxiv.org/abs/2609.35158v1",
+      "fulltext_url": "https://arxiv.org/html/2609.35158v1",
+      "html_sha256": "1eacb0d14ac22224b17a8a3fc03bf49378ff7cba171920b39ca3b0f139e1bab3",
+      "scope": "Selected sections; see EVIDENCE.md. No experimental reproduction.",
+      "relevance": {
+        "r1": "direct",
+        "r2": "direct-scene-comparator"
+      },
+      "full_llm_system_policy_revision_evidence": "Not confirmed in reviewed sections; see the bounded search in SEARCH.md",
+      "online_scope": "Training-time generation of agentic trajectories; deployed user-stream benefit not established by the cited evaluation"
+    },
+    {
+      "key": "tangram",
+      "title": "ARL-Tangram: Unleash the Resource Efficiency in Agentic Reinforcement Learning",
+      "version": "2603.13019v1",
+      "first_submitted": "2026/03/13",
+      "version_date": "2026/03/13",
+      "abstract_url": "https://arxiv.org/abs/2603.13019v1",
+      "fulltext_url": "https://arxiv.org/html/2603.13019v1",
+      "html_sha256": "4e950d90d6f65f08dcc460ae1e4f6f7287a371ee43847e2e598851021e682065",
+      "scope": "Selected sections; see EVIDENCE.md. No experimental reproduction.",
+      "relevance": {
+        "r1": "direct",
+        "r2": "direct-scene-comparator"
+      },
+      "full_llm_system_policy_revision_evidence": "Not confirmed in reviewed sections; see the bounded search in SEARCH.md",
+      "online_scope": "Training-time generation of agentic trajectories; deployed user-stream benefit not established by the cited evaluation",
+      "r1_mechanism_scope": "Partial problem: external/environment resources or rollout request scheduling, not full joint GPU reconfiguration"
+    },
+    {
+      "key": "venusrl",
+      "title": "VenusRL: A Fully Disaggregated Agentic RL System with Priority Scheduling and Scalable Interaction",
+      "version": "2610.03286v1",
+      "first_submitted": "2026/10/02",
+      "version_date": "2026/10/02",
+      "abstract_url": "https://arxiv.org/abs/2610.03286v1",
+      "fulltext_url": "https://arxiv.org/html/2610.03286v1",
+      "html_sha256": "a79ceda414f02577bb1ea31cb839c989f41235406600ce3ed24eee59ae9c9e99",
+      "scope": "Selected sections; see EVIDENCE.md. No experimental reproduction.",
+      "relevance": {
+        "r1": "direct",
+        "r2": "direct-scene-comparator"
+      },
+      "full_llm_system_policy_revision_evidence": "Not confirmed in reviewed sections; see the bounded search in SEARCH.md",
+      "online_scope": "Training-time generation of agentic trajectories; deployed user-stream benefit not established by the cited evaluation",
+      "r1_mechanism_scope": "Partial problem: external/environment resources or rollout request scheduling, not full joint GPU reconfiguration"
+    },
+    {
+      "key": "rlboost",
+      "title": "RLBoost: Harvesting Preemptible Resources for Cost-Efficient Reinforcement Learning on LLMs",
+      "version": "2510.19225v3",
+      "first_submitted": "2025/10/22",
+      "version_date": "2026/04/08",
+      "abstract_url": "https://arxiv.org/abs/2510.19225v3",
+      "fulltext_url": "https://arxiv.org/html/2510.19225v3",
+      "html_sha256": "1d64874bb397eb6fe23a8715a6bf2ff188cee92a9740d40a5c70d37ddf18b882",
+      "scope": "Selected sections; see EVIDENCE.md. No experimental reproduction.",
+      "cited_title": "RLBoost: Harvesting Preemptible Cloud Resources for Cost-Efficient Reinforcement Learning on LLMs",
+      "formal_url": "https://www.usenix.org/conference/nsdi26/presentation/wu-yongji",
+      "formal_pdf_url": "https://www.usenix.org/system/files/nsdi26-wu-yongji.pdf",
+      "formal_review": "Publisher page and selected PDF sections read through web tool",
+      "relevance": {
+        "r1": "level-1",
+        "r2": "not-core"
+      }
+    },
+    {
+      "key": "pollux",
+      "title": "Pollux: Co-adaptive Cluster Scheduling for Goodput-Optimized Deep Learning",
+      "version": "2008.12260v2",
+      "first_submitted": "2020/08/27",
+      "version_date": "2021/05/26",
+      "abstract_url": "https://arxiv.org/abs/2008.12260v2",
+      "fulltext_url": "https://arxiv.org/html/2008.12260v2",
+      "html_sha256": "b0270fbf5c0a71abe9735582ee0a486949a33bbcc3980cc802dbcd6c55a29f3d",
+      "scope": "Selected sections; see EVIDENCE.md. No experimental reproduction.",
+      "relevance": {
+        "r1": "level-2",
+        "r2": "not-core"
+      }
+    },
+    {
+      "key": "autopoiesis",
+      "title": "Autopoiesis: A Self-Evolving System Paradigm for LLM Serving Under Runtime Dynamics",
+      "version": "2604.07144v1",
+      "first_submitted": "2026/04/08",
+      "version_date": "2026/04/08",
+      "abstract_url": "https://arxiv.org/abs/2604.07144v1",
+      "fulltext_url": "https://arxiv.org/html/2604.07144v1",
+      "html_sha256": "52119796005358e7a3e432811121f70253332d0b8fd664e3733376fe40072742",
+      "scope": "Selected sections; see EVIDENCE.md. No experimental reproduction.",
+      "relevance": {
+        "r1": "not-core",
+        "r2": "level-2"
+      }
+    },
+    {
+      "key": "adrs",
+      "title": "Barbarians at the Gate: How AI is Upending Systems Research",
+      "version": "2510.06189v3",
+      "first_submitted": "2025/10/07",
+      "version_date": "2025/10/10",
+      "abstract_url": "https://arxiv.org/abs/2510.06189v3",
+      "fulltext_url": "https://arxiv.org/html/2510.06189v3",
+      "html_sha256": "6b563855d9c2ae434b17678ea26d931c935279441d05be2cfb9be48b4b74a787",
+      "scope": "Selected sections; see EVIDENCE.md. No experimental reproduction.",
+      "relevance": {
+        "r1": "not-core",
+        "r2": "level-2"
+      }
+    },
+    {
+      "key": "adrsdb",
+      "title": "AI-Driven Research for Databases",
+      "version": "2604.06566v1",
+      "first_submitted": "2026/04/08",
+      "version_date": "2026/04/08",
+      "abstract_url": "https://arxiv.org/abs/2604.06566v1",
+      "fulltext_url": "https://arxiv.org/html/2604.06566v1",
+      "html_sha256": "549be0fe64dbbed0c54f49f985377a734e4c1782deb98f89b335d3223d088448",
+      "scope": "Selected sections; see EVIDENCE.md. No experimental reproduction.",
+      "relevance": {
+        "r1": "not-core",
+        "r2": "level-2"
+      }
+    },
+    {
+      "key": "alphaevolve",
+      "title": "AlphaEvolve: A coding agent for scientific and algorithmic discovery",
+      "version": "2506.13131v1",
+      "first_submitted": "2025/06/16",
+      "version_date": "2025/06/16",
+      "abstract_url": "https://arxiv.org/abs/2506.13131v1",
+      "fulltext_url": "https://arxiv.org/html/2506.13131v1",
+      "html_sha256": "eccec3409ca6f57f1fd28f8fec27f024af7eb4b96cd1f6254ab1084b55955d4e",
+      "scope": "Selected sections; see EVIDENCE.md. No experimental reproduction.",
+      "relevance": {
+        "r1": "not-core",
+        "r2": "level-2"
+      }
+    },
+    {
+      "key": "adaevolve",
+      "title": "AdaEvolve: Adaptive LLM Driven Zeroth-Order Optimization",
+      "version": "2602.20133v1",
+      "first_submitted": "2026/02/23",
+      "version_date": "2026/02/23",
+      "abstract_url": "https://arxiv.org/abs/2602.20133v1",
+      "fulltext_url": "https://arxiv.org/html/2602.20133v1",
+      "html_sha256": "41437fdcaa143232cfb7edf61180912b9a4fa44024a75c9468fe179c2e253470",
+      "scope": "Selected sections; see EVIDENCE.md. No experimental reproduction.",
+      "relevance": {
+        "r1": "not-core",
+        "r2": "level-2"
+      }
+    },
+    {
+      "key": "evox",
+      "title": "EvoX: Meta-Evolution for Automated Discovery",
+      "version": "2602.23413v2",
+      "first_submitted": "2026/02/26",
+      "version_date": "2026/03/16",
+      "abstract_url": "https://arxiv.org/abs/2602.23413v2",
+      "fulltext_url": "https://arxiv.org/html/2602.23413v2",
+      "html_sha256": "88b794470444440ce7f2003838c3a451bd3d293405541a57bfd15ac34545a7ec",
+      "scope": "Selected sections; see EVIDENCE.md. No experimental reproduction.",
+      "relevance": {
+        "r1": "not-core",
+        "r2": "level-2"
+      }
+    },
+    {
+      "key": "vidur",
+      "title": "Vidur: A Large-Scale Simulation Framework For LLM Inference",
+      "version": "2405.05465v2",
+      "first_submitted": "2024/05/08",
+      "version_date": "2024/05/21",
+      "abstract_url": "https://arxiv.org/abs/2405.05465v2",
+      "fulltext_url": "https://arxiv.org/html/2405.05465v2",
+      "html_sha256": "a6d20f187600bcd04305e32d304a7e94b2924130a2f3dad5c1b17705274c223e",
+      "scope": "Selected sections; see EVIDENCE.md. No experimental reproduction.",
+      "relevance": {
+        "r1": "level-2",
+        "r2": "not-core"
+      }
+    },
+    {
+      "key": "vtrain",
+      "title": "vTrain: A Simulation Framework for Evaluating Cost-effective and Compute-optimal Large Language Model Training",
+      "version": "2312.12391v2",
+      "first_submitted": "2023/11/27",
+      "version_date": "2024/09/10",
+      "abstract_url": "https://arxiv.org/abs/2312.12391v2",
+      "fulltext_url": "https://arxiv.org/html/2312.12391v2",
+      "html_sha256": "3b6434fb3e44b77ed89e08b378f26172e40b154c1e8d39186453724436586fa8",
+      "scope": "Selected sections; see EVIDENCE.md. No experimental reproduction.",
+      "relevance": {
+        "r1": "level-2",
+        "r2": "not-core"
+      }
+    },
+    {
+      "key": "rlinf",
+      "cited_title": "RLinf: Flexible and Efficient Large-Scale Reinforcement Learning via Macro-to-Micro Flow Transformation",
+      "formal_url": "https://www.usenix.org/conference/osdi26/presentation/yu-chao",
+      "formal_pdf_url": "https://www.usenix.org/system/files/osdi26-yu-chao.pdf",
+      "formal_review": "Publisher page and selected PDF sections read through web tool",
+      "relevance": {
+        "r1": "direct",
+        "r2": "direct-scene-comparator"
+      },
+      "full_llm_system_policy_revision_evidence": "Not confirmed in reviewed sections; see the bounded search in SEARCH.md",
+      "online_scope": "Training-time generation of agentic trajectories; deployed user-stream benefit not established by the cited evaluation",
+      "additional_sections_checked": "OSDI 2026: 3.4 adaptive re-profiling; 5.1.2 Search-R1 agentic evaluation, printed pp.839-840"
+    },
+    {
+      "key": "dynarl",
+      "cited_title": "DynaRL: Flexible and Dynamic Scheduling of Large-Scale Reinforcement Learning Training",
+      "formal_url": "https://www.usenix.org/conference/osdi26/presentation/wang-yuanqing",
+      "formal_pdf_url": "https://www.usenix.org/system/files/osdi26-wang-yuanqing.pdf",
+      "formal_review": "Publisher page and selected PDF sections read through web tool",
+      "relevance": {
+        "r1": "direct",
+        "r2": "direct-scene-comparator"
+      },
+      "full_llm_system_policy_revision_evidence": "Not confirmed in reviewed sections; see the bounded search in SEARCH.md",
+      "online_scope": "Training-time generation of agentic trajectories; deployed user-stream benefit not established by the cited evaluation",
+      "additional_sections_checked": "OSDI 2026: 5.1.2 online regression, printed p.854; 7.1-7.2 multi-turn rstar2-agent evaluation, Fig.12"
+    },
+    {
+      "key": "reflow",
+      "title": "ReFlow: Replay-Driven Decoupling for Efficient RL Post-Training",
+      "version": "2610.21640v1",
+      "first_submitted": "2026/10/15",
+      "version_date": "2026/10/15",
+      "abstract_url": "https://arxiv.org/abs/2610.21640v1",
+      "fulltext_url": "https://arxiv.org/html/2610.21640v1",
+      "html_sha256": "11f6061ccdf87eefb1ca64e74e9fedddee09d2a3428570bcda8f524b949adb06",
+      "scope": "Selected design and evaluation sections; see EVIDENCE.md. No reproduction.",
+      "relevance": {
+        "r1": "direct",
+        "r2": "direct-scene-comparator"
+      },
+      "full_llm_system_policy_revision_evidence": "Not confirmed in reviewed sections; see the bounded search in SEARCH.md",
+      "online_scope": "Training-time generation of agentic trajectories; deployed user-stream benefit not established by the cited evaluation",
+      "additional_sections_checked": "5: worker role transition and replica groups; 6: feedback scheduling; 7.2-7.5: APPS/ReTool, replay semantics"
+    },
+    {
+      "key": "llmzero",
+      "title": "LLMZero: Discovering Adaptive Training Strategies for RL Post-Training via LLM Agents",
+      "version": "2606.18388v2",
+      "first_submitted": "2026/06/16",
+      "version_date": "2026/09/02",
+      "abstract_url": "https://arxiv.org/abs/2606.18388v2",
+      "fulltext_url": "https://arxiv.org/html/2606.18388v2",
+      "html_sha256": "7052dc47f71829ce318c6c19f8765fe74436b46195a7e5ff34c785363177275a",
+      "scope": "Selected design and evaluation sections; see EVIDENCE.md. No reproduction.",
+      "relevance": {
+        "r1": "not-core",
+        "r2": "level-1"
+      },
+      "additional_sections_checked": "3.1-3.6: hyperparameter transition tree, weights-only checkpoint resumption; 4.1: four GRPO tasks"
+    },
+    {
+      "key": "opentinker",
+      "title": "OpenTinker: Separating Concerns in Agentic Reinforcement Learning",
+      "version": "2601.07376v2",
+      "first_submitted": "2026/01/12",
+      "version_date": "2026/07/06",
+      "abstract_url": "https://arxiv.org/abs/2601.07376v2",
+      "fulltext_url": "https://arxiv.org/html/2601.07376v2",
+      "html_sha256": "0e1f75f9bb1d67961d6044f01299ebc4d86ef8473f62db9de91e6f3c71717b50",
+      "scope": "Selected design and evaluation sections; see EVIDENCE.md. No reproduction.",
+      "relevance": {
+        "r1": "background",
+        "r2": "direct-scene-comparator"
+      },
+      "full_llm_system_policy_revision_evidence": "Not confirmed in reviewed sections; see the bounded search in SEARCH.md"
+    },
+    {
+      "key": "respec",
+      "title": "ReSpec: Towards Optimizing Speculative Decoding in Reinforcement Learning Systems",
+      "version": "2510.26475v1",
+      "first_submitted": "2025/10/30",
+      "version_date": "2025/10/30",
+      "abstract_url": "https://arxiv.org/abs/2510.26475v1",
+      "fulltext_url": "https://arxiv.org/html/2510.26475v1",
+      "html_sha256": "8b10ca8a782a2818f1f54c6f2e9c604334d1390708ec5ff943b49994608c5f3b",
+      "scope": "Selected design and evaluation sections; see EVIDENCE.md. No reproduction.",
+      "relevance": {
+        "r1": "level-1",
+        "r2": "level-1"
+      }
+    },
+    {
+      "key": "war",
+      "title": "WAR: Workload-Aware Rollouts for Synchronous Agentic Reinforcement Learning",
+      "version": "2607.17299v1",
+      "first_submitted": "2026/07/19",
+      "version_date": "2026/07/19",
+      "abstract_url": "https://arxiv.org/abs/2607.17299v1",
+      "fulltext_url": "https://arxiv.org/html/2607.17299v1",
+      "html_sha256": "116026b6a7c8bee2ae6f5ea43b77f678e0aeb50ad9855330e8433a752887de95",
+      "scope": "Selected design and evaluation sections; see EVIDENCE.md. No reproduction.",
+      "relevance": {
+        "r1": "direct",
+        "r2": "direct-scene-comparator"
+      },
+      "full_llm_system_policy_revision_evidence": "Not confirmed in reviewed sections; see the bounded search in SEARCH.md",
+      "online_scope": "Training-time generation of agentic trajectories; deployed user-stream benefit not established by the cited evaluation",
+      "r1_mechanism_scope": "Partial problem: external/environment resources or rollout request scheduling, not full joint GPU reconfiguration"
+    },
+    {
+      "key": "tvcache",
+      "title": "TVCACHE: A Stateful Tool-Value Cache for Post-Training LLM Agents",
+      "version": "2602.10986v1",
+      "first_submitted": "2026/02/11",
+      "version_date": "2026/02/11",
+      "abstract_url": "https://arxiv.org/abs/2602.10986v1",
+      "fulltext_url": "https://arxiv.org/html/2602.10986v1",
+      "html_sha256": "d236f3f0394b9a63b78f18767c153e1a674fb28e3f5177717ede30b98e15894a",
+      "scope": "Selected design and evaluation sections; see EVIDENCE.md. No reproduction.",
+      "relevance": {
+        "r1": "background",
+        "r2": "not-core"
+      }
+    },
+    {
+      "key": "ooco",
+      "title": "OOCO: Latency-disaggregated Architecture for Online-Offline Co-locate LLM Serving",
+      "version": "2511.21862v1",
+      "first_submitted": "2025/11/26",
+      "version_date": "2025/11/26",
+      "abstract_url": "https://arxiv.org/abs/2511.21862v1",
+      "fulltext_url": "https://arxiv.org/html/2511.21862v1",
+      "html_sha256": "d4af7054b000c109793a7bd3cc0752eb14ee61f9453e2c44bbca2f1effb40e13",
+      "scope": "Selected design and evaluation sections; see EVIDENCE.md. No reproduction.",
+      "relevance": {
+        "r1": "level-2",
+        "r2": "not-core"
+      }
+    }
+  ],
+  "code_files": [
+    {
+      "repo": "NetX-lab/Libra",
+      "sha": "7aeb7c0424984b1f8e19ad7e7b231bb636e530e4",
+      "path": "infra/cost_model/global_resource_planner.py",
+      "url": "https://raw.githubusercontent.com/NetX-lab/Libra/7aeb7c0424984b1f8e19ad7e7b231bb636e530e4/infra/cost_model/global_resource_planner.py",
+      "sha256": "deb87ce41ce65b53d7a0fc729d3e61ff0e82dba850c8927d5a5b4e492298bf34"
+    },
+    {
+      "repo": "NetX-lab/Libra",
+      "sha": "7aeb7c0424984b1f8e19ad7e7b231bb636e530e4",
+      "path": "infra/cost_model/calibrator.py",
+      "url": "https://raw.githubusercontent.com/NetX-lab/Libra/7aeb7c0424984b1f8e19ad7e7b231bb636e530e4/infra/cost_model/calibrator.py",
+      "sha256": "92e5724be3f36d41e6f68b2a35f922fdd802779dcffdd9eb8cfa8b3f2ba2144a"
+    },
+    {
+      "repo": "NetX-lab/Libra",
+      "sha": "7aeb7c0424984b1f8e19ad7e7b231bb636e530e4",
+      "path": "infra/cost_model/model.py",
+      "url": "https://raw.githubusercontent.com/NetX-lab/Libra/7aeb7c0424984b1f8e19ad7e7b231bb636e530e4/infra/cost_model/model.py",
+      "sha256": "777f72a009a502c3c12b457400b3bd87847e3fe513e3404cd131af5d3831c8ca"
+    },
+    {
+      "repo": "audreyccheng/adrd",
+      "sha": "609594ca4f8d2c9c9c49113183d28c7836e3acc5",
+      "path": "buffer_cache/README.md",
+      "url": "https://raw.githubusercontent.com/audreyccheng/adrd/609594ca4f8d2c9c9c49113183d28c7836e3acc5/buffer_cache/README.md",
+      "sha256": "70be36d7b298774ce8fb0f27e0bb6d06acddc662176cdce70041eb7e5501fcb7"
+    },
+    {
+      "repo": "audreyccheng/adrd",
+      "sha": "609594ca4f8d2c9c9c49113183d28c7836e3acc5",
+      "path": "buffer_cache/evaluator_generator.py",
+      "url": "https://raw.githubusercontent.com/audreyccheng/adrd/609594ca4f8d2c9c9c49113183d28c7836e3acc5/buffer_cache/evaluator_generator.py",
+      "sha256": "b44fbea0821313a9565dc5b9fe0cc9a417a40a61a6f613d53cc1b9bb9db10b82"
+    },
+    {
+      "repo": "audreyccheng/adrd",
+      "sha": "609594ca4f8d2c9c9c49113183d28c7836e3acc5",
+      "path": "index_selection/outer_loop/outer_loop.py",
+      "url": "https://raw.githubusercontent.com/audreyccheng/adrd/609594ca4f8d2c9c9c49113183d28c7836e3acc5/index_selection/outer_loop/outer_loop.py",
+      "sha256": "7c0eee2efa67d86490dbca1e31271d50ecb342f6f658e9f82177203591525e50"
+    }
+  ],
+  "limits": [
+    "Targeted search, not a proof of nonexistence.",
+    "Paper-reported performance was not independently reproduced.",
+    "Training-time online trajectory generation and deployed user streams are distinct evidence.",
+    "Code inspection covers only the six files at the previously recorded commits.",
+    "Full primary-source cache and raw search results are outside the Git repository."
+  ]
+}

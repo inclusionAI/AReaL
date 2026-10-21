@@ -1,0 +1,140 @@
+{
+  "format_version": 1,
+  "date": "2026-10-19",
+  "status": "passed",
+  "scope": "Durable Actor config application on AReaL v2 FSDP pure-DP; synthetic PPO and diagnostic CPU publication",
+  "hardware": {
+    "server": "8 x H20",
+    "pool_devices": [
+      4,
+      5,
+      6,
+      7
+    ]
+  },
+  "model": "tiny random Qwen3, seed 19; cached Qwen3-0.6B tokenizer",
+  "source": {
+    "branch": "feature/autopilot-elastic",
+    "base_commit": "3a307807ed49d5db62b7ee185a70f4804dc8bbe4",
+    "run_id": "config-application-20261019-1792387704",
+    "snapshot_files_verified": 1380,
+    "code_sha256": {
+      "areal/autopilot/elastic/runtime/config.py": "45555fb31c3acfb2608f5f8a4b41fa4906f063081d0b3254bc9a015d7072aaed",
+      "areal/autopilot/elastic/loop.py": "deef0d63887aa5b1a491d12cada12b8a463502d1eedc3a4f9a47c541d450f4a5",
+      "tests/test_elastic_recovery.py": "4fcc9d90d259709fa673b1a9b31f984bbcc2610e3c5fa4b31e355ff27dfe6e1b",
+      "examples/autopilot/elastic/validation/basic_policy.py": "3c87f72175dd261b5d374ca2f4c389830ceb48019bb57cac9d4efe71f17c50c3"
+    }
+  },
+  "cpu_regression": {
+    "passed": 463,
+    "skipped": 1,
+    "skip_reason": "CUDA RNG unit case: coordinator has CUDA_VISIBLE_DEVICES empty",
+    "local_cpu_subset_passed": 329
+  },
+  "restore": {
+    "checks": 9,
+    "target_world_sizes": [
+      1,
+      2,
+      3,
+      4,
+      1,
+      2,
+      1,
+      4,
+      4
+    ],
+    "tensor_elements_compared_per_check": 1018136,
+    "all_exact": true,
+    "all_sources_immutable": true
+  },
+  "config_application": {
+    "applied_actor_targets": [
+      1,
+      2,
+      1,
+      4
+    ],
+    "duplicate_without_restart": true,
+    "unsupported_rollout_rejected": true,
+    "failure_point": "Receipt persistence interrupted after target Actor activation",
+    "recovery_status": "rolled_back",
+    "recovered_actor_world_size": 4,
+    "same_checkpoint_cursor_and_progress": true,
+    "final_config_generation": 4,
+    "final_weight_version": 6,
+    "final_committed_samples": 6,
+    "final_effective_tokens": 192,
+    "following_policy_updates": 2,
+    "following_policy_world_sizes": [
+      4,
+      4
+    ],
+    "automatic_resize_exercised_on_gpu": false,
+    "frontend_stable": true
+  },
+  "cleanup": {
+    "containers_before_cleanup": {
+      "config-application-20261019-1792387704": {
+        "status": "exited",
+        "exit_code": 0
+      },
+      "config-application-20261019-1792387577": {
+        "status": "exited",
+        "exit_code": 1
+      }
+    },
+    "only_owned_validation_containers_removed": true,
+    "consumer_fence_reacquired": true,
+    "checkpoint_cursor_matches_queue": true,
+    "queue_counts": {
+      "committed": 6
+    },
+    "recovery_views_clean": true,
+    "gpus": [
+      {
+        "index": 0,
+        "memory_mib": 0
+      },
+      {
+        "index": 1,
+        "memory_mib": 0
+      },
+      {
+        "index": 2,
+        "memory_mib": 0
+      },
+      {
+        "index": 3,
+        "memory_mib": 0
+      },
+      {
+        "index": 4,
+        "memory_mib": 0
+      },
+      {
+        "index": 5,
+        "memory_mib": 0
+      },
+      {
+        "index": 6,
+        "memory_mib": 0
+      },
+      {
+        "index": 7,
+        "memory_mib": 0
+      }
+    ],
+    "free_bytes": 22571094016,
+    "running_containers": [
+      "autopilot-swe-control-plane"
+    ]
+  },
+  "limits": [
+    "Rollout identity is declared fixed; no real inference executor or joint GPU allocation tested.",
+    "The two following BasicPolicy decisions retained four GPUs; automatic resize integration is covered by CPU protocol tests.",
+    "This is infrastructure validation, not Tau2 accuracy, training quality, or cost-savings evidence.",
+    "Local full pre-commit has a CLI docs hook blocked by missing ray; other hooks passed."
+  ],
+  "evidence_directory": "../../../../../artifacts/config-application-20261019"
+}

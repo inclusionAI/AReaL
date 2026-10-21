@@ -110,6 +110,7 @@ class OpenResponsesBridge(AgentBridge):
                 "inf_base_url",
                 "inf_model",
                 "session_api_key",
+                "inf_episode",
             ):
                 if key in body:
                     turn_body[key] = body[key]
@@ -394,6 +395,7 @@ class ChatCompletionsBridge(AgentBridge):
             "inf_base_url",
             "inf_model",
             "session_api_key",
+            "inf_episode",
         ):
             if key in body:
                 turn_body[key] = body[key]

@@ -4,6 +4,10 @@
 
 ## Quick reference
 
+For AutoPilot work, read [PROGRESS.md](PROGRESS.md) and the
+[Tau2 plan](examples/autopilot/PLAN.md) first. Update `PROGRESS.md` after project
+advancement; keep it concise and distinguish verified results from planned work.
+
 **Tech stack**: Python 3.12+ | PyTorch | FSDP2 / Megatron / Archon | SGLang / vLLM
 
 ```bash
@@ -36,6 +40,8 @@ uv run python docs/generate_cli_docs.py
 
 **Always do**:
 
+- Keep project documentation concise: retain necessary facts, limits and next steps;
+  link detailed evidence instead of repeating logs or history.
 - Read relevant files before modifying code.
 - Run `pre-commit run --all-files` before committing.
 - Follow existing code patterns in the same module.

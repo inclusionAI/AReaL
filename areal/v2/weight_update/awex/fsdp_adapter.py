@@ -23,6 +23,7 @@ from areal.utils import logging
 from areal.v2.weight_update.awex import (
     awex_wu_use_group,
     fetch_kv_metadata,
+    teardown_weight_update_groups,
 )
 from areal.v2.weight_update.nccl_group import (
     init_weights_update_group,
@@ -221,18 +222,7 @@ class AwexFSDPAdapter(AwexTrainingAdapter):
         )
 
     def teardown_weight_update_group(self) -> None:
-        if (
-            self._weights_update_group is not None
-            and torch.distributed.is_initialized()
-        ):
-            torch.distributed.destroy_process_group(self._weights_update_group)
-        if (
-            self._weights_update_group_gloo is not None
-            and torch.distributed.is_initialized()
-        ):
-            torch.distributed.destroy_process_group(self._weights_update_group_gloo)
-        self._weights_update_group = None
-        self._weights_update_group_gloo = None
+        teardown_weight_update_groups(self)
         self._transfer_plan = None
         self._transfer_rank = None
 

@@ -24,6 +24,33 @@ def _make_scheduler(n_gpus_per_node: int = 8) -> MagicMock:
     return scheduler
 
 
+@pytest.mark.parametrize("failed", [False, True])
+def test_serving_versions_requires_every_proxy_ack(failed):
+    controller = RolloutControllerV2(
+        config=InferenceEngineConfig(backend="sglang:d1"), scheduler=_make_scheduler()
+    )
+    controller._data_proxy_addrs = ["http://proxy-0", "http://proxy-1"]
+    controller._version = 99
+    controller._ensure_initialized = MagicMock()
+
+    async def get(url):
+        if failed and "proxy-1" in url:
+            raise httpx.ConnectError("unavailable")
+        return httpx.Response(
+            200, json={"version": 3}, request=httpx.Request("GET", url)
+        )
+
+    controller._get_async_client = AsyncMock(
+        return_value=MagicMock(get=AsyncMock(side_effect=get))
+    )
+    if failed:
+        with pytest.raises(RuntimeError, match="every serving"):
+            controller.serving_versions()
+    else:
+        assert controller.serving_versions() == [3, 3]
+    assert controller.get_version() == 99
+
+
 # =============================================================================
 # InferenceEngineConfig
 # =============================================================================
@@ -508,6 +535,14 @@ class TestRolloutControllerV2Construction:
 
 
 class TestOnlineCallbackFlow:
+    @pytest.fixture(autouse=True)
+    def callback_bind_address(self, monkeypatch):
+        # These in-process HTTP tests must not depend on hostname/IPv6 routing.
+        monkeypatch.setattr(
+            "areal.utils.network.gethostip",
+            lambda: "127.0.0.1",
+        )
+
     @pytest.mark.asyncio
     async def test_online_callback_without_waiter_buffers_export_request(self):
         cfg = InferenceEngineConfig(
@@ -1149,3 +1184,30 @@ class TestMultiNodeConfig:
             c for c in mock_fork.call_args_list if c.kwargs.get("role") == "data-proxy"
         ]
         assert len(data_proxy_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_partial_version_acknowledgement_is_rejected():
+    controller = RolloutControllerV2.__new__(RolloutControllerV2)
+    controller._data_proxy_addrs = ["http://first", "http://second"]
+    controller._async_data_proxy_post = AsyncMock(
+        side_effect=[{}, RuntimeError("unavailable")]
+    )
+    with pytest.raises(RuntimeError, match="1/2 workers"):
+        await controller._async_set_version(3)
+
+
+def test_failed_version_publication_does_not_advance_local_capacity():
+    from threading import Lock
+
+    controller = RolloutControllerV2.__new__(RolloutControllerV2)
+    controller._version = 3
+    controller._version_lock = Lock()
+    controller._gateway_addr = "http://gateway"
+    controller._ensure_initialized = MagicMock()
+    controller._async_set_version = AsyncMock(
+        side_effect=RuntimeError("partial publication")
+    )
+    with pytest.raises(RuntimeError, match="partial publication"):
+        controller.set_version(4)
+    assert controller.get_version() == 3

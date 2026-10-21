@@ -336,3 +336,27 @@ def test_awex_adapters_destroy_payload_and_sidecar_groups(
         sglang_adapter.AwexSGLangAdapter,
     ):
         assert adapter._separation_wire_dtypes is None
+
+
+def test_teardown_attempts_sidecar_after_payload_failure_and_can_retry(monkeypatch):
+    from types import SimpleNamespace
+
+    from areal.v2.weight_update.awex import teardown_weight_update_groups
+
+    adapter = SimpleNamespace(
+        _weights_update_group="payload", _weights_update_group_gloo="sidecar"
+    )
+    destroy = MagicMock(side_effect=[RuntimeError("payload cleanup unknown"), None])
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+    monkeypatch.setattr(torch.distributed, "destroy_process_group", destroy)
+
+    with pytest.raises(ExceptionGroup, match="cleanup incomplete"):
+        teardown_weight_update_groups(adapter)
+    assert destroy.call_args_list == [call("payload"), call("sidecar")]
+    assert adapter._weights_update_group == "payload"
+    assert adapter._weights_update_group_gloo is None
+
+    destroy.side_effect = None
+    teardown_weight_update_groups(adapter)
+    assert destroy.call_args_list[-1] == call("payload")
+    assert adapter._weights_update_group is None

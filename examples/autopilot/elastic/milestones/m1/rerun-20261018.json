@@ -1,0 +1,112 @@
+{
+  "date": "2026-10-18",
+  "status": "passed",
+  "base_commit": "11cd5a38779d15a2179809f059384b060b0d51f2",
+  "scope": "Current refactored runtime; fresh state and two newly generated SWE episodes. No SWE-quality or GPU-hour savings claim.",
+  "runtime": {
+    "image": "ghcr.io/areal-project/areal-runtime:v2.1.0-sglang",
+    "image_id": "sha256:63e5fecba15f0ab1e16503f6ad6e791e1ad5177ede04b0d53d369ebca7d10f38",
+    "gpu": "H20",
+    "inference_gpus": 1,
+    "training_gpus": 4
+  },
+  "source": {
+    "paths": [
+      "areal/autopilot/**/*.py",
+      "examples/autopilot/elastic/**/*.py",
+      "tests/test_elastic_*.py",
+      "tests/test_autopilot_swe_fixture.py",
+      "tests/test_train_controller.py",
+      "tests/test_fsdp_sft_batch.py",
+      "areal/engine/fsdp_engine.py",
+      "areal/infra/controller/train_controller.py"
+    ],
+    "file_count": 59,
+    "sha256": "09925a7bb0dc43911ef352a4f270be05233f68606b56e438dbe205e1a1ea35e4",
+    "scheme": "sha256 of UTF-8 json.dumps({relative_path: sha256(file_bytes)}, sort_keys=True, separators=(',', ':'))"
+  },
+  "checks": {
+    "cpu_regression_passed": 190,
+    "cpu_regression_cuda_skipped": 1,
+    "gpu_runtime_state_passed": 4,
+    "sandbox_sdk_import": "passed",
+    "cli_docs_linux": "passed; both generated files byte-identical",
+    "local_precommit_all_files": "All hooks passed except CLI generation requiring local torchdata; that hook passed in the pinned Linux runtime."
+  },
+  "automatic": {
+    "initial_version": 0,
+    "final_version": 2,
+    "cycles": 2,
+    "empty_queue_kept_training_off": true,
+    "frontend_stable": true,
+    "release_overlapped_next_episode": true,
+    "committed_batches": 2,
+    "episodes": [
+      {
+        "policy_version": 0,
+        "generated_tokens": 2274,
+        "interactions": 3,
+        "reward": 0.0,
+        "sandbox_removed": true
+      },
+      {
+        "policy_version": 1,
+        "generated_tokens": 678,
+        "interactions": 2,
+        "reward": 0.0,
+        "sandbox_removed": true
+      }
+    ]
+  },
+  "timings_seconds": {
+    "startup": [
+      76.047,
+      46.905
+    ],
+    "update": [
+      44.68,
+      21.158
+    ],
+    "checkpoint": [
+      15.065,
+      13.105
+    ],
+    "publication": [
+      3.095,
+      2.617
+    ],
+    "release_including_verification": [
+      11.408,
+      11.506
+    ]
+  },
+  "checkpoint_bytes": [
+    9297302276,
+    9297302320
+  ],
+  "post_checks": {
+    "status": "passed",
+    "consumer_fence_released": true,
+    "offline_payloads_equal_outbox": true,
+    "checkpoint_and_serving_hashes_verified": true,
+    "embedding_weight_tying_verified": true,
+    "sandbox_pods": 0,
+    "independent_inference_and_training_gpu_allocation": true,
+    "memory_mib": {
+      "0": 0,
+      "1": 0,
+      "2": 0,
+      "3": 0,
+      "4": 0,
+      "5": 0,
+      "6": 0,
+      "7": 0
+    },
+    "free_disk_bytes": 41091538944
+  },
+  "evidence": {
+    "workspace_directory": "artifacts/h20-elastic-rerun-20261018",
+    "report_sha256": "f6b85259da0f4500e8dcc79963400ba9d2f61fc63f8d6e25960cb4e9cb1b7e9a",
+    "status_sha256": "d5193285ce45fe255a92e503353c115e0a8b13e2f12a65d7d62fac9b57a19cd8"
+  }
+}

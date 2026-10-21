@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "runtime_revision": "AReaL-v2-Megatron-explicit-analytical-prior",
+  "actor": {
+    "backend": "megatron",
+    "parallel": {"dp": 4},
+    "optimizer_type": "adam",
+    "optimizer_dtype": "float32",
+    "offload_params": false,
+    "grad_bytes": 4,
+    "max_tokens_per_mb": 16384,
+    "gradient_checkpointing": true,
+    "compile": false
+  }
+}

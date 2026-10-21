@@ -1,0 +1,66 @@
+{
+  "checked_date": "2026-10-21",
+  "purpose": "Two questions (reconfiguration; LLM-assisted system-policy revision), each with direct / level-1 / level-2 relevance.",
+  "query_groups": [
+    {
+      "name": "R1 broad / R2 initial",
+      "queries": [
+        "\"agentic\" \"RL\" \"resource\" \"reconfiguration\"",
+        "\"agentic\" \"reinforcement learning\" \"elastic\" scheduling",
+        "\"agentic\" \"RL\" \"LLM\" \"scheduler\" \"evolution\"",
+        "\"reinforcement learning\" \"performance model\" \"LLM\" \"online\" scheduling revision"
+      ]
+    },
+    {
+      "name": "R2 exact scope",
+      "queries": [
+        "\"agentic\" \"reinforcement learning\" \"scheduler\" \"self-evolving\"",
+        "\"agentic RL\" \"performance model\" \"LLM\"",
+        "\"RL post-training\" \"LLM-driven\" optimization",
+        "\"RL training\" \"online\" \"algorithm\" \"revision\""
+      ]
+    },
+    {
+      "name": "R1 extensions",
+      "queries": [
+        "\"agentic\" \"reinforcement learning\" \"dynamic resource\" site:arxiv.org",
+        "\"agentic\" \"rollout\" \"reconfiguration\" site:arxiv.org",
+        "\"Sia\" \"heterogeneous\" \"goodput\" scheduling",
+        "\"ReSpec\" \"reinforcement learning\" \"Adaptive Server\""
+      ]
+    },
+    {
+      "name": "R2 scope and new candidates",
+      "queries": [
+        "\"agentic RL\" \"self-evolving\" scheduling system",
+        "\"reinforcement learning\" \"LLM\" \"cost model\" \"scheduler\"",
+        "\"RL post-training\" \"LLM agents\" adaptive training scheduling",
+        "\"WAR\" \"Workload-Aware Rollouts\""
+      ]
+    },
+    {
+      "name": "R2 model/code revision",
+      "queries": [
+        "\"agentic reinforcement learning\" \"performance model\" \"evolv\"",
+        "\"reinforcement learning\" \"scheduler\" \"LLM agent\" \"code\"",
+        "\"reinforcement learning systems\" \"self-evolving\" resource scheduling",
+        "\"online\" \"performance model\" \"LLM\" \"systems\" revision"
+      ]
+    },
+    {
+      "name": "R2 cross checks",
+      "queries": [
+        "RLHF \"performance model\" \"code generation\"",
+        "\"post-training\" \"scheduler\" \"self-improving\"",
+        "\"reinforcement learning\" \"training system\" \"LLM agents\" optimization",
+        "\"agentic RL\" autotuning self-adaptive"
+      ]
+    }
+  ],
+  "limitations": [
+    "Targeted search, not a proof of nonexistence.",
+    "Search results only generate candidates; claims require primary source sections.",
+    "Direct relevance uses the investigated workload and mechanism, not title keywords.",
+    "Training-time online trajectory generation and deployed external interaction streams are recorded separately."
+  ]
+}

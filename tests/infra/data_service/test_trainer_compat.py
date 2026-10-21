@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import os
 from pathlib import Path
 
 import pytest
@@ -221,6 +222,240 @@ class TestEmptyDataLoaderCompat:
 
 
 class TestTrainerSignature:
+    def test_lifecycle_config_roundtrips_through_structured_yaml(self, tmp_path):
+        from omegaconf import OmegaConf
+
+        from areal.api.cli_args import ActorLifecycleConfig, PPOConfig
+
+        default = OmegaConf.structured(PPOConfig)
+        assert OmegaConf.to_object(default.actor_lifecycle).mode == "resident"
+        config = ActorLifecycleConfig(
+            mode="on_demand",
+            state_root=str(tmp_path),
+            actor_devices=(0, 1),
+            rollout_devices=(2,),
+            checkpoint_estimated_bytes=1024,
+        )
+        parsed = OmegaConf.to_object(
+            OmegaConf.merge(
+                OmegaConf.structured(ActorLifecycleConfig),
+                OmegaConf.create(OmegaConf.to_yaml(config)),
+            )
+        )
+        assert parsed.mode == config.mode and parsed.state_root == config.state_root
+        assert tuple(parsed.actor_devices) == config.actor_devices
+        with pytest.raises(ValueError, match="disjoint"):
+            ActorLifecycleConfig(
+                mode="on_demand",
+                state_root=str(tmp_path),
+                actor_devices=(0,),
+                rollout_devices=(0,),
+                checkpoint_estimated_bytes=1024,
+            )
+
+    def test_cpu_coordinator_assigns_exact_worker_cuda_masks(
+        self, tmp_path, monkeypatch
+    ):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from areal.api import Job
+        from areal.api.cli_args import SchedulingSpec
+        from areal.infra.scheduler import local
+
+        monkeypatch.setattr(
+            local, "current_platform", SimpleNamespace(device_control_env_var="")
+        )
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
+        monkeypatch.setattr(local, "gethostip", lambda: "127.0.0.1")
+        monkeypatch.setattr(
+            local,
+            "find_free_ports",
+            lambda count, exclude_ports: [
+                port for port in range(19000, 19100) if port not in exclude_ports
+            ][:count],
+        )
+        monkeypatch.setattr(local.time, "sleep", lambda value: None)
+        process = MagicMock(pid=99999999)
+        process.poll.return_value = None
+        spawn = MagicMock(return_value=process)
+        monkeypatch.setattr(local, "run_with_streaming_logs", spawn)
+        scheduler = local.LocalScheduler(
+            gpu_devices=[3, 4],
+            log_dir=str(tmp_path),
+            nfs_record_root=str(tmp_path),
+            worker_device_control_env_var="CUDA_VISIBLE_DEVICES",
+        )
+        try:
+            scheduler.create_workers(
+                Job(
+                    role="actor",
+                    replicas=2,
+                    tasks=[
+                        SchedulingSpec(
+                            gpu=1,
+                            cmd="python -m protocol_guard",
+                            env_vars={"CUDA_VISIBLE_DEVICES": "incorrect"},
+                        ),
+                    ],
+                )
+            )
+            scheduler.create_workers(
+                Job(
+                    role="cpu",
+                    replicas=1,
+                    tasks=[
+                        SchedulingSpec(gpu=0, cmd="python -m protocol_guard"),
+                    ],
+                )
+            )
+            assert [
+                call.kwargs["env_vars_in_cmd"]["CUDA_VISIBLE_DEVICES"]
+                for call in spawn.call_args_list
+            ] == ["3", "4", ""]
+            assert os.environ["CUDA_VISIBLE_DEVICES"] == ""
+
+            # A failure after role registration must not block the next Actor.
+            scheduler.exp_config = object()
+            configure = MagicMock(side_effect=RuntimeError("configure failed"))
+            monkeypatch.setattr(scheduler, "_configure_worker", configure)
+            cleanup = MagicMock()
+            monkeypatch.setattr(scheduler, "_cleanup_workers", cleanup)
+            job = Job(
+                role="next-actor",
+                replicas=1,
+                tasks=[
+                    SchedulingSpec(gpu=1, cmd="python -m protocol_guard"),
+                ],
+            )
+            with pytest.raises(local.WorkerCreationError, match="configure failed"):
+                scheduler.create_workers(job)
+            assert "next-actor" not in scheduler._workers
+            cleanup.assert_called_once()
+            configure.side_effect = None
+            assert scheduler.create_workers(job) == ["next-actor/0"]
+        finally:
+            # No actual process or port was created by this protocol test.
+            scheduler._workers.clear()
+
+    @pytest.mark.parametrize("exited", [False, True])
+    def test_guard_readiness_is_bounded_and_detects_process_exit(
+        self, tmp_path, monkeypatch, exited
+    ):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from areal.infra.scheduler import local
+
+        scheduler = local.LocalScheduler(
+            gpu_devices=[0], log_dir=str(tmp_path), nfs_record_root=str(tmp_path)
+        )
+        worker = SimpleNamespace(
+            worker=SimpleNamespace(id="actor/0"),
+            process=MagicMock(returncode=23),
+            log_file="unused",
+        )
+        worker.process.poll.return_value = 23 if exited else None
+        monkeypatch.setattr(scheduler, "_is_worker_ready", lambda value: False)
+        monkeypatch.setattr(scheduler, "_read_log_tail", lambda path: "failed guard")
+        clock = iter((0, 31))
+        monkeypatch.setattr(local.time, "monotonic", lambda: next(clock))
+        expected = local.WorkerFailedError if exited else local.WorkerConfigurationError
+        with pytest.raises(expected):
+            scheduler._configure_worker(worker, 0)
+
+    @pytest.mark.parametrize("on_demand", [False, True])
+    def test_native_ppo_computation_is_shared_and_commits_after_cpu_hooks(
+        self, monkeypatch, on_demand
+    ):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from areal.api import WeightUpdateMeta
+        from areal.api.cli_args import PPOConfig
+        from areal.trainer.rl_trainer import PPOTrainer
+
+        trainer = PPOTrainer.__new__(PPOTrainer)
+        trainer.config = PPOConfig()
+        trainer._should_offload_rollout = trainer._should_offload_actor = False
+        trainer.critic = trainer.ref = trainer.teacher = trainer.eval_rollout = None
+        trainer.data_controller = None
+        trainer.train_dataloader = object()
+        trainer.weight_update_meta = WeightUpdateMeta.from_awex()
+        events = []
+        actor = trainer.actor = MagicMock()
+        rollout = trainer.rollout = MagicMock()
+        batch, adv = [{"tokens": "durable"}], [{"advantages": "native"}]
+        actor.prepare_batch.return_value = batch
+        actor.compute_advantages.side_effect = (
+            lambda value: events.append("advantage") or adv
+        )
+        actor.ppo_update.side_effect = lambda value: events.append("ppo")
+        actor.step_lr_scheduler.side_effect = lambda: events.append("lr")
+        actor.update_weights.side_effect = lambda value: events.append("publish")
+        trainer.config.actor.recompute_logprob = False
+        trainer.config.actor.use_decoupled_loss = False
+        trainer.saver = MagicMock()
+        trainer._on_demand = (
+            SimpleNamespace(
+                actor=actor,
+                next_batch=lambda: batch,
+                commit_and_publish=lambda version: events.append(("commit", version)),
+            )
+            if on_demand
+            else None
+        )
+        trainer._save_hf = MagicMock(side_effect=lambda **kwargs: events.append("hf"))
+        trainer._save_training_state = MagicMock(
+            side_effect=lambda **kwargs: events.append("resident-save")
+        )
+        trainer._evaluate = MagicMock()
+        trainer._export_and_commit_stats = MagicMock(
+            side_effect=lambda **kwargs: events.append("stats")
+        )
+        trainer._save_perf_tracer = MagicMock(
+            side_effect=lambda **kwargs: events.append("trace")
+        )
+        monkeypatch.setenv("AREAL_SPMD_MODE", "0")
+        trainer._train_step(
+            global_step=0,
+            steps_per_epoch=2,
+            workflow=None,
+            workflow_kwargs=None,
+            dynamic_filter_fn=None,
+            eval_workflow=None,
+            eval_workflow_kwargs=None,
+        )
+        actor.compute_advantages.assert_called_once_with(batch)
+        actor.ppo_update.assert_called_once_with(adv)
+        assert events[:3] == ["advantage", "ppo", "lr"]
+        if on_demand:
+            actor.prepare_batch.assert_not_called()
+            rollout.pause.assert_not_called()
+            actor.update_weights.assert_not_called()
+            trainer._save_training_state.assert_not_called()
+            assert events[3:] == ["hf", "stats", "trace", ("commit", 1)]
+        else:
+            assert events[3:] == ["publish", "resident-save", "stats", "trace"]
+            rollout.pause.assert_called_once()
+            rollout.resume.assert_called_once()
+
+    def test_partial_initialization_cleanup_survives_missing_cpu_helpers(
+        self, monkeypatch
+    ):
+        from unittest.mock import MagicMock
+
+        from areal.trainer.rl_trainer import PPOTrainer
+
+        trainer = PPOTrainer.__new__(PPOTrainer)
+        trainer._on_demand = None
+        trainer.actor = MagicMock()
+        trainer.rollout = MagicMock()
+        monkeypatch.setattr("areal.trainer.rl_trainer.perf_tracer.save", MagicMock())
+        trainer.close()
+        trainer.actor.destroy.assert_called_once()
+        trainer.rollout.destroy.assert_called_once()
+
     def test_sft_trainer_accepts_dataset_params(self):
         from areal.trainer.sft_trainer import SFTTrainer
 
@@ -247,3 +482,32 @@ class TestTrainerSignature:
         assert "train_dataset" in params
         assert "valid_dataset" in params
         assert "config" in params
+
+    def test_ppo_close_disconnects_actor_before_destroying_rollout(self, monkeypatch):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from areal.trainer.rl_trainer import PPOTrainer
+
+        calls = []
+        actor, rollout = MagicMock(), MagicMock()
+        actor.destroy.side_effect = lambda: calls.append("actor")
+
+        def destroy_rollout():
+            assert calls == ["actor"]
+            calls.append("rollout")
+
+        rollout.destroy.side_effect = destroy_rollout
+        trainer = SimpleNamespace(
+            saver=MagicMock(),
+            stats_logger=MagicMock(),
+            actor=actor,
+            rollout=rollout,
+            teacher=None,
+            ref=None,
+            critic=None,
+            eval_rollout=None,
+        )
+        monkeypatch.setattr("areal.trainer.rl_trainer.perf_tracer.save", MagicMock())
+        PPOTrainer.close(trainer)
+        assert calls == ["actor", "rollout"]

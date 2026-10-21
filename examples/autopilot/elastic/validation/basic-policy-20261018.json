@@ -1,0 +1,128 @@
+{
+  "date": "2026-10-18",
+  "status": "passed",
+  "base_commit": "78590642d9b6c8c04aaa70dbfd5f8448c509bc81",
+  "implementation": "uncommitted basic policy draft",
+  "source": {
+    "python_files_checked": 58,
+    "python_sha256": "b8adac3b788b8710cbfa53c94d9a00455cf4cc9f67770402c84493a28a06f233",
+    "local_matches_final_test_snapshot": true
+  },
+  "cpu_regression": {
+    "passed": 218,
+    "skipped": 1,
+    "skip_reason": "CUDA hidden in CPU suite"
+  },
+  "cuda_visible_runtime_recovery_suite": {
+    "passed": 14
+  },
+  "gpu": {
+    "hardware": "NVIDIA H20",
+    "pool_size": 4,
+    "model": "tiny random Qwen3, seed 19",
+    "publication": "diagnostic CPU receipt",
+    "directed_resize_pairs": [
+      [
+        4,
+        3
+      ],
+      [
+        3,
+        4
+      ],
+      [
+        4,
+        2
+      ],
+      [
+        2,
+        4
+      ],
+      [
+        4,
+        1
+      ],
+      [
+        1,
+        3
+      ],
+      [
+        3,
+        2
+      ],
+      [
+        2,
+        3
+      ],
+      [
+        3,
+        1
+      ],
+      [
+        1,
+        2
+      ],
+      [
+        2,
+        1
+      ],
+      [
+        1,
+        4
+      ]
+    ],
+    "full_state_elements_per_check": 1018136,
+    "exact_model_adam_restore": true,
+    "source_checkpoint_unchanged": true,
+    "same_size_rng": "exact",
+    "cross_size_rng": "elastic-dp-reseed-v1",
+    "frontend_stable": true
+  },
+  "current_source_run": {
+    "verified_restore_world_size": 3,
+    "initial_step": 6,
+    "final_step": 8,
+    "committed_samples": 8,
+    "effective_tokens": 256,
+    "optimizer_gpu_counts": [
+      1,
+      1
+    ],
+    "history_workloads": [
+      {
+        "samples": 1,
+        "effective_tokens": 32,
+        "sequence_tokens": 64,
+        "rollout_seconds": 0.0033766640117391944
+      },
+      {
+        "samples": 1,
+        "effective_tokens": 32,
+        "sequence_tokens": 64,
+        "rollout_seconds": 0.001364990952424705
+      }
+    ]
+  },
+  "one_diagnostic_forecast": {
+    "updates": 2,
+    "world_size": 1,
+    "inference_gpus": 0,
+    "predicted_gpu_seconds": 48.13266971575213,
+    "observed_residency_gpu_seconds_approx": 44.58456713508349,
+    "observed_method": "first decision to second publication plus final verified release duration; excludes CPU frontend shutdown",
+    "relative_overestimate": 0.07958140694555826
+  },
+  "cleanup": {
+    "independent_gpu_allocation": 4,
+    "consumer_fence_reacquired": true,
+    "loading_views_removed": true,
+    "all_eight_gpus_memory_mib": 0,
+    "stopped_test_containers_removed": true
+  },
+  "limits": [
+    "Synthetic PPO and diagnostic publication do not establish reward preservation or cost savings.",
+    "Full-size SWE basic-policy performance and equal-sample reward comparison remain unmeasured.",
+    "The fixture replicates its small logical batch across ranks; this is not a data-parallel throughput benchmark.",
+    "Profile estimates are local token-scaled means; workflow-specific length and contention modeling require calibration."
+  ]
+}

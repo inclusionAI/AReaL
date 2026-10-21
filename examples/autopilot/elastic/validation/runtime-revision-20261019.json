@@ -1,0 +1,157 @@
+{
+  "date": "2026-10-19",
+  "status": "gpu_assertions_passed_cleanup_recovered",
+  "base_commit": "46c6770a7b4caae2d075e4f2cdf6d0ac269a63bb",
+  "branch": "feature/autopilot-elastic",
+  "source_snapshot": "runtime-revision-gpu-20261019-k_e27yzg",
+  "source_manifest_sha256": "a39fad43c0f4e055921e360ee174d73cc763a6e34fcb180cd06de0682f52bc0f",
+  "final_python_sources_match_snapshot": true,
+  "runtime": {
+    "image": "ghcr.io/areal-project/areal-runtime:v2.1.0-sglang",
+    "image_id": "sha256:63e5fecba15f0ab1e16503f6ad6e791e1ad5177ede04b0d53d369ebca7d10f38"
+  },
+  "model": {
+    "name": "Qwen3-0.6B",
+    "revision": "c1899de289a04d12100db370d81485cdf75e47ca",
+    "actor": "AReaL v2 FSDP pure-DP, world size 1",
+    "rollout": "SGLang, one fixed replica, TP=1",
+    "h20_devices": {
+      "inference": [
+        4
+      ],
+      "actor": [
+        5
+      ]
+    }
+  },
+  "workload": {
+    "type": "synthetic versioned PPO trajectories; actual model and optimizer updates",
+    "updates": 9,
+    "samples": 9,
+    "effective_tokens": 288,
+    "quality_evaluated": false
+  },
+  "revision": {
+    "agent": "Deterministic external JSON proposer; no LLM provider invoked",
+    "windows": 1,
+    "calibration_updates": 2,
+    "validation_updates": 2,
+    "max_proposals_per_component": 2,
+    "proposals": 4,
+    "rejected": 2,
+    "accepted": 2,
+    "all_proposal_calls_overlapped_real_update_v6": true,
+    "model": {
+      "accepted": true,
+      "scope": "conditional restore/train/checkpoint/publish service times, eight cells from two updates",
+      "initial_profile": "actual warmup times multiplied by four for a controlled pessimistic baseline",
+      "mean_relative_error_before": 0.9696153234544269,
+      "mean_relative_error_after": 0.016340806377371852,
+      "feasibility_errors": 0
+    },
+    "optimizer": {
+      "accepted": true,
+      "cases": 2,
+      "frozen_model_gpu_seconds_before": 150.04735044798582,
+      "frozen_model_gpu_seconds_after": 150.04735044798582,
+      "mean_reference_queries_before": 2.0,
+      "mean_reference_queries_after": 1.0,
+      "same_selected_plans": true,
+      "elapsed_speedup_claimed": false
+    }
+  },
+  "policy": {
+    "first_activation_at_weight_version": 6,
+    "activation_preserved_workers_weights_cursor": true,
+    "final_generation": 2,
+    "final_weight_version": 9,
+    "fault": "same-bundle reactivation: failure after atomic pointer replacement; admission fenced; durable generation recovered",
+    "coordinator_recovery_scope": "reconstructed Python coordinator objects at v8 on the same host; real GPU worker processes stop/restore",
+    "training_or_agent_replayed": false,
+    "frontend_stable": true
+  },
+  "exact_model_adam_checks": [
+    {
+      "label": "after-policy-activation",
+      "version": 6,
+      "exact": true,
+      "source_immutable": true,
+      "tensor_elements": 1943732534
+    },
+    {
+      "label": "after-policy-recovery",
+      "version": 7,
+      "exact": true,
+      "source_immutable": true,
+      "tensor_elements": 1943732534
+    }
+  ],
+  "inference_probes": [
+    {
+      "generated_tokens": 32,
+      "version": 1
+    },
+    {
+      "generated_tokens": 32,
+      "version": 6
+    },
+    {
+      "generated_tokens": 32,
+      "version": 7
+    },
+    {
+      "generated_tokens": 32,
+      "version": 8
+    },
+    {
+      "generated_tokens": 32,
+      "version": 9
+    }
+  ],
+  "cleanup": {
+    "all_eight_gpus_memory_mib": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "queue_and_gpu_locks_reacquired": true,
+    "queue_cursor_matches_checkpoint": true,
+    "owned_tmpfs_removed": true,
+    "owned_container_removed": true,
+    "other_running_containers": [
+      "autopilot-swe-control-plane"
+    ],
+    "persistent_free_bytes": 22288596992,
+    "harness_failure": {
+      "original_exit_code": 1,
+      "reason": "GPU assertions passed; final rmdir of Docker bind-mount root raised EBUSY",
+      "repair": "clear contents inside container, then remove empty root on host after container exit",
+      "corrected_cleanup_replay_exit_code": 0,
+      "raw_failure_preserved": true
+    }
+  },
+  "limits": [
+    "Fixed Rollout and one Actor configuration; no automatic joint Actor/Rollout reconfiguration claim",
+    "Synthetic PPO and deterministic proposals do not establish SWE/Tau2 quality, LLM revision ability or cost-efficiency gains",
+    "Eight conditional service-time cells do not establish whole-window or unseen-config model accuracy",
+    "Checkpoint storage was owned host tmpfs; no power-loss, host-reboot or fresh-OS-coordinator recovery claim"
+  ],
+  "evidence": {
+    "local_directory": "artifacts/runtime-revision-gpu-20261019-k_e27yzg",
+    "files": [
+      "evidence/report.json",
+      "evidence/revisions",
+      "postcheck.json",
+      "cleanup-recovery.json",
+      "driver-exit.log",
+      "gpu_driver.executed.py",
+      "gpu_driver.py",
+      "source-manifest.json"
+    ]
+  }
+}

@@ -1,0 +1,167 @@
+{
+  "format_version": 1,
+  "date": "2026-10-21",
+  "status": "blocked_external_access",
+  "branch": "feature/autopilot-elastic",
+  "base_commit": "729d4a8eb3ac53bdea86618ea260676d6f3c6f0b",
+  "scope": "Native PPOTrainer opt-in on-demand lifecycle implemented; recovery hardening and GPU acceptance remain incomplete",
+  "cpu": {
+    "passed": 358,
+    "skipped": 9,
+    "report": "../../../../../artifacts/native-on-demand-20261021/reports/1792556842831948000.json",
+    "log": "../../../../../artifacts/native-on-demand-20261021/reports/1792556842831948000.log",
+    "all_changed_python_files_match_tested_manifest": false,
+    "command": [
+      "docker",
+      "exec",
+      "-e",
+      "AREAL_TEST_TOKENIZER_PATH=/mnt/data/wens/areal-autopilot-elastic/models/Qwen3-0.6B",
+      "-w",
+      "/mnt/data/wens/areal-autopilot-elastic/src/native-on-demand-20261021-1792552875",
+      "native-on-demand-20261021-1792552875",
+      "/opt/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "-o",
+      "faulthandler_timeout=60",
+      "tests/test_elastic_checkpoint.py",
+      "tests/test_elastic_batch_queue.py",
+      "tests/test_elastic_recovery.py",
+      "tests/experimental/openai/test_cache.py",
+      "tests/test_reward_norm_variable_group.py",
+      "tests/v2/inference_service/test_inf_bridge.py",
+      "tests/v2/inference_service/test_data_proxy_chat.py",
+      "tests/v2/inference_service/test_controller.py",
+      "tests/v2/inference_service/test_online_stack.py",
+      "tests/v2/training_service/test_controller_unit.py",
+      "tests/v2/training_service/test_worker_unit.py",
+      "tests/v2/weight_update/test_wu_controller.py",
+      "tests/v2/weight_update/test_pair_registry.py",
+      "tests/v2/weight_update/test_nccl_group.py",
+      "tests/v2/weight_update/test_disk_integration.py",
+      "tests/infra/data_service/test_trainer_compat.py"
+    ],
+    "applies_to": "Earlier Linux foundation snapshot, before native PPO lifecycle integration"
+  },
+  "implemented": [
+    "AWEX two-sided cleanup, generation fencing, idempotent gateway transactions and all-peer version acknowledgement",
+    "CPU episode admission and durable inbox, independent-episode batches and token-version bounds",
+    "Retained inline tensor export, receipt acknowledgement, lost-response retry and session incarnation fencing",
+    "Native FSDP/Megatron checkpoint routes, all-rank preflight, LR/RNG sidecars and save finalization checks",
+    "Resident close/reconnect regression fixes",
+    "Native PPOTrainer delayed Actor initialization, shared PPO computation, commit-before-publication and bounded recovery loop",
+    "Fixed explicit CUDA pools under a CPU coordinator, generation ownership probes, worker seeding and safe fault teardown",
+    "CPU protocol regressions for three Actor cycles, committed publication retry, uncommitted batch replay and default resident compatibility",
+    "Guard startup deadlines, atomic create/configure rollback and confirmed coordinator process-group cleanup",
+    "Explicit source-fenced abort, durable cancellation tombstones, idempotent credit retirement and lost-admission recovery",
+    "Per-request episode identity fencing for generation/reward and every on-demand Agent Service turn, including Hermes forwarding",
+    "Unknown generation outcomes retain credit and session quarantine; replaced Hermes instances cannot execute delayed turns",
+    "GSM8K AgentRunnable single-sample adapter, explicit generation settings and completion-ID reward targeting; real service HTTP components and scorer covered with a stub model"
+  ],
+  "not_completed": [
+    "Coordinator-crash recovery of an unconfirmed prior owner/pair journal (currently rejects restart)",
+    "Real v2 Agent Service GSM8K/Hermes online RL",
+    "FSDP/Megatron GPU restore comparison, three cycles and fault acceptance",
+    "Async overlap, service latency, GPU-hour comparison and final task-resource cleanup"
+  ],
+  "gpu_acceptance": "not_run",
+  "models": {
+    "qwen3_0_6b": "already_cached",
+    "qwen2_5_1_5b_revision": "989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
+    "qwen2_5_1_5b_status": "Local files verified; SSH stream interrupted and resumable transfer failed because the jump host closed new connections; remote final SHA256 check pending"
+  },
+  "local_cpu": {
+    "passed": 456,
+    "skipped": 9,
+    "environment": "macOS CPU, native imports, no GPU acceptance",
+    "report": "../../../../../artifacts/native-on-demand-20261021/reports/local-1792562826475986000.json",
+    "log": "../../../../../artifacts/native-on-demand-20261021/reports/local-1792562826475986000.log",
+    "all_python_files_match_tested_manifest": true,
+    "packages": {
+      "torch": "2.9.1",
+      "torchvision": "0.24.1",
+      "transformers": "5.3.0",
+      "numpy": "1.26.4",
+      "pytest": "9.1.1",
+      "pytest-asyncio": "1.4.0",
+      "omegaconf": "2.4.0.dev2",
+      "openai": "2.33.0",
+      "litellm": "1.83.7",
+      "anthropic": "0.97.0",
+      "aiohttp": "3.13.5",
+      "hydra-core": "1.4.0.dev1",
+      "math-verify": "0.8.0",
+      "latex2sympy2-extended": "1.10.2",
+      "antlr4-python3-runtime": "4.13.2"
+    },
+    "not_run": [
+      {
+        "path": "tests/v2/weight_update/test_nccl_group.py",
+        "reason": "Native AWEX adapter import requires Linux-only Megatron-Core; prior Linux foundation run covered it"
+      }
+    ],
+    "skip_reasons": "Six existing schema migration cases and three CUDA disk integration cases"
+  },
+  "pre_commit": {
+    "status": "passed",
+    "scope": "all tracked files plus all four new production Python modules and validation JSON",
+    "report": "../../../../../artifacts/native-on-demand-20261021/reports/precommit-local-1792562990973692000.json",
+    "log": "../../../../../artifacts/native-on-demand-20261021/reports/precommit-local-1792562990973692000.log"
+  },
+  "remote_connection": "SSH jump host still closes new connections; no new GPU jobs launched and remote resource state remains unverified",
+  "limitations": [
+    "No timeout-based credit reclamation: unknown generation outcomes remain quarantined until backend termination is proven; automatic reconciliation of such outcomes is not implemented."
+  ],
+  "remote_connection_evidence": "../../../../../artifacts/native-on-demand-20261021/reports/ssh-1792563119454927000.json",
+  "gsm8k_preparation": {
+    "agent": "examples.hermes.hermes.GSM8KAgent",
+    "dataset": {
+      "dataset": "openai/gsm8k",
+      "config": "main",
+      "split": "train",
+      "revision": "740312add88f781978c0658806c59bc2815b9866",
+      "file": "main/train-00000-of-00001.parquet",
+      "bytes": 2306545,
+      "sha256": "ea82612ea9582142387730c793eb67d3b12849002bc0b7fa6f8efafa7351419d",
+      "downloaded_at": 1792562359.3578439,
+      "supporting_files": [
+        {
+          "file": "README.md",
+          "bytes": 7935,
+          "sha256": "a17e882503578c9e324560630e31017617714ee025c87cf4fea6fd916895f3c1"
+        },
+        {
+          "file": "main/test-00000-of-00001.parquet",
+          "bytes": 419088,
+          "sha256": "ee7b8da9e381df27b9e3f7758a159ab2bdaa4dbaa910546cbbc47e0cb44e4f59"
+        }
+      ]
+    },
+    "local_formatter_and_scorer": {
+      "rows": 7473,
+      "prepared_episodes": 96,
+      "formatted_prefix_sha256": "0f59a730c72d05912432a5abd07ccb2d2e8ac059219d6ef27c44eca88aaf42bc",
+      "scorer": "areal.reward.gsm8k.gsm8k_reward_fn",
+      "known_answer_scores": [
+        1.0,
+        0.0
+      ],
+      "proof_scope": "Actual dataset formatter and CPU scorer only; no model generation or GPU acceptance"
+    },
+    "evidence": "../../../../../artifacts/native-on-demand-20261021/datasets/gsm8k/local-ready.json",
+    "cpu_http_scope": "Actual Agent Gateway, Router, DataProxy, Worker, OpenAI SDK and GSM8K scorer; model endpoint stubbed. No GPU or training acceptance."
+  },
+  "blocker": {
+    "condition": "Authorized H20 SSH route closes connections; task container, GPU state and native backend operation cannot be inspected or exercised.",
+    "consecutive_goal_turns": 3,
+    "evidence": [
+      "../../../../../artifacts/native-on-demand-20261021/reports/ssh-1792561911961183000.json",
+      "../../../../../artifacts/native-on-demand-20261021/reports/ssh-1792562764389271000.json",
+      "../../../../../artifacts/native-on-demand-20261021/reports/ssh-1792563119454927000.json"
+    ],
+    "next_action_after_access_restored": "Inspect the existing task-owned container and GPU processes, finish model transfer with final hash checks, then continue native recovery hardening and the complete planned GPU acceptance.",
+    "goal_complete": false,
+    "remote_resource_cleanup": "Not confirmed; do not infer that the task-owned development container stopped from the SSH failure."
+  }
+}

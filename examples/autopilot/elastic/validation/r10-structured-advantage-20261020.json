@@ -1,0 +1,179 @@
+{
+  "date": "2026-10-20",
+  "status": "engineering_checks_passed_accuracy_uncalibrated",
+  "scope": "Original R10 Actor4 fixed-arrival conditional replay; structural compute_advantage override, unchanged frozen Expert logp/train/publication",
+  "model": "structural-token-gae-v1",
+  "evidence": "assumed",
+  "profile": "../profiles/r10-advantage-structural-v1.json",
+  "profile_sha256": "05a1d8dec27cdfefc8dbfd474676771d01bfa723a66473a07438faf4ba647f37",
+  "implementation_sha256": {
+    "replay_r10.py": "4f5fba4ef8142eb3d0bc4d7b6d1273f8dd6835218e620c9dabbc521150ee8d07",
+    "replay.py": "216b6fb03a5241c422fbf1ed9e3e6486c309f2f412eb72bfe37d3722bf38eff6",
+    "advantage.py": "692d3b4e045452b0e1984e4ab469057f1b28a3f26fc729dc054a471f919ea95c"
+  },
+  "reference": {
+    "archive": {
+      "trial": "r10",
+      "profiles": 5,
+      "data_files": 14,
+      "configuration": "cfea5974f1952ded3163cea106e668ee5cca57dc172f5395aecbcf31d824ec44"
+    },
+    "code_revision": "f4e4d10fc25ea03858808ea1540e97ba7d552a5e1efbb77665519449ac28ed08",
+    "numerical_environment": {
+      "numpy": "1.26.4"
+    },
+    "manifest_sha256": "3f58ab32e3cd8c872bc35405b6131aa72be5c9deb048dad4bc464b59285450e9"
+  },
+  "development_split": {
+    "calibration": [
+      2,
+      3,
+      4,
+      5
+    ],
+    "validation": [
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16
+    ],
+    "new_timing_fit": false,
+    "independent_test": false
+  },
+  "structural_common_validation": {
+    "steps": [
+      6,
+      7,
+      8,
+      10,
+      12,
+      13,
+      14,
+      15
+    ],
+    "actor_measured_seconds": 472.904154,
+    "phases": {
+      "recompute_logp": {
+        "wape": 0.011067026009057143,
+        "absolute_error_over_actor_total": 0.0006941882148922987
+      },
+      "compute_advantage": {
+        "wape": 0.41971796974162473,
+        "absolute_error_over_actor_total": 0.00724692668424907
+      },
+      "train_step": {
+        "wape": 0.0556648093075253,
+        "absolute_error_over_actor_total": 0.051212070127027935
+      }
+    },
+    "actor_total_wape": 0.045508736305297344
+  },
+  "legacy_common_validation": {
+    "steps": [
+      6,
+      7,
+      8,
+      10,
+      12,
+      13,
+      14,
+      15
+    ],
+    "actor_measured_seconds": 472.904154,
+    "phases": {
+      "recompute_logp": {
+        "wape": 0.011067026009057143,
+        "absolute_error_over_actor_total": 0.0006941882148922987
+      },
+      "compute_advantage": {
+        "wape": 0.11323150432019397,
+        "absolute_error_over_actor_total": 0.0019550757158689693
+      },
+      "train_step": {
+        "wape": 0.0556648093075253,
+        "absolute_error_over_actor_total": 0.051212070127027935
+      }
+    },
+    "actor_total_wape": 0.05043966530944505
+  },
+  "structural_all_validation": {
+    "recompute_logp": {
+      "covered": 8,
+      "total": 11,
+      "evidence_counts": {
+        "calibrated": 8
+      },
+      "wape": 0.011067026009057143
+    },
+    "compute_advantage": {
+      "covered": 11,
+      "total": 11,
+      "evidence_counts": {
+        "assumed": 11
+      },
+      "wape": 0.41505996971808684
+    },
+    "train_step": {
+      "covered": 8,
+      "total": 11,
+      "evidence_counts": {
+        "calibrated": 8
+      },
+      "wape": 0.0556648093075253
+    }
+  },
+  "alignment": {
+    "max_boundary_error_seconds": 0.0287044015808533,
+    "finish_error_seconds": -0.025854441635374315,
+    "observed_actor_gpu_hours": 2.0105467888888886,
+    "tolerance_seconds": 0.05951888656616211,
+    "passed": true
+  },
+  "strict_unknown_steps": [
+    9,
+    11,
+    16
+  ],
+  "strict_window_seconds": null,
+  "diagnostic_window": {
+    "seconds": 1812.7397753611504,
+    "actor_gpu_hours": 2.014155305956834,
+    "evidence": "assumed logp/train fallback plus structural advantage prior"
+  },
+  "checks": {
+    "fixed_arrivals_batches_and_measured_controller_inputs": true,
+    "logp_train_publish_and_save_unchanged": true,
+    "legacy_predictions_reproduce_original": true,
+    "rank_shapes_match_archived_group_lengths": true,
+    "critical_path_component_sum": true,
+    "strict_unknown_steps_preserved": true,
+    "unsupported_advantage_never_uses_diagnostic_fallback": true,
+    "repeat_inputs_and_report_byte_identical": true,
+    "profile_and_implementation_bound": true
+  },
+  "cpu_tests": {
+    "passed": 134,
+    "command": "python tests/run_autopilot_cpu.py tests/test_autopilot_actor_cost.py tests/test_elastic_basic_policy.py tests/test_elastic_policy.py -q"
+  },
+  "artifacts": "r10-structural-advantage-20261020-w___3a8u",
+  "report_sha256": {
+    "strict-final/report.json": "4b4368608bbaa460bddb12d77c5ea9089936c9c3940cac744afa2fd78f64601b",
+    "legacy-final/report.json": "4cfb003a2906c671089359496308d0d5f4726c060a6b3f703caf48cd71b0f1c5",
+    "diagnostic-final/report.json": "b26ec63707b385d94526c4d726d96af982a456fca503edd15676755c7ef4bc80"
+  },
+  "limitations": [
+    "New structural advantage is less accurate than legacy affine on the same eight development-validation steps; Actor-total errors may cancel across phases",
+    "All advantage estimates use unmeasured priors; available predictions are not calibrated coverage",
+    "No cross-config timing validation; DP1/2/4 shape/config responsiveness tested only",
+    "Eager token GAE only; group reward normalization, optional masked advantage normalization with null mean/std and nonempty masks",
+    "Additive full-materialization transfer and operation-count approximations; no cache/fusion/overlap measurement",
+    "No training, optimizer, revision acceptance, parameter fit or new rollout feedback in this change"
+  ]
+}

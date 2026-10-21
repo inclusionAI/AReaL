@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "recipe": {
+    "execution_id": "r10-v2-fsdp-token-gae-eager-cuda",
+    "device": "cuda",
+    "gae_mode": "token_eager",
+    "reward_normalization": "group",
+    "masked_advantage_normalization": true,
+    "audit": true
+  },
+  "rates": {
+    "device_bytes_per_second": 2662400000000,
+    "host_bytes_per_second": 25000000000,
+    "transfer_bytes_per_second": 16000000000,
+    "rpc_bytes_per_second": 1000000000,
+    "launch_seconds": 0.000005,
+    "iteration_seconds": 0.000001,
+    "host_sync_seconds": 0.00001,
+    "rpc_fixed_seconds": 0.001,
+    "rpc_rank_seconds": 0.0001,
+    "audit_file_seconds": 0.001,
+    "trainer_stats_seconds": 0.0001
+  },
+  "operations": {
+    "input_bytes_per_slot": 25,
+    "output_bytes_per_slot": 40,
+    "input_bytes_per_sequence": 12,
+    "output_bytes_per_sequence": 12,
+    "batching_bytes_per_slot": 50,
+    "batching_launches_per_group": 10,
+    "preparation_launches": 30,
+    "preparation_bytes_per_slot": 256,
+    "recurrence_ops_per_iteration": 12,
+    "recurrence_bytes_per_element": 144,
+    "finish_launches": 2,
+    "finish_bytes_per_slot": 16,
+    "reward_norm_launches_per_group": 20,
+    "reward_norm_bytes_per_sequence": 160,
+    "masked_norm_launches": 10,
+    "masked_norm_bytes_per_slot": 128,
+    "audit_launches": 4,
+    "audit_bytes_per_slot": 24,
+    "audit_syncs": 3
+  },
+  "provenance": {
+    "evidence": "assumed",
+    "fitted_to_r10_timings": false,
+    "source_paths": [
+      "areal/trainer/ppo/actor.py:_compute_advantages",
+      "areal/trainer/ppo/gae.py:_compute_token_level_gae",
+      "areal/utils/data.py:batched_call/Normalization",
+      "areal/v2/training_service/worker/app.py:execute",
+      "R10 trial_engine.py:compute_advantages audit wrapper"
+    ],
+    "source_count": "12 pointwise expressions per eager token recurrence; kernel count is approximate",
+    "hardware_prior": "Frozen R10 H20 4096 GB/s times assumed 0.65 HBM efficiency; launch 5us from frozen Actor efficiency",
+    "new_priors": "Host/transfer/RPC rates, iteration/sync/RPC/file/stat costs and tensor-pass counts are unmeasured engineering priors, not fitted on calibration or validation",
+    "layout": "Approximate input token fields: int64 ids+attention, bool loss mask, two fp32 logp tensors; scalar bytes and full output dictionary transport are proxies",
+    "scope": "Pure DP with no model-peer broadcast payload; full input/output materialization, additive costs without overlap; reward group norm and masked advantage norm with null mean/std; no compiled or turn GAE",
+    "device": "Training worker moves payload to CUDA; CPU parameter offload does not select the advantage device"
+  }
+}

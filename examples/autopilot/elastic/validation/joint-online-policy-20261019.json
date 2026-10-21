@@ -1,0 +1,203 @@
+{
+  "date": "2026-10-19",
+  "status": "passed",
+  "base_commit": "7b947c376cdfc655026e0e8c42d1e192e929c4d0",
+  "scope": "real Qwen3-0.6B, FSDP/PPO and SGLang; automatic JointOptimizer -> apply -> actual observation -> replan",
+  "model": "Qwen3-0.6B",
+  "model_revision": "c1899de289a04d12100db370d81485cdf75e47ca",
+  "actor_backend": "AReaL v2 FSDP/PPO pure-DP",
+  "rollout_backend": "SGLang",
+  "gpu_pool": [
+    4,
+    5,
+    6,
+    7
+  ],
+  "automatic_transition": {
+    "source_actor_gpus": 2,
+    "target_actor_gpus": 1,
+    "source_rollout_replicas": 1,
+    "target_rollout_replicas": 2,
+    "source_rollout_tp": 1,
+    "target_rollout_tp": 1,
+    "config_generation": 1,
+    "applied_at_weight_version": 1,
+    "expected_generation": 0,
+    "automatic_request_id": "decision-1-0-f955e9c3c9e4",
+    "status": "applied"
+  },
+  "final_weight_version": 4,
+  "optimizer_updates": 4,
+  "samples": 4,
+  "effective_tokens": 128,
+  "exact_model_adam_checks": [
+    {
+      "exact": true,
+      "source_immutable": true,
+      "tensor_elements_compared": 1943732534,
+      "weight_version": 1,
+      "target": {
+        "actor": {
+          "world_size": 1,
+          "profile_id": ""
+        },
+        "rollout": {
+          "model_id": "c1899de289a04d12100db370d81485cdf75e47ca",
+          "hardware_id": "H20",
+          "runtime_id": "local-sglang-v2",
+          "sampling_id": "fixed-synthetic",
+          "replicas": 2,
+          "tp": 1,
+          "max_batch_sequences": 3,
+          "max_batch_tokens": 1024,
+          "kv_capacity_tokens": 2048,
+          "max_inflight_batches": 1,
+          "backend": "sglang"
+        }
+      }
+    }
+  ],
+  "inference_probes": [
+    {
+      "version": 0,
+      "generated_tokens": 32,
+      "rollout_replicas": 1
+    },
+    {
+      "version": 1,
+      "generated_tokens": 32,
+      "rollout_replicas": 1
+    },
+    {
+      "version": 2,
+      "generated_tokens": 32,
+      "rollout_replicas": 2
+    },
+    {
+      "version": 3,
+      "generated_tokens": 32,
+      "rollout_replicas": 2
+    },
+    {
+      "version": 4,
+      "generated_tokens": 32,
+      "rollout_replicas": 2
+    }
+  ],
+  "planning_history_versions": [
+    null,
+    1,
+    2,
+    3
+  ],
+  "actual_rollout_replicas": [
+    1,
+    2,
+    2,
+    2
+  ],
+  "episode_source_rollout_replicas": [
+    1,
+    1,
+    2,
+    2
+  ],
+  "coordinator_object_and_worker_recovery": true,
+  "cpu_regression": {
+    "passed": 465,
+    "skipped": 1,
+    "skip_reason": "CUDA RNG without GPU",
+    "cli_docs_byte_identical": true,
+    "post_regression_local_checks": 149,
+    "post_regression_change": "Clear prior rollback error after a successful config receipt"
+  },
+  "final_audit": {
+    "status": "passed",
+    "driver_exit_code": 0,
+    "queue_counts": {
+      "committed": 4
+    },
+    "queue_cursor_matches_checkpoint": true,
+    "queue_and_gpu_locks_reacquired": true,
+    "gpus": [
+      {
+        "index": 0,
+        "memory_mib": 0
+      },
+      {
+        "index": 1,
+        "memory_mib": 0
+      },
+      {
+        "index": 2,
+        "memory_mib": 0
+      },
+      {
+        "index": 3,
+        "memory_mib": 0
+      },
+      {
+        "index": 4,
+        "memory_mib": 0
+      },
+      {
+        "index": 5,
+        "memory_mib": 0
+      },
+      {
+        "index": 6,
+        "memory_mib": 0
+      },
+      {
+        "index": 7,
+        "memory_mib": 0
+      }
+    ],
+    "owned_tmpfs_removed": true,
+    "persistent_free_bytes": 22198120448,
+    "frontend_stable": true,
+    "other_running_containers": [
+      "autopilot-swe-control-plane"
+    ]
+  },
+  "limitations": [
+    "Synthetic PPO inputs, not generated-policy trajectories",
+    "Controlled assumed seed profiles force a supported joint transition; no predictive-accuracy or cost-efficiency claim",
+    "Strict serial episode/update gate; no asynchronous staleness2",
+    "Owned host tmpfs; object and worker restart, not power-loss or fresh OS coordinator durability",
+    "Independent fixed-Rollout revision bundle scope is not enabled here"
+  ],
+  "source_files": {
+    "areal/autopilot/elastic/loop.py": {
+      "gpu_snapshot_sha256": "4a5ec3b829f40044e0a5ee012524018080fe4f948de911ae265ca06b7ca50784",
+      "current_sha256": "4f72b403f2f8da952595cdfae3e62dec7820e9626ded13349912a5856b5d0595"
+    },
+    "areal/autopilot/elastic/policy/basic/online.py": {
+      "gpu_snapshot_sha256": "06105ff2cd91f753ca737cc1a3e953f66b87c2c94778354b6998dcf0496cf905",
+      "current_sha256": "06105ff2cd91f753ca737cc1a3e953f66b87c2c94778354b6998dcf0496cf905"
+    },
+    "areal/autopilot/elastic/runtime/config.py": {
+      "gpu_snapshot_sha256": "5521fd130206500f3e79c6ed57b68ca7b8448603c16eb95e7de583b1d1bc7b36",
+      "current_sha256": "5521fd130206500f3e79c6ed57b68ca7b8448603c16eb95e7de583b1d1bc7b36"
+    },
+    "areal/autopilot/elastic/runtime/history.py": {
+      "gpu_snapshot_sha256": "e0a9c5ba5dde07d88644fe3c5d35aa925c5dc4c4a92a5f4067840e00100c2598",
+      "current_sha256": "e0a9c5ba5dde07d88644fe3c5d35aa925c5dc4c4a92a5f4067840e00100c2598"
+    },
+    "examples/autopilot/elastic/basic_policy.py": {
+      "gpu_snapshot_sha256": "1e37d3862ac245b80b49a711952dfb188042da4f90e16963b5e2ddd38edf786f",
+      "current_sha256": "1e37d3862ac245b80b49a711952dfb188042da4f90e16963b5e2ddd38edf786f"
+    },
+    "examples/autopilot/elastic/automatic_swe.py": {
+      "gpu_snapshot_sha256": "92d488fb7aebd4aaa4c67f7d3675bb79711f9c46acaf7accfd114731b8f9b8f4",
+      "current_sha256": "5be42f2d8b092a1142d9e5d6807c6943a8f727b9946fb3bc38da9a8ec26ab386"
+    }
+  },
+  "source_verification_notes": [
+    "GPU snapshot tests the new joint model, planning and history paths. Later executable edits only clear a prior rollback error (149 local CPU checks) and retain the existing SWE 16384-token context; no new real SWE episode was run.",
+    "Initial driver failed before GPU work because source import path was missing. Its logs and cleanup were retained separately; the corrected run and audit both exited successfully."
+  ],
+  "artifacts": "artifacts/joint-online-gpu-final-20261019-91u7iu7j",
+  "quality_status": "not_evaluated",
+  "cost_efficiency_status": "not_evaluated"
+}

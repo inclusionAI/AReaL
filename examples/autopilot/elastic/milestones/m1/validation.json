@@ -1,0 +1,275 @@
+{
+  "milestone": "M1: data-triggered training GPU lifecycle",
+  "validation_date": "2026-10-17",
+  "upstream_tag": "v2.1.0",
+  "runtime_commit": "11cd5a38779d15a2179809f059384b060b0d51f2",
+  "scope": {
+    "host_gpu": "H20",
+    "inference_gpus": 1,
+    "training_gpus": 4,
+    "fixed_world_size": true,
+    "producers": 1,
+    "lifecycle_threads": 1,
+    "version_staleness": 0,
+    "queue": "local SQLite WAL/FULL and flock"
+  },
+  "model": {
+    "name": "Qwen3-0.6B",
+    "revision": "c1899de289a04d12100db370d81485cdf75e47ca"
+  },
+  "task": "pytest-dev__pytest-7432",
+  "preparation_note": "The run resumed corrected version 1, then trained two fresh episodes to version 3. The preparatory version-0 update is separate from these two automatic cycles.",
+  "validation": {
+    "status": "passed",
+    "initial_version": 1,
+    "final_version": 3,
+    "automatic_cycles": 2,
+    "total_corrected_committed_batches": 3,
+    "new_rollouts": [
+      {
+        "policy_version": 1,
+        "generated_tokens": 1178,
+        "interactions": 3,
+        "reward": 0.0,
+        "sandbox_removed": true
+      },
+      {
+        "policy_version": 2,
+        "generated_tokens": 421,
+        "interactions": 1,
+        "reward": 0.0,
+        "sandbox_removed": true
+      }
+    ],
+    "empty_queue_kept_training_off": true,
+    "release_during_next_live_episode": true,
+    "frontend_stable": true,
+    "offline_payloads_equal_outbox": true,
+    "restores": 2,
+    "verified_releases": 2,
+    "idle_seconds": 5,
+    "startup_seconds": [
+      78.3482942560222,
+      46.110864668968134
+    ],
+    "update_seconds": [
+      11.209960279986262,
+      3.647504238993861
+    ],
+    "checkpoint_seconds": [
+      11.77680260001216,
+      13.450172911048867
+    ],
+    "checkpoint_bytes": [
+      9297302298,
+      9297302302
+    ],
+    "publication_seconds": [
+      3.161839872947894,
+      2.498452715924941,
+      2.5260045600589365
+    ],
+    "release_seconds": [
+      11.472909758915193,
+      11.683023393969052
+    ],
+    "grad_norms": [
+      [
+        6.37038598728155,
+        6.37038598728155,
+        6.37038598728155,
+        6.37038598728155
+      ],
+      [
+        10.741733655185522,
+        10.741733655185522,
+        10.741733655185522,
+        10.741733655185522
+      ]
+    ],
+    "cpu_tests": {
+      "passed": 167,
+      "cuda_skipped": 1
+    },
+    "algorithm": "fixed-baseline clipped policy gradient; baseline 0.5, task rewards unchanged; small batch replicated on four ranks",
+    "limits": [
+      "One inference GPU, four training GPUs, one gated producer, local filesystem queue.",
+      "No SWE quality or GPU-hour savings claim; Slurm allocation return is pending."
+    ],
+    "hf_alias_validation": {
+      "step": 3,
+      "embedding_head_changed_elements": 0,
+      "embedding_head_max_delta": 0.0,
+      "weight_tying_verified": true
+    },
+    "full_precommit": "passed",
+    "runtime_code_matches_final": true,
+    "post_cleanup": {
+      "status": "passed",
+      "consumer_fence_released": true,
+      "memory_mib": {
+        "0": 0,
+        "1": 0,
+        "2": 0,
+        "3": 0,
+        "4": 0,
+        "5": 0,
+        "6": 0,
+        "7": 0
+      },
+      "sandbox_pods": 0,
+      "independent_inference_gpu_allocation": true
+    }
+  },
+  "regression_command": "python -m pytest -q tests/test_elastic_*.py tests/test_autopilot_swe_fixture.py tests/test_train_controller.py tests/test_fsdp_sft_batch.py",
+  "evidence_note": "Compact summary of existing H20 observations, not a new GPU run. Original reports remain in the local workspace under artifacts/h20-elastic-automatic; only their hashes are bundled.",
+  "local_evidence_sha256": {
+    "validation-summary.json": "07da1ec9e7a3cd1457ce303ab22c38194cf00ed6846c7c66597b12eadd0379bc",
+    "report.json": "91e5cb1df3846f55d6096924efe16fc3ed59f69a65ec091f88abc06e9e0c3e2a",
+    "source-manifest.json": "f42f6ff481345a7c27e8b3e0a2204a650f6cb110e1515443ab47dd00aa765b10",
+    "post-cleanup.json": "a8237c33fa48aca305df53bcd9340a1690bdbee0bbbd3764d0e707cda79d807b",
+    "regression.log": "db2a3442bb8be691e5ff66a3fde23ada9243b38fbca612ed07dc3ade21fbc0d6",
+    "precommit-final.log": "17b2f9fbed51314801574b0b40af0d27f95dfaf0e88f849f70b2e77c84cfe1c5"
+  },
+  "source_files_note": "Historical changed non-documentation files at runtime_commit relative to v2.1.0. These paths and hashes predate directory reorganization and do not validate the current working tree.",
+  "source_files_sha256": {
+    "areal/autopilot/__init__.py": "6c6ec57de9f82ef42d82760f144a4571cb16b3cd6de33aaa7aa9fd65e8ab1fa1",
+    "areal/autopilot/elastic/__init__.py": "2defbb2a47903f733d4a77f547b6a89fedcae885ac4f4891a0bb3d0a35fe1c44",
+    "areal/autopilot/elastic/batch_queue.py": "3cfcf49120012b9b29ef9af2378abc3e0a9d8f1af8e9300c2a6b6d0942efbc01",
+    "areal/autopilot/elastic/checkpoint.py": "30b826366bf7e90710d4401d255c180df2d902344faabe436a1debf5145d6354",
+    "areal/autopilot/elastic/frontend.py": "3ed9c1d1ce19ba6891eaa612dd1bb91b36a85d22ad8e211ba4a643688062cf61",
+    "areal/autopilot/elastic/inference.py": "b3f55cae548dac6a4542ee930789521b756c74f286494075b70ed4acac544b74",
+    "areal/autopilot/elastic/policy.py": "fbea4f94924e63b9e38e845b06f0aaff5abda71a0f0c9a03daf18fb706a1294f",
+    "areal/autopilot/elastic/ppo.py": "0cbd0f6eac82cb35243a5eea91c9ba50db296218b4785849ef22698ac5d9b725",
+    "areal/autopilot/elastic/processes.py": "425b3c61925feb03b84c7276e00241b1e9aa20a21f824539d1a7d75e2ff56906",
+    "areal/autopilot/elastic/publication.py": "6396b22d60af926e12a665560f7f6b6cb7bff41336e74d08ce10f9dcb51f0cc9",
+    "areal/autopilot/elastic/queued_trainer.py": "9c192256c873acf1b84b87f555d4a6acd6ff3bb9e4245f8e502ad46099e8c88a",
+    "areal/autopilot/elastic/runtime_state.py": "f0e0427db0242e84ab54cda9896cafcf06c589171f08f674b24c47080f3dabf5",
+    "areal/autopilot/elastic/standby.py": "f21c35814060a5db91f4685a3eb561b354e2c7ccb7e37838c880dab526eac6f6",
+    "areal/autopilot/elastic/train_group.py": "cbb3e076f1f8c19e5ace2412c6311fb30583aea91054fa8179d8fcc7f8602b67",
+    "areal/autopilot/elastic/trajectory.py": "ae3cd6d8a1ebeb1fbc89e9481b9b8888396c02c068e992804a10d6a111edbf39",
+    "areal/autopilot/elastic/v2_controller.py": "23bf405c50265e1701ba63a14a7f08f068a4627700ca50d2fb15b8e9d65b6dbd",
+    "areal/engine/fsdp_engine.py": "64f5bbadea2a0583e92d075aa15d05b72e80df27a24c66f3a73721a07d6eb9f4",
+    "areal/infra/controller/train_controller.py": "fc9139bf13f778c90ff688d0db72c90dee89240caef0f30db1fd100d2e539ffc",
+    "examples/autopilot/elastic/automatic_swe.py": "cdbfdd0bd1220e249ac7e17a835ee459ec8e0f3d8bc346947aac931f4121d8e8",
+    "examples/autopilot/elastic/lifecycle_engine.py": "cb532d3f31580c64a700008923c9ddde08a8039ceb01b83d11eb11f1e0332994",
+    "examples/autopilot/elastic/ppo_cycle.py": "1430ef459291d43ad8ee477256f6259b3671d5ad2ff72fac89e3dc88c0a32c40",
+    "examples/autopilot/elastic/ppo_engine.py": "f45470082141bfe29938bd25eba34b552c1f819b329a0b2dc8b4d56544ca1196",
+    "examples/autopilot/elastic/swe/Dockerfile.service": "f0d1ada836470484c8d19b24e875f0c2e1bb6cda2ae54626d875a3ed8c7c3c52",
+    "examples/autopilot/elastic/swe/Dockerfile.shell": "74843d45381884a0ace7897161a1c464d115b6eabab98f7cad3821498d06fc84",
+    "examples/autopilot/elastic/swe/aenv-values.yaml": "9954ffc6c8c4d31ef4bef13998f1f3507e3e2b0345473698a39370a3efbd9156",
+    "examples/autopilot/elastic/swe/agent-config.yaml": "8a1579d32c80c5c4d719f060f80dff36e0f68813090cfb4b2031fa20584f6438",
+    "examples/autopilot/elastic/swe/agent_worker.py": "4236031d8603d6714d4bb47702be97d4e9ed49da18cafa499a0081287ecb4666",
+    "examples/autopilot/elastic/swe/environment.json": "453b47d0b44856d8aaa2a6d40f19dbdbfef9e349aca4f511d704ca474084e186",
+    "examples/autopilot/elastic/swe/kind.yaml": "46d6ead77429d98c1feafe9c3cbaee0bf6dd54642d5c310065c402178975ed57",
+    "examples/autopilot/elastic/swe/prepare_fixture.py": "9a7dbc44d712ee0a6b4b80737247d129bb652199f28e022bb4b0d3b87c0c0d78",
+    "examples/autopilot/elastic/swe/process_env.py": "be213e947f20e47a75fd3afd803316d59977f80e0a9657750d8b68144cce4e0e",
+    "examples/autopilot/elastic/swe/rollout_to_queue.py": "76d1cd0f68a7d2fe2c7fc1841419c05165ea78c472a7865e90fc3c8a763cbf70",
+    "examples/autopilot/elastic/swe/sandbox_worker.py": "a5b83718e87792b2655feb9311ab34302d0944764fffc3b547ffe7bc96106633",
+    "examples/autopilot/elastic/swe/smoke_sandbox.py": "9e86e30930590d9355f77a3d623d63b05540680fa58569c166471133ce4d81eb",
+    "examples/autopilot/elastic/train_lifecycle.py": "64cf32fb248e0d40af95f0ca5786e68467e63035da3c6205893ad38fab22393b",
+    "examples/autopilot/elastic/worker_entrypoint.py": "bef95e78a9e3bb2989152c133b4166062ef19275191cca372fc51551eb7ef63e",
+    "tests/test_autopilot_swe_fixture.py": "146914c297cdfa50b10b1d3c29793798ce2c4616e313978ed78fcc829d9fd5c6",
+    "tests/test_elastic_batch_queue.py": "2144a57a278dcf123861504ad46aab6e9d58a4157b95b71bf600fd833def7d40",
+    "tests/test_elastic_checkpoint.py": "fe79d936eda7cc0312078a661b165596510975425b1ded1978e9b716ed9a3a5b",
+    "tests/test_elastic_frontend.py": "b2a3d2c6ad06077063cfd2c0e35801f0a99c555a3efb5b7c8cfdd7ec31da18b5",
+    "tests/test_elastic_inference.py": "2a64e8dd5c6fe8f55d84263bf085653fb1e2a1bab3a77862a3d9810a9cd2bf8d",
+    "tests/test_elastic_policy.py": "a50f5cd4cda144ba41e74dc29d773a509c5afde0beeb3dfc6f3f0d81d98eb6f7",
+    "tests/test_elastic_ppo.py": "840569f693c2a0360556fe54398dc9747a66c1730bfee20875f18251e226ecee",
+    "tests/test_elastic_queued_trainer.py": "f5db2ff21e9dcb281fec619b8aa336275e1ab3659999702775d27249d01df5cd",
+    "tests/test_elastic_runtime_state.py": "7d15f0dc897e4967be337568fd0737524ea90a0578b1c5bcc2b8680beba659fd",
+    "tests/test_elastic_train_group.py": "669453bb7721b0318e458254711d6d92a1e95810e548e7c9cefb7002cb9b4bbe",
+    "tests/test_elastic_trajectory.py": "f7e3b8b3c830122caba08742eeff0e1057f77a34b31d9760eff45dd07fdef811",
+    "tests/test_elastic_v2_controller.py": "73bd8e1e28134a5a81d275c0a39d2b162ef74bd9ba0601c7450ddf23b31d7e78",
+    "tests/test_fsdp_sft_batch.py": "89dc47ecc8b95512b2cd7a9c722294ec6b4e08ac4db38b7447caa02f26950cf1",
+    "tests/test_train_controller.py": "fa2c95eadc3b4c676b5cd3c33557bdfc603dfedc659deb1cebef2652597ab348"
+  },
+  "layout_validation": {
+    "status": "passed",
+    "scope": "Uncommitted two-loop architecture scaffold; elastic execution and scheduling rules are separated, runtime modules relocated. revision/ is a placeholder only. CPU/contract checks; no new GPU lifecycle run.",
+    "base_commit": "11cd5a38779d15a2179809f059384b060b0d51f2",
+    "cpu_regression": {
+      "passed": 190,
+      "skipped": 1,
+      "skip_reason": "CUDA was not exposed to the test container"
+    },
+    "cli_entrypoints_checked": 6,
+    "lightweight_worker_gpu_selection": "passed before importing torch",
+    "fixture_groups_import_without_fsdp_engine": true,
+    "core_has_no_example_imports": true,
+    "fixed_lm_update": "moved unchanged from core TrainGroup to fixture LMGroup; PPO and LM groups share fixtures/groups.py",
+    "checkpoint_compatibility_and_ppo_fixture_configuration": "Unchanged; PPO/LM fixtures AST-equivalent after import normalization.",
+    "changed_file_precommit": "passed, including new untracked modules",
+    "full_tree_precommit": "Previous layout check: other full-tree hooks passed locally; CLI-doc generation lacked local torchdata and passed separately in the pinned Linux runtime. Current changes passed changed-file hooks, including new modules.",
+    "evidence_sha256": {
+      "regression.log": "406fc790339936deef66595b153476e9f1a28c31dbcb610fd159aef3863f67d7",
+      "smoke.log": "8efd264fb83839c4a4e5153ecf0eba08ea86dad2a93c009366c43b8e678cd1ea",
+      "structural-checks.json": "070948a829f5c7dd341fc4fb2aec5cd1ae3ae661fbe8f4d4293c241c925bde49",
+      "precommit-changes.log": "78c62454e0f2fa6f478a5bb7327151cf6f8fa1a06486d1f6333d80d6093d03a9"
+    },
+    "source_files_sha256": {
+      "areal/autopilot/__init__.py": "6c6ec57de9f82ef42d82760f144a4571cb16b3cd6de33aaa7aa9fd65e8ab1fa1",
+      "areal/autopilot/elastic/__init__.py": "2defbb2a47903f733d4a77f547b6a89fedcae885ac4f4891a0bb3d0a35fe1c44",
+      "areal/autopilot/elastic/loop.py": "7a7eab0eb8012b4a4d0c2091775db2245fb3356d50bab37d79d1d5c73cebfa39",
+      "areal/autopilot/elastic/policy.py": "f2159b9108226c884b69cd1198ca353a52f73972353d1085397cf8e188a1ff4e",
+      "areal/autopilot/elastic/runtime/__init__.py": "6c6ec57de9f82ef42d82760f144a4571cb16b3cd6de33aaa7aa9fd65e8ab1fa1",
+      "areal/autopilot/elastic/runtime/batch_queue.py": "3cfcf49120012b9b29ef9af2378abc3e0a9d8f1af8e9300c2a6b6d0942efbc01",
+      "areal/autopilot/elastic/runtime/checkpoint.py": "30b826366bf7e90710d4401d255c180df2d902344faabe436a1debf5145d6354",
+      "areal/autopilot/elastic/runtime/inference/__init__.py": "6c6ec57de9f82ef42d82760f144a4571cb16b3cd6de33aaa7aa9fd65e8ab1fa1",
+      "areal/autopilot/elastic/runtime/inference/publication.py": "9811d45bf1335a4a543aa37a3039dcbda11b74ed5bf4c363739c5652a034d28f",
+      "areal/autopilot/elastic/runtime/inference/service.py": "e181f5aee62652b052c1a5b3a47ed4baeb0eb8bbc1b0d932b62ffc44355921fd",
+      "areal/autopilot/elastic/runtime/processes.py": "fbe42953e7abbc9f53fe3bbc3c6b5d8f26477e8fdb7c3b3c2d92139f1b67c691",
+      "areal/autopilot/elastic/runtime/queued_trainer.py": "25ccb295156d8a5c19a75a9160df5e7cec76a4ad62de25d78307e1a6eef18c31",
+      "areal/autopilot/elastic/runtime/runtime_state.py": "f0e0427db0242e84ab54cda9896cafcf06c589171f08f674b24c47080f3dabf5",
+      "areal/autopilot/elastic/runtime/training/__init__.py": "6c6ec57de9f82ef42d82760f144a4571cb16b3cd6de33aaa7aa9fd65e8ab1fa1",
+      "areal/autopilot/elastic/runtime/training/frontend.py": "5c7d4bd970ff962bea9ac5e0620051e5c43093f754c273d83a9d8fd241ae7624",
+      "areal/autopilot/elastic/runtime/training/group.py": "804a850163046429655be18da8660dcbb56a5c48eec050db4d9483c30241662c",
+      "areal/autopilot/elastic/runtime/training/standby.py": "f21c35814060a5db91f4685a3eb561b354e2c7ccb7e37838c880dab526eac6f6",
+      "areal/autopilot/elastic/runtime/training/v2_controller.py": "23bf405c50265e1701ba63a14a7f08f068a4627700ca50d2fb15b8e9d65b6dbd",
+      "areal/autopilot/elastic/runtime/trajectory.py": "ae3cd6d8a1ebeb1fbc89e9481b9b8888396c02c068e992804a10d6a111edbf39",
+      "areal/autopilot/elastic/runtime/weights.py": "0fe241b9210b8da34ea235a2ebb55dd1393c66fcce3bfacdc6f7b082fa383f16",
+      "areal/autopilot/revision/__init__.py": "783084870a949dda0262d7237b8e297df5ade0646f76b55659fe1b750d6d869f",
+      "areal/autopilot/revision/loop.py": "83a72c3f7c87c8ff2c735501af0c9e236f64142d92417bc731eabf17cd9e31e7",
+      "areal/engine/fsdp_engine.py": "64f5bbadea2a0583e92d075aa15d05b72e80df27a24c66f3a73721a07d6eb9f4",
+      "areal/infra/controller/train_controller.py": "fc9139bf13f778c90ff688d0db72c90dee89240caef0f30db1fd100d2e539ffc",
+      "examples/autopilot/elastic/automatic_swe.py": "13023dc96f39ae8b41f16e63e183e394fe1053a87a648148548246d136513404",
+      "examples/autopilot/elastic/fixtures/__init__.py": "6c6ec57de9f82ef42d82760f144a4571cb16b3cd6de33aaa7aa9fd65e8ab1fa1",
+      "examples/autopilot/elastic/fixtures/diagnostics.py": "81ed1cf252a74dfa9c62a7a572a82ed36f012a82bba05e71aa5ab0b4eb45f3f5",
+      "examples/autopilot/elastic/fixtures/groups.py": "8f3f8731c2aff44c341f91ecdfadfeec8c030064fd6478e3eca42babaab74346",
+      "examples/autopilot/elastic/fixtures/lm_engine.py": "dc37164c37610645de70ac29f1fe57a327763831063c4b09b1c38884e276c643",
+      "examples/autopilot/elastic/fixtures/ppo_engine.py": "70d324ec60f6dbac9a28ff6b095397c2386dfc0c631cd40224ab933e131804c2",
+      "examples/autopilot/elastic/fixtures/worker_entrypoint.py": "bef95e78a9e3bb2989152c133b4166062ef19275191cca372fc51551eb7ef63e",
+      "examples/autopilot/elastic/swe/agent_worker.py": "4236031d8603d6714d4bb47702be97d4e9ed49da18cafa499a0081287ecb4666",
+      "examples/autopilot/elastic/swe/cleanup.py": "6668074952d8d2e5aaa06092e020173a3906a9313ba08627434553b1d4c5892e",
+      "examples/autopilot/elastic/swe/prepare_fixture.py": "9a7dbc44d712ee0a6b4b80737247d129bb652199f28e022bb4b0d3b87c0c0d78",
+      "examples/autopilot/elastic/swe/process_env.py": "be213e947f20e47a75fd3afd803316d59977f80e0a9657750d8b68144cce4e0e",
+      "examples/autopilot/elastic/swe/rollout_to_queue.py": "d397d2ff2ce1e07c8364d413cdb7867fb9900aa57f625ce702c70f740d976044",
+      "examples/autopilot/elastic/swe/sandbox_worker.py": "a5b83718e87792b2655feb9311ab34302d0944764fffc3b547ffe7bc96106633",
+      "examples/autopilot/elastic/swe/smoke_sandbox.py": "0abee769b0de879003f2f837359d8b047d3c2eac79821b8332ce9fbd4391b617",
+      "examples/autopilot/elastic/validation/__init__.py": "6c6ec57de9f82ef42d82760f144a4571cb16b3cd6de33aaa7aa9fd65e8ab1fa1",
+      "examples/autopilot/elastic/validation/ppo_cycle.py": "cd85682304fe591e0a239e2fe39bdfef45ae482534a2a7581d65b77ed1c6ab91",
+      "examples/autopilot/elastic/validation/probes.py": "80d631165f7e0dbab91291b5869a13e0c3bc9a64cc54b815307f0f6dc33ff93f",
+      "examples/autopilot/elastic/validation/train_lifecycle.py": "008c848547dfd22c2c14a9deb309c2603a6439bf49526aa017a4e25e80321b69",
+      "tests/test_autopilot_swe_fixture.py": "acf6f5e9b5b76825229960ca3508a29a54ef493c3f695aace9f6bde2c4d6ccfc",
+      "tests/test_elastic_batch_queue.py": "49adc68b452afb86b803b6611cf335278f48fe21917ad701a7bacdb038247526",
+      "tests/test_elastic_checkpoint.py": "0ba239803edcbc465e4a36dbfd375997104f3dc5a095d67e8a0e52df2ce25297",
+      "tests/test_elastic_frontend.py": "ce14ad427f74b2b773e5a251bb88e04ae35db5b2f7319fbfeb3a66e3029f4b0a",
+      "tests/test_elastic_inference.py": "799e86e17f5b849d0c16b9e5b8b9ceb5cbbc695bfb10af61610cdf576adcb973",
+      "tests/test_elastic_loop.py": "897fd4a4d180d081e0c910c41e25d3c5c47f8fd85bb872fc99bb4892e4274ada",
+      "tests/test_elastic_policy.py": "f0f2a7e239f2d40117ea577f69cebff9bd4d5063017e8bd73d5af090c17e454c",
+      "tests/test_elastic_ppo.py": "937e07b44b131a6c0ffcd29d4ec842b53104b1175dab27ecde0505f4a5906387",
+      "tests/test_elastic_queued_trainer.py": "d36fb62b95b80527af941287e24e00be3f2d423f7a244d290c5f18211ff434ad",
+      "tests/test_elastic_runtime_state.py": "05b2d4d9880d12620165b809b4406eea83b4f56f0dac183936c5f6ee60798654",
+      "tests/test_elastic_train_group.py": "8ab4ecd69a5318fc3559c02c247a7a895b1476e8b3c0f0208e26413f651ba7a5",
+      "tests/test_elastic_trajectory.py": "1bbdbee8346bb4468167f34f358cdc4672bd9faaae8f080434a66675219026dc",
+      "tests/test_elastic_v2_controller.py": "84103f7ff7f6436cf3026003aeafa40b4cf8b8dd9d868fc4d05bb87950ead715",
+      "tests/test_fsdp_sft_batch.py": "89dc47ecc8b95512b2cd7a9c722294ec6b4e08ac4db38b7447caa02f26950cf1",
+      "tests/test_train_controller.py": "fa2c95eadc3b4c676b5cd3c33557bdfc603dfedc659deb1cebef2652597ab348"
+    },
+    "execution_loop_uses_trainer_interface": true,
+    "scheduling_policy": "Constructor-injected; immutable CPU observation to train/keep/release. Default IdleTimeoutPolicy preserves baseline behavior; execution enforces consistency guards.",
+    "revision_loop": "Placeholder only; no agent, evaluator, dynamic policy replacement or revision persistence implemented.",
+    "runtime_modules": "AST-equivalent after import/path normalization except the read-only QueuedTrainer.is_committed property.",
+    "evidence_directory": "Local workspace artifacts/h20-elastic-loops"
+  }
+}

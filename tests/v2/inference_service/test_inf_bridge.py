@@ -118,6 +118,40 @@ def _make_bridge(
 class TestInfBridge:
     """Tests for InfBridge abort/resubmit loop and ModelResponse construction."""
 
+    @pytest.mark.asyncio
+    async def test_publication_during_request_preserves_dispatch_version(self):
+        bridge = _make_bridge(version=3)
+
+        async def send(http_req):
+            bridge.set_version(4)
+            return _make_sglang_response([(-0.5, 100)], "stop")
+
+        bridge._send_request = send
+        response = await bridge.agenerate(_make_request())
+
+        assert response.output_versions == [3]
+        assert bridge.get_version() == 4
+
+    @pytest.mark.asyncio
+    async def test_abort_resubmit_records_each_attempt_dispatch_version(self):
+        bridge = _make_bridge(version=3)
+        calls = 0
+
+        async def send(http_req):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                bridge.set_version(4)
+                return _make_sglang_response([(-0.5, 100)], "abort")
+            bridge.set_version(5)
+            return _make_sglang_response([(-0.2, 101)], "stop")
+
+        bridge._send_request = send
+        response = await bridge.agenerate(_make_request())
+
+        assert response.output_tokens == [100, 101]
+        assert response.output_versions == [3, 4]
+
     # -- 1. Normal stop ---------------------------------------------------------
 
     @pytest.mark.asyncio

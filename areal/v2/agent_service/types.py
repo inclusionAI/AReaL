@@ -29,6 +29,9 @@ class AgentRequest:
             forwards these fields through.  Agents should route their internal
             LLM calls to this upstream so the trajectory's tokens/logprobs are
             captured for training.
+            On-demand turns also supply ``inf_episode`` on every request; its
+            value is forwarded as ``episode`` and must accompany every LLM
+            call as ``extra_body={"areal_episode": episode}``.
         ``chat_request``: present on the ``/v1/chat/completions`` path; the
             full original request body, so an agent that fronts an
             OpenAI-compatible upstream can replay it verbatim and return a

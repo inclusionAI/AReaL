@@ -1,0 +1,5 @@
+{
+  "recompute_logprob": true,
+  "gradient_checkpointing": false,
+  "ppo_n_minibatches": 1
+}

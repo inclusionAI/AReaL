@@ -70,6 +70,8 @@ def create_data_proxy_app(config: DataProxyConfig) -> FastAPI:
                                     calls go to (required).
             ``session_api_key``  — the caller-minted ``sk-sess-*`` (required).
             ``inf_model``        — model id the agent should request (default "").
+            ``inf_episode``      — on-demand incarnation and trajectory identity;
+                                    required explicitly on every training turn.
 
         ``inf_model`` is optional and never triggers self-evolution on its own;
         only the required pair does.  The handle is cached on the first turn that
@@ -78,6 +80,12 @@ def create_data_proxy_app(config: DataProxyConfig) -> FastAPI:
         """
         base_url = (body.get("inf_base_url") or "").rstrip("/")
         api_key = body.get("session_api_key") or ""
+        inference = session.inference
+        previous_episode = (inference or {}).get("episode")
+        if previous_episode is not None and "inf_episode" not in body:
+            raise HTTPException(
+                409, "Every on-demand turn requires explicit inf_episode"
+            )
         if base_url or api_key:
             if not base_url or not api_key:
                 raise HTTPException(
@@ -87,11 +95,28 @@ def create_data_proxy_app(config: DataProxyConfig) -> FastAPI:
                         "'session_api_key' in the turn body"
                     ),
                 )
-            session.inference = {
+            inference = {
                 "base_url": base_url,
                 "api_key": api_key,
                 "model": body.get("inf_model", "") or "",
             }
+        if "inf_episode" in body:
+            from areal.v2.inference_service.data_proxy.session import EpisodeIdentity
+
+            if inference is None:
+                raise HTTPException(400, "inf_episode requires inference routing")
+            try:
+                episode = EpisodeIdentity.model_validate(body["inf_episode"])
+            except ValueError as exc:
+                raise HTTPException(400, "Invalid inf_episode identity") from exc
+            if previous_episode is not None and (
+                episode.incarnation_id != previous_episode["incarnation_id"]
+                or episode.trajectory_id < previous_episode["trajectory_id"]
+            ):
+                raise HTTPException(409, "Turn targets an obsolete inference episode")
+            inference = {**inference, "episode": episode.model_dump()}
+
+        session.inference = inference
 
         if session.inference is not None:
             metadata = {**metadata, "areal_inference": dict(session.inference)}

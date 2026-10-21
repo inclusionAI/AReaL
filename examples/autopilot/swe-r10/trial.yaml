@@ -1,0 +1,234 @@
+# r10 configuration reference; read README.md before adapting an entry point.
+# Only five machine-specific path values differ from the archived H20 YAML.
+# trial_prefix and the trial-local FSDP/AWEX/workflow adapters are external dependencies.
+experiment_name: qwen3-30b-a3b-swe
+trial_name: trial-20261019
+seed: 42
+enable_offload: false
+total_train_epochs: 1
+total_train_steps: 16
+tokenizer_path: ${actor.path}
+post_exit_hook: ''
+cluster:
+  n_nodes: 1
+  n_gpus_per_node: 8
+  fileroot: ${oc.env:R10_OUTPUT_ROOT}/run
+  name_resolve:
+    type: nfs
+    nfs_record_root: ${oc.env:R10_OUTPUT_ROOT}/names
+scheduler:
+  type: local
+gconfig:
+  n_samples: 4
+  min_new_tokens: 0
+  max_new_tokens: 4096
+  max_tokens: 16384
+  greedy: false
+  temperature: 1.0
+  top_p: 1.0
+  top_k: 1000000
+rollout:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  backend: sglang:d2t2p1
+  max_concurrent_rollouts: 4
+  queue_size: null
+  consumer_batch_size: ${train_dataset.batch_size}
+  max_head_offpolicyness: 2
+  enable_rollout_tracing: true
+  scheduling_spec: ${actor.scheduling_spec}
+  fileroot: ${cluster.fileroot}
+  tokenizer_path: ${tokenizer_path}
+  dump_to_file: true
+  setup_timeout: 1800
+  request_timeout: 7200
+  request_retries: 3
+  pause_grace_period: 30
+  agent:
+    mode: inline
+    admin_api_key: ${oc.env:TRIAL_ADMIN_KEY}
+    tool_call_parser: qwen
+    reasoning_parser: qwen3
+    chat_template_type: concat
+    engine_max_tokens: 16384
+    export_style: concat
+    turn_discount: 1.0
+    session_timeout_seconds: 3600
+    prefix_matcher: trial_prefix.prefix_matcher
+    message_preprocessors:
+    - examples.swe.preprocessors.StripAnthropicBillingHeader
+    - examples.swe.preprocessors.StripAllSystemReminders
+    - examples.swe.preprocessors.StripAnthropicCacheFields
+    - examples.swe.preprocessors.NormalizeToolCallArguments
+  _version: v2
+  model: Qwen3-30B-A3B
+  workers_ready_timeout: 1800
+  admin_api_key: ${oc.env:TRIAL_ADMIN_KEY}
+actor:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  backend: fsdp:d4
+  path: ${oc.env:R10_MODEL_PATH}
+  init_from_scratch: false
+  disable_dropout: true
+  gradient_checkpointing: true
+  dtype: bfloat16
+  grad_reduce_dtype: bfloat16
+  mb_spec:
+    n_mbs: 1
+    granularity: 1
+    max_tokens_per_mb: 16384
+    n_mbs_divisor: 1
+  optimizer:
+    type: adam_bf16
+    lr: 3.0e-06
+    weight_decay: 0.01
+    beta1: 0.9
+    beta2: 0.999
+    eps: 1.0e-08
+    lr_scheduler_type: constant
+    gradient_clipping: 1.0
+    warmup_steps_proportion: 0.001
+  eps_clip: 0.2
+  eps_clip_higher: 0.28
+  temperature: ${gconfig.temperature}
+  kl_ctl: 0.0
+  ppo_n_minibatches: 1
+  recompute_logprob: false
+  prox_logp_method: recompute
+  use_decoupled_loss: true
+  rejection_sampling:
+    level: token
+    action: mask
+    metric: ratio
+    upper: 5.0
+  discount: 1.0
+  gae_lambda: 1.0
+  reward_scaling: 1.0
+  reward_bias: 0.0
+  reward_clip: 5.0
+  reward_norm:
+    mean_level: group
+    std_level: group
+    group_size: ${gconfig.n_samples}
+    eps: 1.0e-05
+  adv_norm:
+    mean_level: null
+    std_level: null
+  max_new_tokens: ${gconfig.max_new_tokens}
+  scheduling_spec:
+  - task_type: worker
+    port_count: 2
+    gpu: 1
+    cpu: 4
+    mem: 48
+    cmd: python3 -m areal.infra.rpc.rpc_server
+    env_vars:
+      NCCL_CUMEM_ENABLE: '0'
+      OMP_NUM_THREADS: '4'
+      TOKENIZERS_PARALLELISM: 'false'
+  _version: v2
+  admin_api_key: ${oc.env:TRIAL_ADMIN_KEY}
+  optimizer_dtype: bfloat16
+  attn_impl: flash_attention_2
+  setup_timeout: 1800
+  workers_ready_timeout: 1800
+  request_timeout: 7200
+  weight_update_mode: awex
+  fsdp:
+    memory_efficient_load: false
+    offload_params: true
+ref:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  backend: ${actor.backend}
+  path: ${actor.path}
+  init_from_scratch: false
+  disable_dropout: false
+  dtype: ${actor.dtype}
+  mb_spec:
+    n_mbs: 1
+    granularity: 1
+    max_tokens_per_mb: 131072
+    n_mbs_divisor: 1
+  optimizer: null
+  scheduling_strategy:
+    type: colocation
+    target: actor
+  scheduling_spec: ${actor.scheduling_spec}
+sglang:
+  model_path: ${actor.path}
+  random_seed: ${seed}
+  skip_tokenizer_init: true
+  dtype: ${actor.dtype}
+  context_length: 16384
+  max_prefill_tokens: 16384
+  max_running_requests: 4
+  mem_fraction_static: 0.75
+  chunked_prefill_size: 4096
+  cuda_graph_max_bs: 4
+  schedule_policy: fcfs
+  attention_backend: fa3
+  log_level: info
+  log_requests: false
+  sampling_backend: pytorch
+  enable_memory_saver: false
+  disable_radix_cache: false
+  triton_attention_num_kv_splits: 16
+  disable_custom_all_reduce: true
+  disable_cuda_graph: false
+train_dataset:
+  batch_size: 4
+  shuffle: false
+  pin_memory: true
+  num_workers: 0
+  path: ${oc.env:R10_FIXTURE_ROOT}/pytest-dev__pytest-7432.json
+  type: rl
+  max_length: 32768
+  drop_last: true
+valid_dataset:
+  batch_size: 4
+  shuffle: false
+  pin_memory: true
+  num_workers: 0
+  path: ${oc.env:R10_FIXTURE_ROOT}/pytest-dev__pytest-7432.json
+  type: rl
+saver:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: null
+  freq_steps: 16
+  freq_secs: null
+  mode: sync
+recover:
+  mode: disabled
+  retries: 3
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: null
+  freq_secs: null
+  no_save_optim: false
+  no_load_optim: false
+  freq_steps: null
+evaluator:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: null
+  freq_steps: null
+  freq_secs: null
+stats_logger:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  wandb:
+    mode: disabled
+perf_tracer:
+  enabled: true
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  session_tracer:
+    enabled: false

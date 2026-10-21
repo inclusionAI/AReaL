@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import time
+from typing import Any
 
 import httpx
 
@@ -36,7 +37,7 @@ import httpx
 async def interactive_loop(
     gateway_addr: str,
     admin_key: str,
-    inference: dict[str, str] | None = None,
+    inference: dict[str, Any] | None = None,
 ) -> None:
     session_key = f"hermes-{int(time.time())}"
     print(f"Session: {session_key}")
@@ -111,11 +112,17 @@ def main() -> None:
         default="",
         help="Per-session sk-sess-* key from start_session.py (required for capture)",
     )
+    parser.add_argument("--incarnation-id", help="On-demand session incarnation")
+    parser.add_argument("--trajectory-id", type=int, help="On-demand episode number")
     args = parser.parse_args()
+    if (args.incarnation_id is None) != (args.trajectory_id is None):
+        parser.error("--incarnation-id and --trajectory-id must be supplied together")
+    if args.incarnation_id is not None and not args.session_api_key:
+        parser.error("Episode identity requires --session-api-key")
 
     gateway_addr = args.gateway_addr.rstrip("/")
 
-    inference: dict[str, str] | None = None
+    inference: dict[str, Any] | None = None
     if args.inf_base_url or args.session_api_key:
         if not (args.inf_base_url and args.session_api_key):
             raise SystemExit(
@@ -126,6 +133,11 @@ def main() -> None:
             "inf_model": args.inf_model,
             "session_api_key": args.session_api_key,
         }
+        if args.incarnation_id is not None:
+            inference["inf_episode"] = {
+                "incarnation_id": args.incarnation_id,
+                "trajectory_id": args.trajectory_id,
+            }
 
     asyncio.run(
         interactive_loop(
