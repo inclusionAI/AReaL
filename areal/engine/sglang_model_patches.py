@@ -36,7 +36,7 @@ def wrap_server_command(command: list[str]) -> list[str]:
 
 
 def apply_model_patches(server_args: Sequence[str]) -> None:
-    """Patch Qwen Flash Next (qwen4_exp), independent of model path or workflow."""
+    """Patch supported Qwen models, independent of model path or workflow."""
     if "--help" in server_args or "-h" in server_args:
         return
     parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
@@ -68,6 +68,11 @@ def apply_model_patches(server_args: Sequence[str]) -> None:
             )
         except (OSError, ValueError):
             return  # Let the original entry point handle other config formats.
+    if config.get("model_type") in ("qwen3_5", "qwen3_5_moe"):
+        from areal.engine import sglang_qwen35_vl
+
+        sglang_qwen35_vl.install(installed_sglang_root())
+        return
     if config.get("model_type") != "qwen4_exp":
         return
 

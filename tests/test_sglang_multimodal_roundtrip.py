@@ -8,7 +8,9 @@ model weights, GPU allocation, server startup, or network downloads are needed.
 import asyncio
 import base64
 import io
+import json
 import os
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -21,43 +23,90 @@ from areal.api import ModelRequest
 from areal.engine.sglang_remote import SGLangBackend
 
 
+@contextmanager
+def preprocessing_server_args(model_path):
+    from sglang.srt.runtime_context import get_context
+
+    context = get_context()
+    if hasattr(context, "override_server_args"):
+        with context.override_server_args(
+            model_path=model_path,
+            device="cuda" if torch.cuda.is_available() else "cpu",
+            mm_feature_transport="cpu",
+            mm_process_config={},
+            mm_processor_worker_num=1,
+            mm_io_worker_num=1,
+            mm_preprocess_cache_size_mb=0,
+        ) as args:
+            yield args
+    else:
+        from sglang.srt import server_args
+
+        previous = server_args._global_server_args
+        args = server_args.ServerArgs(
+            model_path=model_path,
+            device="cuda" if torch.cuda.is_available() else "cpu",
+            mm_process_config={},
+            disable_radix_cache=True,
+        )
+        server_args.set_global_server_args_for_tokenizer(args)
+        try:
+            yield args
+        finally:
+            server_args.set_global_server_args_for_tokenizer(previous)
+
+
 @pytest.fixture(scope="module")
 def qwen_roundtrip_runtime():
     model_path = os.environ.get("AREAL_TEST_QWEN_MODEL_PATH")
     if not model_path:
-        pytest.skip("Set AREAL_TEST_QWEN_MODEL_PATH to a local Qwen4 model")
+        pytest.skip("Set AREAL_TEST_QWEN_MODEL_PATH to a local Qwen model")
+
+    model_type = json.loads((Path(model_path) / "config.json").read_text())[
+        "model_type"
+    ]
+    if model_type in ("qwen3_5", "qwen3_5_moe"):
+        from areal.engine import sglang_qwen35_vl
+
+        # Install before importing either SGLang processor class so the base
+        # class's actual device dispatch is covered too (inside a test runtime).
+        sglang_qwen35_vl.main()
 
     qwen_vl = pytest.importorskip("sglang.srt.multimodal.processors.qwen_vl")
     from sglang.srt.environ import envs
-    from sglang.srt.runtime_context import get_context
     from transformers import AutoConfig, AutoProcessor
-
-    from areal.engine import sglang_qwen4_vl
 
     # Isolate the patched class without changing the installed module or file.
     source = Path(qwen_vl.__file__).read_bytes()
-    patched = sglang_qwen4_vl.patched_source(source)
+    if model_type == "qwen4_exp":
+        from areal.engine import sglang_qwen4_vl
+
+        patched = sglang_qwen4_vl.patched_source(source)
+    else:
+        patched = sglang_qwen35_vl.patched_source(source)
     namespace = qwen_vl.__dict__.copy()
     exec(compile(patched, qwen_vl.__file__, "exec"), namespace)
     assert envs.SGLANG_MM_AVOID_RETOKENIZE.get()
     hf = AutoProcessor.from_pretrained(model_path, local_files_only=True, use_fast=True)
+    # SGLang used to mutate size in place. A shared processor would mutate the
+    # reference as well and conceal the mismatch we are trying to detect.
+    hf_infer = AutoProcessor.from_pretrained(
+        model_path, local_files_only=True, use_fast=True
+    )
     config = AutoConfig.from_pretrained(model_path, local_files_only=True)
-    with get_context().override_server_args(
-        model_path=model_path,
-        device="cpu",
-        mm_feature_transport="cpu",
-        mm_process_config={},
-        mm_processor_worker_num=1,
-        mm_io_worker_num=1,
-        mm_preprocess_cache_size_mb=0,
-    ) as args:
+    with preprocessing_server_args(model_path) as args:
         processor = namespace["QwenVLImageProcessor"](
-            config, args, hf, transport_mode="default", skip_mm_pool=True
+            config, args, hf_infer, transport_mode="default", skip_mm_pool=True
         )
         try:
+            assert hf.image_processor.size == hf_infer.image_processor.size
             yield hf, processor
         finally:
-            processor.shutdown()
+            if hasattr(processor, "shutdown"):
+                processor.shutdown()
+            else:
+                for name in ("io_executor", "cpu_executor", "load_mm_data_executor"):
+                    getattr(processor, name).shutdown(wait=True)
 
 
 def patterned_image(width: int, height: int) -> Image.Image:
@@ -77,6 +126,7 @@ def patterned_image(width: int, height: int) -> Image.Image:
         ([(511, 257)], False),
         ([(257, 511)], False),
         ([(1001, 777)], False),
+        ([(900, 1300)], False),
         ([(84, 56)], False),
         ([(4097, 4097)], False),
         ([(511, 257), (1001, 777)], False),

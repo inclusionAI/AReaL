@@ -183,15 +183,11 @@ def test_concat_with_one_rewarded_turn_zero_fills_other_spans(
     )
 
 
-def test_concat_with_short_child_prompt_masks_parent_rewards():
-    """The invalid-prefix fallback must not copy rewards from its parent."""
+def test_concat_with_short_child_prompt_rejects_invalid_prefix():
+    """Truncated parent actions cannot inherit behavior logprobs or rewards."""
     parent = _interaction("parent", [1, 2], [3])
     parent.token_rewards = torch.tensor([0.5])
     leaf = _interaction("leaf", [1, 2], [4], parent=parent)
 
-    torch.testing.assert_close(
-        leaf.to_tensor_dict()["token_rewards"],
-        torch.zeros((1, 3), dtype=torch.float32),
-        rtol=0.0,
-        atol=0.0,
-    )
+    with pytest.raises(ValueError, match="sampled token prefix"):
+        leaf.to_tensor_dict()
