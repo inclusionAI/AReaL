@@ -400,7 +400,17 @@ class AwexSchedulerPlugin:
 
             def _flush(*args, **kwargs):
                 with _retract_memory_idle(scheduler, owner):
-                    return original_flush(*args, **kwargs)
+                    success = original_flush(*args, **kwargs)
+                    if success:
+                        # SGLang's native flush only invalidates KV/pool state.
+                        # Image hashes do not include the visual weight version,
+                        # so AWEX updates must also discard cached embeddings.
+                        mm_utils = importlib.import_module(
+                            "sglang.srt.managers.mm_utils"
+                        )
+                        if mm_utils.embedding_cache is not None:
+                            mm_utils.embedding_cache.clear()
+                    return success
 
             scheduler.flush_cache = _flush
             if owner is not scheduler and hasattr(owner, "flush_cache"):
