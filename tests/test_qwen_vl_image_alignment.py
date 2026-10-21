@@ -1,0 +1,103 @@
+# SPDX-License-Identifier: Apache-2.0
+
+import base64
+from io import BytesIO
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+from PIL import Image
+
+from areal.utils.qwen_vl_image import (
+    _sglang_image_size,
+    prepare_sglang_qwen_images,
+)
+
+
+class Qwen3VLProcessor:
+    def __init__(self):
+        self.image_processor = SimpleNamespace(
+            patch_size=16,
+            merge_size=2,
+            size={"shortest_edge": 65536, "longest_edge": 16777216},
+        )
+
+
+@pytest.fixture
+def aligned_processor(monkeypatch):
+    monkeypatch.delenv("SGLANG_VLM_QWEN_LIMIT_PIXEL", raising=False)
+    monkeypatch.delenv("SGLANG_RESIZE_RESAMPLE", raising=False)
+    return Qwen3VLProcessor()
+
+
+@pytest.mark.parametrize(
+    ("shape", "expected"),
+    [
+        ((256, 256), (256, 256)),
+        ((700, 900), (704, 896)),
+        ((1200, 1600), (864, 1152)),
+        ((56, 84), (224, 320)),
+    ],
+)
+def test_image_size_matches_sglang_pixel_budget(shape, expected):
+    assert _sglang_image_size(*shape, 32, 65536, 1048576) == expected
+
+
+@pytest.mark.parametrize("shape", [(256, 256), (900, 700), (1600, 1200), (84, 56)])
+@pytest.mark.parametrize("mode", ["RGB", "RGBA", "L"])
+def test_wire_png_preserves_training_pixels_and_is_resize_identity(
+    aligned_processor, shape, mode
+):
+    rng = np.random.default_rng(1)
+    image = Image.fromarray(
+        rng.integers(0, 256, (shape[1], shape[0], 3), dtype=np.uint8)
+    ).convert(mode)
+    # Include a real JPEG decode for RGB input, before producing the common PNG.
+    if mode == "RGB":
+        stream = BytesIO()
+        image.save(stream, format="JPEG")
+        image = Image.open(BytesIO(stream.getvalue())).convert("RGB")
+    original = np.asarray(image).copy()
+    prepared, encoded = prepare_sglang_qwen_images(aligned_processor, [image])
+
+    with Image.open(BytesIO(base64.b64decode(encoded[0].split(",", 1)[1]))) as wire:
+        assert wire.format == "PNG"
+        assert wire.mode == "RGB"
+        np.testing.assert_array_equal(np.asarray(wire), np.asarray(prepared[0]))
+        assert wire.width * wire.height <= 1048576
+        assert _sglang_image_size(wire.height, wire.width, 32, 65536, 1048576) == (
+            wire.height,
+            wire.width,
+        )
+        again, _ = prepare_sglang_qwen_images(aligned_processor, [wire])
+        np.testing.assert_array_equal(np.asarray(again[0]), np.asarray(wire))
+    np.testing.assert_array_equal(np.asarray(image), original)
+    assert aligned_processor.image_processor.size["longest_edge"] == 16777216
+
+
+def test_alignment_honors_disabled_sglang_pixel_limit(aligned_processor, monkeypatch):
+    monkeypatch.setenv("SGLANG_VLM_QWEN_LIMIT_PIXEL", "false")
+    prepared, _ = prepare_sglang_qwen_images(
+        aligned_processor, [Image.new("RGB", (1600, 1200))]
+    )
+    assert prepared[0].width * prepared[0].height > 1048576
+
+
+def test_alignment_preserves_unsupported_processors():
+    assert prepare_sglang_qwen_images(object(), [Image.new("RGB", (256, 256))]) is None
+
+
+def test_alignment_keeps_multiple_images_in_order(aligned_processor):
+    prepared, encoded = prepare_sglang_qwen_images(
+        aligned_processor,
+        [Image.new("RGB", (900, 700), "red"), Image.new("L", (1600, 1200), 127)],
+    )
+    assert len(prepared) == len(encoded) == 2
+    assert prepared[0].getpixel((0, 0)) == (255, 0, 0)
+    assert prepared[1].getpixel((0, 0)) == (127, 127, 127)
+
+
+@pytest.mark.parametrize("shape", [(1, 201), (0, 32)])
+def test_alignment_rejects_invalid_dimensions(shape):
+    with pytest.raises(ValueError, match="aspect ratio"):
+        _sglang_image_size(*shape, 32, 65536, 1048576)
