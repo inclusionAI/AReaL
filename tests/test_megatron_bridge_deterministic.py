@@ -76,8 +76,9 @@ def _run_until_provider_finalize(
     provider: _FakeProvider,
     *,
     deterministic: bool,
-    freeze_vision_model: bool = False,
-    freeze_vision_projection: bool = False,
+    freeze_vision_model: bool | None = None,
+    freeze_vision_projection: bool | None = None,
+    model_type: str | None = None,
 ) -> None:
     pytest.importorskip("mbridge")
     pytest.importorskip("megatron.core")
@@ -102,7 +103,7 @@ def _run_until_provider_finalize(
         for getter in mpu_mocks.values():
             getter.return_value = 1
         make_mcore_model(
-            hf_config=SimpleNamespace(),
+            hf_config=SimpleNamespace(model_type=model_type),
             tf_config=tf_config,
             mcore_config=mcore_config,
             bridge=_FakeBridge(provider),
@@ -140,6 +141,31 @@ def test_megatron_bridge_default_does_not_unfreeze_provider():
     _run_until_provider_finalize(provider, deterministic=False)
 
     assert all(provider.vision_flags_at_finalize.values())
+
+
+@pytest.mark.parametrize(
+    "model_type", ["qwen3_vl", "qwen3_vl_moe", "qwen3_5", "qwen3_5_moe"]
+)
+def test_megatron_bridge_qwen_vision_is_frozen_by_default(model_type):
+    provider = _make_provider(attention_backend=object())
+    provider.freeze_vision_model = False
+    provider.freeze_vision_projection = False
+    _run_until_provider_finalize(provider, deterministic=False, model_type=model_type)
+    assert all(provider.vision_flags_at_finalize.values())
+
+
+def test_megatron_bridge_qwen_vision_can_be_explicitly_unfrozen():
+    provider = _make_provider(attention_backend=object())
+    provider.freeze_vision_model = True
+    provider.freeze_vision_projection = True
+    _run_until_provider_finalize(
+        provider,
+        deterministic=False,
+        model_type="qwen3_5",
+        freeze_vision_model=False,
+        freeze_vision_projection=False,
+    )
+    assert not any(provider.vision_flags_at_finalize.values())
 
 
 @pytest.mark.parametrize("option", ["freeze_vision_model", "freeze_vision_projection"])

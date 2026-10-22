@@ -31,8 +31,9 @@ For trade-offs and migration guidance, see the
 
 ## Freezing Vision Parameters
 
-For a vision-language model using `megatron-bridge`, freeze both the vision encoder and
-its projector/merger explicitly:
+Qwen3-VL and Qwen3.5 (including Qwen3.8-27B) using `megatron-bridge` freeze the vision
+encoder and its projector/merger by default. No environment variable or CLI override is
+needed. The explicit equivalent is:
 
 ```yaml
 actor:
@@ -48,10 +49,11 @@ provider before DDP and optimizer construction. Setting only `freeze_vision_mode
 allows Qwen3.5's merger to remain trainable; set both to keep cached visual embeddings
 valid across language-model updates, assuming the image preprocessing is unchanged.
 
-Both options default to `false`, preserving the provider's existing freezing policy.
-Enabling them with an unsupported bridge or provider raises an error. Qwen4-Exp (Qwen3.8
-Flash Next) uses a separate `mcore-bridge` adapter that already freezes its entire
-`visual` module, including its merger, without these options.
+Both options default to `null`: Qwen3-VL/Qwen3.5 resolve this to `true`, while other
+models preserve their provider's freezing policy. Set either option to `false` to train
+that component. Explicit settings with an unsupported bridge or provider raise an error.
+Qwen4-Exp (Qwen3.8 Flash Next) uses a separate `mcore-bridge` adapter that already
+freezes its entire `visual` module, including its merger, without these options.
 
 ## MoE Parallel Strategy
 
