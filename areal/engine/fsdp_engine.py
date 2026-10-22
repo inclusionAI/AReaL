@@ -1957,10 +1957,17 @@ class FSDPEngine(TrainEngine):
                 mb["attention_mask"] = None
                 padded_mb["attention_mask"] = None
             else:
-                mb["attention_mask"] = dict(full_attention=None, sliding_attention=None)
-                padded_mb["attention_mask"] = dict(
-                    full_attention=None, sliding_attention=None
-                )
+                # Pass None so that the HF model's create_causal_mask auto-detects
+                # packed sequences from position_ids (which reset to 0 at each sequence
+                # boundary via amend_position_ids) and builds a correct block-diagonal
+                # causal mask.  Using dict(full_attention=None, ...) here bypasses the
+                # mask creation path in Qwen2Model.forward (isinstance check on dict),
+                # which causes eager_attention_forward to receive None and skip the mask
+                # entirely -- making every token attend to every other token across
+                # sequence boundaries.  This was the root cause of the TIM
+                # (Training-Inference Mismatch) that broke Score Centering's tail model.
+                mb["attention_mask"] = None
+                padded_mb["attention_mask"] = None
             _prepare_multimodal_forward_inputs(mb, padded_mb)
         _drop_multimodal_payloads(mb_list.data)
         return mb_list
