@@ -37,7 +37,7 @@ from areal.infra.workflow_executor import WorkflowTaskResult
 from areal.utils import perf_tracer, stats_tracker
 from areal.utils.logging import getLogger
 from areal.utils.network import find_free_ports, format_host_for_url
-from areal.utils.sglang_image import compact_image_tokens as _compact_image_tokens
+from areal.utils.sglang_image import image_request_kwargs
 
 logger = getLogger("SGLangRemote")
 
@@ -136,7 +136,7 @@ class SGLangBackend:
             sample_params["sampling_seed"] = gconfig.seed
 
         payload = {
-            "input_ids": _compact_image_tokens(req),
+            **image_request_kwargs(req),
             "image_data": req.image_data,  # ImageObject or str
             "sampling_params": sample_params,
             "return_logprob": True,
