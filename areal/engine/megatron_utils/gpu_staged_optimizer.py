@@ -248,9 +248,10 @@ class GPUStagedAdamW(torch.optim.AdamW):
     manages_cpu_residency = True
     manages_master_weight = True
 
-    # Keep pinned allocations for normal-sized models, but avoid the power-of-
-    # two host allocator expansion for multi-billion-parameter checkpoints.
-    _MAX_PINNED_SLAB_BYTES = 16 * 1024**3
+    # Bound power-of-two host allocator expansion for both dense and expert
+    # leaves. A 6 GiB dense slab still costs 8 GiB pinned, even when the much
+    # larger expert slabs already use pageable memory.
+    _MAX_PINNED_SLAB_BYTES = 4 * 1024**3
 
     def __init__(
         self,
