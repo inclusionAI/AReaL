@@ -444,6 +444,16 @@ def make_mcore_model(
 
     if bridge is not None and bridge_type == "megatron-bridge":
         provider = bridge.to_megatron_provider(load_weights=False)
+        # Native VLM providers apply these policies in provide(), before DDP
+        # allocates gradient buffers and the optimizer selects parameters.
+        for option in ("freeze_vision_model", "freeze_vision_projection"):
+            if getattr(mcore_config, option):
+                if not hasattr(provider, option):
+                    raise ValueError(
+                        f"{type(provider).__name__} does not support {option}; "
+                        "use a compatible vision-language model provider"
+                    )
+                setattr(provider, option, True)
         vpp_size = mcore_config.virtual_pipeline_parallel_size or 0
 
         provider.tensor_model_parallel_size = mpu.get_tensor_model_parallel_world_size()

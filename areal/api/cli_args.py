@@ -1175,6 +1175,29 @@ class MegatronEngineConfig:
         },
     )
 
+    freeze_vision_model: bool = field(
+        default=False,
+        metadata={
+            "help": (
+                "Freeze the vision encoder before DDP/optimizer construction "
+                "(megatron-bridge only). Set freeze_vision_projection=True as well "
+                "to freeze the complete visual feature path. False preserves "
+                "the provider's default freezing policy."
+            )
+        },
+    )
+
+    freeze_vision_projection: bool = field(
+        default=False,
+        metadata={
+            "help": (
+                "Freeze the vision projector/merger, including deepstack mergers, "
+                "before DDP/optimizer construction (megatron-bridge only). "
+                "False preserves the provider's default freezing policy."
+            )
+        },
+    )
+
     freeze_ple_table: bool = field(
         default=True,
         metadata={
@@ -1219,6 +1242,14 @@ class MegatronEngineConfig:
     )
 
     def __post_init__(self) -> None:
+        if (
+            self.freeze_vision_model or self.freeze_vision_projection
+        ) and self.bridge_type != "megatron-bridge":
+            raise ValueError(
+                "freeze_vision_model and freeze_vision_projection require "
+                "bridge_type='megatron-bridge'; Qwen4-Exp with mcore-bridge "
+                "already freezes its complete visual module by default"
+            )
         if self.cpu_staged_offload.enabled and self.async_save:
             raise ValueError(
                 "megatron.async_save is not supported with "
