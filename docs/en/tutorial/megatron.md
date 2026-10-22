@@ -29,6 +29,30 @@ Set `bridge_type: megatron-bridge` to use the new backend.
 For trade-offs and migration guidance, see the
 [Megatron Bridge Backend Reference](../reference/bridge_backend.md).
 
+## Freezing Vision Parameters
+
+For a vision-language model using `megatron-bridge`, freeze both the vision encoder and
+its projector/merger explicitly:
+
+```yaml
+actor:
+  megatron:
+    bridge_type: megatron-bridge
+    freeze_vision_model: true
+    freeze_vision_projection: true
+```
+
+The equivalent CLI overrides are `actor.megatron.freeze_vision_model=true` and
+`actor.megatron.freeze_vision_projection=true`. These settings reach the native model
+provider before DDP and optimizer construction. Setting only `freeze_vision_model`
+allows Qwen3.5's merger to remain trainable; set both to keep cached visual embeddings
+valid across language-model updates, assuming the image preprocessing is unchanged.
+
+Both options default to `false`, preserving the provider's existing freezing policy.
+Enabling them with an unsupported bridge or provider raises an error. Qwen4-Exp (Qwen3.8
+Flash Next) uses a separate `mcore-bridge` adapter that already freezes its entire
+`visual` module, including its merger, without these options.
+
 ## MoE Parallel Strategy
 
 For MoE models, Megatron supports separate parallelism for attention and FFN modules
