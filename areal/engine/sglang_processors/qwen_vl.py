@@ -7,6 +7,7 @@ import torch
 from sglang.srt.managers.schedule_batch import MultimodalProcessorOutput
 from sglang.srt.multimodal.processors.qwen_vl import QwenVLImageProcessor
 
+from areal.engine.sglang_processors._tensor_storage import compact_mm_item_storage
 from areal.utils.sglang_image import IMAGE_SPANS_KEY, validate_image_spans
 
 
@@ -31,9 +32,10 @@ class AReaLQwenImageProcessor(QwenVLImageProcessor):
             IMAGE_SPANS_KEY
         )
         if spans is None:
-            return await super().process_mm_data_async(
+            native = await super().process_mm_data_async(
                 image_data, input_text, request_obj, *args, **kwargs
             )
+            return replace(native, mm_items=compact_mm_item_storage(native.mm_items))
         if (
             not isinstance(input_text, list)
             or request_obj.video_data
@@ -62,8 +64,8 @@ class AReaLQwenImageProcessor(QwenVLImageProcessor):
             not item.is_image() for item in native.mm_items
         ):
             raise ValueError("Processed image count does not match real-image spans")
-        # Features/grid may be cached. Copy only per-request metadata, never the
-        # tensors, and leave native hash/IPC transport lifecycle unchanged.
+        # Keep offsets request-local: native features/grid may be cached.
+        # Compact CPU views below while preserving native hashes and CUDA IPC.
         items = [
             replace(
                 item,
@@ -72,6 +74,7 @@ class AReaLQwenImageProcessor(QwenVLImageProcessor):
             )
             for item, span in zip(native.mm_items, spans, strict=True)
         ]
+        items = compact_mm_item_storage(items)
         rope = self._compute_image_only_mrope_positions_from_offsets(
             input_len=len(input_text),
             mm_items=items,

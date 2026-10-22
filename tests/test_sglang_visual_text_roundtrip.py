@@ -4,6 +4,7 @@
 import asyncio
 import base64
 import os
+import pickle
 from io import BytesIO
 from types import SimpleNamespace
 
@@ -120,6 +121,14 @@ def test_real_generated_visual_tokens_keep_full_ids_features_and_offsets(
     )
     assert result.input_ids == prepared.input_ids
     assert len(result.mm_items) == image_count
+    logical_bytes = sum(
+        item.feature.numel() * item.feature.element_size() for item in result.mm_items
+    )
+    assert len(pickle.dumps(result)) < logical_bytes + 64 * 1024
+    for item in result.mm_items:
+        assert item.feature.untyped_storage().nbytes() == (
+            item.feature.numel() * item.feature.element_size()
+        )
     assert [item.offsets[0] for item in result.mm_items] == [
         tuple(span) for span in metadata[IMAGE_SPANS_KEY]
     ]
@@ -148,6 +157,40 @@ def test_real_generated_visual_tokens_keep_full_ids_features_and_offsets(
     assert not any(
         "falling back to decode+retokenize" in r.message for r in caplog.records
     )
+
+
+@pytest.mark.slow
+def test_native_image_transport_without_explicit_spans_compacts_cpu_views(qwen_runtime):
+    hf, sg = qwen_runtime
+    buffer = BytesIO()
+    Image.new("RGB", (511, 257), (20, 90, 150)).save(buffer, format="JPEG")
+    images = [
+        "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode()
+    ] * 2
+    messages = [{"role": "user", "content": [{"type": "image"}] * 2}]
+    prepared = _process_multimodal_prompt(
+        hf, hf.tokenizer, messages, images, None, {}, align_sglang_images=True
+    )
+    wire = image_request_kwargs(
+        ModelRequest(input_ids=prepared.input_ids, image_data=images, processor=hf)
+    )
+    assert "mm_sampling_kwargs" not in wire
+
+    result = asyncio.run(
+        sg.process_mm_data_async(
+            images,
+            wire["input_ids"],
+            SimpleNamespace(video_data=None, audio_data=None, rid="native-storage"),
+        )
+    )
+
+    assert result.input_ids == prepared.input_ids
+    pixels = torch.cat([item.feature for item in result.mm_items])
+    torch.testing.assert_close(
+        pixels, prepared.multi_modal_input["pixel_values"], rtol=0, atol=0
+    )
+    logical_bytes = pixels.numel() * pixels.element_size()
+    assert len(pickle.dumps(result)) < logical_bytes + 64 * 1024
 
 
 @pytest.mark.slow
