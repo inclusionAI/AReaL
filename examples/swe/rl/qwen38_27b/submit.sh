@@ -24,9 +24,10 @@ if [[ ${1:-} != --from-snapshot ]]; then
     esac
   done
   snapshot=$(realpath -m "${QWEN_SYNC_DIR:-$QWEN_RUN_DIR/source}")
-  privilege=()
+  # Bash 4.2 treats an empty array as unset under nounset.
+  privilege=(env)
   if (( EUID != 0 )); then
-    privilege=(sudo)
+    privilege=(sudo env)
   fi
   source_revision=$("${privilege[@]}" python3 "$recipe_dir/source_snapshot.py" stage \
     --source "$local_repo" --profile "$QWEN_ENV_FILE" --destination "$snapshot")
@@ -35,7 +36,7 @@ if [[ ${1:-} != --from-snapshot ]]; then
     exit 0
   fi
   # Carry only routing/provenance here. Credentials are read from the staged profile.
-  exec "${privilege[@]}" env \
+  exec "${privilege[@]}" \
     QWEN_ENV_FILE="$snapshot/code/examples/swe/rl/qwen38_27b/site.env" \
     QWEN_SUBMITTED_ENV_FILE="$snapshot/code/examples/swe/rl/qwen38_27b/site.env" \
     QWEN_SUBMITTED_REPO="$snapshot/code" \
