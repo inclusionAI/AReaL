@@ -29,6 +29,7 @@ parts:
   - caption: 定制指南
     chapters:
     - file: customization/dataset
+    - file: customization/data_engineering
     - file: customization/agent
     - file: customization/advantage
   - caption: 算法
