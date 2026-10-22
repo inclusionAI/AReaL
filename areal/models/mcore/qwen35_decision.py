@@ -213,7 +213,23 @@ def replace_output_layer_with_pointer_head(
     if not getattr(gpt, "post_process", True) or not hasattr(gpt, "output_layer"):
         return None
     device = _module_device(gpt.output_layer)
+    # TP>1 shards the sequence. Gather in the head even if the passed
+    # config still says sequence_parallel is false.
+    tp_size = 1
+    try:
+        if dist.is_initialized():
+            tp_size = int(mpu.get_tensor_model_parallel_world_size())
+    except Exception:
+        tp_size = 1
+    if tp_size > 1:
+        try:
+            tf_config.sequence_parallel = True
+        except Exception:
+            pass
     head = PointerHead(int(tf_config.hidden_size), dp=head_dim, config=tf_config)
+    if tp_size > 1:
+        head.sequence_parallel = True
+        head._mark_sequence_parallel()
     if device is None:
         head = head.to(dtype=torch.float32)
     else:

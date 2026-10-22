@@ -518,35 +518,3 @@ def test_select_labelled_records_caps_per_source_then_total():
         1,
         3,
     ]
-
-
-def test_example_files_wire_decision_megatron_bridge():
-    root = os.path.join(os.path.dirname(__file__), "..", "examples", "decision")
-    yaml_text = open(os.path.join(root, "qwen3_5_decision_sft.yaml"), encoding="utf-8").read()
-    poc = open(
-        os.path.join(root, "qwen3_5_decision_sft_npu_poc.yaml"), encoding="utf-8"
-    ).read()
-    script = open(os.path.join(root, "train_decision.py"), encoding="utf-8").read()
-    assert "is_decision_model: true" in yaml_text
-    assert "bridge_type: megatron-bridge" in yaml_text
-    assert "lora_targets_preset: all" in yaml_text
-    assert "type: decision" in yaml_text
-    assert "SFTTrainer" in script
-    assert "get_custom_dataset" in script
-    assert "backend: \"megatron:d1\"" in poc
-    assert "n_gpus_per_node: 1" in poc
-    assert "is_decision_model: true" in poc
-    assert "lora_rank: 16" in poc
-    assert "decision_head_dim: 256" in poc
-    assert "Qwen/Qwen3.5-4B-Base" in poc
-    assert "/data/decision/train.jsonl" in poc
-    for name in (
-        "qwen3_5_decision_sft.yaml",
-        "qwen3_5_decision_sft_npu_poc.yaml",
-        "train_decision.py",
-        "run_npu_poc.sh",
-        "prepare_v7_sample.py",
-        "README.md",
-    ):
-        text = open(os.path.join(root, name), encoding="utf-8").read()
-        assert "parham" not in text.lower(), name

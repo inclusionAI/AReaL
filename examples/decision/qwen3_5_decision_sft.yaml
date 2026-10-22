@@ -5,6 +5,8 @@
 # docs/en/customization/decision_dataset.md.
 # Single-NPU smoke / recipe PoC: examples/decision/qwen3_5_decision_sft_npu_poc.yaml
 # and examples/decision/run_npu_poc.sh.
+# Other layouts (DP, TP+SP, CP, PP, this d4p1t2 template):
+# examples/decision/run_npu_parallel.sh.
 experiment_name: qwen35-decision-sft
 trial_name: trial0
 

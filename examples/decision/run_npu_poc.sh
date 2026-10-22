@@ -13,6 +13,8 @@
 #   FILEROOT         default /tmp/areal/experiments
 #   EPOCHS           default 2
 #   STEPS            optional step cap; unset means run the full epoch budget
+#   SAVE_STEPS       checkpoint interval when STEPS is set (default: STEPS)
+#   EVAL_STEPS       eval interval when STEPS is set (default: STEPS)
 #   N_PER_SOURCE     default 32 (only when sampling a suite)
 #   DEV_PER_SOURCE   default 4
 #   DEVICE           default 0  (ASCEND_RT_VISIBLE_DEVICES)
@@ -32,7 +34,28 @@ export TORCH_COMPILE_DISABLE="${TORCH_COMPILE_DISABLE:-1}"
 # Local scheduler health-checks the node IP. If that address is missing from
 # NO_PROXY, HTTP_PROXY intercepts worker RPC and the run hangs.
 HOST_IPS="$(hostname -I 2>/dev/null | xargs | tr ' ' ',')"
-export NO_PROXY="${NO_PROXY:+${NO_PROXY},}127.0.0.1,localhost,::1${HOST_IPS:+,${HOST_IPS}}"
+HOST_NAME="$(hostname -f 2>/dev/null || hostname 2>/dev/null || true)"
+ROUTE_IPS="$(python3 - <<'PY'
+import socket
+ips = []
+def add(ip):
+    if ip and ip not in ips:
+        ips.append(ip)
+try:
+    for family, _, _, _, sockaddr in socket.getaddrinfo(socket.gethostname(), None):
+        add(sockaddr[0])
+except OSError:
+    pass
+try:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.connect(("8.8.8.8", 80))
+        add(sock.getsockname()[0])
+except OSError:
+    pass
+print(",".join(ips))
+PY
+)"
+export NO_PROXY="${NO_PROXY:+${NO_PROXY},}127.0.0.1,localhost,::1${HOST_NAME:+,${HOST_NAME}}${HOST_IPS:+,${HOST_IPS}}${ROUTE_IPS:+,${ROUTE_IPS}}"
 export no_proxy="$NO_PROXY"
 
 MODEL_PATH="${MODEL_PATH:-}"
@@ -137,7 +160,11 @@ TRAIN_ARGS=(
   "valid_dataset.path=${VALID_PATH}"
 )
 if [[ -n "${STEPS}" ]]; then
-  TRAIN_ARGS+=("total_train_steps=${STEPS}")
+  TRAIN_ARGS+=(
+    "total_train_steps=${STEPS}"
+    "saver.freq_steps=${SAVE_STEPS:-$STEPS}"
+    "evaluator.freq_steps=${EVAL_STEPS:-$STEPS}"
+  )
   echo "Training up to ${STEPS} steps, ${EPOCHS} epoch cap, NPU ${ASCEND_RT_VISIBLE_DEVICES}"
 else
   echo "Training ${EPOCHS} epochs on NPU ${ASCEND_RT_VISIBLE_DEVICES} from ${MODEL_PATH}"

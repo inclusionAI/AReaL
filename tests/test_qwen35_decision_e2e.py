@@ -229,3 +229,86 @@ def test_qwen35_decision_sft_single_npu_poc(tmp_path):
     assert isinstance(payload, dict)
     head = payload.get("head", payload)
     assert "q.weight" in head
+
+
+_MULTI_NPU_CASES = (
+    ("dp2", "megatron:d2", 2),
+    ("tp2", "megatron:d1t2", 2),
+    ("cp2", "megatron:d1c2", 2),
+)
+
+
+@pytest.mark.multi_npu
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    ("parallel", "backend", "n_devices"),
+    _MULTI_NPU_CASES,
+    ids=[case[0] for case in _MULTI_NPU_CASES],
+)
+def test_qwen35_decision_sft_multi_npu(parallel, backend, n_devices, tmp_path):
+    """Two-step decision SFT for DP, TP+SP, and CP, same checks as 1 NPU."""
+    from areal.infra.platforms import current_platform
+
+    if current_platform.device_type != "npu" or current_platform.device_count() < n_devices:
+        pytest.skip(f"need {n_devices} NPUs for {parallel}")
+    if _MODEL is None or not _MODEL.is_dir():
+        pytest.skip("set DECISION_MODEL to a local Qwen3.5 checkpoint to run this test")
+    if not (_MODEL / "config.json").exists():
+        pytest.skip(f"Qwen3.5 checkpoint is not available: {_MODEL}")
+
+    fileroot = tmp_path / "experiments"
+    log_path = tmp_path / "poc.log"
+    env = os.environ.copy()
+    env["PYTHONPATH"] = f"{_REPO}{os.pathsep}{env.get('PYTHONPATH', '')}"
+    env["TORCH_COMPILE_DISABLE"] = "1"
+    env["MODEL_PATH"] = str(_MODEL)
+    env["PARALLEL"] = parallel
+    env["DEVICES"] = ",".join(str(i) for i in range(n_devices))
+    env["FILEROOT"] = str(fileroot)
+    env["NAME_RESOLVE"] = str(tmp_path / "name_resolve")
+    env["SLICE_DIR"] = str(tmp_path / "data")
+    env["EPOCHS"] = "1"
+    env["STEPS"] = "2"
+    env["BATCH"] = "2"
+    env["N_PER_SOURCE"] = "1"
+    env["DEV_PER_SOURCE"] = "1"
+    env["EXPERIMENT_NAME"] = f"qwen35-decision-npu-{parallel}"
+    env["TRIAL_NAME"] = parallel
+    if _JSONL is not None:
+        train_path, valid_path = _JSONL
+        env["TRAIN_PATH"] = str(train_path)
+        env["VALID_PATH"] = str(valid_path)
+    elif _SUITE is not None and _SUITE.is_dir():
+        env["SUITE_PATH"] = str(_SUITE)
+    else:
+        pytest.skip(
+            "set DECISION_SUITE or DECISION_TRAIN + DECISION_VALID to run this test"
+        )
+
+    with log_path.open("w", encoding="utf-8") as log:
+        result = subprocess.run(
+            ["bash", str(_REPO / "examples/decision/run_npu_parallel.sh")],
+            cwd=_REPO,
+            env=env,
+            check=False,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=1800,
+        )
+    output = _read_text(log_path)
+    if fileroot.exists():
+        for extra in fileroot.rglob("*.log"):
+            output += "\n" + _read_text(extra)
+    if result.returncode != 0:
+        pytest.fail(f"{parallel} exited {result.returncode}\n{output[-8000:]}")
+    assert f"backend={backend}" in output
+    if parallel == "tp2":
+        assert "Sequence parallel is enabled" in output
+    assert _SUCCESS.search(output), output[-4000:]
+    assert "decision_loss" in output
+    checkpoints = list((fileroot / "checkpoints").rglob("head.pt"))
+    assert checkpoints, f"expected head.pt under {fileroot}, got none"
+    payload = torch.load(checkpoints[0], map_location="cpu", weights_only=False)
+    head = payload.get("head", payload)
+    assert "q.weight" in head
