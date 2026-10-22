@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import base64
+import json
 from io import BytesIO
 from types import SimpleNamespace
 
@@ -15,7 +16,8 @@ from areal.utils.qwen_vl_image import (
 
 
 class Qwen3VLProcessor:
-    def __init__(self):
+    def __init__(self, model_path):
+        self.tokenizer = SimpleNamespace(name_or_path=str(model_path))
         self.image_processor = SimpleNamespace(
             patch_size=16,
             merge_size=2,
@@ -24,10 +26,11 @@ class Qwen3VLProcessor:
 
 
 @pytest.fixture
-def aligned_processor(monkeypatch):
+def aligned_processor(monkeypatch, tmp_path):
     monkeypatch.delenv("SGLANG_VLM_QWEN_LIMIT_PIXEL", raising=False)
     monkeypatch.delenv("SGLANG_RESIZE_RESAMPLE", raising=False)
-    return Qwen3VLProcessor()
+    (tmp_path / "config.json").write_text(json.dumps({"model_type": "qwen3_5"}))
+    return Qwen3VLProcessor(tmp_path)
 
 
 @pytest.mark.parametrize(
@@ -85,6 +88,26 @@ def test_alignment_honors_disabled_sglang_pixel_limit(aligned_processor, monkeyp
 
 def test_alignment_preserves_unsupported_processors():
     assert prepare_sglang_qwen_images(object(), [Image.new("RGB", (256, 256))]) is None
+
+
+@pytest.mark.parametrize("model_type", ["qwen4_exp", "llama", None])
+def test_shared_processor_does_not_apply_qwen35_pixel_cap_to_other_models(
+    tmp_path, model_type
+):
+    # Both real models use Qwen3VLProcessor and the same original pixel bounds.
+    (tmp_path / "config.json").write_text(json.dumps({"model_type": model_type}))
+    processor = Qwen3VLProcessor(tmp_path)
+    image = Image.new("RGB", (1600, 1200))
+
+    assert prepare_sglang_qwen_images(processor, [image]) is None
+    assert image.size == (1600, 1200)
+    assert processor.image_processor.size["longest_edge"] == 16777216
+
+
+def test_processor_without_model_identity_is_left_unchanged(tmp_path):
+    processor = Qwen3VLProcessor(tmp_path)
+    del processor.tokenizer.name_or_path
+    assert prepare_sglang_qwen_images(processor, [Image.new("RGB", (256, 256))]) is None
 
 
 def test_alignment_keeps_multiple_images_in_order(aligned_processor):

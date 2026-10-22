@@ -7,11 +7,21 @@ from __future__ import annotations
 import base64
 import math
 import os
+from functools import lru_cache
 from io import BytesIO
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from PIL.Image import Image
+
+
+@lru_cache(maxsize=8)
+def _processor_model_type(model_name_or_path: str) -> str | None:
+    # Read raw config: Qwen4-Exp need not be registered with AutoConfig here.
+    from transformers import PretrainedConfig
+
+    config, _ = PretrainedConfig.get_config_dict(model_name_or_path)
+    return config.get("model_type")
 
 
 def _sglang_image_size(
@@ -48,6 +58,9 @@ def prepare_sglang_qwen_images(
     The proxy and SGLang must inherit the same SGLANG_VLM_QWEN_LIMIT_PIXEL setting. This
     targets the Qwen3-VL/Qwen3.5 image path in SGLang 0.5.18, with an unmodified
     HF processor and no server-side image-size overrides.
+    Qwen4-Exp also uses Qwen3VLProcessor, but has its own preprocessing policy;
+    resolve model_type from the processor's tokenizer path before applying this
+    model-specific pixel cap. Unknown model types are left unchanged.
 
     Send the returned PNGs, rather than the original JPEG/PNG, to SGLang. Sending
     originals would leave GPU JPEG decoding and the extra resize inconsistent
@@ -55,6 +68,16 @@ def prepare_sglang_qwen_images(
     SGLang's PIL/tensor resize paths identities and avoid nvJPEG entirely.
     """
     if not any(cls.__name__ == "Qwen3VLProcessor" for cls in type(processor).__mro__):
+        return None
+    model_path = getattr(getattr(processor, "tokenizer", None), "name_or_path", None)
+    if not isinstance(model_path, (str, os.PathLike)) or not model_path:
+        return None
+    if _processor_model_type(os.fspath(model_path)) not in (
+        "qwen3_vl",
+        "qwen3_vl_moe",
+        "qwen3_5",
+        "qwen3_5_moe",
+    ):
         return None
 
     from PIL import Image as PILImage

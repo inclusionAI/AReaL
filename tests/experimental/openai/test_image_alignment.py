@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import base64
+import json
 from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -22,7 +23,8 @@ from areal.infra.processor_cache import ProcessorCallCache
 class Qwen3VLProcessor:
     """Record the actual image supplied by the OpenAI input preparation path."""
 
-    def __init__(self):
+    def __init__(self, model_path):
+        self.tokenizer = SimpleNamespace(name_or_path=str(model_path))
         self.image_processor = SimpleNamespace(
             patch_size=16,
             merge_size=2,
@@ -42,13 +44,18 @@ class Qwen3VLProcessor:
         }
 
 
+@pytest.fixture
+def processor(tmp_path):
+    (tmp_path / "config.json").write_text(json.dumps({"model_type": "qwen3_5"}))
+    return Qwen3VLProcessor(tmp_path)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("chat_template_type", ["hf", "concat"])
 async def test_cached_prompt_keeps_wire_images_with_training_tensors(
-    monkeypatch, chat_template_type
+    monkeypatch, chat_template_type, processor
 ):
     monkeypatch.delenv("SGLANG_VLM_QWEN_LIMIT_PIXEL", raising=False)
-    processor = Qwen3VLProcessor()
     buffer = BytesIO()
     Image.new("RGB", (1600, 1200), "red").save(buffer, format="JPEG")
     original_images = [base64.b64encode(buffer.getvalue()).decode()]
@@ -95,7 +102,7 @@ async def test_cached_prompt_keeps_wire_images_with_training_tensors(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("api", ["chat", "responses"])
 @pytest.mark.parametrize("backend", ["sglang", "vllm"])
-async def test_create_forwards_images_for_backend(monkeypatch, api, backend):
+async def test_create_forwards_images_for_backend(monkeypatch, api, backend, processor):
     monkeypatch.delenv("SGLANG_VLM_QWEN_LIMIT_PIXEL", raising=False)
     tokenizer = MagicMock(eos_token_id=2, pad_token_id=0)
     tokenizer.decode.return_value = "done"
@@ -120,7 +127,7 @@ async def test_create_forwards_images_for_backend(monkeypatch, api, backend):
     client = ArealOpenAI(
         engine=Engine(),
         tokenizer=tokenizer,
-        processor=Qwen3VLProcessor(),
+        processor=processor,
         api_key="test",
         reasoning_parser="",
     )
