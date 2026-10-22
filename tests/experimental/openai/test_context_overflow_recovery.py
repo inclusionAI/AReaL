@@ -747,6 +747,7 @@ async def test_concat_per_completion_rewards_do_not_fill_unscored_branch(monkeyp
         ("NO_OUTPUT", True),
         ("EVAL_FAILED", True),
         ("SETUP_FAILED", True),
+        ("COLLECT_FAILED", True),
     ],
 )
 @pytest.mark.parametrize("reject_terminal_task_failures", [False, True])

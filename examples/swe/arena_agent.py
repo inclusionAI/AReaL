@@ -1342,10 +1342,10 @@ class ArenaStreamAgentWorkflow:
             error, ArenaTaskFailedError
         ):
             return False
-        # Setup and grader failures leave this task unscored without
+        # Setup, collection, and grader failures leave this task unscored without
         # invalidating healthy siblings. Proxy service errors are still
         # propagated by OpenAIProxyWorkflow before applying this hook.
-        if error.status in {"SETUP_FAILED", "EVAL_FAILED"}:
+        if error.status in {"SETUP_FAILED", "COLLECT_FAILED", "EVAL_FAILED"}:
             return disposition == "system_failure_reject"
         return (
             error.status in {"HARNESS_FAILED", "NO_OUTPUT", "TIMEOUT"}
