@@ -1999,8 +1999,12 @@ class AsyncResponsesWithReward(BaseAsyncResponses):
 
         interaction.response = deepcopy(response)
         interaction.model_response = engine_resp
+        # Cache the same representation used for incoming Responses items so a
+        # caller can return response.output and retain the sampled parent prefix.
         interaction.output_message_list = [
-            o.model_dump(exclude_none=True) for o in resp_output
+            message
+            for item in resp_output
+            for message in _build_messages_list(item.model_dump(exclude_none=True))
         ]
         if invalid_tool_call_error is not None:
             raise invalid_tool_call_error
