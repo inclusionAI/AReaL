@@ -1,11 +1,16 @@
 # Qwen3.8-27B Arena RL
 
-This recipe uses the dense 27B training settings from the 19-task Graybox experiment and
-selects the 64-task Whitebox B Stream for the next run. The branch starts from upstream
-`main` at `448de523`. Arena categorized retries, RPC/checkpoint fixes and
-required-recovery checks are already upstream. The additional core fix carries
-`de8d6796`: resolve rollout dump paths without importing metrics SDKs in inference
-workers.
+The default submission selects `train_fine_released64_bs16.yaml`, matching the Fine
+released64 experiment's bs16/gs12 training settings. Vision encoder and projection are
+frozen, and SGLang's visual embedding cache uses 100 MB. The cache setting is applied
+after the site profile so an inherited `SGLANG_VLM_CACHE_SIZE_MB=0` cannot disable it.
+`train.yaml` retains the earlier Whitebox B preset and can be selected explicitly with
+`QWEN_TRAIN_CONFIG=train.yaml` in the site profile.
+
+The example profile uses experiment `dzq-qwen38-27b-vlm-rl` and a dated trial such as
+`vf-imgmg-bs16gs12-1022-1757`: frozen vision, training-side image alignment to SGLang,
+batch/group sizes, and submission date/time. W&B, Slurm names, and log directories use
+this same experiment/trial identity.
 
 The new files provide the dense controller/actor entry points, the exact training
 parameters and Slurm submission preflights. They do not modify the running trial.

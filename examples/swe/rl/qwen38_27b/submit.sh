@@ -61,13 +61,16 @@ done
 log_dir="$QWEN_OUTPUT_ROOT/logs/$QWEN_RUN_USER/$QWEN_EXPERIMENT_NAME/$QWEN_ARENA_TRIAL"
 mkdir -p "$EXPERIMENT_ROOT" "$log_dir"
 # The staged profile selects a recipe-local YAML; the runtime path stays train.yaml.
-config_name=${QWEN_TRAIN_CONFIG:-train.yaml}
+config_name=${QWEN_TRAIN_CONFIG:-train_fine_released64_bs16.yaml}
 if [[ $config_name != "$(basename -- "$config_name")" || $config_name != *.yaml ]]; then
   echo 'QWEN_TRAIN_CONFIG must name a YAML file in the recipe directory' >&2
   exit 1
 fi
 config_source="$recipe_dir/$config_name"
 test -f "$config_source"
+printf 'Experiment: %s\nTrial: %s\nConfig: %s\nReservation: %s\nNodes: %s\n' \
+  "$QWEN_EXPERIMENT_NAME" "$QWEN_ARENA_TRIAL" "$config_name" \
+  "$QWEN_RESERVATION" "$QWEN_NODELIST"
 if [[ -f $QWEN_CONFIG ]]; then
   cmp "$config_source" "$QWEN_CONFIG"
   test "$(cat "$EXPERIMENT_ROOT/source-revision")" = "$QWEN_SOURCE_REVISION"
