@@ -1,10 +1,14 @@
 # GLM-5.3-Flash bring-up
 
 This is an experimental text actor integration for `Glm5NextForConditionalGeneration`
-(`glm5_next`, nested `glm5_next_text`). CPU architecture tests and focused single-GPU
-kernel tests are available. Full-model GPU execution, distributed training, HF reload,
-SGLang logps, routing replay, and live weight transfer still require validation before
-production RL.
+(`glm5_next`, nested `glm5_next_text`). CPU architecture tests, focused CUDA kernel
+tests, a reduced four-layer distributed SFT smoke, and a no-update forward of the
+original 45-layer model have passed. The smoke covered TP1/EP8 and three-node TP4/EP12,
+HF export, DCP save, and a follow-up optimizer/model/LR/RNG reload from global step 3.
+The original model's profile512 NLL was 1.87--1.89 across three data-parallel replicas
+on TP4/EP12; this is the first full-model loss evidence. HF logps and per-layer routing
+have been captured for the same input, but HF/SGLang numerical parity, routing replay,
+and live weight transfer still require validation before production RL.
 
 ## Architecture and runtime
 
@@ -29,7 +33,8 @@ Dependency pins are unchanged. An explicitly selected runtime also needs Transfo
 Engine, FLA's KDA/short-convolution/gated RMSNorm APIs, Triton, and TileLang. FlashMLA
 is optional. Kernel sources are adapted from Apache-2.0
 [`radixark/miles@ee36bb2`](https://github.com/radixark/miles/tree/ee36bb2), with
-provenance in each file; Miles is not a runtime dependency.
+provenance in each file. The selected MCore fork imports Miles by default; the
+library-mode patch below makes that integration optional for this SFT recipe.
 
 ## CPU checks
 
@@ -46,11 +51,24 @@ allocate model weights or execute kernels. Actual mbridge conversion tests skip 
 mbridge or a compatible mHC runtime is unavailable; the CPU DSA test uses real Torch
 projections and compares absorption against explicit dense MLA, including gradients.
 
-The isolated CPU runtime uses the MCore revision linked above and mbridge
+The isolated runtime uses the MCore revision linked above and mbridge
 `310e8fb35ccf4fcd4419d32973e563a6d43ee5fb`, with Python 3.12, Torch 2.9.1+cu129,
 Transformer Engine 2.14.1, FLA 0.4.2, Triton 3.5.1, TileLang 0.1.9, and Transformers
-5.3.0. These versions describe the development test environment; full-model and
-distributed execution still need the gates below.
+5.3.0. The distributed smoke used the same versions and an external MCore compatibility
+patch: absent top-level Miles is optional, while incomplete installations still fail;
+checkpoint tensor concatenation also works when Megatron CLI global arguments are not
+initialized. Apply the included [library-mode patch](patches/mcore-library-mode.patch)
+to the exact MCore revision above before training (dependency pins remain unchanged):
+
+```bash
+git -C "$MCORE_SOURCE" apply --check "$AREAL_SOURCE/examples/glm5_next/patches/mcore-library-mode.patch"
+git -C "$MCORE_SOURCE" apply "$AREAL_SOURCE/examples/glm5_next/patches/mcore-library-mode.patch"
+```
+
+The runtime probe checked tensor merging with unset CLI args and both low-memory modes,
+missing versus incomplete Miles imports, and Miles/native replay precedence. R3 itself
+has not been validated. Any custom training entry point must protect trainer creation
+with `if __name__ == "__main__"` because DCP save spawns subprocesses.
 
 The checkpoint's FP8 storage is distinct from BF16 actor compute. Its root
 `quantization_config` is retained; legacy `model.layers.*` exclusions are expanded to
@@ -98,6 +116,17 @@ reload. The synthetic repeated sample is a plumbing test; its loss is not a qual
 metric. Validate TP=1 first, then TP>1/SP and EP, checking replicated KDA gradients and
 FP32 mHC optimizer state across ranks.
 
+The earlier loss around 11.76 was measured with only the first four decoder layers
+connected to the original final norm and language-model head. It is not a valid
+full-model loss: the original checkpoint has 45 layers. A full-model no-update forward
+on the same 512-token profile produced NLL 1.8667, 1.8936, and 1.8820 on three DP
+replicas. A follow-up check found identical non-expert weight hashes across matching TP
+shards but different logps on repeated forwards of the same replica. A controlled probe
+changing only unfused MoE unpermute accumulation from BF16 to FP32 eliminated
+repeat-to-repeat variation. Cross-replica differences remained, starting with small KDA
+output differences before the first MoE layer. This diagnostic does not change the
+production accumulator or establish HF parity.
+
 ## Numerical and RL gates
 
 1. Run `pytest -q -m slow tests/test_glm5_next_kernels.py` on CUDA. This checks packed
@@ -125,7 +154,11 @@ FP32 mHC optimizer state across ranks.
    The tool rejects mismatched token IDs/masks, non-finite scored logps, and empty
    comparisons. It reports mean, p99, and maximum absolute differences and exits nonzero
    on failure. The example tolerance must be calibrated to the reference runtime and
-   quantization mode; it is not evidence of numerical agreement.
+   quantization mode; it is not evidence of numerical agreement. The current native HF
+   5.16.1 comparison is a diagnostic, not a pass: AReaL and HF profile512 NLLs are
+   1.8667 and 1.8871, while 57.0% of scored logps are within 0.05. Hidden-state error
+   starts near 3e-5 at layer 0 and accumulates; this is being investigated before
+   choosing a production tolerance.
 
 1. Validate native MoE routing replay on the 42 sparse layers. DSA indexer replay is not
    implemented. Compare routes and logps separately before enabling R3 in RL.

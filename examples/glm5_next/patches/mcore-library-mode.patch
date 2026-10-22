@@ -1,0 +1,67 @@
+diff --git a/megatron/core/transformer/moe/moe_utils.py b/megatron/core/transformer/moe/moe_utils.py
+index 5955816dd..639d405f8 100644
+--- a/megatron/core/transformer/moe/moe_utils.py
++++ b/megatron/core/transformer/moe/moe_utils.py
+@@ -794,15 +794,20 @@ def topk_routing_with_score_function(
+     # path during miles training. MTP layers bypass R3. NVIDIA's inference-time
+     # router_replay (megatron's own generation) is a separate pipeline used only when
+     # the miles manager is not active, so it can never shadow R3.
+-    from miles.utils.replay_base import routing_replay_manager
+-
+-    if not is_mtp:
++    try:
++        from miles.utils.replay_base import routing_replay_manager
++    except ModuleNotFoundError as exc:
++        if exc.name != "miles":
++            raise
++        routing_replay_manager = None
++
++    if not is_mtp and routing_replay_manager is not None:
+         _miles_topk = routing_replay_manager.get_topk_fn(_compute_topk, return_probs=True)
+     else:
+         _miles_topk = _compute_topk
+ 
+     def compute_topk(scores, topk, num_groups=None, group_topk=None):
+-        if not is_mtp and routing_replay_manager.enabled:
++        if not is_mtp and routing_replay_manager is not None and routing_replay_manager.enabled:
+             return _miles_topk(scores, topk, num_groups, group_topk)
+         if router_replay is not None:
+             return router_replay.get_replay_topk(
+diff --git a/megatron/core/transformer/moe/router.py b/megatron/core/transformer/moe/router.py
+index 0257001a9..2f3311cb0 100644
+--- a/megatron/core/transformer/moe/router.py
++++ b/megatron/core/transformer/moe/router.py
+@@ -272,9 +272,13 @@ class TopKRouter(Router):
+         # miles rollout routing replay (R3): register this router so the miles
+         # routing_replay_manager can record/replay sglang rollout routing during
+         # training. No-op (early return) unless miles enables the manager.
+-        from miles.utils.replay_base import routing_replay_manager
+-
+-        routing_replay_manager.register_to_module(self, "routing_replay")
++        try:
++            from miles.utils.replay_base import routing_replay_manager
++        except ModuleNotFoundError as exc:
++            if exc.name != "miles":
++                raise
++        else:
++            routing_replay_manager.register_to_module(self, "routing_replay")
+ 
+     def _maintain_float32_expert_bias(self):
+         """
+diff --git a/megatron/core/transformer/utils.py b/megatron/core/transformer/utils.py
+index 9ce59738d..78505e4b0 100644
+--- a/megatron/core/transformer/utils.py
++++ b/megatron/core/transformer/utils.py
+@@ -81,9 +81,10 @@ def cat_with_oom_fallback(sub_state_dict):
+     """Merge sharded tensor pieces, falling back to CPU if device-side cat OOMs."""
+     # miles --low-memory-resume: merge on CPU proactively to keep peak GPU memory low
+     # during distributed-optimizer checkpoint load (avoids the device cat allocation).
+-    from megatron.training import get_args
++    from megatron.training import global_vars
+ 
+-    if get_args().low_memory_resume:
++    args = global_vars._GLOBAL_ARGS
++    if args is not None and getattr(args, "low_memory_resume", False):
+         return torch.cat([t.cpu() for t in sub_state_dict])
+     try:
+         return torch.cat(sub_state_dict)
