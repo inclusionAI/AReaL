@@ -1175,25 +1175,27 @@ class MegatronEngineConfig:
         },
     )
 
-    freeze_vision_model: bool = field(
-        default=False,
+    freeze_vision_model: bool | None = field(
+        default=None,
         metadata={
             "help": (
                 "Freeze the vision encoder before DDP/optimizer construction "
                 "(megatron-bridge only). Set freeze_vision_projection=True as well "
-                "to freeze the complete visual feature path. False preserves "
-                "the provider's default freezing policy."
+                "to freeze the complete visual feature path. None freezes "
+                "Qwen3-VL/Qwen3.5 vision by default and preserves other providers' "
+                "defaults. Set False explicitly to train the encoder."
             )
         },
     )
 
-    freeze_vision_projection: bool = field(
-        default=False,
+    freeze_vision_projection: bool | None = field(
+        default=None,
         metadata={
             "help": (
                 "Freeze the vision projector/merger, including deepstack mergers, "
                 "before DDP/optimizer construction (megatron-bridge only). "
-                "False preserves the provider's default freezing policy."
+                "None freezes Qwen3-VL/Qwen3.5 mergers by default and preserves "
+                "other providers' defaults. Set False explicitly to train them."
             )
         },
     )
@@ -1243,7 +1245,8 @@ class MegatronEngineConfig:
 
     def __post_init__(self) -> None:
         if (
-            self.freeze_vision_model or self.freeze_vision_projection
+            self.freeze_vision_model is not None
+            or self.freeze_vision_projection is not None
         ) and self.bridge_type != "megatron-bridge":
             raise ValueError(
                 "freeze_vision_model and freeze_vision_projection require "
