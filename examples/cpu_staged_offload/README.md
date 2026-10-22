@@ -1,8 +1,14 @@
 # CPU-staged Megatron optimizers
 
-This example keeps FP32 AdamW master parameters and moments in pinned CPU memory.
-Optimizer steps stream bounded chunks through reusable GPU buffers, freeing the full
-optimizer state from the colocated rollout GPU.
+This example keeps FP32 AdamW master parameters and moments in CPU memory. Optimizer
+steps stream bounded chunks through reusable GPU buffers, freeing the full optimizer
+state from the colocated rollout GPU.
+
+State slabs up to 16 GiB use pinned memory. Larger slabs use pageable memory and
+synchronous transfers to avoid the pinned allocator's power-of-two allocation rounding,
+which can exhaust host memory on large models. This preserves FP32 AdamW semantics but
+reduces transfer overlap; host capacity must still cover all three FP32 state slabs on
+every local rank.
 
 The feature is configured directly through AReaL's Megatron configuration:
 

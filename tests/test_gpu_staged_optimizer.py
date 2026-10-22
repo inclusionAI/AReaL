@@ -156,8 +156,11 @@ def test_bind_builds_cpu_state_views_and_bounded_units() -> None:
 
 
 @pytest.mark.skipif(not CUDA_AVAILABLE, reason="CUDA is required for staged AdamW")
-def test_multiple_steps_match_fp32_master_adamw() -> None:
+@pytest.mark.parametrize("pageable", [False, True])
+def test_multiple_steps_match_fp32_master_adamw(monkeypatch, pageable) -> None:
     """DP=1 shard updates match ordinary FP32-master AdamW over many steps."""
+    if pageable:
+        monkeypatch.setattr(GPUStagedAdamW, "_MAX_PINNED_SLAB_BYTES", 0)
     torch.manual_seed(1234)
     initial = torch.randn(41, device="cuda", dtype=torch.bfloat16)
     staged_param = torch.nn.Parameter(initial.clone())
@@ -172,6 +175,8 @@ def test_multiple_steps_match_fp32_master_adamw() -> None:
         [staged_param], staged_config=_tiny_config(bucket_numel=9), **kwargs
     )
     staged.bind_owned_params(staged.param_groups)
+    assert staged.cpu_slabs.pinned is not pageable
+    assert staged.cpu_slabs.master.is_pinned() is not pageable
     baseline = torch.optim.AdamW([baseline_param], **kwargs)
 
     for _ in range(7):
@@ -598,8 +603,13 @@ def test_gpu_state_residency_is_bounded_by_slots_not_total_state() -> None:
 
 
 @pytest.mark.skipif(not CUDA_AVAILABLE, reason="CUDA is required for staged AdamW")
-def test_checkpoint_state_dict_aliases_cpu_slabs_and_save_drains(monkeypatch) -> None:
-    """Synchronous schema reads the authoritative pinned views without CUDA state."""
+@pytest.mark.parametrize("pageable", [False, True])
+def test_checkpoint_state_dict_aliases_cpu_slabs_and_save_drains(
+    monkeypatch, pageable
+) -> None:
+    """Synchronous schema reads the authoritative CPU views without CUDA state."""
+    if pageable:
+        monkeypatch.setattr(GPUStagedAdamW, "_MAX_PINNED_SLAB_BYTES", 0)
     param = torch.nn.Parameter(
         torch.linspace(-1, 1, 19, device="cuda", dtype=torch.bfloat16)
     )
@@ -630,7 +640,7 @@ def test_checkpoint_state_dict_aliases_cpu_slabs_and_save_drains(monkeypatch) ->
     for key, tensor in state.items():
         assert tensor.device.type == "cpu"
         assert tensor.dtype is torch.float32
-        assert tensor.is_pinned()
+        assert tensor.is_pinned() is not pageable
         assert (
             tensor.untyped_storage().data_ptr()
             == live_state[key].untyped_storage().data_ptr()

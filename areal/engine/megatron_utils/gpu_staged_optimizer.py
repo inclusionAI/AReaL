@@ -211,32 +211,46 @@ class _UpdateUnit:
 
 @dataclass
 class AdamWCPUSlabs:
-    """Three flat pinned FP32 slabs authoritative between optimizer steps."""
+    """Three flat FP32 slabs authoritative between optimizer steps.
+
+    Pinned host allocations are rounded up to the next power of two by
+    PyTorch's caching host allocator.  For very large models that can turn a
+    57 GiB state slab into a 64 GiB allocation on every rank.  Large slabs are
+    therefore allowed to use pageable host memory; CUDA copies remain correct
+    (and may be synchronous), while the optimizer state stays CPU-resident and
+    FP32.
+    """
 
     master: torch.Tensor
     exp_avg: torch.Tensor
     exp_avg_sq: torch.Tensor
+    pinned: bool = True
 
     @classmethod
-    def allocate(cls, numel: int) -> AdamWCPUSlabs:
+    def allocate(cls, numel: int, *, pin_memory: bool = True) -> AdamWCPUSlabs:
         kwargs = {
             "size": (numel,),
             "dtype": torch.float32,
             "device": "cpu",
-            "pin_memory": True,
+            "pin_memory": pin_memory,
         }
         return cls(
             master=torch.empty(**kwargs),
             exp_avg=torch.zeros(**kwargs),
             exp_avg_sq=torch.zeros(**kwargs),
+            pinned=pin_memory,
         )
 
 
 class GPUStagedAdamW(torch.optim.AdamW):
-    """AdamW whose FP32 master weights and moments live in pinned CPU slabs."""
+    """AdamW whose FP32 master weights and moments live in CPU slabs."""
 
     manages_cpu_residency = True
     manages_master_weight = True
+
+    # Keep pinned allocations for normal-sized models, but avoid the power-of-
+    # two host allocator expansion for multi-billion-parameter checkpoints.
+    _MAX_PINNED_SLAB_BYTES = 16 * 1024**3
 
     def __init__(
         self,
@@ -378,7 +392,11 @@ class GPUStagedAdamW(torch.optim.AdamW):
                 "empty staged AdamW ownership requires an explicit CUDA device"
             )
 
-        self.cpu_slabs = AdamWCPUSlabs.allocate(total_numel)
+        slab_bytes = total_numel * 4  # FP32 state
+        use_pinned_memory = slab_bytes <= self._MAX_PINNED_SLAB_BYTES
+        self.cpu_slabs = AdamWCPUSlabs.allocate(
+            total_numel, pin_memory=use_pinned_memory
+        )
         self._layouts = tuple(layouts)
         self._units = self._build_units(layouts, self.staged_config.bucket_numel)
         device = next(iter(devices), empty_device)
@@ -468,7 +486,7 @@ class GPUStagedAdamW(torch.optim.AdamW):
         with torch.cuda.stream(slot.d2h_stream):
             slot.d2h_stream.wait_event(slot.h2d_done)
             self.cpu_slabs.master.narrow(0, unit.slab_offset, unit.numel).copy_(
-                slot.master.narrow(0, 0, unit.numel), non_blocking=True
+                slot.master.narrow(0, 0, unit.numel), non_blocking=self.cpu_slabs.pinned
             )
             slot.d2h_done.record(slot.d2h_stream)
         self._runtime.mark_d2h_pending(slot_index)
@@ -489,13 +507,14 @@ class GPUStagedAdamW(torch.optim.AdamW):
             # overflow, norm and clipping work that precedes inner step().
             slot.h2d_stream.wait_event(grads_ready)
             slot.master[:count].copy_(
-                self.cpu_slabs.master[slab_slice], non_blocking=True
+                self.cpu_slabs.master[slab_slice], non_blocking=self.cpu_slabs.pinned
             )
             slot.exp_avg[:count].copy_(
-                self.cpu_slabs.exp_avg[slab_slice], non_blocking=True
+                self.cpu_slabs.exp_avg[slab_slice], non_blocking=self.cpu_slabs.pinned
             )
             slot.exp_avg_sq[:count].copy_(
-                self.cpu_slabs.exp_avg_sq[slab_slice], non_blocking=True
+                self.cpu_slabs.exp_avg_sq[slab_slice],
+                non_blocking=self.cpu_slabs.pinned,
             )
             slot.h2d_done.record(slot.h2d_stream)
 
@@ -579,13 +598,13 @@ class GPUStagedAdamW(torch.optim.AdamW):
         with torch.cuda.stream(slot.d2h_stream):
             slot.d2h_stream.wait_event(slot.compute_done)
             self.cpu_slabs.master[slab_slice].copy_(
-                slot.master[:count], non_blocking=True
+                slot.master[:count], non_blocking=self.cpu_slabs.pinned
             )
             self.cpu_slabs.exp_avg[slab_slice].copy_(
-                slot.exp_avg[:count], non_blocking=True
+                slot.exp_avg[:count], non_blocking=self.cpu_slabs.pinned
             )
             self.cpu_slabs.exp_avg_sq[slab_slice].copy_(
-                slot.exp_avg_sq[:count], non_blocking=True
+                slot.exp_avg_sq[:count], non_blocking=self.cpu_slabs.pinned
             )
             slot.d2h_done.record(slot.d2h_stream)
         self._runtime.mark_d2h_pending(slot_index)
