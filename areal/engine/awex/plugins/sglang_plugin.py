@@ -243,6 +243,10 @@ class AwexSchedulerPlugin:
         self._initialization_error: Exception | None = None
         self._weight_queue: queue.Queue = queue.Queue()
         self._version = 0
+        # Positive actor-side proof is published during receiver initialization.
+        # Unknown/legacy senders retain conservative visual-cache invalidation.
+        self._visual_embeddings_frozen = False
+        self._visual_embeddings_initialized = False
         self._paused_poll_interval_s = max(
             0.0, get_float_env_var("AWEX_PAUSED_POLL_INTERVAL_S", 0.01)
         )
@@ -401,15 +405,22 @@ class AwexSchedulerPlugin:
             def _flush(*args, **kwargs):
                 with _retract_memory_idle(scheduler, owner):
                     success = original_flush(*args, **kwargs)
-                    if success:
+                    if success and (
+                        not self._visual_embeddings_frozen
+                        or not self._visual_embeddings_initialized
+                    ):
                         # SGLang's native flush only invalidates KV/pool state.
-                        # Image hashes do not include the visual weight version,
-                        # so AWEX updates must also discard cached embeddings.
+                        # Image hashes have no visual weight version. Establish
+                        # the actor checkpoint once, then reuse features only
+                        # when every visual parameter is known to be frozen.
                         mm_utils = importlib.import_module(
                             "sglang.srt.managers.mm_utils"
                         )
                         if mm_utils.embedding_cache is not None:
                             mm_utils.embedding_cache.clear()
+                        self._visual_embeddings_initialized = (
+                            self._visual_embeddings_frozen
+                        )
                     return success
 
             scheduler.flush_cache = _flush
@@ -1014,6 +1025,9 @@ class AwexSchedulerPlugin:
             timeout=awex_colocate_timeout_s(),
         )
         train_world_size = train_info["train_world_size"]
+        self._visual_embeddings_frozen = (
+            train_info.get("frozen_visual_embeddings") is True
+        )
         # In colocate mode train and infer share the same N physical GPUs, so the
         # global infer NCCL world spans the same N ranks (numerically == train
         # world). This is a *physical* coincidence (same GPUs), NOT a requirement

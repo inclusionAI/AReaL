@@ -160,8 +160,9 @@ def test_memory_transitions_are_idempotent(monkeypatch):
 
 
 @pytest.mark.parametrize("separate_updater", [False, True])
+@pytest.mark.parametrize("frozen_visual", [False, True])
 def test_successful_flush_reencodes_images_after_weight_update(
-    monkeypatch, separate_updater
+    monkeypatch, separate_updater, frozen_visual
 ):
     import sys
 
@@ -189,6 +190,7 @@ def test_successful_flush_reencodes_images_after_weight_update(
         scheduler = owner
     scheduler._request_dispatcher = SimpleNamespace(_mapping={"flush": flush_cache})
     plugin = AwexSchedulerPlugin(scheduler)
+    plugin._visual_embeddings_frozen = frozen_visual
     plugin._patch_memory_transitions()
     patched_flush = scheduler.flush_cache
     plugin._patch_memory_transitions()
@@ -207,11 +209,20 @@ def test_successful_flush_reencodes_images_after_weight_update(
     version = 59
     assert image_embedding() == 0
     assert scheduler._request_dispatcher._mapping["flush"](empty_cache=False)
+    # First synchronization establishes the actor's frozen checkpoint too.
     assert embeddings == {}
     assert image_embedding() == 59
-    assert image_embedding() == 59
-    assert encodes == [0, 59]
-    assert flush_calls == [False]
+    version = 100
+    assert scheduler.flush_cache(empty_cache=False)
+    if frozen_visual:
+        assert embeddings == {"same-image": 59}
+        assert image_embedding() == 59
+        assert encodes == [0, 59]
+    else:
+        assert embeddings == {}
+        assert image_embedding() == 100
+        assert encodes == [0, 59, 100]
+    assert flush_calls == [False, False]
     assert owner.flush_cache is scheduler.flush_cache
 
 
@@ -433,7 +444,10 @@ def test_physical_gpu_id_uses_noncontiguous_visible_device(monkeypatch):
 
 @pytest.mark.parametrize("node_id", [0, 1])
 @pytest.mark.parametrize("isolated", [False, True])
-def test_receiver_init_tp_servers_register_unique_ranks(monkeypatch, node_id, isolated):
+@pytest.mark.parametrize("frozen_visual", [None, False, True, "true"])
+def test_receiver_init_tp_servers_register_unique_ranks(
+    monkeypatch, node_id, isolated, frozen_visual
+):
     """Transfer ranks stay dense with both isolated and fully visible GPUs."""
     import awex.meta.meta_server as meta_server
 
@@ -442,9 +456,10 @@ def test_receiver_init_tp_servers_register_unique_ranks(monkeypatch, node_id, is
     monkeypatch.setenv("WORLD_SIZE", "16")
     monkeypatch.setenv("SLURM_NODEID", str(node_id))
     monkeypatch.setenv("SLURM_NNODES", "2")
-    client = SimpleNamespace(
-        get_object=lambda *args, **kwargs: {"train_world_size": 16}
-    )
+    train_info = {"train_world_size": 16}
+    if frozen_visual is not None:
+        train_info["frozen_visual_embeddings"] = frozen_visual
+    client = SimpleNamespace(get_object=lambda *args, **kwargs: train_info)
     monkeypatch.setattr(meta_server, "MetaServerClient", lambda *args: client)
     registrations = []
 
@@ -468,6 +483,7 @@ def test_receiver_init_tp_servers_register_unique_ranks(monkeypatch, node_id, is
             )
 
             plugin._init_receiver_from_meta_server("127.0.0.1:1")
+            assert plugin._visual_embeddings_frozen is (frozen_visual is True)
 
     assert [r["transfer_rank"] for r in registrations] == list(
         range(node_id * 8, (node_id + 1) * 8)

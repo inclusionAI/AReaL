@@ -16,15 +16,27 @@ bug alone caused a historical training collapse.
 ## Change
 
 Extend the existing AReaL AWEX scheduler flush wrapper to clear the worker-local
-multimodal embedding cache after the native flush succeeds. The wrapper already covers
-the scheduler, a separate weight updater, and dispatcher callbacks. Every worker
-installs it; no new collective, configuration field, environment setting, dependency, or
-SGLang source modification is needed.
+multimodal embedding cache after the native flush succeeds unless all visual weights are
+proven frozen. The wrapper already covers the scheduler, a separate weight updater, and
+dispatcher callbacks. Every worker installs it; no new collective, configuration field,
+environment setting, dependency, or SGLang source modification is needed.
 
-This also clears embeddings on explicit successful flushes. Images remain cached between
-flushes, including repeated requests under the same weight version. Failed or busy
-flushes retain their existing behavior and do not clear embeddings. An uninitialized
-embedding cache needs no action.
+For native Qwen VLMs, the training metadata publisher inspects the actual visual owner's
+parameters, including the encoder and all projections. A nonempty, entirely frozen
+module permits reuse across language-model weight versions. Missing ownership, unknown
+metadata or any trainable visual parameter retains per-flush invalidation. Flash Next
+uses its existing verified frozen-weight contract. No environment variable or new CLI
+option is needed.
+
+The first successful flush still clears embeddings once to establish the actor's
+checkpoint, including recovery from a checkpoint different from the inference server's
+initial load. Subsequent successful flushes preserve features only with the positive
+freezing proof. Failed or busy flushes do not clear embeddings. The KV cache still
+follows native flushing on every successful call.
+
+Shared training metadata now lives in the dependency-light AWEX metadata module. Only
+the Flash model path imports its specialized binding; the previous binding import path
+remains available for compatibility.
 
 ## Validation
 
