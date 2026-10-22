@@ -8,10 +8,10 @@ import json
 from pathlib import Path
 from typing import Any, Literal
 
-from areal.elastic.state.checkpoint import (
-    atomic_json,
+from areal.utils.atomic import atomic_json, recovery_digest
+
+from .runtime_state import (
     capture_runtime_state,
-    recovery_digest,
     restore_random_state,
     restore_runtime_state,
 )
@@ -209,7 +209,9 @@ def load_full_checkpoint(
     if backend == "fsdp":
         restore_runtime_state(engine, state)
     else:
-        engine.lr_scheduler.load_state_dict(state["lr_scheduler"])
+        # Megatron's DCP loader already restores the scheduler. Its load method
+        # advances by the saved num_steps, so applying the sidecar a second time
+        # would double that progress. The digest below verifies the DCP restore.
         engine.set_version(version)
     if [group["lr"] for group in engine.optimizer.param_groups] != state[
         "optimizer_group_lrs"
@@ -218,5 +220,14 @@ def load_full_checkpoint(
     _restore_rng(engine, state)
     actual = _capture(engine, backend, identity_sha256)
     if recovery_digest(actual) != recovery_digest(state):
-        raise ValueError("Full checkpoint runtime state was not restored exactly")
+        different_fields = sorted(
+            key
+            for key in state.keys() | actual.keys()
+            if recovery_digest({key: state.get(key)})
+            != recovery_digest({key: actual.get(key)})
+        )
+        raise ValueError(
+            "Full checkpoint runtime state was not restored exactly: "
+            + ", ".join(different_fields)
+        )
     return _report(actual)

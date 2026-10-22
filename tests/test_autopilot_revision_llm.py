@@ -357,7 +357,7 @@ def test_serial_model_proposals_receive_the_correct_timing_api_sources():
     assert "build_serial_model" in value["request"]["api"]
     assert (
         "SerialTimingInput"
-        in value["reference_sources"]["areal/elastic/policy/basic/online.py"]
+        in value["reference_sources"]["areal/elastic/policy/basic/serial_planning.py"]
     )
     assert "predict_timing" in messages[0]["content"]
 

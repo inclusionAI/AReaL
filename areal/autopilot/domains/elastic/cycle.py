@@ -17,7 +17,7 @@ from areal.autopilot.domains.elastic.model_execution import HistoricalSourceEval
 from areal.autopilot.revision.agent import RevisionAgent
 from areal.autopilot.revision.contracts import digest, source_digest
 from areal.autopilot.revision.loop import RevisionLoop
-from areal.elastic.state.checkpoint import atomic_json
+from areal.utils.atomic import atomic_json
 
 
 def _fixed_json(path: Path, value: dict) -> None:

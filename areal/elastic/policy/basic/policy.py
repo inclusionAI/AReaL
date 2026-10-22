@@ -32,8 +32,8 @@ class IdleTimeoutPolicy:
     idle_seconds: float = 30
 
     def __post_init__(self) -> None:
-        if not math.isfinite(self.idle_seconds) or self.idle_seconds <= 0:
-            raise ValueError("Idle timeout must be finite and positive")
+        if not math.isfinite(self.idle_seconds) or self.idle_seconds < 0:
+            raise ValueError("Idle timeout must be finite and nonnegative")
 
     def decide(self, observation: ElasticObservation) -> Decision:
         if observation.pending_publication or not observation.committed:

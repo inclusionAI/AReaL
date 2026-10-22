@@ -31,3 +31,20 @@ def json_digest(value: Any) -> str:
             value, sort_keys=True, separators=(",", ":"), allow_nan=False
         ).encode()
     ).hexdigest()
+
+
+def artifact_manifest(root: Path) -> dict:
+    files = {}
+    for path in sorted(root.rglob("*")):
+        if path.is_file():
+            with path.open("rb") as stream:
+                files[str(path.relative_to(root))] = hashlib.file_digest(
+                    stream, "sha256"
+                ).hexdigest()
+    return files
+
+
+def recovery_digest(value: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()

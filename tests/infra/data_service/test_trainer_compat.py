@@ -229,6 +229,7 @@ class TestTrainerSignature:
 
         default = OmegaConf.structured(PPOConfig)
         assert OmegaConf.to_object(default.actor_lifecycle).mode == "resident"
+        assert OmegaConf.to_object(default.actor_lifecycle).policy == "basic"
         config = ActorLifecycleConfig(
             mode="on_demand",
             state_root=str(tmp_path),
@@ -243,7 +244,17 @@ class TestTrainerSignature:
             )
         )
         assert parsed.mode == config.mode and parsed.state_root == config.state_root
+        assert parsed.policy == "basic"
         assert tuple(parsed.actor_devices) == config.actor_devices
+        selected = OmegaConf.to_object(
+            OmegaConf.merge(
+                OmegaConf.structured(ActorLifecycleConfig),
+                {"policy": "reference"},
+            )
+        )
+        assert selected.policy == "reference"
+        with pytest.raises(ValueError, match="policy must be basic or reference"):
+            ActorLifecycleConfig(policy="unknown")
         with pytest.raises(ValueError, match="disjoint"):
             ActorLifecycleConfig(
                 mode="on_demand",
@@ -365,7 +376,7 @@ class TestTrainerSignature:
             scheduler._configure_worker(worker, 0)
 
     @pytest.mark.parametrize("on_demand", [False, True])
-    def test_native_ppo_computation_is_shared_and_commits_after_cpu_hooks(
+    def test_native_ppo_publishes_before_saving_and_finishes_after_cpu_hooks(
         self, monkeypatch, on_demand
     ):
         from types import SimpleNamespace
@@ -400,7 +411,11 @@ class TestTrainerSignature:
             SimpleNamespace(
                 actor=actor,
                 next_batch=lambda: batch,
-                commit_and_publish=lambda version: events.append(("commit", version)),
+                publish_update=lambda version: events.append(
+                    ("publish_update", version)
+                ),
+                maybe_checkpoint=lambda **kwargs: events.append("periodic-checkpoint"),
+                finish_update=lambda: events.append("finish"),
             )
             if on_demand
             else None
@@ -409,7 +424,9 @@ class TestTrainerSignature:
         trainer._save_training_state = MagicMock(
             side_effect=lambda **kwargs: events.append("resident-save")
         )
-        trainer._evaluate = MagicMock()
+        trainer._evaluate = MagicMock(
+            side_effect=lambda **kwargs: events.append("eval")
+        )
         trainer._export_and_commit_stats = MagicMock(
             side_effect=lambda **kwargs: events.append("stats")
         )
@@ -434,9 +451,17 @@ class TestTrainerSignature:
             rollout.pause.assert_not_called()
             actor.update_weights.assert_not_called()
             trainer._save_training_state.assert_not_called()
-            assert events[3:] == ["hf", "stats", "trace", ("commit", 1)]
+            assert events[3:] == [
+                ("publish_update", 1),
+                "hf",
+                "periodic-checkpoint",
+                "eval",
+                "stats",
+                "trace",
+                "finish",
+            ]
         else:
-            assert events[3:] == ["publish", "resident-save", "stats", "trace"]
+            assert events[3:] == ["publish", "resident-save", "eval", "stats", "trace"]
             rollout.pause.assert_called_once()
             rollout.resume.assert_called_once()
 

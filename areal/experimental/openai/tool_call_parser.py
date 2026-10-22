@@ -290,13 +290,15 @@ def _process_tool_calls_sglang(
         ]
 
     parser_p = FunctionCallParser(tools, tool_call_parser)
-    reasoning_parser_p = ReasoningParser(reasoning_parser)
-
-    reasoning_text, content_text = _detect_think_and_return_ori_think(
-        text,
-        reasoning_parser_p.detector.think_start_token,
-        reasoning_parser_p.detector.think_end_token,
-    )
+    if reasoning_parser:
+        reasoning_parser_p = ReasoningParser(reasoning_parser)
+        reasoning_text, content_text = _detect_think_and_return_ori_think(
+            text,
+            reasoning_parser_p.detector.think_start_token,
+            reasoning_parser_p.detector.think_end_token,
+        )
+    else:
+        reasoning_text, content_text = "", text
 
     if parser_p.has_tool_call(content_text):
         if finish_reason == "stop":

@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 import torch
 
-from areal.elastic.state.checkpoint import (
+from areal.v2.training_service.runtime_state import (
     capture_runtime_state,
     restore_runtime_state,
 )

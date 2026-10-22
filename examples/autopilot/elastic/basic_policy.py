@@ -60,12 +60,12 @@ def measured_policy(
 
 def measured_joint_policy(profiles: Path, *, compatibility, horizon=2, idle_seconds=30):
     """Explicit profiles for the local serial loop, independent of Expert data."""
-    from areal.elastic.policy.basic.online import (
+    from areal.elastic.policy.basic.optimizer import JointOptimizer
+    from areal.elastic.policy.basic.serial_planning import (
         OnlineJointPolicy,
         serial_config,
         serial_model_from_profile,
     )
-    from areal.elastic.policy.basic.optimizer import JointOptimizer
 
     data = json.loads(profiles.read_text())
     if (

@@ -7,16 +7,17 @@ from dataclasses import asdict, dataclass, replace
 from areal.autopilot.domains.elastic.contracts import (
     history_from_dict,
     observation_from_dict,
-    workflow_from_profile,
 )
 from areal.autopilot.revision.contracts import digest
 from areal.autopilot.revision.execution import load_source
-from areal.elastic.contracts import SimulationResult, TrainingConfig
+from areal.elastic.policy.basic.profile import (
+    fixed_layout_simulator,
+    workflow_from_profile,
+)
 from areal.elastic.policy.basic.simulator import (
     ComponentContext,
     Estimate,
     WorkflowModel,
-    WorkflowSimulator,
 )
 
 PHASES = ("start", "restore", "train", "checkpoint", "publish", "release")
@@ -40,29 +41,6 @@ class ServiceTime:
             )
         # Revalidate even objects constructed outside the normal dataclass path.
         return Estimate(**asdict(estimate))
-
-
-class FixedLayoutSimulator(WorkflowSimulator):
-    """Native acceptance covers one actual ready batch and one fixed layout."""
-
-    def __init__(self, workflow, world_size):
-        super().__init__(workflow)
-        self.config = TrainingConfig(world_size)
-
-    def evaluate(self, observation, forecast, plan, history, **kwargs):
-        if (
-            len(forecast) != 1
-            or len(plan) != 1
-            or any(step.config != self.config for step in plan)
-        ):
-            return SimulationResult(False, reason="Outside native fixed-layout scope")
-        return super().evaluate(observation, forecast, plan, history, **kwargs)
-
-
-def fixed_layout_simulator(workflow, profile):
-    if profile.get("execution_scope") == "native-async-v1":
-        return FixedLayoutSimulator(workflow, profile["native_actor_world_size"])
-    return WorkflowSimulator(workflow)
 
 
 def fixed_phase_simulator(candidate, workflow, profile=None):

@@ -30,7 +30,7 @@ from areal.autopilot.domains.elastic.policy import (
 from areal.autopilot.revision.contracts import digest
 from areal.autopilot.revision.loop import RevisionLoop
 from areal.elastic.policy.basic.optimizer import BasicOptimizer
-from areal.elastic.state.checkpoint import atomic_json
+from areal.utils.atomic import atomic_json
 
 
 def runtime_problems(profile, window, *, settings=None, runner=None):
@@ -385,11 +385,11 @@ class RuntimeRevisionLoop:
         return directory, request, result
 
     def _check_initial_joint(self, host):
-        from areal.elastic.policy.basic.online import (
+        from areal.elastic.policy.basic.optimizer import JointOptimizer
+        from areal.elastic.policy.basic.serial_planning import (
             OnlineJointPolicy,
             serial_model_from_profile,
         )
-        from areal.elastic.policy.basic.optimizer import JointOptimizer
 
         policy = host.policy
         model = serial_model_from_profile(self.profile, idle_seconds=self.idle_seconds)
@@ -410,6 +410,8 @@ class RuntimeRevisionLoop:
     def tick(self, host: RevisionHost):
         if self._lock.closed:
             raise RuntimeError("Runtime revision loop is closed")
+        if not getattr(host, "measurement_ready", True):
+            return
         if host.policy_application is None or host.runtime_history is None:
             raise ValueError(
                 "Runtime revisions require policy activation and committed history stores"
@@ -426,8 +428,8 @@ class RuntimeRevisionLoop:
         if host.policy_generation == 0 and self.scope == "serial-joint-timing-v1":
             self._check_initial_joint(host)
         elif host.policy_generation == 0:
-            from areal.autopilot.domains.elastic.contracts import workflow_from_profile
             from areal.elastic.policy.basic.policy import BasicPolicy
+            from areal.elastic.policy.basic.profile import workflow_from_profile
             from areal.elastic.policy.basic.simulator import WorkflowSimulator
 
             policy = host.policy
@@ -442,13 +444,25 @@ class RuntimeRevisionLoop:
                 raise ValueError(
                     "Initial live policy differs from the revision baseline"
                 )
-        _fixed_json(
-            self.root / "execution.json",
-            {
-                "policy_context": host.policy_application.context,
-                "history_context": host.runtime_history.context,
-            },
-        )
+        execution = {
+            "policy_context": host.policy_application.context,
+            "history_context": host.runtime_history.context,
+        }
+        binding = self.root / "execution.json"
+        if binding.exists():
+            prior = json.loads(binding.read_text())
+            if (
+                prior.get("policy_context") == execution["policy_context"]
+                and prior.get("history_context") != execution["history_context"]
+                and hasattr(host, "measurement_failed")
+            ):
+                host.measurement_failed(
+                    ValueError(
+                        "Revision history series changed; use a fresh revision root"
+                    )
+                )
+                return
+        _fixed_json(binding, execution)
         if self.future is not None and self.future.done():
             try:
                 self.pending = self.future.result()
@@ -530,7 +544,13 @@ class RuntimeRevisionLoop:
                 4, last + self.every
             ):
                 return
-            window = host.runtime_history.snapshot(host.published_version)
+            try:
+                window = host.runtime_history.snapshot(host.published_version)
+            except (OSError, ValueError, KeyError, TypeError) as error:
+                if not hasattr(host, "measurement_failed"):
+                    raise
+                host.measurement_failed(error)
+                return
             if len(window["updates"]) < 4:
                 return
             directory = self.root / f"window-{len(windows) + 1:04d}"

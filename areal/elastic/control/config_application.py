@@ -14,34 +14,22 @@ import hashlib
 import json
 import re
 import time
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, is_dataclass, replace
 from pathlib import Path
-from typing import Protocol
+from typing import Generic, Protocol, TypeVar
 
-from ..contracts import TrainingConfig
-from ..policy.basic.cost_model.rollout import RolloutConfig
-from ..policy.basic.joint import JointConfig
-from ..state.checkpoint import atomic_json
+from areal.utils.atomic import atomic_json
+from areal.utils.atomic import json_digest as digest
+
+from .boundary import NativeControlPort
+
+ConfigT = TypeVar("ConfigT")
 
 
 def _digest(value: dict) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, allow_nan=False).encode()
     ).hexdigest()
-
-
-def _config(value: dict):
-    if "execution_id" in value:
-        return NativeConfig(
-            **{
-                **value,
-                "actor_devices": tuple(value["actor_devices"]),
-                "rollout_devices": tuple(value["rollout_devices"]),
-            }
-        )
-    return JointConfig(
-        TrainingConfig(**value["actor"]), RolloutConfig(**value["rollout"])
-    )
 
 
 @dataclass(frozen=True)
@@ -67,9 +55,9 @@ class NativeConfig:
 
 
 @dataclass(frozen=True)
-class ConfigRequest:
+class ConfigRequest(Generic[ConfigT]):
     request_id: str
-    target: JointConfig | NativeConfig
+    target: ConfigT
     expected_generation: int
     expected_weights_version: int
     policy_bundle_id: str
@@ -79,8 +67,10 @@ class ConfigRequest:
             r"[A-Za-z0-9][A-Za-z0-9_.-]{0,95}", self.request_id
         ):
             raise ValueError("Invalid config request identity")
-        if not isinstance(self.target, (JointConfig, NativeConfig)):
-            raise TypeError("Target must be a complete execution configuration")
+        if not is_dataclass(self.target) or isinstance(self.target, type):
+            raise TypeError(
+                "Target must be a complete execution configuration dataclass"
+            )
         if any(
             type(n) is not int or n < 0
             for n in (self.expected_generation, self.expected_weights_version)
@@ -91,29 +81,76 @@ class ConfigRequest:
 
 
 @dataclass(frozen=True)
-class ConfigSnapshot:
-    config: JointConfig | NativeConfig
+class ConfigSnapshot(Generic[ConfigT]):
+    config: ConfigT
     weights_version: int
     boundary_id: str
     committed: bool
 
 
-class ConfigExecutor(Protocol):
+class NativeConfigExecutor:
+    """Observe and verify configuration; never create resources or replay training."""
+
+    def __init__(
+        self, control: NativeControlPort, config: NativeConfig, *, policy_context: str
+    ):
+        self.control, self.config = control, config
+        self.context_id = digest(
+            {"native": asdict(config), "policy_context": policy_context}
+        )
+
+    def observe(self):
+        state = self.control.control_snapshot()
+        return ConfigSnapshot(
+            self.config, state.applied_version, state.boundary_id, state.boundary_ready
+        )
+
+    def decode_config(self, value: dict) -> NativeConfig:
+        return NativeConfig(
+            **{
+                **value,
+                "actor_devices": tuple(value["actor_devices"]),
+                "rollout_devices": tuple(value["rollout_devices"]),
+            }
+        )
+
+    def validate(self, target):
+        if target != self.config:
+            raise ValueError(
+                "Native Actor/Rollout layout and GPU pools are currently fixed"
+            )
+
+    def apply(self, target):
+        self.validate(target)
+
+    def recover(self, source):
+        self.validate(source.config)
+        if self.observe() != source:
+            raise RuntimeError(
+                "Native configuration recovery cannot replay training or change its cursor"
+            )
+
+
+class ConfigExecutor(Protocol[ConfigT]):
     """Implementations must verify all changed roles, not just assign fields."""
 
     @property
     def context_id(self) -> str: ...
 
-    def observe(self) -> ConfigSnapshot: ...
+    def observe(self) -> ConfigSnapshot[ConfigT]: ...
 
-    def validate(self, target: JointConfig) -> None: ...
+    def decode_config(self, value: dict) -> ConfigT:
+        """Reconstruct this executor's schema without importing planning models."""
+        ...
 
-    def apply(self, target: JointConfig) -> None: ...
+    def validate(self, target: ConfigT) -> None: ...
 
-    def recover(self, source: ConfigSnapshot) -> None: ...
+    def apply(self, target: ConfigT) -> None: ...
+
+    def recover(self, source: ConfigSnapshot[ConfigT]) -> None: ...
 
 
-class ConfigApplication:
+class ConfigApplication(Generic[ConfigT]):
     """One application journal; partial requests recover to their source boundary.
 
     Config generations count committed logical changes, not training updates.
@@ -121,7 +158,7 @@ class ConfigApplication:
     Source/target capabilities and logical training semantics belong to the executor.
     """
 
-    def __init__(self, executor: ConfigExecutor, root: Path):
+    def __init__(self, executor: ConfigExecutor[ConfigT], root: Path):
         self.executor = executor
         self.root = root.resolve()
         self.root.mkdir(parents=True, exist_ok=True)
@@ -156,7 +193,7 @@ class ConfigApplication:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             return self._read()
 
-    def _preflight(self, state: dict, request: ConfigRequest):
+    def _preflight(self, state: dict, request: ConfigRequest[ConfigT]):
         if state["pending"] is not None:
             raise RuntimeError("Recover the pending config application first")
         current = self.executor.observe()
@@ -180,13 +217,15 @@ class ConfigApplication:
         self.executor.validate(request.target)
         return None
 
-    def preflight(self, request: ConfigRequest) -> None:
+    def preflight(self, request: ConfigRequest[ConfigT]) -> None:
         """Check before closing admission; apply repeats checks under the same gate."""
         with (self.root / "config.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             self._preflight(self._read(), request)
 
-    def _verify(self, source: ConfigSnapshot, target: JointConfig) -> ConfigSnapshot:
+    def _verify(
+        self, source: ConfigSnapshot[ConfigT], target: ConfigT
+    ) -> ConfigSnapshot[ConfigT]:
         actual = self.executor.observe()
         if (
             not actual.committed
@@ -216,7 +255,7 @@ class ConfigApplication:
         atomic_json(self.root / "state.json", state)
         return receipt
 
-    def apply(self, request: ConfigRequest) -> dict:
+    def apply(self, request: ConfigRequest[ConfigT]) -> dict:
         with (self.root / "config.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             state = self._read()
@@ -257,7 +296,7 @@ class ConfigApplication:
             if pending is not None:
                 row = pending["source"]
                 source = ConfigSnapshot(
-                    _config(row["config"]),
+                    self.executor.decode_config(row["config"]),
                     row["weights_version"],
                     row["boundary_id"],
                     row["committed"],
@@ -272,7 +311,7 @@ class ConfigApplication:
                 raise RuntimeError(
                     "Recover training progress before config application"
                 )
-            active = _config(state["config"])
+            active = self.executor.decode_config(state["config"])
             if current.config != active:
                 source = replace(current, config=active)
                 self.executor.recover(source)

@@ -20,7 +20,8 @@ from areal.autopilot.revision.contracts import EvaluationReport, digest, source_
 from areal.autopilot.revision.execution import load_source
 from areal.autopilot.revision.loop import RevisionLoop
 from areal.elastic.contracts import BatchWorkload
-from areal.elastic.policy.basic.online import (
+from areal.elastic.policy.basic.optimizer import JointOptimizer
+from areal.elastic.policy.basic.serial_planning import (
     OnlineJointPolicy,
     SerialTimingInput,
     logical_workload,
@@ -29,7 +30,6 @@ from areal.elastic.policy.basic.online import (
     serial_window_from_dict,
     timing_input_from_dict,
 )
-from areal.elastic.policy.basic.optimizer import JointOptimizer
 
 from .adapter import ElasticEvaluator, candidate_runner
 from .identity import AREAL_ROOT, protected_files

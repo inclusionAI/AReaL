@@ -81,12 +81,12 @@ class AwexFSDPAdapter(AwexTrainingAdapter):
                 shard_meta = self._extract_dtensor_shard_meta(name, tensor, rank_info)
                 global_shape = tuple(tensor.shape)
                 global_numel = int(tensor.numel())
-                dtype = tensor.dtype
+                dtype = self._wire_dtype(tensor)
             else:
                 shard_meta = self._extract_plain_shard_meta(name, tensor, rank_info)
                 global_shape = tuple(tensor.shape)
                 global_numel = int(tensor.numel())
-                dtype = tensor.dtype
+                dtype = self._wire_dtype(tensor)
 
             replica = ParameterReplicaMeta(shards=[shard_meta])
             metadata.append(
@@ -117,11 +117,17 @@ class AwexFSDPAdapter(AwexTrainingAdapter):
 
             tensor = param.data
             if isinstance(tensor, DTensor):
-                local_params[name] = tensor._local_tensor
-            else:
-                local_params[name] = tensor
+                tensor = tensor._local_tensor
+            # FSDP keeps FP32 master storage even with BF16 compute. Match
+            # rollout export precision without changing model/optimizer storage.
+            local_params[name] = self._engine._cast_to_compute_dtype(tensor)
 
         return local_params
+
+    def _wire_dtype(self, tensor: torch.Tensor) -> torch.dtype:
+        if tensor.is_floating_point():
+            return self._engine._compute_dtype()
+        return tensor.dtype
 
     def save_parameters(self, save_path: str, names: list[str] | None = None) -> None:
         params = self.get_local_shard_parameters(names)
@@ -336,7 +342,7 @@ class AwexFSDPAdapter(AwexTrainingAdapter):
             name=name,
             shape=tuple(local_tensor.shape),
             numel=int(local_tensor.numel()),
-            dtype=local_tensor.dtype,
+            dtype=self._wire_dtype(local_tensor),
             global_offset=self._compute_dtensor_offset(dtensor),
             sharding_type=sharding_type,
             num_shards=num_shards,
@@ -364,7 +370,7 @@ class AwexFSDPAdapter(AwexTrainingAdapter):
             name=name,
             shape=tuple(tensor.shape),
             numel=int(tensor.numel()),
-            dtype=tensor.dtype,
+            dtype=self._wire_dtype(tensor),
             global_offset=tuple([0] * len(tuple(tensor.shape))),
             sharding_type=ShardingType.NO_SHARDING,
             num_shards=1,

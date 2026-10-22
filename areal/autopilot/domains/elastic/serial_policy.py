@@ -22,8 +22,8 @@ from areal.autopilot.domains.elastic.serial import (
 from areal.autopilot.revision.contracts import digest, source_digest
 from areal.autopilot.revision.execution import load_source
 from areal.elastic.policy.basic.joint import JointSearchResult
-from areal.elastic.policy.basic.online import OnlineJointPolicy
-from areal.elastic.state.checkpoint import atomic_json
+from areal.elastic.policy.basic.serial_planning import OnlineJointPolicy
+from areal.utils.atomic import atomic_json
 
 COMPONENTS = ("serial_model", "joint_optimizer")
 

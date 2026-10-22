@@ -9,12 +9,6 @@ import pytest
 from areal.elastic.contracts import BatchWorkload, ElasticObservation, TrainingConfig
 from areal.elastic.policy.basic import BasicPolicy, IdleTimeoutPolicy
 from areal.elastic.policy.basic.optimizer import BasicOptimizer
-from areal.elastic.policy.basic.replay import (
-    ActorPhase,
-    ActorReplayStep,
-    GroupArrival,
-    replay_actor,
-)
 from areal.elastic.policy.basic.simulator import (
     ComponentContext,
     ConstantComponent,
@@ -76,13 +70,13 @@ def serial_joint_policy(*, seconds=20, switch=1, max_seconds=None):
         TransitionProfile,
     )
     from areal.elastic.policy.basic.joint import JointConfig
-    from areal.elastic.policy.basic.online import (
+    from areal.elastic.policy.basic.optimizer import JointOptimizer
+    from areal.elastic.policy.basic.serial_planning import (
         EpisodeTiming,
         JointPhaseTiming,
         OnlineJointPolicy,
         SerialJointModel,
     )
-    from areal.elastic.policy.basic.optimizer import JointOptimizer
 
     current = JointConfig(TrainingConfig(2), rollout_config())
     target = JointConfig(TrainingConfig(1), replace(current.rollout, replicas=2))
@@ -208,7 +202,7 @@ def test_online_joint_opaque_rollout_profiles_do_not_scale_to_different_workload
 
 def test_serial_joint_phase_feedback_never_crosses_rollout_configuration():
     """Same Actor count does not make publication timings portable across layouts."""
-    from areal.elastic.policy.basic.online import JointPhaseTiming
+    from areal.elastic.policy.basic.serial_planning import JointPhaseTiming
 
     policy, current, target = serial_joint_policy()
     policy.history.add_workload(WORK)
@@ -470,95 +464,3 @@ def test_joint_runtime_state_preserves_observations_older_than_bounded_update_ar
         restored.record_committed(row)
     assert restored.runtime_state() == state
     assert asdict(restored.history.snapshot()) == asdict(policy.history.snapshot())
-
-
-def test_actor_replay_keeps_absolute_arrivals_while_actor_speed_changes():
-    """Arrivals overlap Actor work; a slower Actor removes wait rather than shifting Rollout."""
-    arrivals = (
-        GroupArrival("a", 10, 4),
-        GroupArrival("b", 20, 4),
-        GroupArrival("prefetch", 12, 4),
-    )
-    steps = tuple(
-        ActorReplayStep((g,), (ActorPhase("train", 5),), 100, 50) for g in ("a", "b")
-    )
-    fast = replay_actor(arrivals, steps, actor_gpus=4)
-    slow = replay_actor(
-        arrivals,
-        (replace(steps[0], phases=(ActorPhase("train", 15),)), steps[1]),
-        actor_gpus=4,
-    )
-    assert fast["seconds"] == 25 and slow["seconds"] == 30
-    assert fast["phase_seconds"]["wait"] == 15
-    assert slow["phase_seconds"]["wait"] == 10
-    assert slow["steps"][1]["actor_start"] == 25
-    assert slow["steps"][1]["queue_wait_seconds"] == {"b": 5}
-    for result in (fast, slow):
-        assert [
-            (e["group_id"], e["time"])
-            for e in result["events"]
-            if e["kind"] == "group_ready"
-        ] == [("a", 10), ("prefetch", 12), ("b", 20)]
-        assert result["samples"] == 8 and result["groups"] == 2
-        assert result["unused_arrived_groups"] == 1
-        assert result["actor_gpu_hours"] == pytest.approx(4 * result["seconds"] / 3600)
-        assert sum(result["phase_seconds"].values()) == pytest.approx(result["seconds"])
-
-
-def test_actor_replay_relative_control_save_and_future_prefetch_accounting():
-    """Relative overhead and final save hold Actor GPUs; unarrived work is excluded."""
-    arrivals = (GroupArrival("a", 0, 4), GroupArrival("future", 100, 4))
-    step = ActorReplayStep(
-        ("a",),
-        (ActorPhase("train", 2), ActorPhase("save", 5)),
-        100,
-        40,
-        before_seconds=3,
-        after_seconds=1,
-    )
-    result = replay_actor(arrivals, (step,), actor_gpus=4)
-    assert result["seconds"] == 11
-    assert result["phase_seconds"] == {"controller": 4, "train": 2, "save": 5}
-    assert result["future_groups"] == 1 and result["unused_arrived_groups"] == 0
-    assert result["effective_tokens"] == 40 and result["sequence_tokens"] == 100
-    assert result["actor_gpu_hours"] == pytest.approx(44 / 3600)
-    assert all(e["time"] <= 11 for e in result["events"])
-
-
-def test_actor_replay_unsupported_work_has_no_full_window_score():
-    """A covered prefix cannot masquerade as a cheaper complete workload."""
-    arrivals = (GroupArrival("a", 0, 4), GroupArrival("b", 1, 4))
-    steps = (
-        ActorReplayStep(("a",), (ActorPhase("train", 2),), 100, 50),
-        ActorReplayStep(("b",), (ActorPhase("train", None, "unsupported"),), 100, 50),
-    )
-    result = replay_actor(arrivals, steps, actor_gpus=4)
-    assert result["status"] == "unsupported" and result["unsupported_steps"] == [2]
-    assert result["seconds"] is None and result["actor_gpu_hours"] is None
-
-
-@pytest.mark.parametrize(
-    "case", ["duplicate_arrival", "duplicate_consumption", "missing_arrival"]
-)
-def test_actor_replay_rejects_ambiguous_consumption(case):
-    """Each trained group has exactly one arrival and one consumption."""
-    arrival = GroupArrival("a", 1, 4)
-    step = ActorReplayStep(("a",), (ActorPhase("train", 2),), 100, 50)
-    arrivals, steps = (arrival,), (step,)
-    if case == "duplicate_arrival":
-        arrivals = (arrival, arrival)
-    elif case == "duplicate_consumption":
-        steps = (step, step)
-    else:
-        arrivals = ()
-    with pytest.raises(ValueError):
-        replay_actor(arrivals, steps, actor_gpus=4)
-
-
-@pytest.mark.parametrize("seconds", [-1, float("nan"), float("inf"), True])
-def test_actor_replay_rejects_invalid_clock_values(seconds):
-    """Invalid clock values cannot create negative or free GPU intervals."""
-    with pytest.raises(ValueError):
-        GroupArrival("a", seconds, 4)
-    with pytest.raises(ValueError):
-        ActorPhase("train", seconds)

@@ -245,6 +245,42 @@ def test_process_tool_calls_qwen25_chat_completions_with_tool_call_in_thinking_s
     assert "<tool_call>" in new_text
 
 
+@pytest.mark.sglang
+@pytest.mark.parametrize("use_responses", [False, True])
+@pytest.mark.parametrize("has_tool_call", [False, True])
+def test_sglang_tool_calls_without_reasoning_parser(use_responses, has_tool_call):
+    pytest.importorskip("sglang.srt.function_call.function_call_parser")
+    pytest.importorskip("sglang.srt.parser.reasoning_parser")
+    text = TEXT.split("</think>", 1)[1] if has_tool_call else "No tool requested."
+    tools = (
+        [{"type": "function", **tool["function"]} for tool in TOOLS]
+        if use_responses
+        else TOOLS
+    )
+
+    calls, content, finish_reason = parser_module.process_tool_calls(
+        text=text,
+        tools=tools,
+        tool_call_parser="qwen25",
+        reasoning_parser="",
+        finish_reason="stop",
+        use_responses=use_responses,
+    )
+
+    if has_tool_call:
+        assert finish_reason == "tool_calls"
+        assert len(calls) == 2
+        for call in calls:
+            function = call if use_responses else call.function
+            assert function.name == "search"
+            assert json.loads(function.arguments)["query"].endswith("country")
+        assert "<tool_call>" not in content
+    else:
+        assert calls is None
+        assert content == text
+        assert finish_reason == "stop"
+
+
 def _raise_module_not_found(*args, **kwargs):
     raise ModuleNotFoundError
 

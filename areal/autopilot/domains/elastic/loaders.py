@@ -19,10 +19,10 @@ def apply_accepted_revision(root: Path, profile: dict, settings: dict):
     from areal.autopilot.domains.elastic.contracts import (
         deployment_context,
         lifecycle_profile_digest,
-        workflow_from_profile,
     )
     from areal.autopilot.revision.execution import load_source
     from areal.elastic.policy.basic.optimizer import BasicOptimizer
+    from areal.elastic.policy.basic.profile import workflow_from_profile
     from areal.elastic.policy.basic.simulator import WorkflowSimulator
 
     store = RevisionStore(root)

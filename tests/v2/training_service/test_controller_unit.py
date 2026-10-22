@@ -13,6 +13,16 @@ from areal.v2.training_service.controller.controller import (
 MODULE = "areal.v2.training_service.controller.controller"
 
 
+def test_tracer_flush_uses_bounded_timeout_without_shortening_training_rpcs():
+    """Optional tracing never inherits the hour-long training RPC timeout."""
+    controller = _make_controller()
+    controller.config.request_timeout = 3600
+    controller._gateway_post = MagicMock()
+    controller.save_perf_tracer(force=True)
+    assert controller._gateway_post.call_args.kwargs["timeout"] == 5.0
+    assert controller.config.request_timeout == 3600
+
+
 def _make_response(method: str, url: str, *, json=None) -> httpx.Response:
     return httpx.Response(
         200,
@@ -180,6 +190,25 @@ def test_unconfirmed_publication_keeps_generation_paused(result_status, result_v
         controller.update_weights(SimpleNamespace(version=1))
 
     controller.rollout.pause_generation.assert_called_once()
+    controller.rollout.continue_generation.assert_not_called()
+
+
+@pytest.mark.parametrize("version", [0, 3])
+def test_native_publication_can_hold_generation_for_checkpoint_and_cpu_hooks(version):
+    """A fresh recovery pair may republish the base model at version zero."""
+    from types import SimpleNamespace
+
+    controller = _make_controller()
+    controller.rollout = MagicMock()
+    controller._weight_update_ctrl = MagicMock()
+    controller._weight_update_ctrl.update_weights.return_value = SimpleNamespace(
+        status="ok", version=version, duration_ms=0
+    )
+    controller.update_weights(SimpleNamespace(version=version), resume_generation=False)
+    controller._weight_update_ctrl.update_weights.assert_called_once_with(
+        version=version
+    )
+    controller.rollout.set_version.assert_called_once_with(version)
     controller.rollout.continue_generation.assert_not_called()
 
 

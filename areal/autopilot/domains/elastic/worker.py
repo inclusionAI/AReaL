@@ -15,7 +15,6 @@ from areal.autopilot.domains.elastic.contracts import (
     history_from_dict,
     observation_from_dict,
     plan_from_dict,
-    workflow_from_profile,
 )
 from areal.autopilot.domains.elastic.model_evaluator import HistoricalPrediction
 from areal.autopilot.domains.elastic.model_execution import (
@@ -35,6 +34,7 @@ from areal.elastic.policy.basic.joint import (
     JointPrediction,
     JointSearchResult,
 )
+from areal.elastic.policy.basic.profile import workflow_from_profile
 from areal.elastic.policy.basic.simulator import (
     SimulationResult,
 )

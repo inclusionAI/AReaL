@@ -5,83 +5,14 @@ from dataclasses import asdict, replace
 
 import pytest
 
-from tests.test_elastic_runtime_state import make_engine
-
 from areal.elastic.contracts import TrainingConfig
-from areal.elastic.control.config import (
+from areal.elastic.control.config_application import (
     ConfigApplication,
     ConfigRequest,
     ConfigSnapshot,
 )
 from areal.elastic.policy.basic.cost_model.rollout import RolloutConfig
 from areal.elastic.policy.basic.joint import JointConfig
-from areal.elastic.state.checkpoint import (
-    artifact_manifest,
-    atomic_json,
-    capture_runtime_state,
-    recovery_view,
-    restore_recovery_runtime,
-)
-
-
-def source(tmp_path):
-    engine = make_engine("cpu")
-    engine.world_size = 2
-    path = tmp_path / "step-00000001-source"
-    (path / "dcp").mkdir(parents=True)
-    (path / "dcp/.metadata").write_text("immutable")
-    for rank in range(2):
-        engine.rank = rank
-        atomic_json(path / f"runtime-{rank}.json", capture_runtime_state(engine))
-    manifest = {
-        "world_size": 2,
-        "global_step": 1,
-        "compatibility": {"elastic_dp": "fsdp-pure-dp-v1", "seed": 17},
-    }
-    atomic_json(path / "manifest.json", manifest)
-    return path, manifest
-
-
-def test_resize_recovery_view_is_immutable_and_retries_are_deterministic(tmp_path):
-    path, manifest = source(tmp_path)
-    before = artifact_manifest(path)
-    views = [
-        recovery_view(path, manifest, target_world_size=3, root=tmp_path / "recovery")
-        for _ in range(2)
-    ]
-    states = []
-    for view in views:
-        assert (view / "dcp").is_symlink()
-        engine = make_engine("cpu")
-        engine.world_size = 3
-        ranks = []
-        for rank in range(3):
-            engine.rank = rank
-            plan = json.loads((view / f"runtime-{rank}.json").read_text())
-            restored = restore_recovery_runtime(engine, plan)
-            ranks.append(restored)
-            assert restored["world_size"] == 3 and restored["policy_version"] == 1
-        states.append(ranks)
-    assert states[0] == states[1]
-    assert states[0][0]["torch_rng"] != states[0][1]["torch_rng"]
-    assert artifact_manifest(path) == before
-
-
-def test_same_size_recovery_preserves_exact_rng_and_legacy_resize_is_rejected(tmp_path):
-    path, manifest = source(tmp_path)
-    view = recovery_view(
-        path, manifest, target_world_size=2, root=tmp_path / "recovery"
-    )
-    original = json.loads((path / "runtime-0.json").read_text())
-    engine = make_engine("cpu")
-    engine.world_size = 2
-    actual = restore_recovery_runtime(
-        engine, json.loads((view / "runtime-0.json").read_text())
-    )
-    assert json.loads(json.dumps(actual)) == original
-    manifest["compatibility"] = {"backend": "fsdp:d2"}
-    with pytest.raises(ValueError, match="does not authorize"):
-        recovery_view(path, manifest, target_world_size=3, root=tmp_path / "recovery")
 
 
 def rollout_config():
@@ -104,6 +35,11 @@ class ConfigFixture:
 
     def observe(self):
         return self.current
+
+    def decode_config(self, value):
+        return JointConfig(
+            TrainingConfig(**value["actor"]), RolloutConfig(**value["rollout"])
+        )
 
     def validate(self, target):
         if target.world_size > 8:
@@ -190,7 +126,7 @@ def test_config_application_noop_and_context_mismatch_are_explicit(tmp_path):
 def test_config_application_recovers_interruption_without_replaying_target(
     tmp_path, monkeypatch, point
 ):
-    import areal.elastic.control.config as module
+    import areal.elastic.control.config_application as module
 
     class PowerLoss(BaseException):
         pass

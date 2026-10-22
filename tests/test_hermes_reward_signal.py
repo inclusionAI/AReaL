@@ -1,3 +1,4 @@
+import json
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -71,6 +72,82 @@ def test_hermes_carries_episode_identity_into_every_llm_request(monkeypatch, on_
         )
     else:
         assert "request_overrides" not in kwargs
+
+
+@pytest.mark.parametrize("recreated", [False, True])
+def test_hermes_direct_summary_and_recreated_clients_keep_bound_episode(recreated):
+    from types import SimpleNamespace
+
+    import httpx
+    from openai import OpenAI
+
+    from examples.hermes.hermes import _bind_episode_requests
+
+    requests = []
+    clients = []
+
+    def respond(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "id": "summary",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "default",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "done"},
+                        "finish_reason": "stop",
+                    }
+                ],
+            },
+        )
+
+    def create_client(*args, **kwargs):
+        client = OpenAI(
+            api_key="test-session",
+            base_url="http://inference/v1",
+            http_client=httpx.Client(transport=httpx.MockTransport(respond)),
+        )
+        clients.append(client)
+        return client
+
+    identity = {"incarnation_id": "source", "trajectory_id": 3}
+    agent = SimpleNamespace(client=create_client(), _create_openai_client=create_client)
+    _bind_episode_requests(agent, identity)
+    identity["trajectory_id"] = 99
+    client = (
+        agent._create_openai_client({}, reason="summary", shared=True)
+        if recreated
+        else agent.client
+    )
+    try:
+        result = client.chat.completions.create(
+            model="default",
+            messages=[{"role": "user", "content": "summarize"}],
+            extra_body={"other_metadata": "preserved"},
+        )
+        assert result.choices[0].message.content == "done"
+        assert requests == [
+            {
+                "model": "default",
+                "messages": [{"role": "user", "content": "summarize"}],
+                "other_metadata": "preserved",
+                "areal_episode": {"incarnation_id": "source", "trajectory_id": 3},
+            }
+        ]
+        with pytest.raises(ValueError, match="conflicts"):
+            client.chat.completions.create(
+                model="default",
+                messages=[],
+                extra_body={"areal_episode": identity},
+            )
+        assert len(requests) == 1
+    finally:
+        for client in clients:
+            client.close()
 
 
 @pytest.mark.asyncio

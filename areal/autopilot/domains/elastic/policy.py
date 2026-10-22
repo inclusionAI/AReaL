@@ -23,16 +23,16 @@ from areal.autopilot.domains.elastic.phase import (
     verify_phase_reference,
 )
 from areal.autopilot.revision.contracts import digest, source_digest
-from areal.elastic.control.application import (
+from areal.elastic.control.policy_activation import (
     PolicyApplication as PolicyStore,
 )
-from areal.elastic.control.application import (
+from areal.elastic.control.policy_activation import (
     PolicyBoundaryBusy,
     PolicyRequest,
     PreparedPolicy,
 )
 from areal.elastic.policy.basic.policy import BasicPolicy, IdleTimeoutPolicy
-from areal.elastic.state.checkpoint import atomic_json
+from areal.utils.atomic import atomic_json
 
 
 def _evidence(store):

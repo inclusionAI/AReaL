@@ -46,10 +46,29 @@ def test_idle_policy_decides_without_execution(changes, expected):
     assert IdleTimeoutPolicy(5).decide(observation(**changes)) == expected
 
 
-@pytest.mark.parametrize("timeout", [0, -1, float("inf"), float("nan")])
+@pytest.mark.parametrize("timeout", [-1, float("inf"), float("nan")])
 def test_idle_policy_rejects_invalid_timeout(timeout):
-    with pytest.raises(ValueError, match="finite and positive"):
+    with pytest.raises(ValueError, match="finite and nonnegative"):
         IdleTimeoutPolicy(timeout)
+
+
+def test_idle_policy_zero_timeout_releases_at_idle_boundary():
+    """Zero disables waiting without altering publication or batch checks."""
+    policy = IdleTimeoutPolicy(0)
+    assert policy.decide(observation(idle_duration=0)) == "release"
+    assert policy.decide(observation(idle_duration=0, batch_ready=True)) == "train"
+    assert policy.decide(observation(idle_duration=0, committed=False)) == "keep"
+
+
+def test_policy_selection_keeps_reference_explicitly_unimplemented():
+    """Selecting Reference cannot silently execute Basic instead."""
+    from areal.elastic.policy import build_policy
+
+    assert build_policy("basic", idle_timeout=60) == IdleTimeoutPolicy(60)
+    with pytest.raises(NotImplementedError, match="reference.*not implemented"):
+        build_policy("reference", idle_timeout=60)
+    with pytest.raises(ValueError, match="basic or reference"):
+        build_policy("unknown", idle_timeout=60)
 
 
 def test_policy_observation_is_immutable():

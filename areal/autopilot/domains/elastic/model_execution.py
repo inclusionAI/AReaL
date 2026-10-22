@@ -37,7 +37,7 @@ from areal.elastic.policy.basic.joint import (
     JointPrediction,
     JointScenario,
 )
-from areal.elastic.state.checkpoint import atomic_json
+from areal.utils.atomic import atomic_json
 
 from .adapter import ElasticEvaluator, candidate_runner
 from .identity import AREAL_ROOT, protected_files
@@ -65,7 +65,7 @@ def joint_config_from_dict(data: dict | None) -> JointConfig | None:
 
 def joint_scenario_from_dict(work: dict) -> JointScenario:
     if "observation" in work and "episodes" in work:
-        from areal.elastic.policy.basic.online import serial_window_from_dict
+        from areal.elastic.policy.basic.serial_planning import serial_window_from_dict
 
         return serial_window_from_dict(work)
     batches = []

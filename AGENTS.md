@@ -49,6 +49,9 @@ uv run python docs/generate_cli_docs.py
 - Batch structure and naming changes, then run relevant tests once at the end. Use
   static checks while iterating; rerun targeted tests only to diagnose concrete
   failures.
+- For current elastic-training work, temporarily do not run corner-case or
+  fault-injection tests unless the user requests them. Limit validation to necessary
+  normal-path checks, batched after changes settle; retain existing tests and evidence.
 - Ask for decisions and clarifications with short, structured options instead of broad
   open-ended questions. Use the platform's native question/clarification tool if
   available.

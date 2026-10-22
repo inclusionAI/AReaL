@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .batch_queue import (
+    BatchConsumer,
     BatchQueue,
     _digest,
     _encode,
@@ -203,12 +204,22 @@ class OnlineInbox:
                 if row["digest"] != digest or row["payload"] != encoded:
                     raise ValueError("Episode retry contains different content")
                 return digest
-            if row["status"] != "admitted":
+            discarded = (
+                row["status"] == "rejected" and row["rejection"] == "recovery_rollback"
+            )
+            if row["status"] != "admitted" and not discarded:
                 raise ValueError("Cannot receive a closed episode")
             db.execute(
                 "UPDATE online_episodes SET payload=?,digest=?,min_version=?,max_version=?,"
-                "status='ready' WHERE episode_id=?",
-                (encoded, digest, minimum, maximum, episode_id),
+                "status=? WHERE episode_id=?",
+                (
+                    encoded,
+                    digest,
+                    minimum,
+                    maximum,
+                    "rejected" if discarded else "ready",
+                    episode_id,
+                ),
             )
         return digest
 
@@ -315,7 +326,9 @@ class OnlineInbox:
                     )
         return {"episode_id": identity, "status": "rejected"}
 
-    def seal_batch(self, actor_version: int) -> str | None:
+    def seal_batch(
+        self, actor_version: int, *, consumer: BatchConsumer | None = None
+    ) -> str | None:
         """Atomically bind B eligible episodes to one checkpoint-consumed batch.
 
         BatchQueue's existing single consumer and checkpoint cursor remain the
@@ -325,7 +338,7 @@ class OnlineInbox:
         if type(actor_version) is not int or actor_version < 0:
             raise ValueError("Actor version must be a nonnegative integer")
         with self.queue._transaction() as db:
-            progress = db.execute("SELECT * FROM progress").fetchone()
+            progress = self._progress(db, consumer)
             published = db.execute(
                 "SELECT published_version, admission_open FROM online_progress"
             ).fetchone()[0]
@@ -334,10 +347,11 @@ class OnlineInbox:
                 or published != actor_version
             ):
                 raise ValueError(
-                    "Reconcile checkpoint and serving versions before reserving"
+                    "Reconcile applied and serving versions before reserving"
                 )
             existing = db.execute(
-                "SELECT batch_id FROM batches WHERE status!='committed' ORDER BY sequence LIMIT 1"
+                "SELECT batch_id FROM batches WHERE sequence>? ORDER BY sequence LIMIT 1",
+                (progress["through_sequence"],),
             ).fetchone()
             if existing is not None:
                 return existing["batch_id"]
@@ -378,24 +392,70 @@ class OnlineInbox:
             )
             return batch_id
 
-    def confirm_publication(self, version: int) -> None:
-        """Release only the prefix already bound to a committed full checkpoint."""
+    def _progress(self, db, consumer):
+        if consumer is None:
+            return db.execute("SELECT * FROM progress").fetchone()
+        if consumer.queue is not self.queue:
+            raise ValueError("Publication consumer belongs to another inbox")
+        # The fenced consumer owns this live cursor. Claim/checkpoint recovery
+        # validate payloads; polling must not rescan the complete retained prefix.
+        return consumer.cursor
+
+    def confirm_publication(
+        self, version: int, *, consumer: BatchConsumer | None = None
+    ) -> None:
+        """Release applied episode credits after serving acknowledges the weights.
+
+        The live consumer may be ahead of the last durable checkpoint. Payloads
+        remain retained for replay if that GPU state is subsequently lost.
+        """
         with self.queue._transaction() as db:
-            committed = db.execute("SELECT applied_batches FROM progress").fetchone()[0]
+            progress = self._progress(db, consumer)
+            committed = progress["applied_batches"]
             published = db.execute(
                 "SELECT published_version, admission_open FROM online_progress"
             ).fetchone()[0]
             if type(version) is not int or version != committed or version < published:
                 raise ValueError(
-                    "Publication must match the committed checkpoint version"
+                    "Publication must match applied progress (or the committed checkpoint)"
                 )
             db.execute(
                 "UPDATE online_episodes SET status='published' WHERE status='reserved' "
-                "AND batch_id IN (SELECT batch_id FROM batches WHERE status='committed')"
+                "AND batch_id IN (SELECT batch_id FROM batches WHERE sequence<=? "
+                "AND status IN ('applied','committed'))",
+                (progress["through_sequence"],),
             )
             db.execute("UPDATE online_progress SET published_version=?", (version,))
 
+    def rollback(self, consumer: BatchConsumer) -> None:
+        """Fence an abandoned serving branch after restoring its checkpoint cursor.
+
+        Already sealed batches replay in their original order. Other admitted or
+        ready episodes are explicitly rejected, including late source replies,
+        so reused version numbers cannot disguise data from the abandoned branch.
+        The caller pauses serving and stops the old Actor before this operation.
+        """
+        with self.queue._transaction() as db:
+            if db.execute("SELECT admission_open FROM online_progress").fetchone()[0]:
+                raise RuntimeError("Rollback requires closed admission")
+            cursor = self._progress(db, consumer)
+            db.execute(
+                "UPDATE online_episodes SET status=CASE WHEN batch_id IN "
+                "(SELECT batch_id FROM batches WHERE sequence<=?) THEN 'published' "
+                "ELSE 'reserved' END WHERE batch_id IS NOT NULL",
+                (cursor["through_sequence"],),
+            )
+            db.execute(
+                "UPDATE online_episodes SET status='rejected', rejection='recovery_rollback' "
+                "WHERE status IN ('admitted','ready')"
+            )
+            db.execute(
+                "UPDATE online_progress SET published_version=?",
+                (cursor["applied_batches"],),
+            )
+
     def status(self) -> dict[str, Any]:
+        """Serving acknowledgement and durable progress; SQLite names stay unchanged."""
         with self.queue._transaction() as db:
             counts = dict(
                 db.execute(
@@ -405,7 +465,9 @@ class OnlineInbox:
             published = db.execute(
                 "SELECT published_version, admission_open FROM online_progress"
             ).fetchone()
-            committed = db.execute("SELECT applied_batches FROM progress").fetchone()[0]
+            checkpoint = db.execute("SELECT applied_batches FROM progress").fetchone()[
+                0
+            ]
         return {
             "queue_id": self.queue.queue_id,
             "capacity": self.capacity,
@@ -415,7 +477,7 @@ class OnlineInbox:
                 if state not in ("published", "rejected")
             ),
             "counts": counts,
-            "committed_version": committed,
+            "checkpoint_version": checkpoint,
             "published_version": published[0],
             "admission_open": bool(published[1]),
         }

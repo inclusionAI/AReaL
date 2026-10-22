@@ -1,13 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
-"""Committed phase observations for the local single-producer elastic fixture."""
+"""Bounded published-update and lifecycle measurements for native Elastic training."""
 
 import json
 from pathlib import Path
 
+from areal.utils.atomic import atomic_json
 from areal.utils.atomic import json_digest as digest
-
-from ..state.checkpoint import atomic_json
 
 
 class RuntimeHistory:
@@ -37,7 +36,7 @@ class RuntimeHistory:
         return value
 
     def append(self, record: dict):
-        """Called only after checkpoint commit and successful weight publication."""
+        """Record a completed, published update; checkpointing may lag behind."""
         value = self._read()
         if (
             type(record.get("weights_version")) is not int
@@ -48,7 +47,8 @@ class RuntimeHistory:
             (
                 r
                 for r in value["updates"]
-                if r["checkpoint_id"] == record["checkpoint_id"]
+                if r.get("update_id", r["checkpoint_id"])
+                == record.get("update_id", record["checkpoint_id"])
             ),
             None,
         )
@@ -73,6 +73,16 @@ class RuntimeHistory:
             for r in (*value["updates"], *value.get("boundaries", ()))
         ):
             raise ValueError("Runtime history is newer than the recovered checkpoint")
+
+    def rollback(self, version: int):
+        """Remove observations belonging to the abandoned, unsaved GPU branch."""
+        value = self._read()
+        retained = self.snapshot(version)
+        if (value["updates"], value.get("boundaries", [])) != (
+            retained["updates"],
+            retained["boundaries"],
+        ):
+            atomic_json(self.path, {**value, **retained})
 
     def append_boundary(self, record: dict):
         """A committed lifecycle measurement, without inventing an optimizer update."""

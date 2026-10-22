@@ -202,6 +202,42 @@ def _merge_training_meta_by_name(meta_list: list[dict]) -> list[dict]:
     return list(by_name.values()) + overflow
 
 
+def _validate_wire_dtypes(
+    training_meta: list[dict], inference_meta: list[dict]
+) -> None:
+    """Reject incompatible P2P buffers before any rank initializes a collective."""
+
+    def data(value: dict) -> dict:
+        return value.get("data", value)
+
+    def dtype(value: dict):
+        result = value.get("dtype")
+        return result.get("value") if isinstance(result, dict) else result
+
+    by_name: dict[str, str] = {}
+    for role, metadata in (("training", training_meta), ("inference", inference_meta)):
+        for parameter in metadata:
+            parameter = data(parameter)
+            name, expected = parameter["name"], dtype(parameter)
+            if expected is None:
+                raise ValueError(f"Missing AWEX wire dtype for {role} parameter {name}")
+            if name in by_name and by_name[name] != expected:
+                raise ValueError(
+                    f"AWEX wire dtype mismatch for {name}: {by_name[name]} != {expected}"
+                )
+            by_name[name] = expected
+            shards = list(parameter.get("shards", []))
+            for replica in parameter.get("replicas", []):
+                shards.extend(data(replica).get("shards", []))
+            for shard in shards:
+                actual = dtype(data(shard))
+                if actual != expected:
+                    raise ValueError(
+                        f"AWEX wire dtype mismatch for {role} shard {name}: "
+                        f"{actual} != {expected}"
+                    )
+
+
 def create_app(config: WeightUpdateConfig | None = None) -> FastAPI:
     config = config or WeightUpdateConfig()
 
@@ -459,7 +495,6 @@ def create_app(config: WeightUpdateConfig | None = None) -> FastAPI:
                 training_params_meta.extend(meta)
             else:
                 training_params_meta.append(meta)
-        training_params_meta = _merge_training_meta_by_name(training_params_meta)
 
         infer_params_meta = []
         for result in infer_meta_resps:
@@ -469,6 +504,8 @@ def create_app(config: WeightUpdateConfig | None = None) -> FastAPI:
             else:
                 infer_params_meta.append(meta)
 
+        _validate_wire_dtypes(training_params_meta, infer_params_meta)
+        training_params_meta = _merge_training_meta_by_name(training_params_meta)
         kv_store.put(pair_name, "training_params_meta", training_params_meta)
         kv_store.put(pair_name, "infer_params_meta", infer_params_meta)
 
@@ -500,7 +537,12 @@ def create_app(config: WeightUpdateConfig | None = None) -> FastAPI:
                     session,
                     f"{url}/awex/init_weights_update_group",
                     init_timeout_s,
-                    json_data={**init_payload_base, "transfer_rank": i},
+                    json_data={
+                        **init_payload_base,
+                        "transfer_rank": i,
+                        # Leave part of the HTTP budget for abort and error replies.
+                        "transfer_timeout_s": config.update_timeout_s * 0.8,
+                    },
                 )
             )
         for i, url in enumerate(train_urls):
@@ -587,7 +629,6 @@ def create_app(config: WeightUpdateConfig | None = None) -> FastAPI:
                 training_params_meta.extend(meta)
             else:
                 training_params_meta.append(meta)
-        training_params_meta = _merge_training_meta_by_name(training_params_meta)
 
         infer_params_meta = []
         for result in infer_meta_resps:
@@ -597,6 +638,8 @@ def create_app(config: WeightUpdateConfig | None = None) -> FastAPI:
             else:
                 infer_params_meta.append(meta)
 
+        _validate_wire_dtypes(training_params_meta, infer_params_meta)
+        training_params_meta = _merge_training_meta_by_name(training_params_meta)
         kv_store.put(pair_name, "training_params_meta", training_params_meta)
         kv_store.put(pair_name, "infer_params_meta", infer_params_meta)
 

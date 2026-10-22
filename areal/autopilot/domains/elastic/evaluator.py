@@ -21,7 +21,6 @@ from areal.autopilot.domains.elastic.contracts import (
     lifecycle_profile_digest,
     observation_from_dict,
     plan_from_dict,
-    workflow_from_profile,
 )
 from areal.autopilot.domains.elastic.phase import (
     SCOPE,
@@ -38,6 +37,7 @@ from areal.autopilot.revision.contracts import (
 from areal.autopilot.revision.execution import CandidateRunner, load_source
 from areal.elastic.contracts import ResourceDecision, TrainingConfig
 from areal.elastic.policy.basic.optimizer import BasicOptimizer
+from areal.elastic.policy.basic.profile import workflow_from_profile
 from areal.elastic.policy.basic.simulator import (
     PlanStep,
     forecast_window,

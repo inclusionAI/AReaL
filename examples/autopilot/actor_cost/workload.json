@@ -1,8 +1,0 @@
-{
-  "n_seqs": 128,
-  "sequence_tokens": 524288,
-  "min_seq_len": 1024,
-  "max_seq_len": 8192,
-  "loss_tokens": 131072,
-  "outer_padded_tokens": 1048576
-}

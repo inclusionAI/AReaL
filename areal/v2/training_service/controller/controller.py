@@ -659,7 +659,9 @@ class GatewayTrainController:
     # -- Gateway HTTP helpers (duck-type TrainController interface) ---------
 
     @_exclusive_engine_operation
-    def _gateway_post(self, path: str, payload: Any = None) -> Any:
+    def _gateway_post(
+        self, path: str, payload: Any = None, *, timeout: float | None = None
+    ) -> Any:
         import requests
 
         self._ensure_initialized()
@@ -668,7 +670,7 @@ class GatewayTrainController:
             url,
             json=payload,
             headers={"Authorization": f"Bearer {self.api_key}"},
-            timeout=self.config.request_timeout,
+            timeout=self.config.request_timeout if timeout is None else timeout,
         )
         if resp.status_code >= 400:
             raise RuntimeError(
@@ -967,7 +969,11 @@ class GatewayTrainController:
             "args": serialize_value([]),
             "kwargs": serialize_value({"step": step, "force": force}),
         }
-        self._gateway_post("/save_perf_tracer", payload)
+        # Optional trace persistence must not block failed-generation cleanup
+        # for the full training RPC timeout. A timeout does not cancel the RPC.
+        self._gateway_post(
+            "/save_perf_tracer", payload, timeout=min(5.0, self.config.request_timeout)
+        )
 
     def clear_batches(self, *targets: Any) -> None:
         from areal.infra.rpc.rtensor import RTensor, flatten_shard_ids
@@ -1135,14 +1141,14 @@ class GatewayTrainController:
         )
 
     @_exclusive_engine_operation
-    def update_weights(self, meta: Any) -> None:
+    def update_weights(self, meta: Any, *, resume_generation: bool = True) -> None:
         if self._weight_update_ctrl is None or self.rollout is None:
             raise RuntimeError(
                 "connect_engine() must be called before update_weights()"
             )
         self.rollout.pause_generation()
-        assert meta.version is not None and meta.version > 0, (
-            f"meta.version must be a positive integer, got {meta.version}"
+        assert type(meta.version) is int and meta.version >= 0, (
+            f"meta.version must be a nonnegative integer, got {meta.version}"
         )
         result = self._weight_update_ctrl.update_weights(version=meta.version)
         if result.status != "ok" or result.version != meta.version:
@@ -1150,7 +1156,8 @@ class GatewayTrainController:
                 f"Weight publication v{meta.version} was not confirmed: {result}"
             )
         self.rollout.set_version(meta.version)
-        self.rollout.continue_generation()
+        if resume_generation:
+            self.rollout.continue_generation()
         logger.info(
             "Weight update v%d completed (%s, %.0fms)",
             meta.version,

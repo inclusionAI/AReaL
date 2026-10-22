@@ -1,8 +1,8 @@
 # Tau2 计划与公司端交接
 
-范围：S031、S029、T0390、S026、S030、S028、S025、S024、S013。 当前状态统一维护在
-[PROGRESS.md](../../PROGRESS.md)，Expert 细项见
-[专用进度](../../areal/elastic/policy/reference/PROGRESS.md)。旧论文 draft 仅作参考。
+范围：S031、S029、T0390、S026、S030、S028、S025、S024、S013。当前状态统一维护在
+[PROGRESS.md](../../PROGRESS.md)，Expert 接口与边界见
+[Reference](../../areal/elastic/policy/reference/README.md)。设计长文与历史进度保留在本地归档。
 
 [M2 历史快照](../../../artifacts/repository-archive-20261021/files/examples/autopilot/elastic/milestones/m2/README.md)
 保留旧串行执行器的代码身份与证据。 [架构图](elastic/README.md#policy-and-revision-loops) 区分 policy
@@ -73,8 +73,8 @@ SWE／Tau2 的完整 workflow 适配另行推进。 九条 Tau2 的研究范围�
 执行统一为 `PPOTrainer → OnDemandActor`；删除旧串行训练器、Rollout 包装和小模型 fixture 入口。 共享
 checkpoint、队列、在线 inbox 与进程所有权移入 `areal/elastic/state/`。
 
-- `NativePolicyRuntime` 接 Basic 决策、已提交历史和模型／optimizer 独立验收后的 bundle；旧串行 bundle 拒绝部署到原生
-  scope。
+- AReaL 的 `PolicyAdapter` 统一接默认超时／实测 Basic；AutoPilot 的 `RevisionAdapter` 接修订和独立验收后的
+  bundle；默认 Monitor 统一提供观测、历史和测量恢复，旧串行 bundle 拒绝部署到原生 scope。
 - `ConfigApplication` 保留 CAS、持久意图／回执和恢复；原生 executor 只接受相同固定布局，独立拓扑调整待实现。
 - `RuntimeRevisionLoop` 使用显式 host 协议；按完整 update 划分校准／验收并保留预算。原生首轮限定
   horizon=1、固定布局，阶段误差验收不代表异步完成时间或收益。
@@ -82,8 +82,8 @@ checkpoint、队列、在线 inbox 与进程所有权移入 `areal/elastic/state
 
 ## 后续实现：原生按需训练
 
-2026-10-21 方案，正在实施，GPU 验收未完成；当前状态见 `PROGRESS.md`。目标来自用户提供的讨论截图：保留 `PPOTrainer` 入口，
-Rollout 持续服务，Actor GPU workers 按数据需求启动／恢复／释放，后续支持独立重配置两侧。
+2026-10-21 方案；固定布局主流程已实施和 GPU 验收，故障闭环与完整结果见 `PROGRESS.md`。目标来自用户提供的讨论截图：保留 `PPOTrainer`
+入口， Rollout 持续服务，Actor GPU workers 按数据需求启动／恢复／释放，后续支持独立重配置两侧。
 
 首轮以 v2 online 模式、分离部署和固定布局为范围，先用 FSDP 回归，再接 Megatron 同布局恢复。 新增生命周期选项默认维持常驻行为，与现有
 `agent.mode=online` 分开；保留原生 PPO 计算、batch／group 和 reward 语义。 CPU 协调器、Rollout、轨迹接收与持久缓冲跨
@@ -99,23 +99,23 @@ Actor 代次存活；复用 elastic 机制，不直接套用严格串行的 `Ela
 
 关键约束：
 
-- 数据：当前在线通知在内存中，`export_trajectory` 会移除源记录。新增按需路径需可重试的 export／ack 或持久 outbox； payload
-  落盘后才确认交接，ID 包含运行／服务身份，记录生成权重版本、group 和内容摘要。 原生 tensor／RTensor 需转为不依赖旧进程的持久载荷，不能直接塞入现有
-  JSON 队列；队列复用其消费锁与 checkpoint 游标契约。
-- 恢复：原生 `RecoverHandler` 当前拒绝 v2；新增明确的恢复适配，覆盖模型、optimizer、LR、RNG、训练进度与消费游标。
-  恢复前校验模型／配置／checkpoint 身份；不通过关闭恢复检查来接通流程。
-- 提交：update → 完整 checkpoint 与消费游标提交 → 发布权重并确认 serving 版本 → 空闲释放。
-  发布失败只重试已提交权重；训练结果不确定时停止该代 workers，从最近提交恢复。
-- 建联：当前 AWEX `/disconnect` 仅清登记信息，未调用 worker teardown；补双端通信组／缓存清理及确认，之后才销毁 Actor。
-  新代次重新发现 topology／元数据、生成 transfer plan、建通信组，首次发布 full sync；connect／update／disconnect
+- 数据：按需路径需可重试的 export／ack 或持久 outbox； payload 落盘后才确认交接，ID 包含运行／服务身份，记录生成权重版本、group
+  和内容摘要。 原生 tensor／RTensor 需转为不依赖旧进程的持久载荷，不能直接塞入现有 JSON 队列；队列复用其消费锁与 checkpoint 游标契约。
+- 恢复：按需路径提供 v2 完整状态适配，覆盖模型、optimizer、LR、RNG、训练进度与消费游标。 恢复前校验模型／配置／checkpoint
+  身份；不通过关闭恢复检查来接通流程。
+- 顺序：update → 暂停 Rollout → 发布并确认 serving 版本 → 按周期保存 → 评估／清理／恢复 Rollout → 判断释放。
+  释放前补存本轮结束后的完整状态与消费游标，包括周期保存之后的 CPU／RNG 变化。意外故障从最近 checkpoint 恢复并重放未保存 batch， 拒绝未编入
+  batch、来自已放弃权重分支的轨迹；发布失败不再意味着该次 update 已持久化。
+- 建联：AWEX `/disconnect` 清理双端通信组／缓存并确认，之后才销毁 Actor；通信不确定时先证明故障训练代次已停止，再清理推理端。 新代次重新发现
+  topology／元数据、生成 transfer plan、建通信组，首次发布 full sync；connect／update／disconnect
   互斥、幂等并可查询结果。 拒绝旧代次请求，部分初始化失败须清理双方资源；不能把 RPC 超时当作远端已取消。
-- 发布：当前 controller 未检查返回的 `status="error"` 就恢复生成，须补成功状态与所有目标副本的版本核验。
-  部分更新失败时隔离受影响副本，用已提交完整权重修复，确认一致后再恢复服务。
+- 发布：controller 检查成功状态及所有目标副本的版本，再恢复生成。 部分更新失败时隔离受影响副本，用已提交完整权重修复，确认一致后再恢复服务。
 - 调度与收益：首轮只在已分配 GPU 池内释放／唤起，跨作业租约与 Slurm 资源归还另验。 使用 batch readiness 与 idle
   timeout，记录启停／恢复／发布耗时、两侧 GPU·h、队列等待与服务延迟； 与常驻 Actor 在相同输入和训练语义下比较，收益尚未确认。异步执行接
   policy／revision 前需重新验证模型及执行契约。
 
-用户已授权实现期间使用 8×H20。以下为拟运行任务，尚未启动；启动前核对现有作业、模型／运行环境与布局支持。 按阶段顺序运行，实际 GPU 编号由空闲资源确定。
+用户已授权实现期间使用 8×H20。以下为验收任务定义；实际配置、失败记录与结果见 `PROGRESS.md` 链接的 GPU
+证据。运行前核对现有作业、模型／环境与布局支持，只操作本轮自有资源。
 
 初始 staleness 与生命周期规则（拟实施，阈值为验收起点，尚非收益最优参数）：
 
@@ -127,10 +127,10 @@ Actor 代次存活；复用 elastic 机制，不直接套用严格串行的 `Ela
   额度与完整 batch 就绪分别计数；消费拒绝、提交和恢复均从持久记录核对，Actor 重启不能重置仍存活 Rollout 的计数。
 - 拉起：至少一个完整、持久化、奖励与版本合格的 batch 就绪，Actor 为停止状态，旧代 workers 已确认释放；首轮阈值为 1 batch，不预测性预热。
   释放过程中到达的新 batch 记录唤起需求，待旧代清理完成再启动；重复通知不重复创建 workers。
-- 释放：无完整合格 batch、无在途训练／checkpoint／发布／重配置，checkpoint 与消费游标已提交且 serving 版本已确认， 连续空闲达到
-  60s，且 Actor 就绪后已驻留至少 120s。空闲计时以最近一次成功训练发布／进入无完整 batch 状态为起点；零散轨迹不重置计时。 partial batch
-  留在 CPU，未结束的 Agent 会话本身不阻止释放；真正断联前再次原子检查就绪状态。
-- 生命周期冒烟用 idle=5s、最短驻留=0，专门覆盖三轮启停，不作为成本收益配置。 正式同口径对照固定 `S=2`，比较常驻 Actor
+- 释放：无完整合格 batch、无在途训练／checkpoint／发布／重配置，serving 版本已确认， 连续空闲达到 60s，且 Actor 就绪后已驻留至少
+  120s。空闲计时以最近一次成功训练发布／进入无完整 batch 状态为起点；零散轨迹不重置计时。 partial batch 留在 CPU，未结束的 Agent
+  会话本身不阻止释放；决定释放后补齐最新 checkpoint 与消费游标，保存后再次检查 batch 就绪状态。
+- 生命周期验收用 idle=5s、最短驻留=0，专门覆盖启停，不作为成本收益配置。 后续收益对照固定 `S=2`，比较常驻 Actor
   与上述按需规则，报告恢复等待、过期拒绝率、服务延迟与 GPU·h；成本优化策略后续再接。
 
 用户确认在线验收必须启动真实 v2 Agent Service：客户端 → Agent Gateway／DataProxy／Worker → Inference
@@ -139,11 +139,12 @@ Service／SGLang。 先以 `AgentRunnable` 适配轻量 GSM8K Agent，复用题�
 `examples.hermes.hermes.HermesAgent`，验收多轮对话、受控工具调用及会话与推理 session 的对应关系。 两阶段均将真实轨迹和评分送入原生
 `PPOTrainer`，执行更新、AWEX 发布及 Actor 释放／恢复；Agent Service 和 Rollout 跨 Actor 代次存活。
 
-| 任务                | 模型与 GPU 分配（Actor＋Rollout）                              | 初始规模与目的                                                                                      |
-| ------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| 生命周期冒烟        | Qwen3-0.6B；FSDP 2＋SGLang 1                                   | 6 次 update、3 轮启停；用固定真实轨迹检查完整状态恢复、权重发布及资源释放。                         |
-| 原生 online RL      | Qwen2.5-1.5B-Instruct；FSDP 4＋SGLang 2                        | 12 次 update；沿用 Hermes 的 `PPOTrainer` 在线入口，外部客户端送入 GSM8K train 问题并回传真实评分。 |
-| Megatron 同布局恢复 | Qwen2.5-1.5B-Instruct；目标 `megatron:d2p2` 4＋`sglang:d2t2` 4 | 12 次 update；相同在线任务，验证不同训练／推理并行布局下的恢复、拓扑发现与 AWEX 重连。              |
+| 任务                | 模型与 GPU 分配（Actor＋Rollout）                         | 初始规模与目的                                                                                      |
+| ------------------- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| 生命周期冒烟        | Qwen3-0.6B；FSDP 2＋SGLang 1                              | 6 次 update、3 轮启停；用固定真实轨迹检查完整状态恢复、权重发布及资源释放。                         |
+| 原生 online RL      | Qwen2.5-1.5B-Instruct；FSDP 4＋SGLang 2                   | 12 次 update；沿用 Hermes 的 `PPOTrainer` 在线入口，外部客户端送入 GSM8K train 问题并回传真实评分。 |
+| Megatron 同布局恢复 | Qwen2.5-1.5B-Instruct；`megatron:d2p2` 4＋`sglang:d2t2` 4 | 12 次 update；B8满足PP最小微批要求，验证不同训练／推理并行布局下的恢复、拓扑发现与 AWEX 重连。      |
+| Hermes 多轮工具     | Qwen3-4B-Instruct-2507；FSDP4＋SGLang1                    | 原生64K服务、24个双轮episode、6更新，至少三代Actor；实际任务失败保持0分。                           |
 
 在线任务采用短突发→空闲→再突发以及持续到达，固定请求内容与输入顺序；每 batch 拟用 4 条独立轨迹，保留 online 单样本组语义。 通过原生
 session／completion／reward／export 通路，复用 GSM8K scorer。随后单独进行真实 Hermes 多轮／工具交互在线 RL 验收，先跑 6
@@ -157,8 +158,10 @@ CPU 测试扩展现有 trainer、queue、recovery、inference 和 weight-update 
 ## 当前接口与文件组织
 
 ```text
-areal/trainer/{rl_trainer,on_demand}.py  # 唯一 PPO 执行与生命周期
-areal/elastic/{state,control,telemetry}/ # 持久状态、控制事务与实测
+areal/trainer/rl_trainer.py             # 唯一 PPO 执行与每轮工作顺序
+areal/elastic/runtime.py               # Actor 生命周期、发布、保存与恢复
+areal/elastic/{state,control,monitor}/   # 持久状态、控制事务与运行观测／实测
+areal/v2/training_service/{checkpoint,runtime_state}.py # 原生状态读写与各 rank LR／RNG
 areal/elastic/policy/basic/             # Basic 模型／simulator／optimizer
 areal/elastic/policy/reference/         # 独立 Expert 对照
 areal/autopilot/revision/               # 通用 proposal／评测编排／接受／store
@@ -172,10 +175,9 @@ areal/autopilot/domains/elastic/        # Elastic evaluator、worker、bundle �
 
 ## 代码入口与复核
 
-离线模型无需 GPU：
+模型与规划测试入口：
 
 ```bash
-python -S areal/elastic/policy/basic examples/autopilot/elastic/lifecycle_scenario.json
 python tests/run_autopilot_cpu.py -q \
   tests/test_elastic_basic_policy.py tests/test_elastic_lifecycle_optimizer.py \
   tests/test_autopilot_actor_cost.py tests/test_autopilot_revision.py
@@ -192,3 +194,5 @@ pre-commit run --all-files
 历史结果、文献材料和 R10
 数据已移入[本地归档](../../../artifacts/repository-archive-20261021/README.md)，运行代码、基础 profile
 和必要测试输入保留。 R10 档案测试需显式设置 `AREAL_TEST_EXPERT_CATALOG`；默认测试不依赖此机器的归档目录。后续逐项评估开发期间需回放入库的材料。
+离线 CLI、R10 回放辅助代码及专用验证入口另见
+[开发材料归档](../../../artifacts/elastic-policy-development-20261021/README.md)。

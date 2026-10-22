@@ -21,16 +21,23 @@ def main(args):
     if options.elastic_policy or any(
         (options.elastic_profile, options.elastic_settings, options.elastic_bundle)
     ):
-        from areal.autopilot.domains.elastic.native import NativePolicyRuntime
+        from areal.elastic.policy.adapter import PolicyAdapter
 
-        kwargs["elastic_policy"] = NativePolicyRuntime(
+        adapter_type = PolicyAdapter
+        adapter_options = {}
+        if options.elastic_policy or options.elastic_bundle is not None:
+            from areal.autopilot.domains.elastic.native import RevisionAdapter
+
+            adapter_type = RevisionAdapter
+            adapter_options["bundle"] = options.elastic_bundle
+        kwargs["elastic_policy"] = adapter_type(
             profile=None
             if options.elastic_profile is None
             else json.loads(options.elastic_profile.read_text()),
             settings=None
             if options.elastic_settings is None
             else json.loads(options.elastic_settings.read_text()),
-            bundle=options.elastic_bundle,
+            **adapter_options,
         )
 
     with PPOTrainer(config, **kwargs) as trainer:

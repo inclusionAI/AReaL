@@ -9,31 +9,34 @@ from types import SimpleNamespace
 import pytest
 
 from tests.test_elastic_checkpoint import (
+    _complete_native_update,
     _ready_native_episodes,
     native_lifecycle,  # noqa: F401 -- shared native controller fixture
 )
 
-from areal.autopilot.domains.elastic.native import NativePolicyRuntime
+from areal.autopilot.domains.elastic.native import RevisionAdapter
 from areal.autopilot.domains.elastic.policy import PolicyBoundaryBusy, PolicyRequest
 from areal.elastic.contracts import BatchWorkload, HistorySnapshot, TrainingConfig
-from areal.elastic.control.config import ConfigRequest
+from areal.elastic.control.config_application import ConfigRequest
 
 
 @pytest.fixture
 def native_policy(request):
     fixture = request.getfixturevalue("native_lifecycle")
     fixture.manager.close()
-    runtime = NativePolicyRuntime()
+    runtime = RevisionAdapter()
     manager = fixture.create(runtime)
     yield manager, runtime, fixture
     manager.close()
 
 
 def update(manager):
-    _ready_native_episodes(manager, manager.version * 4, manager.version)
+    _ready_native_episodes(
+        manager, manager.applied_version * 4, manager.applied_version
+    )
     assert len(manager.next_batch()) == 4
     manager.actor.updates += 1
-    manager.commit_and_publish(manager.version + 1)
+    _complete_native_update(manager, manager.applied_version + 1)
 
 
 def accepted_native_bundle(runtime, root, *, native=True):
@@ -133,10 +136,10 @@ def test_native_policy_records_published_updates_and_restores_history(native_pol
     assert manager.rollout is fixture.rollout
     manager.close()
     history = runtime.runtime_history.snapshot(3)
-    recovered_runtime = NativePolicyRuntime()
+    recovered_runtime = RevisionAdapter()
     recovered = fixture.create(recovered_runtime)
     try:
-        assert recovered.version == 3 and recovered.actor is None
+        assert recovered.applied_version == 3 and recovered.actor is None
         assert recovered_runtime.runtime_history.snapshot(3) == history
         assert recovered_runtime.observe().committed_tokens == 24
         update(recovered)
@@ -145,7 +148,40 @@ def test_native_policy_records_published_updates_and_restores_history(native_pol
         recovered.close()
 
 
-def test_native_publication_failure_commits_history_once_without_replaying_update(
+def test_native_policy_tracks_updates_between_periodic_checkpoints(native_policy):
+    """Measured skipped saves are distinct from missing checkpoint measurements."""
+    manager, runtime, _ = native_policy
+    manager.checkpoint_frequency.step_ctl.frequency_steps = 3
+    for _ in range(3):
+        update(manager)
+    rows = runtime.runtime_history.snapshot(3)["updates"]
+    assert [row["checkpointed"] for row in rows] == [False, False, True]
+    assert [row["checkpoint_id"] for row in rows[:2]] == [None, None]
+    assert all(not row["missing_phases"] for row in rows)
+    assert runtime.observe().committed_tokens == 24
+    assert manager.inbox.status()["checkpoint_version"] == 3
+
+
+def test_native_policy_rollback_removes_unsaved_history_before_replay(native_policy):
+    """Abandoned weight versions cannot collide with replayed runtime records."""
+    manager, runtime, _ = native_policy
+    update(manager)
+    manager.checkpoint_frequency.step_ctl.frequency_steps = 100
+    update(manager)
+    update(manager)
+    assert len(runtime.runtime_history.snapshot(3)["updates"]) == 3
+    manager.recover_uncertain(RuntimeError("lost unsaved GPU state"))
+    assert manager.applied_version == 1 and runtime.observe().committed_tokens == 8
+    assert len(runtime.runtime_history.snapshot(3)["updates"]) == 1
+    for version in (2, 3):
+        manager.next_batch()
+        manager.actor.updates += 1
+        _complete_native_update(manager, version)
+    assert len(runtime.runtime_history.snapshot(3)["updates"]) == 3
+    assert runtime.observe().committed_tokens == 24
+
+
+def test_native_publication_failure_replays_unsaved_update_and_records_history_once(
     native_policy,
 ):
     manager, runtime, _ = native_policy
@@ -154,12 +190,16 @@ def test_native_publication_failure_commits_history_once_without_replaying_updat
     manager.actor.updates += 1
     manager.actor.fail_publication = True
     with pytest.raises(TimeoutError):
-        manager.commit_and_publish(1)
+        manager.publish_update(1)
     assert runtime.runtime_history.snapshot(1)["updates"] == []
     manager.recover_uncertain(TimeoutError("ack lost"))
-    assert manager.version == manager.actor.updates == 1
+    assert manager.applied_version == manager.actor.updates == 0
+    manager.next_batch()
+    manager.actor.updates += 1
+    _complete_native_update(manager, 1)
+    assert manager.applied_version == manager.actor.updates == 1
     assert len(runtime.runtime_history.snapshot(1)["updates"]) == 1
-    runtime.published()
+    manager.monitor.complete_update()
     assert len(runtime.runtime_history.snapshot(1)["updates"]) == 1
     assert manager.inbox.status()["active_credits"] == 0
 
@@ -205,6 +245,22 @@ def test_native_policy_cannot_bypass_batch_or_release_guards(native_policy):
         )
 
 
+def test_native_timeout_adapter_matches_default_policy_clock(native_policy):
+    """Explicit baseline instrumentation preserves default timeout decisions."""
+    manager, runtime, _ = native_policy
+    assert runtime is manager.policy_adapter
+    update(manager)
+    now = max(manager.ready_since + 120, manager.idle_since + 60)
+    observation = manager.monitor.observe(now=now)
+    assert runtime.observe(now=now) == replace(
+        observation, committed_tokens=manager.monitor.completed_tokens
+    )
+    assert runtime.decide(None, now=now) == manager.policy_adapter.policy.decide(
+        observation
+    )
+    assert manager.maybe_suspend(now=now)
+
+
 def test_native_policy_rejects_legacy_bundle_and_activates_native_acceptance(
     native_policy, tmp_path
 ):
@@ -221,21 +277,21 @@ def test_native_policy_rejects_legacy_bundle_and_activates_native_acceptance(
     with pytest.raises(PolicyBoundaryBusy):
         runtime.apply_policy(request, prepared)
     manager.actor.updates += 1
-    manager.commit_and_publish(1)
+    _complete_native_update(manager, 1)
     request = replace(request, expected_weights_version=1)
-    before = manager.version, manager.actor, fixture.actors[:]
+    before = manager.applied_version, manager.actor, fixture.actors[:]
     receipt = runtime.apply_policy(request, prepared)
     assert runtime.apply_policy(request, prepared) == receipt
     assert runtime.policy_generation == 1
-    assert (manager.version, manager.actor, fixture.actors) == before
+    assert (manager.applied_version, manager.actor, fixture.actors) == before
     update(manager)
     assert manager.actor.updates == 2
     manager.close()
-    restored_runtime = NativePolicyRuntime()
+    restored_runtime = RevisionAdapter()
     restored = fixture.create(restored_runtime)
     try:
         assert restored_runtime.policy_generation == 1
-        assert restored.version == 2 and restored.actor is None
+        assert restored.applied_version == 2 and restored.actor is None
         assert len(restored_runtime.history.snapshot().workloads) == 2
     finally:
         restored.close()
@@ -277,28 +333,31 @@ def test_native_cleanup_closes_policy_and_consumer_after_admission_disk_failure(
         with pytest.raises(ExceptionGroup, match="cleanup"):
             manager.close()
     assert runtime.closed and manager._closed and manager.actor is None
-    recovered = fixture.create(NativePolicyRuntime())
+    recovered = fixture.create(RevisionAdapter())
     recovered.close()
 
 
-def test_native_policy_attach_rejects_legacy_checkpoint_before_persisting_state(
-    request,
-):
+def test_native_revision_attaches_to_ordinary_checkpoint_with_shared_monitor(request):
+    """An ordinary run already has all measurement state required by revision."""
     fixture = request.getfixturevalue("native_lifecycle")
     update(fixture.manager)
     fixture.manager.close()
-    with pytest.raises(ValueError, match="without policy state"):
-        fixture.create(NativePolicyRuntime())
-    assert not (fixture.manager.root / "policy-application").exists()
-    resumed = fixture.create()
-    assert resumed.version == 1
-    resumed.close()
+    context = fixture.manager.monitor.runtime_history.context
+    resumed = fixture.create(RevisionAdapter())
+    try:
+        assert resumed.applied_version == 1
+        assert resumed.monitor.completed_tokens == 8
+        assert resumed.policy_adapter.runtime_history is resumed.monitor.runtime_history
+        assert resumed.monitor.runtime_history.context == context
+        assert len(resumed.policy_adapter.history.snapshot().workloads) == 1
+    finally:
+        resumed.close()
 
 
 def test_native_uncertain_policy_pointer_recovers_without_closed_admission_deadlock(
     native_policy, tmp_path, monkeypatch
 ):
-    import areal.elastic.control.application as store
+    import areal.elastic.control.policy_activation as store
 
     manager, runtime, _ = native_policy
     bundle = accepted_native_bundle(runtime, tmp_path / "revision")
@@ -320,7 +379,7 @@ def test_native_uncertain_policy_pointer_recovers_without_closed_admission_deadl
     with pytest.raises(RuntimeError, match="Recover pending policy"):
         manager._poll_batch()
     manager.recover_uncertain(RuntimeError("activation outcome unknown"))
-    assert runtime.policy_generation == 1 and manager.version == 0
+    assert runtime.policy_generation == 1 and manager.applied_version == 0
     assert manager.inbox.status()["admission_open"]
     update(manager)
     assert manager.actor.updates == 1
@@ -329,9 +388,9 @@ def test_native_uncertain_policy_pointer_recovers_without_closed_admission_deadl
 def test_native_four_gpu_missing_measurement_keeps_fixed_layout_cold_fallback():
     from tests.test_elastic_basic_policy import model, observation
 
-    from areal.autopilot.domains.elastic.phase import FixedLayoutSimulator
     from areal.elastic.policy.basic.optimizer import BasicOptimizer
     from areal.elastic.policy.basic.policy import BasicPolicy
+    from areal.elastic.policy.basic.profile import FixedLayoutSimulator
     from areal.elastic.policy.basic.simulator import MeasuredComponent
 
     policy = BasicPolicy(
@@ -361,11 +420,11 @@ def test_native_history_disk_failure_still_closes_policy_and_releases_consumer(
             "append_boundary",
             lambda *args, **kwargs: (_ for _ in ()).throw(OSError("history disk full")),
         )
-        with pytest.raises(ExceptionGroup, match="cleanup"):
-            manager.close()
+        manager.close()
+        assert not runtime.measurement_ready
     assert runtime.closed and manager._closed
     assert manager.actor is None and manager.owner is None
-    recovered = fixture.create(NativePolicyRuntime())
+    recovered = fixture.create(RevisionAdapter())
     recovered.close()
 
 
@@ -396,7 +455,7 @@ def test_native_background_revision_uses_committed_host_and_durable_window_budge
         ],
     }
     fixture.config.actor_lifecycle.state_root = str(tmp_path / "measured-run")
-    measured = NativePolicyRuntime(profile=profile)
+    measured = RevisionAdapter(profile=profile)
     manager = fixture.create(measured)
 
     class Unchanged:
@@ -428,7 +487,7 @@ def test_native_background_revision_uses_committed_host_and_durable_window_budge
             (tmp_path / "revision/window-0001/outcome.json").read_text()
         )
         assert outcome["status"] == "unchanged", outcome
-        assert measured.policy_generation == 0 and manager.version == 4
+        assert measured.policy_generation == 0 and manager.applied_version == 4
         for _ in range(4):
             update(manager)
         measured.poll()
@@ -477,8 +536,50 @@ def test_hermes_entry_preserves_config_arguments_and_optionally_attaches_native_
     assert seen["args"] == config_args and seen["trained"]
     assert ("elastic_policy" in seen) == enabled
     if enabled:
-        assert isinstance(seen["elastic_policy"], NativePolicyRuntime)
+        assert isinstance(seen["elastic_policy"], RevisionAdapter)
         assert seen["elastic_policy"].closed
+
+
+def test_hermes_measured_profile_selects_areal_adapter_without_autopilot(
+    monkeypatch, tmp_path
+):
+    """Profile-only runs use the ordinary adapter and default Monitor."""
+    import builtins
+
+    from examples.hermes import train
+
+    from areal.elastic.policy.adapter import PolicyAdapter
+
+    profile = tmp_path / "profile.json"
+    profile.write_text(json.dumps({"measurements": []}))
+    seen = {}
+
+    class Trainer:
+        def __init__(self, config, **kwargs):
+            seen.update(kwargs)
+
+        def __enter__(self):
+            return self
+
+        def train(self):
+            seen["trained"] = True
+
+        def __exit__(self, *args):
+            seen["elastic_policy"].close()
+
+    original_import = builtins.__import__
+
+    def without_autopilot(name, *args, **kwargs):
+        if name == "areal.autopilot" or name.startswith("areal.autopilot."):
+            raise AssertionError("Measured Basic entry must not import AutoPilot")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(train, "load_expr_config", lambda *args: (object(), None))
+    monkeypatch.setattr(train, "PPOTrainer", Trainer)
+    monkeypatch.setattr(builtins, "__import__", without_autopilot)
+    train.main(["--elastic-profile", str(profile), "actor_lifecycle.mode=on_demand"])
+    assert type(seen["elastic_policy"]) is PolicyAdapter
+    assert seen["elastic_policy"].hooks is None and seen["trained"]
 
 
 def test_duplicate_policy_owner_rejection_does_not_close_original_trainer(
@@ -493,17 +594,19 @@ def test_duplicate_policy_owner_rejection_does_not_close_original_trainer(
         fixture.create(runtime)
     assert not runtime.closed and runtime.owner is manager
     update(manager)
-    assert manager.version == 1
+    assert manager.applied_version == 1
 
 
-def test_release_after_history_append_failure_uses_current_checkpoint_workload(
+def test_history_append_failure_preserves_update_and_pauses_revision(
     native_policy, monkeypatch
 ):
+    """An optional history failure never replays a successfully published PPO."""
+    from unittest.mock import MagicMock
+
     from tests.test_elastic_batch_queue import _receive_episode
 
-    manager, runtime, _ = native_policy
+    manager, runtime, fixture = native_policy
     update(manager)
-    previous = runtime.runtime_history.snapshot(1)["updates"][0]["workload"]
     for number in range(4, 8):
         _receive_episode(manager.inbox, number, version=1, rows=2)
     manager.next_batch()
@@ -514,16 +617,28 @@ def test_release_after_history_append_failure_uses_current_checkpoint_workload(
             "append",
             lambda *args: (_ for _ in ()).throw(OSError("history unavailable")),
         )
-        with pytest.raises(OSError, match="history unavailable"):
-            manager.commit_and_publish(2)
-    current = runtime._checkpoint_record()["pending"]["workload"]
-    assert current != previous
-    manager.recover_uncertain(OSError("retry history persistence"))
-    snapshot = runtime.runtime_history.snapshot(2)
-    assert snapshot["boundaries"][-1]["weights_version"] == 2
-    assert snapshot["boundaries"][-1]["measurements"][0]["workload"] == current
-    assert snapshot["updates"][-1]["workload"] == current
-    assert manager.version == 2
+        _complete_native_update(manager, 2)
+    assert manager.applied_version == manager.published_version == 2
+    assert manager.actor.updates == 2 and manager.active is None
+    assert not runtime.measurement_ready and not runtime.policy_boundary_ready
+    revision = MagicMock()
+    monkeypatch.setattr(runtime, "revision", revision)
+    runtime.poll()
+    revision.tick.assert_not_called()
+    expected = manager.data_progress.copy()
+    assert manager.monitor.completed_tokens == expected["effective_tokens"]
+    assert manager.maybe_suspend(now=manager.ready_since + 121)
+    assert manager.latest_manifest["data_progress"] == expected
+    assert manager.consumer.cursor["applied_batches"] == 2
+    manager.close()
+    restored = fixture.create(RevisionAdapter())
+    try:
+        assert restored.applied_version == 2 and restored.data_progress == expected
+        assert restored.monitor.runtime_history.snapshot(2)["updates"] == []
+        restored.ensure_actor()
+        assert restored.actor.updates == 2
+    finally:
+        restored.close()
 
 
 def test_native_public_control_serializes_policy_activation_and_reports_boundary(
@@ -531,7 +646,7 @@ def test_native_public_control_serializes_policy_activation_and_reports_boundary
 ):
     import threading
 
-    from areal.elastic.control.application import PolicyBoundaryBusy
+    from areal.elastic.control.policy_activation import PolicyBoundaryBusy
 
     manager, runtime, _ = native_policy
     entered, finish = threading.Event(), threading.Event()
@@ -557,3 +672,102 @@ def test_native_public_control_serializes_policy_activation_and_reports_boundary
     assert runtime.policy_generation == 0 and not runtime.failed
     manager.fence_admission()
     assert not manager.inbox.status()["admission_open"]
+
+
+def test_accepted_bundle_still_rejects_protected_comment_changes(
+    native_policy, tmp_path, monkeypatch
+):
+    """Measurement compatibility never relaxes accepted-bundle source proofs."""
+    from pathlib import Path
+
+    from areal.autopilot.domains.elastic.policy import validate_bundle
+    from areal.elastic.identity import measurement_identity
+
+    manager, runtime, _ = native_policy
+    bundle = json.loads(
+        Path(accepted_native_bundle(runtime, tmp_path / "proof")).read_text()
+    )
+    validate_bundle(bundle)
+    original = Path.read_text
+    identity = measurement_identity(manager)
+
+    def changed_trace(path, *args, **kwargs):
+        source = original(path, *args, **kwargs)
+        if path.as_posix().endswith("elastic/monitor/trace.py"):
+            source += "\n# a harmless offline parser comment\n"
+        return source
+
+    monkeypatch.setattr(Path, "read_text", changed_trace)
+    assert measurement_identity(manager) == identity
+    with pytest.raises(ValueError, match="code changed"):
+        validate_bundle(bundle)
+
+
+@pytest.mark.parametrize("fault", ["snapshot_io", "missing_metrics", "changed_series"])
+def test_native_revision_pauses_on_unavailable_measurement_window(
+    native_policy, tmp_path, monkeypatch, fault
+):
+    """Missing observations cannot launch a revision or fail the native PPO loop."""
+    from unittest.mock import MagicMock
+
+    from areal.autopilot.domains.elastic.online import RuntimeRevisionLoop
+    from areal.elastic.contracts import Measurement
+    from areal.utils.atomic import atomic_json
+
+    initial, adapter, fixture = native_policy
+    initial.close()
+    profile = {
+        **adapter.profile,
+        "measurements": [
+            asdict(Measurement(phase, 1, 1, 8))
+            for phase in (
+                "start",
+                "restore",
+                "train",
+                "checkpoint",
+                "publish",
+                "release",
+            )
+        ],
+    }
+    fixture.config.actor_lifecycle.state_root = str(tmp_path / "measured-fault")
+    host = RevisionAdapter(profile=profile)
+    manager = fixture.create(host)
+    loop = host.revision = RuntimeRevisionLoop(
+        tmp_path / "revision-fault",
+        profile=profile,
+        model_agent=MagicMock(),
+        optimizer_agent=MagicMock(),
+        settings=host.settings,
+        scope="native-async-v1",
+        horizon=1,
+        max_windows=1,
+        max_model_rounds=1,
+        max_optimizer_rounds=1,
+        idle_seconds=manager.options.idle_timeout,
+    )
+    try:
+        for _ in range(4):
+            update(manager)
+        snapshot = MagicMock(side_effect=OSError("measurement window unavailable"))
+        if fault == "changed_series":
+            atomic_json(
+                loop.root / "execution.json",
+                {
+                    "policy_context": host.policy_application.context,
+                    "history_context": "previous-measurement-series",
+                },
+            )
+        else:
+            monkeypatch.setattr(host.runtime_history, "snapshot", snapshot)
+            if fault == "missing_metrics":
+                manager.monitor.mark_unavailable(OSError("earlier metrics failure"))
+        loop.tick(host)
+        assert loop.future is None and not list(loop.root.glob("window-*"))
+        assert not host.measurement_ready
+        assert manager.applied_version == manager.published_version == 4
+        assert manager.actor.updates == 4
+        if fault == "missing_metrics":
+            snapshot.assert_not_called()
+    finally:
+        manager.close()

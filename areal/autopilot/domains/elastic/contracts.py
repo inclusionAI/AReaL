@@ -11,11 +11,6 @@ from areal.elastic.policy.basic.serialization import (
     observation_from_dict,
     plan_from_dict,
 )
-from areal.elastic.policy.basic.simulator import (
-    MeasuredComponent,
-    Measurement,
-    WorkflowModel,
-)
 
 
 def lifecycle_profile_digest(profile: dict) -> str:
@@ -35,24 +30,6 @@ def lifecycle_profile_digest(profile: dict) -> str:
     )
 
 
-def workflow_from_profile(profile: dict) -> WorkflowModel:
-    measurements = tuple(Measurement(**x) for x in profile["measurements"])
-    return WorkflowModel(
-        **{
-            phase: MeasuredComponent(phase, measurements, scale_tokens=phase == "train")
-            for phase in (
-                "train",
-                "start",
-                "restore",
-                "checkpoint",
-                "publish",
-                "release",
-            )
-        },
-        inference_gpus=profile.get("inference_gpus", 1),
-    )
-
-
 def deployment_context(profile: dict, settings: dict) -> dict:
     """Bind accepted code to the model, residency and optimizer contract."""
     return {
@@ -67,7 +44,7 @@ def deployment_context(profile: dict, settings: dict) -> dict:
 
 
 BASELINE_SOURCE = {
-    "serial_model": "from areal.elastic.policy.basic.online import serial_model_from_profile\ndef build_serial_model(profile):\n    return serial_model_from_profile(profile)\n",
+    "serial_model": "from areal.elastic.policy.basic.serial_planning import serial_model_from_profile\ndef build_serial_model(profile):\n    return serial_model_from_profile(profile)\n",
     "joint_optimizer": "from areal.elastic.policy.basic.optimizer import JointOptimizer\ndef build_joint_optimizer(settings):\n    return JointOptimizer(**settings)\n",
     "simulator": "from areal.elastic.policy.basic.simulator import WorkflowSimulator\ndef build_simulator(workflow):\n    return WorkflowSimulator(workflow)\n",
     "optimizer": "from areal.elastic.policy.basic.optimizer import BasicOptimizer\ndef build_optimizer(settings):\n    return BasicOptimizer(**settings)\n",
@@ -116,13 +93,16 @@ def proposal_context(target: str) -> dict:
             for n in ("model_evaluator", "model_adapters", "model_execution")
         ]
     elif target == "serial_model":
-        names += ["elastic/policy/basic/online.py", "elastic/policy/basic/joint.py"]
+        names += [
+            "elastic/policy/basic/serial_planning.py",
+            "elastic/policy/basic/joint.py",
+        ]
     elif target == "joint_optimizer":
         names += [
             "elastic/policy/basic/joint.py",
             "elastic/policy/basic/optimizer.py",
             "autopilot/domains/elastic/joint_evaluator.py",
-            "elastic/policy/basic/online.py",
+            "elastic/policy/basic/serial_planning.py",
         ]
     elif target in {"simulator", "optimizer"}:
         names += [
@@ -153,7 +133,6 @@ __all__ = [
     "BASELINE_SOURCE",
     "deployment_context",
     "lifecycle_profile_digest",
-    "workflow_from_profile",
     "proposal_context",
     "elastic_proposal_request",
 ]

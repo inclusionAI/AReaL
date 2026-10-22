@@ -4,8 +4,6 @@
 
 import itertools
 import json
-import subprocess
-import sys
 from dataclasses import asdict, replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -54,7 +52,6 @@ from areal.elastic.policy.basic.actor_cost import (
     ActorTrainComponent,
     CompatibleRestore,
 )
-from areal.elastic.policy.basic.cli import run_scenario
 from areal.elastic.policy.basic.cost_model import (
     ActorConfig,
     ActorCostModel,
@@ -467,64 +464,6 @@ def test_bounded_search_retains_all_profiles_and_shortens_lookahead(catalog):
         build_actor_policy(catalog, lifecycle(), max_evaluations=7).decide(
             observation(next_batch=WORK, max_train_gpus=32)
         )
-
-
-def test_standalone_lifecycle_cli_runs_without_training_dependencies(tmp_path):
-    """The full model/simulator/optimizer chain works with only the stdlib."""
-    output = tmp_path / "decision.json"
-    subprocess.run(
-        [
-            sys.executable,
-            "-S",
-            str(ROOT / "areal/elastic/policy/basic"),
-            str(EXAMPLE),
-            "--output",
-            str(output),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    result = json.loads(output.read_text())
-    assert result == json.loads(
-        json.dumps(run_scenario(json.loads(EXAMPLE.read_text())))
-    )
-    assert result["decision"]["action"] == "launch"
-    assert len(result["actor_predictions"]) == 4
-    assert result["prediction"]["samples"] == 96
-    assert result["prediction"]["effective_tokens"] == 196608
-
-
-def test_frozen_lifecycle_validation_reproduces_all_scenarios():
-    """Saved decisions and actor estimates are reproducible with only stdlib inputs."""
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-S",
-            str(ROOT / "examples/autopilot/elastic/validation/lifecycle_policy.py"),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    actual = json.loads(result.stdout)
-    expected = json.loads(
-        (
-            ROOT
-            / "examples/autopilot/elastic/validation/lifecycle-policy-20261018.json"
-        ).read_text()
-    )
-    # Keep the dated numeric archive immutable; executor-limit prose evolves.
-    actual.pop("limitations")
-    expected.pop("limitations")
-    assert actual == expected
-    cases = actual["cases"]
-    assert cases["switch_declared"]["decision"]["action"] == "reconfigure"
-    assert cases["switch_undeclared"]["decision"]["action"] == "keep"
-    assert (
-        cases["switch_after_gap"]["plan"][0]["config"]
-        != cases["switch_after_gap"]["plan"][1]["config"]
-    )
 
 
 # The joint model has an independent inference input and no Expert dependency.

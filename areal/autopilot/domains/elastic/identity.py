@@ -22,6 +22,11 @@ def protected_files() -> tuple[Path, ...]:
     }
     paths.update(
         AREAL_ROOT / name
-        for name in ("utils/atomic.py", "trainer/on_demand.py", "trainer/rl_trainer.py")
+        for name in (
+            "utils/atomic.py",
+            "trainer/rl_trainer.py",
+            "v2/training_service/checkpoint.py",
+            "v2/training_service/runtime_state.py",
+        )
     )
     return tuple(sorted(paths))

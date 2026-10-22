@@ -34,7 +34,7 @@ from areal.api.cli_args import (
     ValidDatasetConfig,
     vLLMConfig,
 )
-from areal.elastic.control.policy import validate_unbound_policy
+from areal.elastic.control.policy_hooks import validate_unbound_adapter
 from areal.engine import RemoteSGLangEngine, RemotevLLMEngine
 from areal.infra import (
     LocalScheduler,
@@ -113,7 +113,7 @@ class PPOTrainer:
         *,
         elastic_policy=None,
     ):
-        validate_unbound_policy(elastic_policy)
+        validate_unbound_adapter(elastic_policy)
         self._elastic_policy = elastic_policy
         self._on_demand = None
         self.actor = None
@@ -148,7 +148,7 @@ class PPOTrainer:
         if self._elastic_policy is not None and not self._on_demand_mode:
             raise ValueError("elastic_policy requires actor_lifecycle.mode='on_demand'")
         if self._on_demand_mode:
-            from areal.trainer.on_demand import validate_on_demand
+            from areal.elastic.runtime import validate_on_demand
 
             validate_on_demand(config)
         self._apply_dte_config_envvars()
@@ -347,7 +347,7 @@ class PPOTrainer:
         # before the data controller can colocate with them.
         engine_init_kwargs = {"addr": None, "ft_spec": ft_spec}
         if self._on_demand_mode:
-            from areal.trainer.on_demand import OnDemandActor
+            from areal.elastic.runtime import OnDemandActor
 
             self._on_demand = OnDemandActor(
                 config,
@@ -358,7 +358,7 @@ class PPOTrainer:
                     scheduler=self.scheduler,
                     create_process_group=False,
                 ),
-                policy_runtime=self._elastic_policy,
+                policy_adapter=self._elastic_policy,
             )
         else:
             self.actor.initialize(**engine_init_kwargs, role="actor")
@@ -738,7 +738,7 @@ class PPOTrainer:
         if self._on_demand is not None:
             if workflow is not None or dynamic_filter_fn is not None:
                 raise ValueError("on_demand consumes rewarded online episodes directly")
-            start_step = self._on_demand.version
+            start_step = self._on_demand.applied_version
 
         global_step = start_step
         failures = 0
@@ -770,7 +770,7 @@ class PPOTrainer:
                 )
                 self._on_demand.recover_uncertain(error)
                 self.actor = self._on_demand.actor
-                global_step = self._on_demand.version
+                global_step = self._on_demand.applied_version
                 continue
             global_step += 1
             failures = 0
@@ -989,8 +989,10 @@ class PPOTrainer:
         # calls in update_weights/save are no-ops.
 
         if self._on_demand is not None:
+            self._on_demand.publish_update(global_step + 1)
             self._save_hf(epoch=epoch, epoch_step=step, global_step=global_step)
             self.saver.maybe_wait_for_staging()
+            self._on_demand.maybe_checkpoint(epoch_step=step)
         else:
             with (
                 stats_tracker.record_timing("update_weights"),
@@ -1081,7 +1083,7 @@ class PPOTrainer:
 
         self._save_perf_tracer(step=global_step)
         if self._on_demand is not None:
-            self._on_demand.commit_and_publish(global_step + 1)
+            self._on_demand.finish_update()
 
     def _save_training_state(
         self,

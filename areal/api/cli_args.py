@@ -3411,6 +3411,13 @@ class ActorLifecycleConfig:
             "choices": ["resident", "on_demand"],
         },
     )
+    policy: str = field(
+        default="basic",
+        metadata={
+            "help": "On-demand policy; basic currently uses an idle timeout; reference is not implemented.",
+            "choices": ["basic", "reference"],
+        },
+    )
     state_root: str | None = None
     actor_devices: tuple[int, ...] = ()
     rollout_devices: tuple[int, ...] = ()
@@ -3427,6 +3434,8 @@ class ActorLifecycleConfig:
 
         if self.mode not in ("resident", "on_demand"):
             raise ValueError("actor_lifecycle.mode must be resident or on_demand")
+        if self.policy not in ("basic", "reference"):
+            raise ValueError("actor_lifecycle.policy must be basic or reference")
         if (
             any(
                 not math.isfinite(value) or value < 0

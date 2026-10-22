@@ -22,9 +22,9 @@ from areal.elastic.policy.basic.joint import (
     JointPrediction,
     JointScenario,
 )
-from areal.elastic.policy.basic.online import SerialJointWindow
 from areal.elastic.policy.basic.optimizer import JointModel, JointOptimizer
-from areal.elastic.state.checkpoint import atomic_json
+from areal.elastic.policy.basic.serial_planning import SerialJointWindow
+from areal.utils.atomic import atomic_json
 
 from .adapter import ElasticEvaluator, candidate_runner
 from .identity import AREAL_ROOT, protected_files

@@ -2163,7 +2163,7 @@ def serial_revision_inputs(*, updates=6, compatibility=None):
 
 
 SERIAL_TIMING_SOURCE = """from dataclasses import replace
-from areal.elastic.policy.basic.online import serial_model_from_profile, SerialTimingEstimate
+from areal.elastic.policy.basic.serial_planning import serial_model_from_profile, SerialTimingEstimate
 class Model:
     def __init__(self, profile): self.base = serial_model_from_profile(profile)
     def predict_timing(self, context):
@@ -2263,7 +2263,7 @@ def test_serial_timing_rejects_coverage_loss_state_and_worker_drift(
         "parent-drift": "import os; return SerialTimingEstimate(1 if os.environ.get('CUDA_VISIBLE_DEVICES') == '' else 2)",
     }[mode]
     source = (
-        "from areal.elastic.policy.basic.online import SerialTimingEstimate\nclass Model:\n    n=0\n    def predict_timing(self, context):\n        "
+        "from areal.elastic.policy.basic.serial_planning import SerialTimingEstimate\nclass Model:\n    n=0\n    def predict_timing(self, context):\n        "
         + body
         + "\ndef build_serial_model(profile): return Model()\n"
     )
@@ -2283,7 +2283,7 @@ def test_serial_cycle_freezes_model_revalidates_search_and_deploys_executable_pr
         build_serial_policy,
         validate_serial_bundle,
     )
-    from areal.elastic.policy.basic.online import SerialTimingInput
+    from areal.elastic.policy.basic.serial_planning import SerialTimingInput
 
     bundle, evaluation, scenarios, profile, settings, window = accepted_serial_bundle(
         tmp_path / "cycle", runner
@@ -2434,7 +2434,7 @@ def test_serial_interrupted_baseline_resume_rejects_changed_prediction_fingerpri
     profile, settings, window = serial_revision_inputs()
     model, _ = runtime_joint_problems(profile, window, settings=settings, runner=runner)
     source = """import os
-from areal.elastic.policy.basic.online import serial_model_from_profile, SerialTimingEstimate
+from areal.elastic.policy.basic.serial_planning import serial_model_from_profile, SerialTimingEstimate
 class Model:
     def __init__(self,p): self.base=serial_model_from_profile(p)
     def predict_timing(self,c):
@@ -2562,10 +2562,10 @@ def test_elastic_planning_and_native_controls_import_without_autopilot():
                     raise AssertionError(fullname)
         sys.meta_path.insert(0, BlockAutoPilot())
         from areal.elastic.policy import basic as planning, reference
-        from areal.elastic.control import application, config, native
-        from areal.elastic.state import batch_queue, checkpoint, online
-        from areal.elastic.telemetry import history
-        from areal.elastic.policy.basic.online import serial_model_from_profile
+        from areal.elastic.control import boundary, config_application, policy_activation, policy_hooks
+        from areal.elastic.state import batch_queue, checkpoint_store, episode_inbox
+        from areal.elastic.monitor import history
+        from areal.elastic.policy.basic.serial_planning import serial_model_from_profile
         assert planning.BasicPolicy and reference.Catalog
         assert not any(n.startswith("areal.autopilot") for n in sys.modules)
     """)

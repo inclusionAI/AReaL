@@ -12,8 +12,10 @@ shows the policy loop and the two separate revision loops.
 sends its feedback to the agent and applies the acceptance decision. The
 [independent Expert model](../../../elastic/policy/reference/README.md) provides a
 frozen offline reference alongside successive Basic simulator versions. Its
-implementation and R10 replay are included; a common experiment adapter remains separate
-work. It does not direct revisions or supply training labels by default.
+implementation remains in the source package; the R10 experiment driver is in the
+[local development archive](../../../../../artifacts/elastic-policy-development-20261021/README.md).
+A common experiment adapter remains separate work. It does not direct revisions or
+supply training labels by default.
 
 - **Simulator:** independent held-out measurements supply feasibility, wall time and GPU
   seconds. Calibration is visible to the agent; held-out labels stay in the evaluator.
@@ -39,13 +41,22 @@ work. It does not direct revisions or supply training labels by default.
 ## Native runtime bridge
 
 `online.py` consumes an explicit committed-host protocol implemented by
-`NativePolicyRuntime`. Native scope is `native-async-v1`, with horizon=1 and one fixed
-Actor layout. Model service-time revision and optimizer acceptance remain separate.
-Serial joint models below are retained as offline references.
+`RevisionAdapter`. Native scope is `native-async-v1`, with horizon=1 and one fixed Actor
+layout. Model service-time revision and optimizer acceptance remain separate. Serial
+joint models below are retained as offline references. Ordinary policy assembly and
+decisions live in `elastic/policy/adapter.py::PolicyAdapter`;
+`native.py::RevisionAdapter` adds revision and activation to that same decision entry
+point. AReaL's default `ElasticMonitor` supplies both ordinary policy history and
+revision windows. Its `weights_version` host field names the applied version;
+checkpoints may lag.
 
-- `RuntimeHistory` records actual config, workload, causal planning history and measured
-  service phases after checkpoint commit and weight publication. Restart restores the
-  bounded policy history without replaying training.
+- `elastic/monitor/collector.py` owns observations, phase collection, token accounting
+  and measurement recovery; `history.py` provides bounded `RuntimeHistory` storage. It
+  records actual config, workload, causal planning history and measured service phases
+  after publication and end-of-update hooks. `checkpointed` distinguishes periodic saves
+  from skipped saves. Here the host's `committed` boundary means a completed, published
+  update; the full checkpoint may lag. Fault recovery restores its bounded history and
+  replays unsaved batches through native PPO.
 - `RuntimeRevisionLoop` freezes a window after at least four updates, then runs CPU
   revisions in one background worker. Defaults: every four updates, at most three
   windows, two proposals per component per window. Started proposals consume their
@@ -435,7 +446,7 @@ provides executable examples of both schemas. `--settings` optionally loads the 
 ## Use an accepted component
 
 Native execution accepts complete independently evaluated bundles through
-`NativePolicyRuntime(bundle=path)` or `prepare_policy()` / `apply_policy()` with
+`RevisionAdapter(bundle=path)` or `prepare_policy()` / `apply_policy()` with
 `PolicyRequest`. The native host verifies scope, execution identity, both acceptance
 proofs, component sources, fixed candidate set and idle timeout. Activation changes the
 policy pointer only; history and training weights persist. Legacy serial/lifecycle
@@ -447,3 +458,10 @@ native bundle gate. The
 [LLM demonstration](../../../../../artifacts/repository-archive-20261021/files/examples/autopilot/revising-llm-validation-20261018.json)
 uses synthetic cases and does not establish workflow generalization, reward preservation
 or production savings. Retain a separate final audit set.
+
+Native Monitor failures pause revision and use the Basic timeout baseline. Training
+recovery compatibility, measurement applicability and accepted-bundle source proofs are
+independent: missing measurement state starts a fresh series without discarding valid
+optimizer/data progress; changed protected sources still reject old bundles. A revision
+root is bound to one history series and must be replaced when that series changes. See
+[AReaL Elastic](../../../elastic/README.md) for collection and recovery rules.

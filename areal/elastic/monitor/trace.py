@@ -14,7 +14,7 @@ import re
 from collections import defaultdict
 from typing import Any
 
-from .actor import STAGES
+STAGES = ("recompute_logp", "compute_advantage", "train_step")
 
 
 def stage_metrics(metrics: dict[str, Any]) -> dict[str, float]:

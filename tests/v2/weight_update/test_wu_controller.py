@@ -349,6 +349,55 @@ class TestGatewayDisconnect:
 
 
 class TestGatewayTransactions:
+    @pytest.mark.parametrize("colocate", [False, True])
+    def test_dtype_mismatch_rejects_connect_before_group_init(
+        self, monkeypatch, colocate
+    ):
+        from unittest.mock import AsyncMock
+
+        from starlette.testclient import TestClient
+
+        from areal.v2.weight_update.gateway import app as gateway
+
+        app, calls = self.app(), []
+        monkeypatch.setattr(
+            gateway,
+            "_discover_parallelism",
+            AsyncMock(return_value=({"world_size": 1}, {"world_size": 1})),
+        )
+
+        async def metadata(session, url, timeout_s, json_data=None):
+            calls.append(url)
+            dtype = (
+                "torch.float32" if url.startswith("http://train/") else "torch.bfloat16"
+            )
+            return {
+                "result": [
+                    {
+                        "data": {
+                            "name": "layer.weight",
+                            "dtype": {"type": "torch_dtype", "value": dtype},
+                        }
+                    }
+                ]
+            }
+
+        cleanup = AsyncMock()
+        monkeypatch.setattr(gateway, "_post_json", metadata)
+        monkeypatch.setattr(gateway, "_post", cleanup)
+        response = TestClient(app).post(
+            "/connect",
+            json={**self.body(), "colocate": colocate},
+            headers={"Authorization": "Bearer test-key"},
+        )
+        assert response.status_code == 503
+        assert "wire dtype mismatch" in response.json()["error"]
+        assert all(url.endswith("/report_weight_meta") for url in calls)
+        assert {call.args[1] for call in cleanup.call_args_list} == {
+            "http://train/awex/teardown",
+            "http://infer/awex/teardown",
+        }
+
     @staticmethod
     def app():
         from areal.v2.weight_update.gateway.app import create_app

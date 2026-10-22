@@ -47,7 +47,9 @@ import json
 import os
 import time
 import uuid
+from copy import deepcopy
 from dataclasses import dataclass, field
+from functools import wraps
 from typing import Any
 
 from areal.utils import logging
@@ -59,6 +61,42 @@ from areal.v2.agent_service.types import (
 )
 
 logger = logging.getLogger("HermesAgent")
+
+
+def _bind_episode_requests(agent: Any, episode: dict[str, Any]) -> None:
+    """Bind all real SDK clients, including Hermes' direct summary requests.
+
+    Hermes 0.19's iteration-limit summary bypasses request_overrides. Bind the
+    instance's client factory as well as its existing client so recreation and
+    per-request clients preserve the same identity. Responses are untouched.
+    """
+    identity = deepcopy(episode)
+
+    def bind(client: Any) -> Any:
+        create = client.chat.completions.create
+        if getattr(create, "_areal_episode", None) == identity:
+            return client
+
+        @wraps(create)
+        def create_for_episode(*args: Any, **kwargs: Any) -> Any:
+            body = dict(kwargs.pop("extra_body", None) or {})
+            if "areal_episode" in body and body["areal_episode"] != identity:
+                raise ValueError("Hermes request conflicts with its bound episode")
+            body["areal_episode"] = deepcopy(identity)
+            return create(*args, **kwargs, extra_body=body)
+
+        create_for_episode._areal_episode = identity
+        client.chat.completions.create = create_for_episode
+        return client
+
+    create_client = agent._create_openai_client
+
+    @wraps(create_client)
+    def create_bound_client(*args: Any, **kwargs: Any) -> Any:
+        return bind(create_client(*args, **kwargs))
+
+    agent._create_openai_client = create_bound_client
+    bind(agent.client)
 
 
 def _split_csv(value: str) -> list[str] | None:
@@ -224,7 +262,7 @@ class HermesAgent:
             if upstream.episode is not None
             else {}
         )
-        return AIAgent(
+        agent = AIAgent(
             base_url=upstream.base_url,
             api_key=upstream.api_key,
             model=upstream.model,
@@ -238,6 +276,9 @@ class HermesAgent:
             session_db=None,
             **kwargs,
         )
+        if upstream.episode is not None:
+            _bind_episode_requests(agent, upstream.episode)
+        return agent
 
     async def _session_lock(self, session_key: str) -> asyncio.Lock:
         async with self._locks_guard:
