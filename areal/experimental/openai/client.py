@@ -167,6 +167,7 @@ def _process_multimodal_prompt(
     chat_template_kwargs: dict[str, Any],
     *,
     align_sglang_images: bool = False,
+    processor_cache: ProcessorCallCache | None = None,
 ) -> _PreparedPrompt:
     """Build prompt tokens and vision tensors from inline base64 images only.
 
@@ -202,7 +203,9 @@ def _process_multimodal_prompt(
 
     wire_image_data = None
     if align_sglang_images:
-        aligned_images = prepare_sglang_qwen_images(processor, images)
+        aligned_images = prepare_sglang_qwen_images(
+            processor, images, cache=processor_cache, image_keys=image_data
+        )
         if aligned_images is not None:
             images, wire_image_data = aligned_images
 
@@ -856,6 +859,7 @@ async def _prepare_prompt(
                 tools,
                 chat_template_kwargs,
                 align_sglang_images=align_sglang_images,
+                processor_cache=processor_cache,
             )
             if processor_cache is not None:
                 prompt = _share_multimodal_tensors(

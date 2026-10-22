@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from PIL.Image import Image
 
+    from areal.infra.processor_cache import ProcessorCallCache
+
 
 @lru_cache(maxsize=8)
 def _processor_model_type(model_name_or_path: str) -> str | None:
@@ -50,7 +52,11 @@ def _sglang_image_size(
 
 
 def prepare_sglang_qwen_images(
-    processor: Any, images: list[Image]
+    processor: Any,
+    images: list[Image],
+    *,
+    cache: ProcessorCallCache | None = None,
+    image_keys: list[str] | None = None,
 ) -> tuple[list[Image], list[str]] | None:
     """Resize once and use lossless image transport, without patching SGLang.
 
@@ -97,17 +103,41 @@ def prepare_sglang_qwen_images(
     # Match SGLang's PIL branch. The resulting PNG has the final dimensions, so
     # neither the HF tensor resizer nor SGLang's additional resizer changes it.
     resample = getattr(PILImage, os.environ.get("SGLANG_RESIZE_RESAMPLE", ""), None)
+    if image_keys is not None and len(image_keys) != len(images):
+        raise ValueError("Image cache keys must match the input images")
     prepared, encoded = [], []
-    for image in images:
-        height, width = _sglang_image_size(
-            image.height, image.width, factor, min_pixels, max_pixels
-        )
-        image = image.convert("RGB").resize((width, height), resample=resample)
-        buffer = BytesIO()
-        image.save(buffer, format="PNG", compress_level=1)
-        prepared.append(image)
-        encoded.append(
-            "data:image/png;base64,"
-            + base64.b64encode(buffer.getvalue()).decode("ascii")
-        )
+    for index, image in enumerate(images):
+
+        def prepare(image=image):
+            height, width = _sglang_image_size(
+                image.height, image.width, factor, min_pixels, max_pixels
+            )
+            resized = image.convert("RGB").resize((width, height), resample=resample)
+            buffer = BytesIO()
+            resized.save(buffer, format="PNG", compress_level=1)
+            wire = "data:image/png;base64," + base64.b64encode(
+                buffer.getvalue()
+            ).decode("ascii")
+            return resized, wire
+
+        if cache is not None and image_keys is not None:
+            # The full prompt changes every turn; the image preparation does
+            # not. Scope immutable transport data to the existing group cache,
+            # independently for each image so appending images reuses history.
+            key = cache.make_key(
+                "sglang_qwen_image",
+                id(processor),
+                factor,
+                min_pixels,
+                max_pixels,
+                resample,
+                image_keys[index],
+            )
+            resized, wire = cache.get_or_compute(key, prepare)
+            # Processors may mutate PIL inputs. Never expose the cached image.
+            resized = resized.copy()
+        else:
+            resized, wire = prepare()
+        prepared.append(resized)
+        encoded.append(wire)
     return prepared, encoded

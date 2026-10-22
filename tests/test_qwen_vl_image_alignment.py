@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
+from areal.infra.processor_cache import ProcessorCallCache
 from areal.utils.qwen_vl_image import (
     _sglang_image_size,
     prepare_sglang_qwen_images,
@@ -118,6 +119,56 @@ def test_alignment_keeps_multiple_images_in_order(aligned_processor):
     assert len(prepared) == len(encoded) == 2
     assert prepared[0].getpixel((0, 0)) == (255, 0, 0)
     assert prepared[1].getpixel((0, 0)) == (127, 127, 127)
+
+
+def test_image_preparation_reuses_history_across_changed_prompts(
+    aligned_processor, monkeypatch
+):
+    cache = ProcessorCallCache()
+    image = Image.new("RGB", (900, 700), "red")
+    expected, expected_wire = prepare_sglang_qwen_images(aligned_processor, [image])
+    calls = []
+    original_save = Image.Image.save
+
+    def save(self, *args, **kwargs):
+        calls.append(self.size)
+        return original_save(self, *args, **kwargs)
+
+    monkeypatch.setattr(Image.Image, "save", save)
+    first, first_wire = prepare_sglang_qwen_images(
+        aligned_processor, [image], cache=cache, image_keys=["red-image"]
+    )
+    first[0].putpixel((0, 0), (0, 0, 0))
+    second, second_wire = prepare_sglang_qwen_images(
+        aligned_processor,
+        [image, Image.new("RGB", (256, 256), "blue")],
+        cache=cache,
+        image_keys=["red-image", "blue-image"],
+    )
+    assert len(calls) == 2  # Each unique image encoded once, despite new history.
+    assert first_wire == expected_wire == second_wire[:1]
+    np.testing.assert_array_equal(np.asarray(second[0]), np.asarray(expected[0]))
+    cache.close()
+    prepare_sglang_qwen_images(
+        aligned_processor, [image], cache=cache, image_keys=["red-image"]
+    )
+    assert len(calls) == 3
+
+
+def test_image_preparation_cache_respects_pixel_policy_changes(
+    aligned_processor, monkeypatch
+):
+    cache = ProcessorCallCache()
+    image = Image.new("RGB", (1600, 1200))
+    first, _ = prepare_sglang_qwen_images(
+        aligned_processor, [image], cache=cache, image_keys=["same-image"]
+    )
+    monkeypatch.setenv("SGLANG_VLM_QWEN_LIMIT_PIXEL", "false")
+    second, _ = prepare_sglang_qwen_images(
+        aligned_processor, [image], cache=cache, image_keys=["same-image"]
+    )
+    assert first[0].width * first[0].height <= 1048576
+    assert second[0].width * second[0].height > 1048576
 
 
 @pytest.mark.parametrize("shape", [(1, 201), (0, 32)])
