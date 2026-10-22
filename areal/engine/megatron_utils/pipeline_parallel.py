@@ -9,6 +9,7 @@ from megatron.core.transformer.pipeline_parallel_layer_layout import (
 from transformers import PretrainedConfig
 
 from areal.api import MegatronParallelStrategy
+from areal.models.mcore.glm5_next_config import is_glm5_next
 from areal.utils import logging
 
 logger = logging.getLogger("MCoreParallel")
@@ -23,6 +24,12 @@ def configure_pipeline_layer_splits(
     vpp_size = parallel_strategy.virtual_pipeline_parallel_size
 
     if pp_size <= 1:
+        return tf_config
+
+    # GLM-5.3 layer specs currently support only the standard MCore partition.
+    # Preserve that layout instead of injecting a parameter-balanced split that
+    # the model's runtime validation rejects before construction.
+    if is_glm5_next(hf_config):
         return tf_config
 
     total_stages = pp_size * vpp_size
