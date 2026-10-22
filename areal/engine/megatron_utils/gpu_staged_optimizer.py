@@ -892,7 +892,16 @@ class GPUStagedAdamW(torch.optim.AdamW):
 
 
 def _check_megatron_compatibility() -> None:
-    version = importlib.metadata.version("megatron-core")
+    # The runtime may intentionally prepend a source checkout to PYTHONPATH.
+    # In that case the installed dist-info can describe a different, older
+    # Megatron package and ``importlib.metadata.version`` would reject the
+    # implementation that Python actually imported.  Check the imported
+    # package's version first and use metadata only as a fallback.
+    try:
+        from megatron.core.package_info import __version__ as version
+    except (ImportError, AttributeError):
+        version = importlib.metadata.version("megatron-core")
+    version = version.split("+", 1)[0]
     if version != _SUPPORTED_MEGATRON_CORE_VERSION:
         raise RuntimeError(
             "GPU-staged AdamW compatibility layer supports megatron-core "

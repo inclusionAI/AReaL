@@ -17,12 +17,38 @@ from areal.engine.megatron_utils.gpu_staged_optimizer import (
     GPUStagedAdamW,
     GPUStagedAdamWConfig,
     SlotStateMachine,
+    _check_megatron_compatibility,
     _resolve_adamw_update_backend,
     bind_gpu_staged_adamw,
     get_megatron_optimizer_with_gpu_staged_adamw,
 )
 
 CUDA_AVAILABLE = torch.cuda.is_available()
+
+
+@pytest.mark.parametrize("version", ["0.19.0", "0.19.0+e8f57451"])
+def test_compatibility_uses_imported_source_version(monkeypatch, version) -> None:
+    import importlib.metadata
+
+    from megatron.core import package_info
+
+    monkeypatch.setattr(package_info, "__version__", version)
+    monkeypatch.setattr(importlib.metadata, "version", lambda _: "0.17.0")
+
+    _check_megatron_compatibility()
+
+
+@pytest.mark.parametrize("version", ["0.17.0", "0.19.0rc1", "0.20.0"])
+def test_compatibility_rejects_unsupported_imported_version(monkeypatch, version):
+    import importlib.metadata
+
+    from megatron.core import package_info
+
+    monkeypatch.setattr(package_info, "__version__", version)
+    monkeypatch.setattr(importlib.metadata, "version", lambda _: "0.19.0")
+
+    with pytest.raises(RuntimeError, match="supports megatron-core"):
+        _check_megatron_compatibility()
 
 
 def _tiny_config(buffer_count: int = 2, bucket_numel: int = 16):
