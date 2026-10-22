@@ -102,7 +102,6 @@ rollout:
     # Apply after site.env so historical cache=0 profiles cannot override it.
     - export SGLANG_VLM_CACHE_SIZE_MB=100
     - python3 "$QWEN_RECIPE_DIR/configure_sglang_logging.py"
-    - python3 -m areal.engine.sglang_mm_tensor_storage
     - test "$TMS_INIT_ENABLE" = 0
     - test "$TMS_INIT_ENABLE_CPU_BACKUP" = 0
     - cd ${oc.env:QWEN_REPO}
