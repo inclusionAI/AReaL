@@ -3,8 +3,11 @@
 
 SM90 decode must pass CUDA Graph padding (-1) to FlashInfer's indexed state
 pool API. Python gather/scatter instead aliases the last allocatable slot.
+Padded lanes can corrupt live or cached recurrent state and affect subsequent
+generation.
 
-Apply in the interpreter that will run SGLang, before starting any servers::
+This patch is not applied automatically. It must be run explicitly in the
+SGLang interpreter before starting SGLang servers::
 
     python -m areal.engine.sglang_gdn_decode_padding
 
