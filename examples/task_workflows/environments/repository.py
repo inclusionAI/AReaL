@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from examples.task_workflows.environments.python import run_limited
+from examples.task_workflows.trace import mark_tool_execution
 
 
 @dataclass(frozen=True)
@@ -160,6 +161,7 @@ class RepositoryEnvironment:
                     }
                 )
             started = time.time()
+            mark_tool_execution(started)
             try:
                 self._start()
                 result = run_limited(

@@ -15,6 +15,8 @@ from urllib.parse import urlsplit
 
 from aiohttp import ClientSession, ClientTimeout, web
 
+from examples.task_workflows.trace import CallTrace, observe_anthropic_data
+
 from areal.v2.agent_service.types import AgentResponse
 
 
@@ -58,7 +60,8 @@ class InferenceRelay:
                 "Claude Code tasks require explicit AReaL inference URL, key and model"
             )
         self.key = secrets.token_urlsafe(32)
-        self.calls: list[dict[str, Any]] = []
+        self.trace = CallTrace()
+        self.calls = self.trace.requests
         self._runner = None
         self._http = None
 
@@ -105,7 +108,8 @@ class InferenceRelay:
             "status": None,
             "timing_scope": "relay_receive_to_response_end",
         }
-        self.calls.append(record)
+        self.trace.request(record)
+        buffer = bytearray()
         try:
             async with self._http.post(
                 self.base_url + "/v1/messages",
@@ -127,6 +131,17 @@ class InferenceRelay:
                 await response.prepare(request)
                 async for chunk in upstream.content.iter_any():
                     await response.write(chunk)
+                    buffer.extend(chunk)
+                    if upstream.content_type == "text/event-stream":
+                        while b"\n" in buffer:
+                            line, _, remaining = buffer.partition(b"\n")
+                            buffer[:] = remaining
+                            if line.startswith(b"data:"):
+                                payload = line[5:].strip()
+                                if payload and payload != b"[DONE]":
+                                    observe_anthropic_data(record, payload)
+                if upstream.content_type != "text/event-stream" and buffer:
+                    observe_anthropic_data(record, bytes(buffer))
                 await response.write_eof()
                 return response
         finally:
@@ -175,6 +190,7 @@ class ClaudeCodeHarness:
         ]
         final = None
         async with InferenceRelay(request.metadata) as relay:
+            relay.trace.bind_tools(runtime)
             env = {
                 "ANTHROPIC_BASE_URL": relay.url,
                 "ANTHROPIC_API_KEY": relay.key,
@@ -265,6 +281,7 @@ class ClaudeCodeHarness:
                         and final.stop_reason != "max_tokens",
                         "api_calls": len(relay.calls),
                         "inference_calls": relay.calls,
+                        "simulation_trace": relay.trace.snapshot(),
                         "transcript": transcript,
                         "cc_result": _serialize(final),
                     },
@@ -273,7 +290,11 @@ class ClaudeCodeHarness:
                 await asyncio.to_thread(
                     (directory / "transcript.json").write_text,
                     json.dumps(
-                        {"messages": transcript, "inference_calls": relay.calls},
+                        {
+                            "messages": transcript,
+                            "inference_calls": relay.calls,
+                            "simulation_trace": relay.trace.snapshot(),
+                        },
                         ensure_ascii=False,
                         indent=2,
                     ),

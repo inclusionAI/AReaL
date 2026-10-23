@@ -42,8 +42,10 @@ staleness、来源ACK与重放审计见证据链接。测试服务及本轮两�
 
 **边界与后续**
 
+- [Expert观测补采](../artifacts/expert-trace-collection-20261023/offline-validation.json)：Hermes／CC逐调用usage长度、工具fan-out依赖、锁等待／服务时间、清单就绪时间及CPU轨迹导出工作量已记录；26项离线正常路径通过，GPU待验收。缓存未知保留null，实际消费／控制边界仍须对照；Expert源码／系数未改，1.7B
+  dense适配仍待做。
 - [2×2八卡操作文档](examples/task_workflows/RUN_2X2_8GPU.md)已覆盖Hermes／CC ×
-  DAPO／SWE在H20／H200上的评测、4＋4常驻PPO、训练后评测与trace缺口。shell／内嵌Python语法与8种训练配置解析通过，见[文档检查](../artifacts/task-workflows-2x2-docs-20261023/checks.json)；未启动GPU任务，原OOM未解决，请求长度／阶段／batch关联仍待实现。
+  DAPO／SWE在H20／H200上的评测、4＋4常驻PPO、训练后评测与trace缺口。shell／内嵌Python语法与8种训练配置解析通过，见[文档检查](../artifacts/task-workflows-2x2-docs-20261023/checks.json)；未启动GPU任务，原OOM未解决，引擎阶段／batch关联仍待实现。
 - [任务工作流已统一](examples/task_workflows/README.md)：旧目录与兼容入口已删除，八卡评测／训练文档及
   `configs/dapo_17b_resident.yaml`
   均迁入同一目录。1.7B正式配置解析结果与迁移前完整一致，删除旧目录后21项离线回归通过、无跳过，见[整合证据](../artifacts/task-workflows-consolidation-20261023/offline-validation.json)。模型／Docker传输仍为替身，未启动服务器训练；原

@@ -121,6 +121,18 @@ patch；这条命令只验收环境，不参与模型轨迹和训练。仓库／
 episode／推理／工具耗时。工具并发时累计时长可能重叠，缺失测量保持 null。token／logprob／权重版本仍由 v2 原生推理链路记录，Rollout
 prefill／decode 使用已有 batch 采集器。
 
+每题新增 `task_index`、`available_at`（本次清单就绪时间，早于客户端并发等待）及 `metadata.simulation_trace`。其中
+`nodes` 以 `name` 为题内调用ID，保存模型请求的实际 `input_tokens/output_tokens`、工具的 `pool/seconds` 和共同的
+`predecessors`；并行工具共享模型父节点，下一模型调用等待工具汇合。Hermes／CC均从响应usage读取长度，不估算字符数；缺失保持null，检查
+`lengths_complete`。仅支持原生串行模型循环＋工具fan-out，观测到模型／工具未完成就进入下一模型调用时，
+`dependencies_complete=false`，不能当完整DAG使用。缓存命中未报告时也保持null；仅在确认禁用缓存后才能按Expert的none模式取0。
+
+工具节点的 `queued` 是调用入口，`started` 是取得环境锁后的执行开始，`seconds`
+排除该锁等待、包含本次所需容器初始化；每题工具池容量1只表示环境锁，不表示全机CPU容量。开启现有 `AREAL_ROLLOUT_TRACE_DIR` 后，v2轨迹导出端另写
+`exported-workloads-<host>-<pid>.jsonl`： 以session／incarnation／trajectory关联，保存
+`interaction_ids` 和可供Expert `WorkloadStats` 使用的真实序列长度、attention／loss token。重复导出按
+`export_id` 去重；这是成功导出记录，实际Actor消费仍须对照Trainer。以上都不采逐token时间、不修改Expert模型。
+
 ## 离线验证
 
 统一目录后 21 项正常路径检查通过，无跳过，其中 CC 3

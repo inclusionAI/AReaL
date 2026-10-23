@@ -6,9 +6,14 @@ import asyncio
 import hashlib
 import hmac
 import json
+import os
+import socket
+import threading
+import time
 import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -67,6 +72,46 @@ from areal.v2.inference_service.vllm.bridge import VLLMBridgeBackend
 logger = logging.getLogger("InferenceDataProxy")
 
 _INLINE_TRAJECTORY_FIELDS = frozenset(("rewards", "original_rewards"))
+_EXPORT_TRACE_LOCK = threading.Lock()
+
+
+def _trace_export_workload(traj: dict, sources: list[dict], ids: list[str], style: str):
+    """Opt-in CPU tensor statistics; records exports, not proof of Actor consumption."""
+    directory = os.environ.get("AREAL_ROLLOUT_TRACE_DIR")
+    if not directory or not sources or "attention_mask" not in traj:
+        return
+    attention, loss = traj["attention_mask"], traj["loss_mask"]
+    if attention.device.type != "cpu" or loss.device.type != "cpu":
+        logger.warning("Skipping export workload trace: masks are not on CPU")
+        return
+    lengths = attention.sum(-1).tolist()
+    identity = {"sources": sources, "interaction_ids": ids, "export_style": style}
+    row = {
+        "record": "export_workload",
+        "schema_version": 1,
+        "export_id": hashlib.sha256(
+            json.dumps(identity, sort_keys=True).encode()
+        ).hexdigest(),
+        "exported_at": time.time(),
+        **identity,
+        "workload": {
+            "n_seqs": len(lengths),
+            "sequence_lengths": lengths,
+            "sequence_tokens": sum(lengths),
+            "min_seq_len": min(lengths),
+            "max_seq_len": max(lengths),
+            "loss_tokens": int(loss.sum()),
+            "outer_padded_tokens": attention.numel(),
+        },
+    }
+    try:
+        root = Path(directory)
+        root.mkdir(parents=True, exist_ok=True)
+        path = root / f"exported-workloads-{socket.gethostname()}-{os.getpid()}.jsonl"
+        with _EXPORT_TRACE_LOCK, path.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(row) + "\n")
+    except OSError:
+        logger.exception("Could not write export workload trace")
 
 
 def _remotize_trajectory(traj: dict[str, Any], node_addr: str) -> dict[str, Any]:
@@ -1125,8 +1170,13 @@ def create_app(config: DataProxyConfig) -> FastAPI:
             if interactions is not None:
                 merged.update(interactions)
 
+        trace_masks = None
         if all(v.has_tensor_data for v in merged.values()):
             traj = concat_padded_tensors([v.to_tensor_dict() for v in merged.values()])
+            if merged and os.environ.get("AREAL_ROLLOUT_TRACE_DIR"):
+                trace_masks = {
+                    key: traj[key] for key in ("attention_mask", "loss_mask")
+                }
             if not body.inline_tensors:
                 traj = _remotize_trajectory(traj, node_addr=config.serving_addr)
         else:
@@ -1151,6 +1201,21 @@ def create_app(config: DataProxyConfig) -> FastAPI:
             for sid in body.session_ids:
                 store.remove_session(sid)
 
+        if trace_masks is not None:
+            await asyncio.to_thread(
+                _trace_export_workload,
+                trace_masks,
+                [
+                    {
+                        "session_id": session.session_id,
+                        "incarnation_id": session.incarnation_id,
+                        "trajectory_id": trajectory_id,
+                    }
+                    for session, trajectory_id in exported
+                ],
+                list(merged),
+                body.style,
+            )
         return ExportTrajectoriesResponse(traj=serialized)
 
     # =========================================================================

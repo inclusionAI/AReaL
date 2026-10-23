@@ -348,10 +348,11 @@ class EpisodeClient:
 
     async def run(self, tasks: list[Any]) -> dict[str, Any]:
         semaphore = asyncio.Semaphore(self.settings.concurrency)
+        available_at = time.time()
         failed = asyncio.Event()
         progress = tqdm(total=len(tasks), desc="Task episodes", unit="episode")
 
-        async def one(task: Any) -> dict:
+        async def one(index: int, task: Any) -> dict:
             async with semaphore:
                 if failed.is_set():
                     row = {"task_id": task.task_id, "status": "not_submitted"}
@@ -359,13 +360,16 @@ class EpisodeClient:
                     row = await self.run_task(task)
                     if row["status"] != "completed":
                         failed.set()
+                row.update(task_index=index, available_at=available_at)
                 async with self._write_lock:
                     await asyncio.to_thread(self._append_episode, row)
                 progress.update(1)
                 return row
 
         try:
-            rows = await asyncio.gather(*(one(task) for task in tasks))
+            rows = await asyncio.gather(
+                *(one(index, task) for index, task in enumerate(tasks))
+            )
         finally:
             progress.close()
         completed = [row for row in rows if row["status"] == "completed"]

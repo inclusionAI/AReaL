@@ -403,12 +403,12 @@ source公共环境、重新加载原初始模型训练。
 
 ## 5．Trace：现有记录与模拟所缺的信息
 
-| 层次          | 现在可采集                                                            | 后续 simulation 还需补齐                                                                            |
-| ------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| Episode／调用 | episodes.jsonl 的逐题、逐模型／工具墙钟时间；CC 的 SDK可见 transcript | 跨层稳定 call ID、父子／并行依赖、环境创建／清理／评分的独立 span                                   |
-| Rollout 请求  | 原生训练路径持有 token／logprob／版本，不代表已有统一落盘trace        | 每次实际 prompt／生成长度、缓存命中／有效prefill量；入队、prefill、首／末token边界、attempt与版本段 |
-| Rollout batch | prefill／decode／mixed请求数、token汇总、CUDA event区间               | 参与请求ID与长度形状、请求到batch关联、KV块及抢占／重算事件                                         |
-| Actor／控制   | perf_tracer阶段／前后向span、训练配置及日志                           | step／rank／microbatch与序列长度、packing／padding、轨迹消费和发布的完整关联                        |
+| 层次          | 现在可采集                                                                           | 后续 simulation 还需补齐                                           |
+| ------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
+| Episode／调用 | simulation_trace的题内调用ID／依赖／工具池与服务耗时，task_index／available_at       | 环境创建／清理／评分的独立span；并发模型分支仍不支持               |
+| Rollout 请求  | 逐次响应usage的实际输入／输出长度、completion ID／结束原因，缺失保持null             | 缓存／有效prefill量、引擎入队／首末token／attempt和版本段          |
+| Rollout batch | prefill／decode／mixed请求数、token汇总、CUDA event区间                              | 参与请求ID与长度形状、请求到batch关联、KV块及抢占／重算事件        |
+| Actor／控制   | perf_tracer阶段；exported-workloads记录成功导出的真实序列长度及attention／loss token | step／rank／microbatch、packing／padding、实际消费与发布的完整关联 |
 
 上述命令启用了已有 batch采集和 Trainer
 perf_tracer；逐调用墙钟记录自动保存。SGLang采集按普通TP／DP实现，GPU兼容性和开销待实测；见[字段与时间口径](../../docs/zh/best_practices/perf_profiling.md#sglang-batch-%E8%AF%B7%E6%B1%82%E6%95%B0%E4%B8%8E-token-%E6%97%B6%E5%BA%8F)。不能把预热流量计入正式工作量，也不能把
@@ -417,10 +417,17 @@ mixed 的时长重复相加。
 采集粒度采用“**调用级依赖＋引擎每batch摘要**”，不全程采每请求每token的内容／时间或逐kernel
 profiler。长度来自引擎实际tokenization，不从字符数估计；生成长度是实际值，不用max_tokens代替。后续事件还需统一schema、run／episode／call／attempt身份、主机／进程单调时钟和墙钟校准，保留跨主机对齐误差与丢失事件标记。
 
-补齐字段尚属设计，本次文档不自动实现。当前 v2 会等底层生成完成再构造流式响应，SDK首包不能代表真实首token；阶段边界须在引擎采集。
+逐调用长度／依赖和导出工作量已补采，见[字段与限制](README.md#%E8%AF%84%E5%88%86%E4%B8%8E%E8%AE%B0%E5%BD%95)。代码同步后重启Agent与推理／训练进程才对新运行生效；26项离线正常路径检查通过，真实GPU待验收，见[检查记录](../../../artifacts/expert-trace-collection-20261023/offline-validation.json)。现有调用墙钟不拆成prefill／decode；v2会等底层生成完成再构造流式响应，SDK首包不能代表真实首token。
 
-先用已有数据做运行时间线和描述统计；完整请求级调度 simulation
-须补齐关联字段。模拟新配置时根据依赖重新产生下游调用到达时间，重新计算排队／服务时间，不能把历史排队时间固定当计算成本。H20／H200分别校准性能；固定工作负载模拟不能证明改变训练后仍产生相同轨迹或学习质量。
+对[现有Expert输入](../../areal/elastic/policy/reference/scenario.py)，应区分：
+
+- **模拟输入**：Request长度／predecessors、ExternalCall服务耗时／资源池已写入simulation_trace；客户端清单就绪时间与导出工作量分别落盘。先检查lengths_complete／dependencies_complete；缓存未知不能擅自填0。Group后处理、实际消费／初态及目标配置仍须组装，导出不代表已训练。
+- **校准／验证记录**：逐batch执行时间、成员、query／已有context及KV状态。Expert自行组batch并推进decode，历史成员列表和逐token时间不是运行它的必需输入；但当前聚合trace不足以完整核验mixed／chunked服务成本。采集器的context_tokens包含完整prompt，Expert的同名字段指当前query之前的已缓存上下文，必须转换口径。
+
+现有调度为decode-first＋完整长度KV预留的显式假设，不是SGLang调度复刻。Catalog模型加载器目前只覆盖qwen3_moe，内置Qwen3-30B-A3B；1.7B
+dense适配及H20／H200目标校准仍待完成，不能套用旧系数。Reference源码与冻结校准未改，见[核查记录](../../../artifacts/expert-trace-audit-20261023/audit.json)。
+
+先用已有数据做运行时间线和描述统计；模拟新配置时根据依赖重新产生下游调用到达时间，重新计算排队／服务时间，不能把历史排队时间固定当计算成本。固定工作负载模拟不能证明改变训练后仍产生相同轨迹或学习质量。
 
 每组保留：代码快照（含未提交改动）、包版本、模型／任务／镜像摘要、解析后配置、客户端和Trainer日志／退出码、episodes／summary、HF导出及两类trace。解析后的配置和CLI状态可能含密钥，分享前脱敏。当前trace缺口不能在完成后凭图补造。
 

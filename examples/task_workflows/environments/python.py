@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from examples.task_workflows.trace import mark_tool_execution
+
 
 @dataclass(frozen=True)
 class ToolSettings:
@@ -198,6 +200,7 @@ class PythonSandbox:
     def execute(self, code: str) -> str:
         with self._lock:
             started = time.time()
+            mark_tool_execution(started)
             if (
                 not isinstance(code, str)
                 or len(code.encode()) > self.settings.max_code_bytes

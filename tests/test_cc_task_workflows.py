@@ -257,6 +257,17 @@ async def test_cc_native_sdk_uses_shared_environment_grading_and_reward(
             for call in response.metadata["inference_calls"]
         )
         assert rows[0]["timing"]["tool_seconds"] > 0
+        trace = response.metadata["simulation_trace"]
+        assert trace["lengths_complete"] and trace["dependencies_complete"]
+        first, tool, second = trace["nodes"]
+        assert first["input_tokens"] == second["input_tokens"] == 100
+        assert first["output_tokens"] == second["output_tokens"] == 20
+        assert tool["predecessors"] == [first["name"]]
+        assert second["predecessors"] == [tool["name"]]
+        assert tool["queued"] <= tool["started"] <= tool["finished"]
+        assert tool["seconds"] >= 0
+        assert rows[0]["task_index"] == 0
+        assert rows[0]["available_at"] <= rows[0]["started"]
         assert "ToolUseBlock" in json.dumps(response.metadata["transcript"])
         assert "ToolResultBlock" in json.dumps(response.metadata["transcript"])
         assert "per-episode-key" not in json.dumps(rows)
@@ -275,7 +286,9 @@ async def test_cc_relays_isolate_concurrent_inference_sessions():
     async def model(request):
         body = await request.json()
         observed.append((request.headers["Authorization"], body))
-        return web.json_response({"content": []})
+        return web.json_response(
+            {"content": [], "usage": {"input_tokens": 71, "output_tokens": 9}}
+        )
 
     app = web.Application()
     app.router.add_post("/v1/messages", model)
@@ -305,6 +318,8 @@ async def test_cc_relays_isolate_concurrent_inference_sessions():
                 assert response.status == 200
                 await response.read()
         assert len(relay.calls) == 1 and relay.calls[0]["seconds"] >= 0
+        assert relay.calls[0]["input_tokens"] == 71
+        assert relay.calls[0]["output_tokens"] == 9
 
     try:
         await asyncio.gather(one(1), one(2))
@@ -316,5 +331,80 @@ async def test_cc_relays_isolate_concurrent_inference_sessions():
                 "trajectory_id": index,
             }
         assert len(observed) == 2
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_cc_relay_collects_native_stream_usage_across_transport_chunks():
+    """The v2 adapter supplies prompt usage at message_delta, not message_start."""
+    from openai.types.chat import ChatCompletionChunk
+
+    from areal.experimental.openai.anthropic import translate_anthropic_stream
+
+    async def model(request):
+        async def chunks():
+            for finished in (False, True):
+                yield ChatCompletionChunk(
+                    id="native-usage",
+                    object="chat.completion.chunk",
+                    created=1,
+                    model="local",
+                    choices=[
+                        {
+                            "index": 0,
+                            "delta": {}
+                            if finished
+                            else {"role": "assistant", "content": "42"},
+                            "finish_reason": "stop" if finished else None,
+                        }
+                    ],
+                    usage={
+                        "prompt_tokens": 123,
+                        "completion_tokens": 7,
+                        "total_tokens": 130,
+                    }
+                    if finished
+                    else None,
+                )
+
+        response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
+        await response.prepare(request)
+        async for event in translate_anthropic_stream(chunks(), "local"):
+            payload = event.encode() if isinstance(event, str) else event
+            for offset in range(0, len(payload), 17):
+                await response.write(payload[offset : offset + 17])
+        await response.write_eof()
+        return response
+
+    app = web.Application()
+    app.router.add_post("/v1/messages", model)
+    runner = web.AppRunner(app, access_log=None)
+    await runner.setup()
+    await web.TCPSite(runner, "127.0.0.1", 0).start()
+    base = "http://127.0.0.1:" + str(runner.addresses[0][1])
+    try:
+        async with (
+            InferenceRelay(
+                {
+                    "areal_inference": {
+                        "base_url": base,
+                        "api_key": "local-test",
+                        "model": "local",
+                    }
+                }
+            ) as relay,
+            ClientSession() as http,
+        ):
+            async with http.post(
+                relay.url + "/v1/messages",
+                headers={"x-api-key": relay.key},
+                json={"stream": True},
+            ) as response:
+                await response.read()
+            call = relay.calls[0]
+            assert (call["input_tokens"], call["output_tokens"]) == (123, 7)
+            assert call["cached_prefix_tokens"] is None
+            assert relay.trace.snapshot()["lengths_complete"]
     finally:
         await runner.cleanup()

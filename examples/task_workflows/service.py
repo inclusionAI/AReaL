@@ -125,6 +125,8 @@ class TaskAgent(HermesAgent):
                     **spec.options,
                 )
                 environment = {}
+                trace = state.agent._areal_call_trace
+                trace.bind_tools(runtime)
                 try:
                     with bind_environment(task_id, runtime):
                         result = state.agent.run_conversation(message, task_id=task_id)
@@ -142,6 +144,7 @@ class TaskAgent(HermesAgent):
                         state.metadata["inference_calls"] = (
                             state.agent._areal_inference_calls
                         )
+                        state.metadata["simulation_trace"] = trace.snapshot()
 
             return await asyncio.to_thread(execute)
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from unittest.mock import AsyncMock, MagicMock
 
@@ -1041,7 +1042,10 @@ async def test_batch_session_produces_single_trajectory(client):
 
 
 @pytest.mark.asyncio
-async def test_batch_online_set_reward_completes_that_session(client):
+async def test_batch_online_set_reward_completes_that_session(
+    client, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("AREAL_ROLLOUT_TRACE_DIR", str(tmp_path))
     start = await client.post(
         "/rl/start_session",
         json={"task_id": "batch-complete"},
@@ -1073,6 +1077,23 @@ async def test_batch_online_set_reward_completes_that_session(client):
     )
     assert export_resp.status_code == 200
     assert "traj" in export_resp.json()
+    rows = [
+        json.loads(line)
+        for path in tmp_path.glob("exported-workloads-*.jsonl")
+        for line in path.read_text().splitlines()
+    ]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["sources"][0]["session_id"] == session_id
+    assert row["sources"][0]["trajectory_id"] == 0
+    assert row["interaction_ids"] == ["chatcmpl-test0"]
+    assert row["workload"]["sequence_lengths"] == [6]
+    assert row["workload"]["sequence_tokens"] == 6
+    assert row["workload"]["loss_tokens"] == 3
+    from areal.elastic.contracts import WorkloadStats
+
+    assert WorkloadStats(**row["workload"]).n_seqs == 1
+    assert session_api_key not in json.dumps(row)
 
 
 @pytest.mark.asyncio

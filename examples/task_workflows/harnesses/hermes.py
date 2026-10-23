@@ -54,6 +54,8 @@ from dataclasses import dataclass, field
 from functools import partial, wraps
 from typing import Any
 
+from examples.task_workflows.trace import CallTrace, observe_openai
+
 from areal.utils import logging
 from areal.v2.agent_service.types import (
     AgentRequest,
@@ -590,8 +592,9 @@ class HermesAgent:
 class _TimedStream:
     """Preserve the SDK stream interface while timing consumption and cleanup."""
 
-    def __init__(self, stream: Any, finish: Any) -> None:
+    def __init__(self, stream: Any, finish: Any, observe: Any = None) -> None:
         self._stream, self._finish = stream, finish
+        self._observe = observe
         self._iterator = iter(stream)
 
     def __iter__(self) -> _TimedStream:
@@ -599,7 +602,10 @@ class _TimedStream:
 
     def __next__(self) -> Any:
         try:
-            return next(self._iterator)
+            chunk = next(self._iterator)
+            if self._observe is not None:
+                self._observe(chunk)
+            return chunk
         except BaseException:
             self._finish()
             raise
@@ -627,7 +633,8 @@ class _TimedStream:
 def observe_inference(agent: Any, sampling: dict[str, Any]) -> Any:
     """Time actual SDK calls, including summary calls and stream consumption."""
     agent.request_overrides = {**agent.request_overrides, **sampling}
-    agent._areal_inference_calls = []
+    agent._areal_call_trace = CallTrace()
+    agent._areal_inference_calls = agent._areal_call_trace.requests
 
     def bind(client: Any) -> Any:
         create = client.chat.completions.create
@@ -638,7 +645,7 @@ def observe_inference(agent: Any, sampling: dict[str, Any]) -> Any:
         def sampled(*args: Any, **kwargs: Any) -> Any:
             clock = time.perf_counter()
             record = {"started": time.time(), "finished": None, "seconds": None}
-            agent._areal_inference_calls.append(record)
+            agent._areal_call_trace.request(record)
 
             def finish() -> None:
                 if record["finished"] is None:
@@ -647,12 +654,20 @@ def observe_inference(agent: Any, sampling: dict[str, Any]) -> Any:
                     )
 
             try:
+                if kwargs.get("stream"):
+                    kwargs["stream_options"] = {
+                        **(kwargs.get("stream_options") or {}),
+                        "include_usage": True,
+                    }
                 response = create(*args, **{**kwargs, **sampling})
             except BaseException:
                 finish()
                 raise
             if kwargs.get("stream"):
-                return _TimedStream(response, finish)
+                return _TimedStream(
+                    response, finish, lambda chunk: observe_openai(record, chunk)
+                )
+            observe_openai(record, response)
             finish()
             return response
 

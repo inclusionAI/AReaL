@@ -304,6 +304,7 @@ async def test_shared_client_submits_and_rewards_both_benchmarks(
     assert summary["completed"] == summary["correct"] == 1
     assert summary["model_calls"] == 2 and summary["tool_executions"] == 1
     row = json.loads((tmp_path / "episodes.jsonl").read_text())
+    assert row["task_index"] == 0 and row["available_at"] <= row["started"]
     assert (
         row["timing"]["inference_seconds"] == 3 and row["timing"]["tool_seconds"] == 1
     )
@@ -317,9 +318,10 @@ async def test_shared_client_submits_and_rewards_both_benchmarks(
 
 
 @pytest.mark.parametrize("kind", ["python", "repository"])
+@pytest.mark.parametrize("streaming", [False, True])
 @pytest.mark.asyncio
 async def test_task_service_runs_multi_call_tools_with_both_environments(
-    tmp_path, monkeypatch, docker_transport, repository_case, kind
+    tmp_path, monkeypatch, docker_transport, repository_case, kind, streaming
 ):
     """A scripted harness exercises actual SDK routing and real environment commands."""
     from openai import OpenAI
@@ -333,6 +335,37 @@ async def test_task_service_runs_multi_call_tools_with_both_environments(
 
     def respond(request):
         seen.append(json.loads(request.content))
+        if seen[-1].get("stream"):
+            chunks = [
+                {"delta": {"content": "done"}, "finish_reason": None},
+                {"delta": {}, "finish_reason": "stop"},
+            ]
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                text="".join(
+                    "data: "
+                    + json.dumps(
+                        {
+                            "id": "offline",
+                            "object": "chat.completion.chunk",
+                            "created": 0,
+                            "model": "Qwen",
+                            "choices": [{"index": 0, **choice}],
+                            "usage": {
+                                "prompt_tokens": 100,
+                                "completion_tokens": 20,
+                                "total_tokens": 120,
+                            }
+                            if i
+                            else None,
+                        }
+                    )
+                    + "\n\n"
+                    for i, choice in enumerate(chunks)
+                )
+                + "data: [DONE]\n\n",
+            )
         return httpx.Response(
             200,
             json={
@@ -340,6 +373,11 @@ async def test_task_service_runs_multi_call_tools_with_both_environments(
                 "object": "chat.completion",
                 "created": 0,
                 "model": "Qwen",
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 20,
+                    "total_tokens": 120,
+                },
                 "choices": [
                     {
                         "index": 0,
@@ -363,18 +401,23 @@ async def test_task_service_runs_multi_call_tools_with_both_environments(
             )
 
         def run_conversation(self, message, task_id):
-            self.client.chat.completions.create(
-                model="Qwen", messages=[{"role": "user", "content": message}]
-            )
+            def infer(text):
+                result = self.client.chat.completions.create(
+                    model="Qwen",
+                    messages=[{"role": "user", "content": text}],
+                    stream=streaming,
+                )
+                if streaming:
+                    list(result)
+
+            infer(message)
             name, arguments = (
                 ("math_python", {"code": "print(6 * 7)"})
                 if kind == "python"
                 else ("workspace_exec", {"command": "printf 'done\\n' > new.txt"})
             )
             hermes._dispatch_tool(name, arguments, task_id=task_id)
-            self.client.chat.completions.create(
-                model="Qwen", messages=[{"role": "user", "content": "continue"}]
-            )
+            infer("continue")
             return {"final_response": r"\boxed{42}", "completed": True, "api_calls": 2}
 
         def close(self):
@@ -426,9 +469,61 @@ async def test_task_service_runs_multi_call_tools_with_both_environments(
     environment = response.metadata["environment"]
     assert environment["kind"] == kind and len(environment["calls"]) == 1
     assert len(environment["timing_calls"]) == 1
+    trace = response.metadata["simulation_trace"]
+    assert trace["lengths_complete"] and trace["dependencies_complete"]
+    first, tool, second = trace["nodes"]
+    assert first["input_tokens"] == second["input_tokens"] == 100
+    assert first["output_tokens"] == second["output_tokens"] == 20
+    assert first["cached_prefix_tokens"] is None
+    assert first["predecessors"] == []
+    assert tool["predecessors"] == [first["name"]]
+    assert second["predecessors"] == [tool["name"]]
+    assert tool["queued"] <= tool["started"] <= tool["finished"]
+    assert tool["seconds"] >= 0 and trace["external_pools"][tool["pool"]] == 1
     if kind == "repository":
         assert "new.txt" in environment["artifacts"]["patch"]
     assert not list(docker_transport.iterdir())
+
+
+def test_task_trace_parallel_tools_join_before_next_request(tmp_path, docker_transport):
+    """Both tools depend on the model, with a join and separately measured queue."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from examples.task_workflows.environments.python import PythonSandbox, ToolSettings
+    from examples.task_workflows.trace import CallTrace
+
+    runtime = PythonSandbox(
+        ToolSettings("offline-image", tmp_path / "tools"),
+        "fanout",
+        image_id="sha256:offline",
+    )
+    trace = CallTrace()
+    trace.bind_tools(runtime)
+    first = {"started": 0.0, "finished": 1.0}
+    trace.request(first)
+    barrier = threading.Barrier(2)
+
+    def invoke(_):
+        barrier.wait(timeout=10)
+        return json.loads(runtime.invoke("math_python", {"code": "print(6 * 7)"}))
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(invoke, range(2)))
+        assert all(row["output"].strip() == "42" for row in results)
+        second = {"started": 2.0, "finished": 3.0}
+        trace.request(second)
+        tools = [node for node in trace.nodes if node["kind"] == "external"]
+        assert len(tools) == 2
+        assert all(node["predecessors"] == [first["name"]] for node in tools)
+        assert set(second["predecessors"]) == {node["name"] for node in tools}
+        assert all(
+            node["queued"] <= node["started"] <= node["finished"] for node in tools
+        )
+        assert all(node["seconds"] >= 0 for node in tools)
+    finally:
+        runtime.close()
 
 
 def test_swe_grading_uses_real_upstream_parser_on_candidate_patch(

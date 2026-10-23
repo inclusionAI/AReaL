@@ -33,7 +33,7 @@ loop、cost-model revision 和 optimizer revision；当前执行入口为原生 
 代码、八卡操作文档和1.7B正式配置已统一到同一目录，旧目录及兼容入口已删除。正式配置解析结果与迁移前完整一致，删除后21项正常路径离线回归通过；[整合证据](../../../artifacts/task-workflows-consolidation-20261023/offline-validation.json)。
 
 后续真实运行按[2×2八卡操作文档](../task_workflows/RUN_2X2_8GPU.md)执行，覆盖Hermes／CC ×
-DAPO／SWE的评测和常驻训练；H20／H200均先验收16题／4更新。离线模拟采用调用依赖＋引擎batch摘要，逐请求长度／阶段边界与跨层关联尚待补齐，本次仅明确采集要求。
+DAPO／SWE的评测和常驻训练；H20／H200均先验收16题／4更新。离线模拟采用调用依赖＋引擎batch摘要，逐调用usage长度／工具依赖及导出工作量已补采，真实GPU与引擎阶段／batch关联仍待验收或补齐。
 
 ### 范围与边界
 
