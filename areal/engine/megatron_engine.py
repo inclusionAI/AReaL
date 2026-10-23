@@ -3030,16 +3030,8 @@ class MegatronEngine(TrainEngine):
                 if staged_adamw_config is not None
                 else getattr(torch, self.mcore_config.main_params_dtype)
             ),
-            exp_avg_dtype=(
-                torch.float32
-                if staged_adamw_config is not None
-                else getattr(torch, self.mcore_config.exp_avg_dtype)
-            ),
-            exp_avg_sq_dtype=(
-                torch.float32
-                if staged_adamw_config is not None
-                else getattr(torch, self.mcore_config.exp_avg_sq_dtype)
-            ),
+            exp_avg_dtype=getattr(torch, self.mcore_config.exp_avg_dtype),
+            exp_avg_sq_dtype=getattr(torch, self.mcore_config.exp_avg_sq_dtype),
         )
 
         optimizer_kwargs = {}

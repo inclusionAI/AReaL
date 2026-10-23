@@ -53,7 +53,7 @@ class _ModelChunk:
         self.param_sync_count += 1
 
 
-def _run_dp2() -> None:
+def _run_dp2(moment_dtype: torch.dtype) -> None:
     if dist.get_world_size() != 2:
         raise ValueError("staged AdamW DP worker requires world size 2")
     device = torch.device("cuda", int(os.environ["LOCAL_RANK"]))
@@ -83,6 +83,8 @@ def _run_dp2() -> None:
     ]
     inner = GPUStagedAdamW(
         param_groups,
+        exp_avg_dtype=moment_dtype,
+        exp_avg_sq_dtype=moment_dtype,
         staged_config=GPUStagedAdamWConfig(
             buffer_count=2,
             bucket_size_mb=11 * 4 / (1024 * 1024),
@@ -123,8 +125,8 @@ def _run_dp2() -> None:
         use_precision_aware_optimizer=True,
         main_grads_dtype=torch.bfloat16,
         main_params_dtype=torch.float32,
-        exp_avg_dtype=torch.float32,
-        exp_avg_sq_dtype=torch.float32,
+        exp_avg_dtype=moment_dtype,
+        exp_avg_sq_dtype=moment_dtype,
         clip_grad=0.0,
     )
 
@@ -172,6 +174,10 @@ def _run_dp2() -> None:
             model_param.main_grad = grad
             baseline_param.grad = grad.float()
         baseline.step()
+        for baseline_param in baseline_params:
+            for state_name in ("exp_avg", "exp_avg_sq"):
+                moment = baseline.state[baseline_param][state_name]
+                moment.copy_(moment.to(moment_dtype))
 
         success, grad_norm, num_zeros = optimizer.step()
         inner.drain()
@@ -200,7 +206,9 @@ def _run_dp2() -> None:
                 for state_name in ("exp_avg", "exp_avg_sq"):
                     torch.testing.assert_close(
                         staged_state[state_name],
-                        baseline_state[state_name].cpu()[expected_slice],
+                        baseline_state[state_name]
+                        .cpu()[expected_slice]
+                        .to(moment_dtype),
                         rtol=2e-6,
                         atol=2e-6,
                     )
@@ -209,12 +217,15 @@ def _run_dp2() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", required=True)
+    parser.add_argument(
+        "--moment-dtype", choices=("float32", "bfloat16"), default="float32"
+    )
     args = parser.parse_args()
     local_rank = int(os.environ["LOCAL_RANK"])
     torch.cuda.set_device(local_rank)
     dist.init_process_group("nccl", device_id=torch.device("cuda", local_rank))
     try:
-        _run_dp2()
+        _run_dp2(getattr(torch, args.moment_dtype))
         dist.barrier()
         if dist.get_rank() == 0:
             with open(args.output, "w") as file:

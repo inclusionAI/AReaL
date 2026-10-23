@@ -337,8 +337,9 @@ def test_precision_aware_optimizer_fields_are_applied_before_validation(
 
 
 @pytest.mark.parametrize("qwen4_exp", [False, True])
+@pytest.mark.parametrize("moment_dtype", ["float32", "bfloat16"])
 def test_cpu_staged_adamw_config_selects_precision_aware_factory(
-    monkeypatch, qwen4_exp: bool
+    monkeypatch, qwen4_exp: bool, moment_dtype: str
 ) -> None:
     """The core Megatron config directly selects the staged AdamW factory."""
     captured = {}
@@ -346,6 +347,8 @@ def test_cpu_staged_adamw_config_selects_precision_aware_factory(
     engine.mcore_config.cpu_staged_offload = CPUStagedOffloadConfig(
         enabled=True, buffer_count=3, bucket_size_mb=4
     )
+    engine.mcore_config.exp_avg_dtype = moment_dtype
+    engine.mcore_config.exp_avg_sq_dtype = moment_dtype
 
     overrides = {object(): object()}
     if qwen4_exp:
@@ -394,8 +397,8 @@ def test_cpu_staged_adamw_config_selects_precision_aware_factory(
     assert config.use_precision_aware_optimizer is True
     assert config.use_precision_aware_optimizer_no_fp8_or_ds_fp8 is True
     assert config.main_params_dtype is torch.float32
-    assert config.exp_avg_dtype is torch.float32
-    assert config.exp_avg_sq_dtype is torch.float32
+    assert config.exp_avg_dtype is getattr(torch, moment_dtype)
+    assert config.exp_avg_sq_dtype is getattr(torch, moment_dtype)
 
 
 def test_scheduler_uses_fixed_warmup_and_resume_safe_initial_lr(

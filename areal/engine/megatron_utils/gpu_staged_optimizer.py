@@ -211,14 +211,14 @@ class _UpdateUnit:
 
 @dataclass
 class AdamWCPUSlabs:
-    """Three flat FP32 slabs authoritative between optimizer steps.
+    """Flat CPU master and moment slabs authoritative between optimizer steps.
 
     Pinned host allocations are rounded up to the next power of two by
     PyTorch's caching host allocator.  For very large models that can turn a
     57 GiB state slab into a 64 GiB allocation on every rank.  Large slabs are
     therefore allowed to use pageable host memory; CUDA copies remain correct
-    (and may be synchronous), while the optimizer state stays CPU-resident and
-    FP32.
+    (and may be synchronous). Master weights remain FP32; moments may use BF16
+    storage and are promoted to FP32 in bounded CUDA slots for each update.
     """
 
     master: torch.Tensor
@@ -227,23 +227,34 @@ class AdamWCPUSlabs:
     pinned: bool = True
 
     @classmethod
-    def allocate(cls, numel: int, *, pin_memory: bool = True) -> AdamWCPUSlabs:
+    def allocate(
+        cls,
+        numel: int,
+        *,
+        pin_memory: bool = True,
+        exp_avg_dtype: torch.dtype = torch.float32,
+        exp_avg_sq_dtype: torch.dtype = torch.float32,
+    ) -> AdamWCPUSlabs:
+        if any(
+            dtype not in (torch.float32, torch.bfloat16)
+            for dtype in (exp_avg_dtype, exp_avg_sq_dtype)
+        ):
+            raise ValueError("CPU AdamW moments must use FP32 or BF16 storage")
         kwargs = {
             "size": (numel,),
-            "dtype": torch.float32,
             "device": "cpu",
             "pin_memory": pin_memory,
         }
         return cls(
-            master=torch.empty(**kwargs),
-            exp_avg=torch.zeros(**kwargs),
-            exp_avg_sq=torch.zeros(**kwargs),
+            master=torch.empty(**kwargs, dtype=torch.float32),
+            exp_avg=torch.zeros(**kwargs, dtype=exp_avg_dtype),
+            exp_avg_sq=torch.zeros(**kwargs, dtype=exp_avg_sq_dtype),
             pinned=pin_memory,
         )
 
 
 class GPUStagedAdamW(torch.optim.AdamW):
-    """AdamW whose FP32 master weights and moments live in CPU slabs."""
+    """CPU-resident AdamW with FP32 updates and optional BF16 moment storage."""
 
     manages_cpu_residency = True
     manages_master_weight = True
@@ -276,11 +287,13 @@ class GPUStagedAdamW(torch.optim.AdamW):
             raise ValueError(
                 "GPU-staged AdamW requires precision-aware master weights and grads"
             )
-        state_dtypes = (master_weight_dtype, exp_avg_dtype, exp_avg_sq_dtype)
-        if any(dtype is not torch.float32 for dtype in state_dtypes):
-            raise ValueError(
-                "GPU-staged AdamW currently requires FP32 master and moment slabs"
-            )
+        if master_weight_dtype is not torch.float32:
+            raise ValueError("GPU-staged AdamW requires FP32 master weights")
+        if any(
+            dtype not in (torch.float32, torch.bfloat16)
+            for dtype in (exp_avg_dtype, exp_avg_sq_dtype)
+        ):
+            raise ValueError("GPU-staged AdamW moments must use FP32 or BF16 storage")
         unsupported_enabled = {
             name: kwargs.pop(name)
             for name in ("amsgrad", "maximize", "differentiable")
@@ -309,6 +322,11 @@ class GPUStagedAdamW(torch.optim.AdamW):
             fused=False,
         )
         self.staged_config = staged_config or GPUStagedAdamWConfig()
+        self._state_dtypes = {
+            "master_param": torch.float32,
+            "exp_avg": exp_avg_dtype,
+            "exp_avg_sq": exp_avg_sq_dtype,
+        }
         self.cpu_slabs: AdamWCPUSlabs | None = None
         self._layouts: tuple[_ParamLayout, ...] = ()
         self._units: tuple[_UpdateUnit, ...] = ()
@@ -393,10 +411,13 @@ class GPUStagedAdamW(torch.optim.AdamW):
                 "empty staged AdamW ownership requires an explicit CUDA device"
             )
 
-        slab_bytes = total_numel * 4  # FP32 state
+        slab_bytes = total_numel * 4  # FP32 master is the largest state slab.
         use_pinned_memory = slab_bytes <= self._MAX_PINNED_SLAB_BYTES
         self.cpu_slabs = AdamWCPUSlabs.allocate(
-            total_numel, pin_memory=use_pinned_memory
+            total_numel,
+            pin_memory=use_pinned_memory,
+            exp_avg_dtype=self._state_dtypes["exp_avg"],
+            exp_avg_sq_dtype=self._state_dtypes["exp_avg_sq"],
         )
         self._layouts = tuple(layouts)
         self._units = self._build_units(layouts, self.staged_config.bucket_numel)
@@ -723,9 +744,16 @@ class GPUStagedAdamW(torch.optim.AdamW):
             raise KeyError(f"unsupported staged AdamW checkpoint state: {key}")
         if not isinstance(value, torch.Tensor):
             raise TypeError(f"loaded {key} must be a tensor")
-        if value.device.type != "cpu" or value.dtype is not torch.float32:
-            raise TypeError(f"loaded {key} must be a CPU FP32 tensor")
         destination = self.state[param][key]
+        # Legacy MCore gather/scatter checkpoints use FP32 transport buffers.
+        # Native sharded checkpoints retain the actual moment storage dtype.
+        if value.device.type != "cpu" or value.dtype not in (
+            destination.dtype,
+            torch.float32,
+        ):
+            raise TypeError(
+                f"loaded {key} must be a CPU {destination.dtype} or FP32 tensor"
+            )
         if destination.shape != value.shape:
             raise ValueError(
                 f"checkpoint state shape mismatch for {key}: "
@@ -864,7 +892,7 @@ class GPUStagedAdamW(torch.optim.AdamW):
                 if (
                     not isinstance(value, torch.Tensor)
                     or value.device.type != "cpu"
-                    or value.dtype is not torch.float32
+                    or value.dtype != destination.dtype
                     or value.shape != destination.shape
                 ):
                     raise ValueError(f"loaded {key} has an incompatible tensor")
@@ -900,14 +928,15 @@ class GPUStagedAdamW(torch.optim.AdamW):
                 if (
                     not isinstance(value, torch.Tensor)
                     or value.device.type != "cpu"
-                    or value.dtype is not torch.float32
+                    or value.dtype != self._state_dtypes[key]
+                    or slab.dtype != self._state_dtypes[key]
                     or value.shape != layout.param.shape
                     or value.storage_offset() != slab.storage_offset() + layout.offset
                     or value.untyped_storage().data_ptr()
                     != slab.untyped_storage().data_ptr()
                 ):
                     raise RuntimeError(
-                        f"managed optimizer {key} view lost CPU FP32 slab ownership"
+                        f"managed optimizer {key} view lost CPU slab ownership"
                     )
 
 
@@ -1006,8 +1035,6 @@ def get_megatron_optimizer_with_gpu_staged_adamw(
         "optimizer_cpu_offload": False,
         "use_precision_aware_optimizer": True,
         "main_params_dtype": torch.float32,
-        "exp_avg_dtype": torch.float32,
-        "exp_avg_sq_dtype": torch.float32,
     }
     mismatches = {
         name: (getattr(mcore_config, name, None), expected)
@@ -1016,6 +1043,9 @@ def get_megatron_optimizer_with_gpu_staged_adamw(
     }
     if mismatches:
         raise ValueError(f"incompatible Megatron optimizer config: {mismatches}")
+    for name in ("exp_avg_dtype", "exp_avg_sq_dtype"):
+        if getattr(mcore_config, name, None) not in (torch.float32, torch.bfloat16):
+            raise ValueError(f"GPU-staged AdamW {name} must be FP32 or BF16")
     if getattr(mcore_config, "optimizer_cuda_graph", False):
         raise ValueError("GPU-staged AdamW does not support optimizer CUDA graphs")
     if getattr(mcore_config, "fp8_recipe", None) is not None:

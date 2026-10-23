@@ -80,6 +80,59 @@ def test_cpu_slabs_are_contiguous_pinned_and_zero_initialized() -> None:
     torch.testing.assert_close(slabs.exp_avg_sq, torch.zeros(37), rtol=0.0, atol=0.0)
 
 
+def test_bf16_moment_slabs_reduce_storage_with_fp32_master() -> None:
+    slabs = AdamWCPUSlabs.allocate(
+        37,
+        pin_memory=False,
+        exp_avg_dtype=torch.bfloat16,
+        exp_avg_sq_dtype=torch.bfloat16,
+    )
+    assert slabs.master.dtype is torch.float32
+    assert (
+        sum(
+            t.numel() * t.element_size()
+            for t in (slabs.master, slabs.exp_avg, slabs.exp_avg_sq)
+        )
+        == 37 * 8
+    )
+    for moment in (slabs.exp_avg, slabs.exp_avg_sq):
+        assert moment.dtype is torch.bfloat16
+        torch.testing.assert_close(moment, torch.zeros_like(moment), rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("field", ["exp_avg_dtype", "exp_avg_sq_dtype"])
+def test_moment_storage_rejects_unsupported_dtype(field) -> None:
+    with pytest.raises(ValueError, match="FP32 or BF16"):
+        GPUStagedAdamW([torch.nn.Parameter(torch.ones(1))], **{field: torch.float16})
+
+
+@pytest.mark.skipif(not CUDA_AVAILABLE, reason="CUDA is required for staged AdamW")
+def test_bf16_checkpoint_state_preserves_views_and_validates_dtype() -> None:
+    param = torch.nn.Parameter(torch.ones(13, device="cuda", dtype=torch.bfloat16))
+    optimizer = GPUStagedAdamW(
+        [param],
+        staged_config=_tiny_config(),
+        exp_avg_dtype=torch.bfloat16,
+        exp_avg_sq_dtype=torch.bfloat16,
+    )
+    optimizer.bind_owned_params(optimizer.param_groups)
+    state = optimizer.get_unscaled_state(param, "exp_avg")
+    assert state.dtype is torch.bfloat16
+    assert (
+        state.untyped_storage().data_ptr()
+        == optimizer.cpu_slabs.exp_avg.untyped_storage().data_ptr()
+    )
+    optimizer.set_scaled_state(param, "exp_avg", torch.full((13,), 0.1))
+    torch.testing.assert_close(state, torch.full_like(state, 0.1), rtol=0, atol=0)
+    with pytest.raises(TypeError, match="FP32"):
+        optimizer.set_scaled_state(param, "master_param", state)
+    malformed = optimizer.state_dict()
+    malformed["state"][0] = dict(malformed["state"][0])
+    malformed["state"][0]["exp_avg"] = state.float()
+    with pytest.raises(ValueError, match="incompatible tensor"):
+        optimizer.load_state_dict(malformed)
+
+
 def test_slot_state_machine_waits_before_reuse_and_drain() -> None:
     """Pending D2H is waited exactly on reuse or drain."""
     waited: list[int] = []
@@ -157,8 +210,11 @@ def test_bind_builds_cpu_state_views_and_bounded_units() -> None:
 
 @pytest.mark.skipif(not CUDA_AVAILABLE, reason="CUDA is required for staged AdamW")
 @pytest.mark.parametrize("pageable", [False, True])
-def test_multiple_steps_match_fp32_master_adamw(monkeypatch, pageable) -> None:
-    """DP=1 shard updates match ordinary FP32-master AdamW over many steps."""
+@pytest.mark.parametrize("moment_dtype", [torch.float32, torch.bfloat16])
+def test_multiple_steps_match_fp32_master_adamw(
+    monkeypatch, pageable, moment_dtype
+) -> None:
+    """Updates match FP32 AdamW with moments rounded between steps when requested."""
     if pageable:
         monkeypatch.setattr(GPUStagedAdamW, "_MAX_PINNED_SLAB_BYTES", 0)
     torch.manual_seed(1234)
@@ -172,7 +228,11 @@ def test_multiple_steps_match_fp32_master_adamw(monkeypatch, pageable) -> None:
         "weight_decay": 0.07,
     }
     staged = GPUStagedAdamW(
-        [staged_param], staged_config=_tiny_config(bucket_numel=9), **kwargs
+        [staged_param],
+        staged_config=_tiny_config(bucket_numel=9),
+        exp_avg_dtype=moment_dtype,
+        exp_avg_sq_dtype=moment_dtype,
+        **kwargs,
     )
     staged.bind_owned_params(staged.param_groups)
     assert staged.cpu_slabs.pinned is not pageable
@@ -189,15 +249,22 @@ def test_multiple_steps_match_fp32_master_adamw(monkeypatch, pageable) -> None:
 
         state = staged.state[staged_param]
         baseline_state = baseline.state[baseline_param]
+        # Quantize only after the FP32 update, exactly at the storage boundary.
+        # Step one still compares against unmodified FP32 AdamW parameters.
+        for key in ("exp_avg", "exp_avg_sq"):
+            baseline_state[key].copy_(baseline_state[key].to(moment_dtype))
         torch.testing.assert_close(
             state["master_param"], baseline_param.detach().cpu(), rtol=2e-6, atol=2e-6
         )
         torch.testing.assert_close(
-            state["exp_avg"], baseline_state["exp_avg"].cpu(), rtol=2e-6, atol=2e-6
+            state["exp_avg"],
+            baseline_state["exp_avg"].cpu().to(moment_dtype),
+            rtol=2e-6,
+            atol=2e-6,
         )
         torch.testing.assert_close(
             state["exp_avg_sq"],
-            baseline_state["exp_avg_sq"].cpu(),
+            baseline_state["exp_avg_sq"].cpu().to(moment_dtype),
             rtol=2e-6,
             atol=2e-6,
         )
@@ -648,7 +715,8 @@ def test_checkpoint_state_dict_aliases_cpu_slabs_and_save_drains(
 
 
 @pytest.mark.skipif(not CUDA_AVAILABLE, reason="CUDA is required for staged AdamW")
-def test_checkpoint_resume_continues_to_match_pytorch_adamw() -> None:
+@pytest.mark.parametrize("moment_dtype", [torch.float32, torch.bfloat16])
+def test_checkpoint_resume_continues_to_match_pytorch_adamw(moment_dtype) -> None:
     """A staged checkpoint resumes on the native AdamW optimization path."""
     torch.manual_seed(20260828)
     initial = torch.randn(31, device="cuda", dtype=torch.bfloat16)
@@ -660,7 +728,11 @@ def test_checkpoint_resume_continues_to_match_pytorch_adamw() -> None:
     }
     source_param = torch.nn.Parameter(initial.clone())
     source = GPUStagedAdamW(
-        [source_param], staged_config=_tiny_config(bucket_numel=8), **kwargs
+        [source_param],
+        staged_config=_tiny_config(bucket_numel=8),
+        exp_avg_dtype=moment_dtype,
+        exp_avg_sq_dtype=moment_dtype,
+        **kwargs,
     )
     source.bind_owned_params(source.param_groups)
     baseline_param = torch.nn.Parameter(initial.float())
@@ -673,6 +745,9 @@ def test_checkpoint_resume_continues_to_match_pytorch_adamw() -> None:
         source.step()
         baseline.step()
         source.drain()
+        for key in ("exp_avg", "exp_avg_sq"):
+            value = baseline.state[baseline_param][key]
+            value.copy_(value.to(moment_dtype))
 
     live_checkpoint = source.state_dict()
     checkpoint = {
@@ -684,7 +759,11 @@ def test_checkpoint_resume_continues_to_match_pytorch_adamw() -> None:
     }
     resumed_param = torch.nn.Parameter(source_param.detach().clone())
     resumed = GPUStagedAdamW(
-        [resumed_param], staged_config=_tiny_config(bucket_numel=8), **kwargs
+        [resumed_param],
+        staged_config=_tiny_config(bucket_numel=8),
+        exp_avg_dtype=moment_dtype,
+        exp_avg_sq_dtype=moment_dtype,
+        **kwargs,
     )
     resumed.bind_owned_params(resumed.param_groups)
     resumed.begin_checkpoint_load()
@@ -701,6 +780,8 @@ def test_checkpoint_resume_continues_to_match_pytorch_adamw() -> None:
 
         resumed_state = resumed.state[resumed_param]
         baseline_state = baseline.state[baseline_param]
+        for key in ("exp_avg", "exp_avg_sq"):
+            baseline_state[key].copy_(baseline_state[key].to(moment_dtype))
         torch.testing.assert_close(
             resumed_state["master_param"],
             baseline_param.detach().cpu(),
@@ -710,7 +791,7 @@ def test_checkpoint_resume_continues_to_match_pytorch_adamw() -> None:
         for key in ("exp_avg", "exp_avg_sq"):
             torch.testing.assert_close(
                 resumed_state[key],
-                baseline_state[key].cpu(),
+                baseline_state[key].cpu().to(moment_dtype),
                 rtol=2e-6,
                 atol=2e-6,
             )

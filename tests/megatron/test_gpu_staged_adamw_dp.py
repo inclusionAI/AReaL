@@ -24,7 +24,10 @@ _WORKER = "tests/megatron/torchrun/run_gpu_staged_adamw_dp.py"
 
 @pytest.mark.multi_gpu
 @pytest.mark.slow
-def test_gpu_staged_adamw_matches_mcore_dp2_shards(tmp_path_factory) -> None:
+@pytest.mark.parametrize("moment_dtype", ["float32", "bfloat16"])
+def test_gpu_staged_adamw_matches_mcore_dp2_shards(
+    tmp_path_factory, moment_dtype
+) -> None:
     """A parameter crossing the DP boundary matches native full AdamW."""
     if current_platform.device_count() < 2:
         pytest.skip("staged AdamW DP parity requires 2 GPUs")
@@ -44,6 +47,7 @@ def test_gpu_staged_adamw_matches_mcore_dp2_shards(tmp_path_factory) -> None:
             f"--master-port={port}",
             _WORKER,
             f"--output={output}",
+            f"--moment-dtype={moment_dtype}",
         ],
         check=True,
         cwd=_PROJECT_ROOT,

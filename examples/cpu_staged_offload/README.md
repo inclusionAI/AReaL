@@ -4,7 +4,7 @@ This example keeps FP32 AdamW master parameters and moments in CPU memory. Optim
 steps stream bounded chunks through reusable GPU buffers, freeing the full optimizer
 state from the colocated rollout GPU.
 
-State slabs up to 16 GiB use pinned memory. Larger slabs use pageable memory and
+State slabs up to 4 GiB use pinned memory. Larger slabs use pageable memory and
 synchronous transfers to avoid the pinned allocator's power-of-two allocation rounding,
 which can exhaust host memory on large models. This preserves FP32 AdamW semantics but
 reduces transfer overlap; host capacity must still cover all three FP32 state slabs on
@@ -26,9 +26,17 @@ No example-specific actor, trainer, or worker environment variables are required
 bounds one slot's master/moment/gradient tensors.
 
 The AdamW backend uses the repository-pinned Megatron-Core, BF16 training, distributed
-optimizer, precision-aware optimizer semantics, and FP32 master/moment state. Enabling
-it selects precision-aware mode automatically. Staged optimizer checkpoint saves are
-synchronous; `megatron.async_save=true` is rejected.
+optimizer, precision-aware optimizer semantics, and FP32 master/moment state by default.
+Enabling it selects precision-aware mode automatically. Staged optimizer checkpoint
+saves are synchronous; `megatron.async_save=true` is rejected.
+
+For host memory constrained runs, set `actor.megatron.exp_avg_dtype=bfloat16` and
+`actor.megatron.exp_avg_sq_dtype=bfloat16` with `actor.optimizer.type=adam`. This
+reduces CPU state storage from 12 to 8 bytes per parameter. Master weights and GPU
+updates remain FP32; moments are rounded to BF16 when stored between steps. The first
+update from zero moments matches FP32 AdamW, while subsequent updates use the rounded
+moments and need their own convergence validation. Native sharded checkpoints preserve
+the storage dtype; resume with the same moment dtype configuration.
 
 Checkpoint loading is fail-stop. DCP writes optimizer state into the authoritative CPU
 slabs in place. If loading fails, the process must terminate and AReaL recovery starts a
