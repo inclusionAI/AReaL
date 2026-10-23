@@ -264,9 +264,15 @@ def apply_non_moe_tp(
         "layers.*.self_attn.q_proj": ColwiseParallel(),
         "layers.*.self_attn.k_proj": ColwiseParallel(),
         "layers.*.self_attn.v_proj": ColwiseParallel(),
-        # special q/k norm for qwen3
-        "layers.*.self_attn.q_norm": ReplicateParallel(),
-        "layers.*.self_attn.k_norm": ReplicateParallel(),
+        # Qwen3 normalizes [batch, sequence, local_heads, head_dim] before
+        # transposing attention axes. Describe the head shard so gradients of
+        # shared norm weights sum contributions from every TP rank.
+        "layers.*.self_attn.q_norm": SequenceParallel(
+            sequence_dim=2, use_local_output=True
+        ),
+        "layers.*.self_attn.k_norm": SequenceParallel(
+            sequence_dim=2, use_local_output=True
+        ),
         # Reduce in RowwiseParallel, Scatter by Shard(1)
         "layers.*.self_attn.o_proj": RowwiseParallel(
             output_layouts=Shard(1),
