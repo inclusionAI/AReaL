@@ -312,11 +312,14 @@ async def test_caught_system_error_cannot_be_recovered_as_context_zero(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_recovered_overflow_keeps_all_eleven_siblings(monkeypatch):
+@pytest.mark.parametrize("failure", ["context_overflow", "invalid_tool_json"])
+async def test_recovered_overflow_keeps_all_eleven_siblings(monkeypatch, failure):
     from areal.api import RolloutWorkflow
     from areal.infra.remote_inf_engine import GroupedRolloutWorkflow
 
     client = _FakeProxyClient()
+    client.context_overflow = failure == "context_overflow"
+    client.invalid_tool_json = failure == "invalid_tool_json"
     monkeypatch.setattr(workflow_module, "OpenAIProxyClient", lambda **_: client)
     monkeypatch.setattr(
         workflow_context, "get_aiohttp_session", AsyncMock(return_value=object())
@@ -743,7 +746,7 @@ async def test_concat_per_completion_rewards_do_not_fill_unscored_branch(monkeyp
         ("TIMEOUT", True),
         ("NO_OUTPUT", True),
         ("EVAL_FAILED", True),
-        ("SETUP_FAILED", False),
+        ("SETUP_FAILED", True),
     ],
 )
 @pytest.mark.parametrize("reject_terminal_task_failures", [False, True])

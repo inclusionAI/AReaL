@@ -346,6 +346,7 @@ async def test_areal_stream_reasoning_only_is_not_empty():
 def _reset_server_globals(monkeypatch):
     """Reset all module-level globals before each test."""
     monkeypatch.setattr(srv, "_session_cache", {})
+    monkeypatch.setattr(srv, "_session_invalid_tool_errors", {})
     monkeypatch.setattr(srv, "_api_key_to_session", {})
     monkeypatch.setattr(srv, "_session_to_api_key", {})
     monkeypatch.setattr(srv, "_capacity", 0)
