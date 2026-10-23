@@ -184,10 +184,15 @@ def test_repository_environment_exports_real_edits_and_new_files(
     try:
         outcome = json.loads(
             environment.invoke(
-                "workspace_exec", {"command": "printf 'new file\\n' > added.txt"}
+                "workspace_exec",
+                {
+                    "command": "printf 'new file\\n' > added.txt; printf 'repository note\\n' >&2"
+                },
             )
         )
         assert outcome["exit_code"] == 0
+        assert outcome["output"] == "repository note\n"
+        assert "stderr" not in outcome
         artifacts = environment.export_artifacts()
         assert "new file" in artifacts["patch"] and "added.txt" in artifacts["patch"]
         assert artifacts["base_commit"] == repository_case["base_commit"]
@@ -195,6 +200,32 @@ def test_repository_environment_exports_real_edits_and_new_files(
         assert environment.records[0]["command"].startswith("printf")
     finally:
         environment.close()
+    assert not list(docker_transport.iterdir())
+
+
+def test_math_tool_separates_stdout_and_stderr(tmp_path, docker_transport):
+    """Keep diagnostics out of calculation output and persist both streams."""
+    from examples.task_workflows.environments.python import PythonSandbox, ToolSettings
+
+    runtime = PythonSandbox(
+        ToolSettings("offline-image", tmp_path / "tools"),
+        "separate-streams",
+        image_id="sha256:offline",
+    )
+    try:
+        result = json.loads(
+            runtime.execute(
+                "import sys; print(6 * 7); print('tool diagnostic', file=sys.stderr)"
+            )
+        )
+        assert result["exit_code"] == 0
+        assert result["output"] == result["stdout"] == "42\n"
+        assert result["stderr"] == "tool diagnostic\n"
+        record = json.loads((runtime.directory / "tools.jsonl").read_text())
+        assert record["stdout"] == "42\n"
+        assert record["stderr"] == result["stderr"]
+    finally:
+        runtime.close()
     assert not list(docker_transport.iterdir())
 
 

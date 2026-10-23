@@ -92,6 +92,7 @@ if command[0] == "timeout":
     command = command[3:]
 command = ["-c" if value == "-lc" else value for value in command]
 if command[0] == "python":
+    print("SIF diagnostic", file=sys.stderr, flush=True)
     command[0] = sys.executable
 env = {"PATH": os.environ["PATH"], "HOME": str(root), "LANG": "C.UTF-8"}
 sys.exit(subprocess.run(command, cwd=cwd, env=env).returncode)
@@ -199,6 +200,9 @@ def test_sif_host_preserves_task_files_without_exposing_credentials(
         )
         assert first["status"] == second["status"] == "completed"
         assert second["output"] == "42\nNone\n"
+        assert second["stdout"] == second["output"]
+        assert second["stderr"] == "SIF diagnostic\n"
+        assert runtime.metadata()["calls"][-1]["stderr"] == second["stderr"]
         assert runtime.metadata()["backend"] == "singularity"
         expected_mode = os.environ["OFFLINE_SIF_PROC_MODE"]
         assert runtime.metadata()["proc_mode"] == expected_mode

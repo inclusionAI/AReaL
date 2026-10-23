@@ -180,6 +180,7 @@ class PythonSandbox:
                     output_bytes=self.settings.max_output_bytes,
                     process_group=getattr(self, "host_process_group", False),
                     env=getattr(self, "host_env", None),
+                    separate_stderr=True,
                 )
                 if result["exit_code"] in (125, 126, 127):
                     result["status"] = "infrastructure_error"

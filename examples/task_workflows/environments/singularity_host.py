@@ -207,6 +207,7 @@ class _SIFRuntime:
                 timeout=self.settings.timeout + (0 if python else 10),
                 output_bytes=self.settings.max_output_bytes,
                 truncate=not python,
+                separate_stderr=python,
             )
             if result["exit_code"] in ((125, 126, 127) if python else (125,)):
                 result["status"] = "infrastructure_error"

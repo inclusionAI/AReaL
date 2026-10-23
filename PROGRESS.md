@@ -11,6 +11,7 @@ logits约18.55GiB，分配器配置不构成已验证修复。资源空闲后须
 
 **当前实现**
 
+- 数学工具在Docker／Singularity中分开保存`stdout`／`stderr`，诊断保留在`stderr`，兼容字段`output`仅含标准输出；总输出限制保持。41项正常路径及真实Python3.6.8宿主14项跨版本检查通过，见[证据](../artifacts/task-workflows-math-streams-20261024/offline-validation.json)；容器命令仍为离线替身，实机待验收。
 - Rollout batch采集默认关闭，分别记录prefill／decode请求数、上下文token与CUDA
   event时间，mixed拆分计数；采集代码已推送`cc430cfd`，5项CPU检查通过，GPU兼容性和开销待公司端实测，见[采集说明](docs/zh/best_practices/perf_profiling.md#sglang-batch-%E8%AF%B7%E6%B1%82%E6%95%B0%E4%B8%8E-token-%E6%97%B6%E5%BA%8F)。
 - 主目录 `AReaL`，分支 `feature/autopilot-elastic`，基线

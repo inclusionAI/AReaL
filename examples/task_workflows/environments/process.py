@@ -9,24 +9,34 @@ import time
 
 
 def run_limited(
-    command, *, timeout, output_bytes, truncate=False, process_group=False, env=None
+    command,
+    *,
+    timeout,
+    output_bytes,
+    truncate=False,
+    process_group=False,
+    env=None,
+    separate_stderr=False,
 ):
-    """Bound a subprocess's combined output and runtime without buffering it all."""
+    """Bound total output and runtime; optionally keep stderr separate from stdout."""
     started = time.monotonic()
     process = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        stderr=subprocess.PIPE if separate_stderr else subprocess.STDOUT,
         start_new_session=process_group,
         env=env,
     )
     output = bytearray()
+    errors = bytearray()
     status = "completed"
     truncated = False
     assert process.stdout is not None
     try:
         with selectors.DefaultSelector() as selector:
-            selector.register(process.stdout, selectors.EVENT_READ)
+            selector.register(process.stdout, selectors.EVENT_READ, output)
+            if separate_stderr:
+                selector.register(process.stderr, selectors.EVENT_READ, errors)
             while selector.get_map():
                 remaining = timeout - (time.monotonic() - started)
                 if remaining <= 0:
@@ -37,8 +47,8 @@ def run_limited(
                     if not chunk:
                         selector.unregister(key.fileobj)
                         continue
-                    available = output_bytes - len(output)
-                    output.extend(chunk[:available])
+                    available = output_bytes - len(output) - len(errors)
+                    key.data.extend(chunk[:available])
                     if len(chunk) > available:
                         truncated = True
                         if not truncate:
@@ -61,9 +71,14 @@ def run_limited(
             process.kill()
         process.wait()
         process.stdout.close()
-    return {
+        if process.stderr is not None:
+            process.stderr.close()
+    result = {
         "status": "output_limit" if truncated and status == "completed" else status,
         "exit_code": process.returncode,
         "output": output.decode(errors="replace"),
         "seconds": time.monotonic() - started,
     }
+    if separate_stderr:
+        result.update(stdout=result["output"], stderr=errors.decode(errors="replace"))
+    return result

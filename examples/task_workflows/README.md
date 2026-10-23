@@ -58,6 +58,7 @@ ID。跨运行复用时应将选定任务的 `image_name` 冻结为不可变的 
 
 数学 Python 工具可先用 `python -m examples.task_workflows.environments.python` 预检：不请求模型，只检查
 Docker 输出42。默认单次15秒／8KiB输出、每题16次工具调用；每次新解释器，题内文件保留，结束清理容器。
+数学工具在Docker／Singularity下均分别返回`stdout`和`stderr`，兼容字段`output`等于`stdout`；运行时与程序诊断保留在`stderr`，两路输出合计沿用原大小限制，工具日志亦保存两路内容。
 
 将下例的 `--benchmark` 与任务文件分别换为 `dapo_math`／已有 DAPO JSONL，或 `swe_rebench`／SWE JSONL：
 
