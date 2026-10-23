@@ -27,6 +27,8 @@ SWE评分仍由训练镜像内的固定上游evaluator解析、判分，测试�
 - 宿主`singularity`必须支持`overlay create --fakeroot`、`exec --fakeroot --containall --net --network none`及禁用默认bind。这些尚未在公司验证；不支持时探针报错，无宿主执行或开放网络回退。
 - 每题使用默认4GiB的sparse
   overlay，工具与新评分环境各自独立，结束后删除overlay／scratch，保留日志和patch。overlay容量不是RAM限额；可用`TASK_OVERLAY_MB`调整，见[Apptainer1.3说明](https://apptainer.org/docs/user/1.3/persistent_overlays.html)。
+- 默认保留Apptainer的`/proc`挂载；设置`TASK_PROC_MODE=none`仅在工具与SWE评分容器追加`--no-mount proc`，其余PID／IPC、网络及文件隔离参数保持。手动启动宿主服务时用`serve --proc-mode none`；省略或设`default`沿用原行为。依赖`/proc`的工具／测试需另行验收，独立PID
+  namespace的权限问题仍需单独诊断。
 - 网络关闭、私有PID／IPC、最小`/dev`、干净环境且不传`--nv`；只读评分patch是唯一额外bind。共享存储／home／socket不挂进任务容器。实际挂载与fakeroot隔离仍需公司验收。
 - CPU／RAM总额依赖公司Slurm的作业cgroup配置，需确认实际生效；`TASK_TOOL_WORKERS`限制同时执行的工具／评分数量。当前不提供Docker式每题CPU／RAM
   cgroup；每次调用有时间／输出上限，结束时清理自身进程组。
@@ -74,12 +76,14 @@ export TASK_TRAIN_SIF=/storage/openpsi/images/areal-dev-sglang-1014.sif
 export TASK_IMAGE_MANIFEST=/absolute/path/to/images.json
 export TASK_HOST_PYTHON=python3  # 须为宿主Python≥3.6.8，也可指定绝对路径
 export TASK_PYTHON=python3  # CPU工具探针只需镜像中的Python
+export TASK_PROC_MODE=none  # 工具容器不挂载/proc；原模式用default或取消此变量
 export TASK_RUN_ROOT=/absolute/results/sif-python-probe-1
 export AREAL_TASK_PYTHON_IMAGE=python:3.12
 sbatch --gres=none --cpus-per-task=8 --mem=16G --time=00:10:00 \
   --export=ALL,TASK_MODE=probe "$TASK_CODE_ROOT/examples/task_workflows/slurm_singularity.sbatch"
 ```
 
+`host-health.json`的`proc_mode`应与选择一致，评测／训练的`launch.json`中另存`task_proc_mode`，每题环境元数据也记录`proc_mode`。
 `python-tool-probe.json`应为completed、输出42；`host-tools.log`无容器启动异常。该探针同时检查overlay／fakeroot／网络namespace能否启动，比之前单纯运行Python的探针多了一层工具隔离，但不验证GPU或每题资源限额。
 
 ## 3．选择组合并评测／训练
@@ -137,7 +141,7 @@ Agent、推理、客户端和宿主工具服务都属于同一作业；脚本只
 沿用现有episodes／simulation_trace、Rollout batch与Trainer
 trace。工具`queued`在调用入口，`started/seconds`采用宿主实际执行时间，排除RPC和工具槽位等待；日志中的宿主pool容量不是现有Expert逐题pool模型，模拟全局CPU并发仍需额外组装。
 
-本地33项正常路径通过，覆盖Docker回归和新增Singularity的Hermes／CC × 数学／SWE，真实Unix
-RPC／git／pytest／上游评分器参与；另用真实Python3.6.8宿主与3.12客户端完成7项跨版本检查，见[兼容性证据](../../../artifacts/task-workflows-singularity-py36-20261024/offline-validation.json)。Apptainer
+本地40项正常路径通过，覆盖Docker回归及Singularity两种proc模式下的Hermes／CC × 数学／SWE，真实Unix
+RPC／git／pytest／上游评分器参与；另用真实Python3.6.8宿主与3.12客户端完成14项跨版本检查，见[模式验证证据](../../../artifacts/task-workflows-singularity-no-proc-20261024/offline-validation.json)。Apptainer
 CLI和模型响应为替身。
 真实SIF、隔离、GPU／NCCL及训练均待公司端验收；详见[证据](../../../artifacts/task-workflows-singularity-20261023/offline-validation.json)。

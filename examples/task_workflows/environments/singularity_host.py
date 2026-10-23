@@ -51,6 +51,7 @@ class _SIFRuntime:
         sif,
         executable,
         overlay_mb,
+        proc_mode="default",
         repo=None,
         base_commit=None,
     ):
@@ -68,6 +69,7 @@ class _SIFRuntime:
         self.container = None
         self.records, self.call_timings = [], []
         self.sif, self.executable, self.overlay_mb = sif, executable, overlay_mb
+        self.proc_mode = proc_mode
         self.overlay = self.directory / "overlay.img"
         self.scratch = self.directory / "scratch"
         self.patches = None
@@ -87,7 +89,7 @@ class _SIFRuntime:
             "--cleanenv",
             "--no-home",
             "--no-mount",
-            "hostfs,bind-paths,cwd",
+            "hostfs,bind-paths,cwd" + (",proc" if self.proc_mode == "none" else ""),
             "--net",
             "--network",
             "none",
@@ -275,6 +277,7 @@ class _SIFRuntime:
             "backend": "singularity",
             "sif": str(self.sif),
             "host_worker_capacity": self.host_worker_capacity,
+            "proc_mode": self.proc_mode,
             "resource_limits": "Requires site Slurm job cgroup; timeout/output bounded per call; no per-task CPU/RAM cgroup",
         }
         if self.kind == "repository":
@@ -291,8 +294,18 @@ class Host:
     """Private job-scoped registry; manifest images are pinned by actual SIF digest."""
 
     def __init__(
-        self, root, images, *, executable="singularity", workers=4, overlay_mb=4096
+        self,
+        root,
+        images,
+        *,
+        executable="singularity",
+        workers=4,
+        overlay_mb=4096,
+        proc_mode="default",
     ):
+        if proc_mode not in ("default", "none"):
+            raise ValueError("proc_mode must be default or none")
+        self.proc_mode = proc_mode
         if workers < 1 or overlay_mb < 64:
             raise ValueError("Positive workers and overlay size >=64 MiB are required")
         self.root = root.resolve()
@@ -333,6 +346,7 @@ class Host:
                 "images": len(self.images),
                 "pid": os.getpid(),
                 "active_tasks": len(self.tasks),
+                "proc_mode": self.proc_mode,
             }
         if action == "open":
             return self.open(**payload)
@@ -408,6 +422,7 @@ class Host:
             sif=self.images[identity],
             executable=self.executable,
             overlay_mb=self.overlay_mb,
+            proc_mode=self.proc_mode,
         )
         runtime.host_worker_capacity = self.workers
         with self.lock:
@@ -495,6 +510,12 @@ def main():
     serve.add_argument("--executable", default="singularity")
     serve.add_argument("--workers", type=int, default=4)
     serve.add_argument("--overlay-mb", type=int, default=4096)
+    serve.add_argument(
+        "--proc-mode",
+        choices=("default", "none"),
+        default="default",
+        help="Keep runtime /proc mounts, or disable them for task tools and grading",
+    )
     args = parser.parse_args()
     os.umask(0o077)
     args.socket.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -504,6 +525,7 @@ def main():
         executable=args.executable,
         workers=args.workers,
         overlay_mb=args.overlay_mb,
+        proc_mode=args.proc_mode,
     )
 
     def stop(signum, frame):

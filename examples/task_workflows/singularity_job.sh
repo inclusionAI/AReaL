@@ -79,6 +79,7 @@ n, epochs, batch = (int(os.environ[k]) for k in ("TASK_N", "TASK_EPOCHS", "TASK_
 assert min(n, epochs, batch) > 0 and n * epochs % batch == 0
 row = {k: os.environ.get(k) for k in ("TASK_CASE", "TASK_MODE", "TASK_MODEL_PATH", "TASK_TRAIN_TASKS", "TASK_EVAL_TASKS", "TASK_HW", "TASK_N", "TASK_EPOCHS", "TASK_BATCH", "TASK_CONCURRENCY")}
 row["updates"] = n * epochs // batch
+row["task_proc_mode"] = json.loads(Path(os.environ["TASK_RUN_ROOT"], "host-health.json").read_text())["proc_mode"]
 Path(os.environ["TASK_RUN_ROOT"], "launch.json").write_text(json.dumps(row, indent=2))
 PY
 updates=$((TASK_N * TASK_EPOCHS / TASK_BATCH))

@@ -47,6 +47,7 @@ singularity --version > "$TASK_RUN_ROOT/runtime-version.txt"
   --socket "$AREAL_TASK_HOST_SOCKET" --root "$TASK_RUN_ROOT/host-tools" \
   --images "$TASK_IMAGE_MANIFEST" --workers "${TASK_TOOL_WORKERS:-4}" \
   --overlay-mb "${TASK_OVERLAY_MB:-4096}" \
+  --proc-mode "${TASK_PROC_MODE:-default}" \
   > "$TASK_RUN_ROOT/host-tools.log" 2>&1 &
 host_pid=$!
 printf '%s\n' "$host_pid" > "$TASK_RUN_ROOT/host-tools.pid"

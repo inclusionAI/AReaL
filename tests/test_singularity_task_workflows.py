@@ -36,8 +36,8 @@ from tests.test_task_workflows import (
 repository_case = task_fixtures.repository_case
 
 
-@pytest.fixture
-def sif_transport(tmp_path, monkeypatch, repository_case):
+@pytest.fixture(params=["default", "none"], ids=["default-proc", "no-proc"])
+def sif_transport(tmp_path, monkeypatch, repository_case, request):
     """Keep the executable host-only: the agent never locates or invokes it."""
     sif = tmp_path / "fixture.sif"
     sif.write_bytes(b"offline SIF transport fixture, not a real filesystem image")
@@ -72,7 +72,10 @@ assert args[0] == "exec"
 for flag in ["--fakeroot", "--containall", "--cleanenv", "--no-home", "--net"]:
     assert flag in args
 assert args[args.index("--network") + 1] == "none"
-assert args[args.index("--no-mount") + 1] == "hostfs,bind-paths,cwd"
+expected = "hostfs,bind-paths,cwd"
+if os.environ["OFFLINE_SIF_PROC_MODE"] == "none":
+    expected += ",proc"
+assert args[args.index("--no-mount") + 1] == expected
 root = pathlib.Path(args[args.index("--overlay") + 1]).parent / "scratch/image"
 image_index = next(i for i, value in enumerate(args) if value.endswith(".sif"))
 command = args[image_index + 1:]
@@ -97,18 +100,19 @@ sys.exit(subprocess.run(command, cwd=cwd, env=env).returncode)
     executable.chmod(0o755)
     monkeypatch.setenv("OFFLINE_SIF_IMAGE", repository_case["_test_image_directory"])
     monkeypatch.setenv("OFFLINE_SIF_LOG", str(tmp_path / "host-commands.jsonl"))
+    monkeypatch.setenv("OFFLINE_SIF_PROC_MODE", request.param)
     monkeypatch.setenv("AREAL_TASK_RUNTIME", "singularity")
     empty = tmp_path / "unused-docker"
     empty.mkdir()
     with tempfile.TemporaryDirectory(prefix="areal-sif-", dir="/tmp") as socket_dir:
         path = Path(socket_dir) / "tools.sock"
         monkeypatch.setenv("AREAL_TASK_HOST_SOCKET", str(path))
-        with _host_process(tmp_path, manifest, executable, path) as host:
+        with _host_process(tmp_path, manifest, executable, path, request.param) as host:
             yield host, empty
 
 
 @contextmanager
-def _host_process(tmp_path, manifest, executable, path):
+def _host_process(tmp_path, manifest, executable, path, proc_mode):
     """Optional real legacy interpreter; the agent/client remains on modern Python."""
     root = tmp_path / "host-state"
     host_python = os.environ.get("AREAL_TEST_HOST_PYTHON")
@@ -131,6 +135,8 @@ def _host_process(tmp_path, manifest, executable, path):
                     str(executable),
                     "--workers",
                     "2",
+                    "--proc-mode",
+                    proc_mode,
                 ],
                 stdout=log,
                 stderr=subprocess.STDOUT,
@@ -159,7 +165,9 @@ def _host_process(tmp_path, manifest, executable, path):
                 process.terminate()
                 assert process.wait(timeout=15) == 0
         return
-    host = Host(root, manifest, executable=str(executable), workers=2)
+    host = Host(
+        root, manifest, executable=str(executable), workers=2, proc_mode=proc_mode
+    )
     with HostServer(path, host) as server:
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -192,6 +200,9 @@ def test_sif_host_preserves_task_files_without_exposing_credentials(
         assert first["status"] == second["status"] == "completed"
         assert second["output"] == "42\nNone\n"
         assert runtime.metadata()["backend"] == "singularity"
+        expected_mode = os.environ["OFFLINE_SIF_PROC_MODE"]
+        assert runtime.metadata()["proc_mode"] == expected_mode
+        assert rpc("health")["proc_mode"] == expected_mode
         assert rpc("health")["images"] == 1
     finally:
         runtime.close()
@@ -199,6 +210,7 @@ def test_sif_host_preserves_task_files_without_exposing_credentials(
     assert not list(host.root.glob("*/overlay.img"))
     assert not list(host.root.glob("*/scratch"))
     assert runtime.metadata()["backend"] == "singularity"
+    assert runtime.metadata()["proc_mode"] == expected_mode
 
 
 @pytest.mark.parametrize("kind", ["python", "repository"])
