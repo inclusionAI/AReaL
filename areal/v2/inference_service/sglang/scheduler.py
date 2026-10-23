@@ -171,6 +171,7 @@ class AwexSchedulerBridge:
 # markers.  Deltas vs upstream:
 #   1. AwexSchedulerBridge(scheduler).bind()   -- awex weight update service
 #   2. PPSchedulerBridge(scheduler, server_args).bind()  -- per-PP-rank NCCL groups
+#   3. bind_batch_observer(scheduler)  -- optional batch occupancy / timing
 # ---------------------------------------------------------------------------
 
 
@@ -194,6 +195,7 @@ def areal_run_scheduler_process(
     Deltas vs upstream:
       1. After ``Scheduler()`` creation -> ``AwexSchedulerBridge(scheduler).bind()``
       2. After ``Scheduler()`` creation -> ``PPSchedulerBridge(scheduler, server_args).bind()``
+      3. After ``Scheduler()`` creation -> optional ``bind_batch_observer(scheduler)``
     """
     import signal
 
@@ -215,6 +217,7 @@ def areal_run_scheduler_process(
     )
     from sglang.utils import get_exception_traceback
 
+    from areal.v2.inference_service.sglang.batch_observer import bind_batch_observer
     from areal.v2.inference_service.sglang.pp_bridge import (
         PPSchedulerBridge,
     )
@@ -247,6 +250,7 @@ def areal_run_scheduler_process(
         trace_set_thread_info(thread_label, tp_rank, dp_rank)
 
     # Create a scheduler and run the event loop
+    observer = None
     try:
         scheduler = Scheduler(
             server_args,
@@ -263,6 +267,7 @@ def areal_run_scheduler_process(
         # ---- BEGIN AREAL ----
         AwexSchedulerBridge(scheduler).bind()
         PPSchedulerBridge(scheduler, server_args).bind()
+        observer = bind_batch_observer(scheduler)
         # ---- END AREAL ----
 
         pipe_writer.send(scheduler.get_init_info())
@@ -272,6 +277,9 @@ def areal_run_scheduler_process(
         traceback = get_exception_traceback()
         logger.error(f"Scheduler hit an exception: {traceback}")
         parent_process.send_signal(signal.SIGQUIT)
+    finally:
+        if observer is not None:
+            observer.close()
 
 
 def create_result_ipc() -> str:

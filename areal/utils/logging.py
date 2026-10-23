@@ -60,6 +60,7 @@ LOGGER_COLORS_EXACT = {
     "StatsLogger": "light_green",
     "StatsTracker": "light_green",
     "PerfTracer": "light_green",
+    "SGLangBatchObserver": "light_green",
     # RPC servers - white
     "SyncRPCServer": "white",
     "RPCSerialization": "white",

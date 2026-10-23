@@ -1,9 +1,11 @@
 # AutoPilot 进度
 
-更新：2026-10-22。[架构](areal/elastic/README.md)／[计划](examples/autopilot/PLAN.md)／[GPU 验收证据](../artifacts/gpu-native-acceptance-20261022/README.md)／[实测阶段时间线 SVG](../artifacts/elastic-timeline-20261022/README.md)。
+更新：2026-10-23。[架构](areal/elastic/README.md)／[计划](examples/autopilot/PLAN.md)／[GPU 验收证据](../artifacts/gpu-native-acceptance-20261022/README.md)／[实测阶段时间线 SVG](../artifacts/elastic-timeline-20261022/README.md)。
 
 **当前实现**
 
+- Rollout batch采集默认关闭，分别记录prefill／decode请求数、上下文token与CUDA
+  event时间，mixed拆分计数；5项CPU检查通过，GPU兼容性和开销待公司端实测，见[采集说明](docs/zh/best_practices/perf_profiling.md#sglang-batch-%E8%AF%B7%E6%B1%82%E6%95%B0%E4%B8%8E-token-%E6%97%B6%E5%BA%8F)。
 - 主目录 `AReaL`，分支 `feature/autopilot-elastic`，基线 `v2.1.0`（`ecc8b0e4`）。
 - 唯一执行：`PPOTrainer → elastic/runtime.py`。PPO → 发布确认 → 周期保存／评估／清理 → 恢复 Rollout →
   判断释放；释放前补齐完整状态与消费游标。
