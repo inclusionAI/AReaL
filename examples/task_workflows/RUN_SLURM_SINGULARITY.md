@@ -15,7 +15,8 @@
 └─ 训练SIF：Trainer／Agent／客户端 → 私有Unix socket → 宿主工具服务
 ```
 
-宿主服务仅依赖Python≥3.10的标准库；不导入torch／Hermes／CC，也不需要推理密钥。Agent／客户端内部不执行容器命令。
+宿主入口`examples.task_workflows.environments.singularity_host`仅依赖Python≥3.6.8标准库；不导入torch／Hermes／CC，也不需要推理密钥。训练SIF内部仍使用Python3.12，Agent／客户端内部不执行容器命令。
+无需在宿主安装AReaL包，sbatch会从代码根目录启动；`TASK_HOST_PYTHON`与容器内`TASK_PYTHON`分别配置，宿主版本保存到`host-python-version.txt`。
 SWE评分仍由训练镜像内的固定上游evaluator解析、判分，测试命令在宿主服务创建的全新评分overlay中运行；评分补丁不进入Agent环境。
 
 ## 1．准备训练与任务镜像
@@ -71,7 +72,7 @@ export TASK_CODE_ROOT=/absolute/path/to/AReaL
 export TASK_MOUNT_ROOT=/storage
 export TASK_TRAIN_SIF=/storage/openpsi/images/areal-dev-sglang-1014.sif
 export TASK_IMAGE_MANIFEST=/absolute/path/to/images.json
-export TASK_HOST_PYTHON=python3  # 须为宿主Python≥3.10，也可指定绝对路径
+export TASK_HOST_PYTHON=python3  # 须为宿主Python≥3.6.8，也可指定绝对路径
 export TASK_PYTHON=python3  # CPU工具探针只需镜像中的Python
 export TASK_RUN_ROOT=/absolute/results/sif-python-probe-1
 export AREAL_TASK_PYTHON_IMAGE=python:3.12
@@ -137,5 +138,6 @@ Agent、推理、客户端和宿主工具服务都属于同一作业；脚本只
 trace。工具`queued`在调用入口，`started/seconds`采用宿主实际执行时间，排除RPC和工具槽位等待；日志中的宿主pool容量不是现有Expert逐题pool模型，模拟全局CPU并发仍需额外组装。
 
 本地33项正常路径通过，覆盖Docker回归和新增Singularity的Hermes／CC × 数学／SWE，真实Unix
-RPC／git／pytest／上游评分器参与，Apptainer CLI和模型响应为替身。
+RPC／git／pytest／上游评分器参与；另用真实Python3.6.8宿主与3.12客户端完成7项跨版本检查，见[兼容性证据](../../../artifacts/task-workflows-singularity-py36-20261024/offline-validation.json)。Apptainer
+CLI和模型响应为替身。
 真实SIF、隔离、GPU／NCCL及训练均待公司端验收；详见[证据](../../../artifacts/task-workflows-singularity-20261023/offline-validation.json)。

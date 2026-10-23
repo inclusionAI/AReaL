@@ -3,9 +3,13 @@
 
 import hashlib
 import json
+import os
+import subprocess
 import sys
 import tempfile
 import threading
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -93,24 +97,78 @@ sys.exit(subprocess.run(command, cwd=cwd, env=env).returncode)
     executable.chmod(0o755)
     monkeypatch.setenv("OFFLINE_SIF_IMAGE", repository_case["_test_image_directory"])
     monkeypatch.setenv("OFFLINE_SIF_LOG", str(tmp_path / "host-commands.jsonl"))
-    host = Host(
-        tmp_path / "host-state", manifest, executable=str(executable), workers=2
-    )
+    monkeypatch.setenv("AREAL_TASK_RUNTIME", "singularity")
+    empty = tmp_path / "unused-docker"
+    empty.mkdir()
     with tempfile.TemporaryDirectory(prefix="areal-sif-", dir="/tmp") as socket_dir:
         path = Path(socket_dir) / "tools.sock"
-        with HostServer(path, host) as server:
-            thread = threading.Thread(target=server.serve_forever, daemon=True)
-            thread.start()
-            monkeypatch.setenv("AREAL_TASK_RUNTIME", "singularity")
-            monkeypatch.setenv("AREAL_TASK_HOST_SOCKET", str(path))
-            empty = tmp_path / "unused-docker"
-            empty.mkdir()
+        monkeypatch.setenv("AREAL_TASK_HOST_SOCKET", str(path))
+        with _host_process(tmp_path, manifest, executable, path) as host:
+            yield host, empty
+
+
+@contextmanager
+def _host_process(tmp_path, manifest, executable, path):
+    """Optional real legacy interpreter; the agent/client remains on modern Python."""
+    root = tmp_path / "host-state"
+    host_python = os.environ.get("AREAL_TEST_HOST_PYTHON")
+    if host_python:
+        with (tmp_path / "host.log").open("w+") as log:
+            process = subprocess.Popen(
+                [
+                    host_python,
+                    "-S",
+                    "-m",
+                    "examples.task_workflows.environments.singularity_host",
+                    "serve",
+                    "--socket",
+                    str(path),
+                    "--root",
+                    str(root),
+                    "--images",
+                    str(manifest),
+                    "--executable",
+                    str(executable),
+                    "--workers",
+                    "2",
+                ],
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                cwd=Path(__file__).resolve().parents[1],
+            )
+
+            class ObservedHost:
+                @property
+                def tasks(self):
+                    return rpc("health")["active_tasks"]
+
+            observed = ObservedHost()
+            observed.root = root
             try:
-                yield host, empty
+                deadline = time.monotonic() + 15
+                while (
+                    not path.exists()
+                    and process.poll() is None
+                    and time.monotonic() < deadline
+                ):
+                    time.sleep(0.05)
+                log.seek(0)
+                assert path.exists(), log.read()
+                yield observed
             finally:
-                server.shutdown()
-                thread.join()
-                host.close()
+                process.terminate()
+                assert process.wait(timeout=15) == 0
+        return
+    host = Host(root, manifest, executable=str(executable), workers=2)
+    with HostServer(path, host) as server:
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            yield host
+        finally:
+            server.shutdown()
+            thread.join()
+            host.close()
 
 
 def test_sif_host_preserves_task_files_without_exposing_credentials(

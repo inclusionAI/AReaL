@@ -6,9 +6,7 @@ from __future__ import annotations
 
 import json
 import os
-import selectors
 import shutil
-import signal
 import subprocess
 import threading
 import time
@@ -17,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from examples.task_workflows.environments.process import run_limited as run_limited
 from examples.task_workflows.trace import mark_tool_execution
 
 
@@ -67,73 +66,6 @@ class ToolSettings:
             ),
             max_calls=int(os.environ.get("HERMES_MATH_TOOL_MAX_CALLS", "16")),
         )
-
-
-def run_limited(
-    command: list[str],
-    *,
-    timeout: float,
-    output_bytes: int,
-    truncate: bool = False,
-    process_group: bool = False,
-    env: dict[str, str] | None = None,
-) -> dict[str, Any]:
-    """Bound a subprocess's combined output and runtime without buffering it all."""
-    started = time.monotonic()
-    process = subprocess.Popen(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        start_new_session=process_group,
-        env=env,
-    )
-    output = bytearray()
-    status = "completed"
-    truncated = False
-    assert process.stdout is not None
-    try:
-        with selectors.DefaultSelector() as selector:
-            selector.register(process.stdout, selectors.EVENT_READ)
-            while selector.get_map():
-                remaining = timeout - (time.monotonic() - started)
-                if remaining <= 0:
-                    status = "timeout"
-                    break
-                for key, _ in selector.select(min(remaining, 0.2)):
-                    chunk = os.read(key.fileobj.fileno(), 4096)
-                    if not chunk:
-                        selector.unregister(key.fileobj)
-                        continue
-                    available = output_bytes - len(output)
-                    output.extend(chunk[:available])
-                    if len(chunk) > available:
-                        truncated = True
-                        if not truncate:
-                            status = "output_limit"
-                            break
-                if status != "completed":
-                    break
-        if status == "completed":
-            try:
-                process.wait(timeout=max(0.01, timeout - (time.monotonic() - started)))
-            except subprocess.TimeoutExpired:
-                status = "timeout"
-    finally:
-        if process_group:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        if process.poll() is None:
-            process.kill()
-        process.wait()
-        process.stdout.close()
-    return {
-        "status": "output_limit" if truncated and status == "completed" else status,
-        "exit_code": process.returncode,
-        "output": output.decode(errors="replace"),
-        "seconds": time.monotonic() - started,
-    }
 
 
 class PythonSandbox:

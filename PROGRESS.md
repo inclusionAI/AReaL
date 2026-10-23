@@ -1,6 +1,6 @@
 # AutoPilot 进度
 
-更新：2026-10-23。[架构](areal/elastic/README.md)／[计划](examples/autopilot/PLAN.md)／[GPU 验收证据](../artifacts/gpu-native-acceptance-20261022/README.md)／[实测阶段时间线 SVG](../artifacts/elastic-timeline-20261022/README.md)。
+更新：2026-10-24。[架构](areal/elastic/README.md)／[计划](examples/autopilot/PLAN.md)／[GPU 验收证据](../artifacts/gpu-native-acceptance-20261022/README.md)／[实测阶段时间线 SVG](../artifacts/elastic-timeline-20261022/README.md)。
 
 **Hermes 1.7B 常驻 PPO：等待GPU资源，OOM修正待实测**
 
@@ -42,7 +42,7 @@ staleness、来源ACK与重放审计见证据链接。测试服务及本轮两�
 
 **边界与后续**
 
-- [Slurm＋Singularity执行方式](examples/task_workflows/RUN_SLURM_SINGULARITY.md)与默认Docker并列保留：宿主私有socket服务启动逐题SIF／独立overlay，Hermes／CC共用工具与SWE评分；33项离线正常路径通过，见[证据](../artifacts/task-workflows-singularity-20261023/offline-validation.json)。[公司已有CPU探针](../artifacts/company-apptainer-probe-20261023/evidence.json)仅验证Apptainer1.3.2经`singularity`／`srun --mpi=none`运行Python；新overlay／隔离／GPU／NCCL／训练待公司验收，原长序列OOM未解决。
+- [Slurm＋Singularity执行方式](examples/task_workflows/RUN_SLURM_SINGULARITY.md)与默认Docker并列保留：宿主私有socket服务启动逐题SIF／独立overlay，Hermes／CC共用工具与SWE评分；宿主入口已拆为Python3.6.8标准库模块，训练SIF仍用3.12，Docker默认保留。33项正常路径及真实3.6.8宿主／3.12客户端跨版本7项通过，见[兼容性证据](../artifacts/task-workflows-singularity-py36-20261024/offline-validation.json)。[公司已有CPU探针](../artifacts/company-apptainer-probe-20261023/evidence.json)仅验证Apptainer1.3.2经`singularity`／`srun --mpi=none`运行Python；新overlay／隔离／GPU／NCCL／训练待公司验收，原长序列OOM未解决。
 - [Expert观测补采](../artifacts/expert-trace-collection-20261023/offline-validation.json)：Hermes／CC逐调用usage长度、工具fan-out依赖、锁等待／服务时间、清单就绪时间及CPU轨迹导出工作量已记录；26项离线正常路径通过，GPU待验收。缓存未知保留null，实际消费／控制边界仍须对照；Expert源码／系数未改，1.7B
   dense适配仍待做。
 - [2×2八卡操作文档](examples/task_workflows/RUN_2X2_8GPU.md)已覆盖Hermes／CC ×

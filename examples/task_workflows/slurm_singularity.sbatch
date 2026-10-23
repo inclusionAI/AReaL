@@ -41,9 +41,9 @@ trap 'exit 130' INT
 
 cd "$TASK_CODE_ROOT"
 host_python="${TASK_HOST_PYTHON:-python3}"
-"$host_python" -c 'import sys; assert sys.version_info >= (3, 10), "Host Python >=3.10 required"'
+"$host_python" -S -c 'import sys; assert sys.version_info >= (3, 6, 8), "Host Python >=3.6.8 required"; print(sys.version)' > "$TASK_RUN_ROOT/host-python-version.txt"
 singularity --version > "$TASK_RUN_ROOT/runtime-version.txt"
-"$host_python" -m examples.task_workflows.environments.singularity serve \
+"$host_python" -S -m examples.task_workflows.environments.singularity_host serve \
   --socket "$AREAL_TASK_HOST_SOCKET" --root "$TASK_RUN_ROOT/host-tools" \
   --images "$TASK_IMAGE_MANIFEST" --workers "${TASK_TOOL_WORKERS:-4}" \
   --overlay-mb "${TASK_OVERLAY_MB:-4096}" \

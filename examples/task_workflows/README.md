@@ -11,16 +11,17 @@ harness。训练沿用现有 online PPO，DAPO 在这里指数学数据集。
 
 执行方式并列保留：默认按[本地Docker](RUN_2X2_8GPU.md)运行；公司集群可选择[Slurm＋Singularity](RUN_SLURM_SINGULARITY.md)，通过宿主侧工具服务执行任务与评分，训练镜像内部不需要容器命令。两者复用同一任务／harness／评分契约。
 
-| 模块                          | 职责                                                    |
-| ----------------------------- | ------------------------------------------------------- |
-| `benchmarks/dapo_math.py`     | 原 DAPO 清单、prompt、最终答案评分                      |
-| `benchmarks/swe_rebench.py`   | SWE-rebench V2 清单、公开任务输入、上游评分适配         |
-| `environments/python.py`      | 每题隔离 Python 工具，保留原资源与执行语义              |
-| `environments/repository.py`  | 每题独立仓库、终端／文件操作、完整 patch 导出           |
-| `environments/singularity.py` | 可选宿主SIF执行后端、私有socket客户端与独立overlay      |
-| `harnesses/hermes.py`         | Hermes 原生循环、推理身份绑定、逐调用计时与环境工具注册 |
-| `harnesses/cc.py`             | Claude Code SDK 循环、每题推理转发与共享环境 MCP 绑定   |
-| `client.py` / `service.py`    | session、环境生命周期、并发、评分与原生奖励交接         |
+| 模块                               | 职责                                                    |
+| ---------------------------------- | ------------------------------------------------------- |
+| `benchmarks/dapo_math.py`          | 原 DAPO 清单、prompt、最终答案评分                      |
+| `benchmarks/swe_rebench.py`        | SWE-rebench V2 清单、公开任务输入、上游评分适配         |
+| `environments/python.py`           | 每题隔离 Python 工具，保留原资源与执行语义              |
+| `environments/repository.py`       | 每题独立仓库、终端／文件操作、完整 patch 导出           |
+| `environments/singularity.py`      | 可选SIF执行后端的socket客户端                           |
+| `environments/singularity_host.py` | Python3.6.8宿主服务，逐题SIF／overlay与工具计时         |
+| `harnesses/hermes.py`              | Hermes 原生循环、推理身份绑定、逐调用计时与环境工具注册 |
+| `harnesses/cc.py`                  | Claude Code SDK 循环、每题推理转发与共享环境 MCP 绑定   |
+| `client.py` / `service.py`         | session、环境生命周期、并发、评分与原生奖励交接         |
 
 ## 准备与运行
 
