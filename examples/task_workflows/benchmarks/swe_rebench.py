@@ -237,9 +237,10 @@ class SWERebenchBenchmark:
                     env=env,
                 )
         except subprocess.TimeoutExpired:
-            subprocess.run(
-                ["docker", "rm", "--force", name], capture_output=True, timeout=30
-            )
+            if os.environ.get("AREAL_TASK_RUNTIME", "docker") == "docker":
+                subprocess.run(
+                    ["docker", "rm", "--force", name], capture_output=True, timeout=30
+                )
             raise
         report = json.loads((output / "grade-report.json").read_text())
         return GradeResult(
@@ -264,6 +265,20 @@ def _grade_worker(job_path: Path) -> None:
     def run_in_container(
         image, workdir, patch_dir, patch_name, test_patch_name, test_cmds
     ):
+        if os.environ.get("AREAL_TASK_RUNTIME", "docker") == "singularity":
+            from examples.task_workflows.environments.singularity import rpc
+
+            return rpc(
+                "grade",
+                task_id=job["container"],
+                image=image,
+                repo=job["task"]["repo"],
+                base_commit=job["task"]["base_commit"],
+                patch=(patch_dir / patch_name).read_text(),
+                test_patch=(patch_dir / test_patch_name).read_text(),
+                test_cmds=test_cmds,
+                timeout=job["timeout"],
+            )
         name = job["container"]
 
         def docker(*args):

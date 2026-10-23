@@ -8,6 +8,7 @@ import json
 import os
 import selectors
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -32,9 +33,7 @@ class ToolSettings:
 
     def __post_init__(self) -> None:
         if not self.image or not self.root.is_absolute():
-            raise ValueError(
-                "A local Docker image and an absolute tool log root are required"
-            )
+            raise ValueError("A tool image and an absolute tool log root are required")
         if (
             min(
                 self.timeout,
@@ -71,12 +70,22 @@ class ToolSettings:
 
 
 def run_limited(
-    command: list[str], *, timeout: float, output_bytes: int, truncate: bool = False
+    command: list[str],
+    *,
+    timeout: float,
+    output_bytes: int,
+    truncate: bool = False,
+    process_group: bool = False,
+    env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Bound a subprocess's combined output and runtime without buffering it all."""
     started = time.monotonic()
     process = subprocess.Popen(
-        command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        start_new_session=process_group,
+        env=env,
     )
     output = bytearray()
     status = "completed"
@@ -110,6 +119,11 @@ def run_limited(
             except subprocess.TimeoutExpired:
                 status = "timeout"
     finally:
+        if process_group:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         if process.poll() is None:
             process.kill()
         process.wait()
@@ -158,6 +172,9 @@ class PythonSandbox:
             ["docker", *args], capture_output=True, text=True, timeout=30, check=True
         )
         return result.stdout.strip()
+
+    def _command(self, *args: str) -> list[str]:
+        return ["docker", "exec", self.container, *args]
 
     def _start(self) -> None:
         if self.container is not None:
@@ -220,18 +237,17 @@ class PythonSandbox:
                 self._start()
                 name = self.container
                 result = run_limited(
-                    [
-                        "docker",
-                        "exec",
-                        self.container,
+                    self._command(
                         "python",
                         "-I",
                         "-u",
                         "-c",
                         code,
-                    ],
+                    ),
                     timeout=self.settings.timeout,
                     output_bytes=self.settings.max_output_bytes,
+                    process_group=getattr(self, "host_process_group", False),
+                    env=getattr(self, "host_env", None),
                 )
                 if result["exit_code"] in (125, 126, 127):
                     result["status"] = "infrastructure_error"
@@ -283,6 +299,13 @@ class PythonSandbox:
 
 
 def resolve_image(settings: ToolSettings) -> str:
+    backend = os.environ.get("AREAL_TASK_RUNTIME", "docker")
+    if backend == "singularity":
+        from examples.task_workflows.environments.singularity import rpc
+
+        return rpc("resolve", image=settings.image)
+    if backend != "docker":
+        raise ValueError(f"Unknown task runtime: {backend}")
     if shutil.which("docker") is None:
         raise RuntimeError("Docker is required for the math Python tool")
     image_id = subprocess.run(
@@ -302,8 +325,13 @@ def main() -> None:
     import sys
 
     settings = ToolSettings.from_env()
-    runtime = PythonSandbox(
-        settings, "preflight-" + uuid.uuid4().hex, image_id=resolve_image(settings)
+    from examples.task_workflows.environments.singularity import create_environment
+
+    runtime = create_environment(
+        PythonSandbox,
+        settings,
+        "preflight-" + uuid.uuid4().hex,
+        image_id=resolve_image(settings),
     )
     try:
         result = json.loads(runtime.execute("print(6 * 7)"))

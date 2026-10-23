@@ -13,11 +13,13 @@ from typing import Any
 _tool_record: ContextVar[dict | None] = ContextVar("task_trace_tool", default=None)
 
 
-def mark_tool_execution(started: float) -> None:
+def mark_tool_execution(started: float, *, seconds: float | None = None) -> None:
     """Called inside the environment's existing lock, after any tool queue wait."""
     record = _tool_record.get()
     if record is not None:
         record.update(started=started, _clock=time.perf_counter())
+        if seconds is not None:
+            record["_service_seconds"] = seconds
 
 
 class CallTrace:
@@ -79,7 +81,9 @@ class CallTrace:
                 record["finished"] = time.time()
                 clock = record.pop("_clock", None)
                 if clock is not None:
-                    record["seconds"] = time.perf_counter() - clock
+                    record["seconds"] = record.pop(
+                        "_service_seconds", time.perf_counter() - clock
+                    )
                 _tool_record.reset(token)
 
         runtime.invoke = observed

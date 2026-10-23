@@ -111,6 +111,9 @@ class RepositoryEnvironment:
             check=True,
         ).stdout.strip()
 
+    def _command(self, *args: str) -> list[str]:
+        return ["docker", "exec", self.container, *args]
+
     def _start(self) -> None:
         if self.container is not None:
             return
@@ -165,20 +168,19 @@ class RepositoryEnvironment:
             try:
                 self._start()
                 result = run_limited(
-                    [
-                        "docker",
-                        "exec",
-                        self.container,
+                    self._command(
                         "timeout",
                         "--kill-after=5s",
                         str(self.settings.timeout),
                         "bash",
                         "-lc",
                         command,
-                    ],
+                    ),
                     timeout=self.settings.timeout + 10,
                     output_bytes=self.settings.max_output_bytes,
                     truncate=True,
+                    process_group=getattr(self, "host_process_group", False),
+                    env=getattr(self, "host_env", None),
                 )
                 if result["exit_code"] == 124:
                     result["status"] = "timeout"
@@ -219,18 +221,17 @@ class RepositoryEnvironment:
         self._start()
         self._control("exec", self.container, "git", "add", "--intent-to-add", "--all")
         result = run_limited(
-            [
-                "docker",
-                "exec",
-                self.container,
+            self._command(
                 "git",
                 "diff",
                 "--binary",
                 self.base_commit,
                 "--",
-            ],
+            ),
             timeout=60,
             output_bytes=self.settings.max_patch_bytes,
+            process_group=getattr(self, "host_process_group", False),
+            env=getattr(self, "host_env", None),
         )
         if result["status"] != "completed" or result["exit_code"] != 0:
             raise RuntimeError("Cannot export the complete candidate patch")

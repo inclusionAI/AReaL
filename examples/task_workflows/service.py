@@ -21,6 +21,7 @@ from examples.task_workflows.environments.repository import (
     RepositoryEnvironment,
     RepositorySettings,
 )
+from examples.task_workflows.environments.singularity import create_environment
 from examples.task_workflows.harnesses.hermes import (
     HermesAgent,
     bind_environment,
@@ -118,7 +119,8 @@ class TaskAgent(HermesAgent):
                 provider = (
                     PythonSandbox if spec.kind == "python" else RepositoryEnvironment
                 )
-                runtime = provider(
+                runtime = create_environment(
+                    provider,
                     settings,
                     task_id,
                     image_id=self._images[settings.image],
@@ -183,6 +185,7 @@ class CCTaskAgent:
                 )
             provider = PythonSandbox if spec.kind == "python" else RepositoryEnvironment
             runtime = await asyncio.to_thread(
+                create_environment,
                 provider,
                 settings,
                 "cc-" + uuid.uuid4().hex,
@@ -192,7 +195,7 @@ class CCTaskAgent:
             response = await self._harness.run(
                 request, runtime=runtime, emitter=emitter
             )
-            environment = runtime.metadata()
+            environment = await asyncio.to_thread(runtime.metadata)
             environment["artifacts"] = await asyncio.to_thread(runtime.export_artifacts)
             response.metadata["environment"] = environment
             return response
