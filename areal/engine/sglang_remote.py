@@ -93,6 +93,32 @@ def _resolve_colocated_base_gpu_id(
     )
 
 
+def _resolve_colocated_transfer_rank_base(
+    env: Mapping[str, str],
+    gpus_per_server: int,
+    base_gpu_id: int,
+    fallback_base_gpu_id: int,
+) -> int:
+    """Use actual placement for AWEX's dense node-local transfer base.
+
+    Worker enumeration can differ from Slurm's task placement. With a shared
+    device namespace the resolved logical GPU base already identifies the slot.
+    An isolated namespace starts at zero, so use the Slurm task slot when present
+    and retain the controller's dense base for other schedulers.
+    """
+    visible_devices = env.get(current_platform.device_control_env_var, "")
+    visible_count = len([item for item in visible_devices.split(",") if item.strip()])
+    if visible_count != gpus_per_server:
+        return base_gpu_id
+    local_id = env.get("SLURM_LOCALID")
+    if local_id is None:
+        return fallback_base_gpu_id
+    local_id = int(local_id)
+    if local_id < 0:
+        raise ValueError("SLURM_LOCALID must be non-negative")
+    return local_id * gpus_per_server
+
+
 def _compact_image_tokens(req: ModelRequest) -> list[int]:
     """Use one placeholder per image on the wire, preserving training token IDs.
 
@@ -553,20 +579,26 @@ class SGLangBackend:
         awex_transfer_rank_base = server_args.pop("_awex_transfer_rank_base", None)
         if awex_gpus_per_server is not None:
             fallback_base_gpu_id = int(server_args.get("base_gpu_id", 0))
-            awex_transfer_rank_base = fallback_base_gpu_id
             base_gpu_id, source = _resolve_colocated_base_gpu_id(
                 os.environ,
                 int(awex_gpus_per_server),
                 fallback_base_gpu_id,
             )
+            awex_transfer_rank_base = _resolve_colocated_transfer_rank_base(
+                os.environ,
+                int(awex_gpus_per_server),
+                base_gpu_id,
+                fallback_base_gpu_id,
+            )
             server_args["base_gpu_id"] = base_gpu_id
             logger.info(
                 "AWEX colocate base_gpu_id=%s resolved from %s "
-                "(gpus_per_server=%s, requested=%s)",
+                "(gpus_per_server=%s, requested=%s, transfer_rank_base=%s)",
                 base_gpu_id,
                 source,
                 awex_gpus_per_server,
                 fallback_base_gpu_id,
+                awex_transfer_rank_base,
             )
         cmd = SGLangConfig.build_cmd_from_args(server_args)
         _env = self.build_server_env(os.environ)
