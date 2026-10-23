@@ -25,6 +25,137 @@ loop、cost-model revision 和 optimizer revision；当前执行入口为原生 
   可提供离线成本参考，评分与修订反馈仍由 evaluator 负责。最终用独立实测验证，计入采样、搜索、修订和切换开销。
 - 对照包括现有固定配置、固定 Planner、普通在线校准，再分别评估模型修订、optimizer 修订及联合修订。
 
+## DAPO 与 SWE 适配计划
+
+2026-10-23：DAPO 独立与 SWE 接入已实现。用户将本轮验收限定为简单离线检查；真实 Docker／Hermes／GPU
+及训练闭环另行实测，不作为本轮完成条件。运行方法见 [共享任务工作流](../task_workflows/README.md)。
+
+代码、八卡操作文档和1.7B正式配置已统一到同一目录，旧目录及兼容入口已删除。正式配置解析结果与迁移前完整一致，删除后21项正常路径离线回归通过；[整合证据](../../../artifacts/task-workflows-consolidation-20261023/offline-validation.json)。
+
+后续真实运行按[2×2八卡操作文档](../task_workflows/RUN_2X2_8GPU.md)执行，覆盖Hermes／CC ×
+DAPO／SWE的评测和常驻训练；H20／H200均先验收16题／4更新。离线模拟采用调用依赖＋引擎batch摘要，逐请求长度／阶段边界与跨层关联尚待补齐，本次仅明确采集要求。
+
+### 范围与边界
+
+- 两项目标：将现有 DAPO 数学任务从 Hermes 中独立；接入可复用的 SWE 仓库修复任务。训练算法仍为现有 online PPO。
+- Hermes 与新增 CC harness 复用 v2 `AgentRunnable`、推理采集、admission、奖励与 durable
+  handoff；Tau2、Harbor／其他 MCP 数据集暂不纳入。
+- SWE 首个数据源为
+  [SWE-rebench V2](https://huggingface.co/datasets/nebius/SWE-rebench-V2)，准备命令默认选 Python
+  任务，冻结 dataset revision、顺序与内容摘要；尚未下载正式任务清单或镜像。通用仓库环境不绑定此数据源。
+- 不增加第二套调度器、训练队列或 agent 循环。原训练 OOM 仍独立待解决；工作流适配不构成显存修复，也不启动正式训练。
+
+### 代码组织与共享边界
+
+组合层位于 `examples/task_workflows/`，不预建其他 harness／benchmark 空壳：
+
+```text
+types.py                       # 任务输入、环境描述、执行结果、评分结果
+client.py                      # 固定清单、并发、session、评分调用、奖励交接、记录
+service.py                     # AgentRunnable 包装；环境生命周期与 harness 绑定
+train.py                       # 迁移／复用现有 PPOTrainer 薄入口
+harnesses/hermes.py             # 通用 Hermes 适配、能力绑定、逐调用观测
+harnesses/cc.py                 # Claude Code SDK 循环、逐题推理绑定、环境 MCP 工具
+benchmarks/dapo_math.py         # DAPO 数据身份、公开任务说明、数学评分
+benchmarks/swe_rebench.py       # 首个 SWE 数据源、初始化规格、原生评分接入
+environments/python.py         # 从现有 PythonSandbox 提取
+environments/repository.py     # 通用仓库、终端／文件执行及 patch 导出
+configs/                       # DAPO／SWE 运行组合，复用训练配置
+```
+
+| 部分            | 接口与职责                                                                           | 禁止耦合                                       |
+| --------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------- |
+| Benchmark       | 加载固定任务；生成公开输入与环境规格；用私有评分资料评价结果                         | 不导入 Hermes／CC；不管理训练 session          |
+| Environment     | 创建／附着、执行工具、导出产物、清理；每 episode 独立                                | 不决定 reward；不修改 agent 循环               |
+| Harness         | 沿用 `AgentRunnable.run`；绑定推理与环境能力；返回完整输出、结束原因和调用记录       | 不读取 benchmark 名称、标准答案或参考补丁      |
+| Client／Service | Client 管任务顺序、session、评分与训练交接；Service 在 Worker 持有环境并绑定 harness | 不重写模型／工具循环，不自行导出或消费训练张量 |
+
+`TaskInput` 只含公开信息；`EnvironmentSpec` 可序列化。`TaskResult` 包含最终输出、完成标志、产物及逐调用观测；评分结果保留
+reward 与判定依据，基础设施异常由客户端单列。评分资料不进入 agent 请求或工具可读环境；跨进程返回 patch 内容，不假定客户端与 Worker 共享本地路径。
+
+首轮执行：Client 创建 session → Service 准备环境并调用 Hermes → 导出结果／产物 → Client 调 benchmark 评分 → 原生
+set_reward／handoff → 清理。DAPO 评分最终文本；SWE 导出模型 patch，由评分端在独立测试环境调用上游评测，不需要客户端直接持有 Worker 的
+Python 环境对象。
+
+DAPO 继续使用现有隔离 Python 工具；SWE 的 `workspace_exec` 在每题独立容器内执行，提供仓库文件／编辑／终端能力，并导出含新增文件的
+patch。Hermes 仅绑定当前环境的工具集；命令和类路径统一使用共享工作流。
+
+### 本轮交付与验收边界
+
+| 部分          | 已实现                                                                            | 离线验收                                                                             |
+| ------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| 公共层与 DAPO | 共用 client／service；独立数学 benchmark、Python 环境与 Hermes 绑定；单一公共入口 | 固定 manifest／prompt／评分；两种环境的多轮 SDK 路由与逐调用计时；公共 CLI 结果格式  |
+| SWE           | 固定上游评测版本；仓库工具、模型 patch 导出与独立评分；任务准备与镜像拉取命令     | 临时真实 Git 仓库、候选／测试 patch、pytest 与真实上游解析评分；Docker 传输使用替身  |
+| 配置与交接    | 共用 PPOTrainer 薄入口、常驻默认配置、原生 session／set_reward／handoff           | 两类配置的 Hydra 组合；模拟 HTTP 的 session／奖励交接与已有 durable handoff 正常路径 |
+
+固定清单与顺序保持，不要求重新生成的回答逐 token 相同。推理墙钟、工具墙钟、episode 总耗时保持各自口径；Rollout prefill／decode
+继续使用已有引擎 batch 采集，不从 SDK 调用区间推测。
+
+SWE 评测代码固定至 `c71902a8`，运行记录实际 image ID；跨运行任务镜像还须冻结 registry digest。训练评分显式使用模型候选 patch，参考
+patch 仅用于环境验收。测试命令与日志解析沿用 SWE-rebench 原生评测；新数据源增加初始化／评分适配，复用环境与 harness。
+
+本轮不跑故障注入、不改核心配置结构／launcher／scheduler，不新增依赖。后续真实服务评测需先拉取任务镜像并验收参考 patch；GPU 训练还须独立解决原
+OOM，并核对 Trainer 实际消费、更新与发布，不能以客户端完成代替训练成功。
+
+CC 接入已补充：`service.CCTaskAgent` 组合 SDK 原生循环与共享环境，逐题 relay 转发至 v2 `/v1/messages` 并绑定
+episode 身份。真实 SDK／CLI 的 DAPO、SWE
+多轮工具与评分、并发转发隔离共3项通过，合并21项离线检查无跳过；[证据](../../../artifacts/cc-task-workflows-20261023/offline-validation.json)。真实模型、GPU
+训练及压缩／子调用待实测。
+
+## 下一阶段：Hermes 数学在线 RL 与到达率对照
+
+2026-10-22：阶段 1 的四个适配文件已实现，8 项本地正常路径检查通过；真实 Docker／Hermes／GPU 闭环、模型预跑与收益对照待完成。 运行步骤见
+[Hermes 数学工作流](../task_workflows/README.md)。本节优先于下文历史验收方案，暂不做故障注入。
+
+目标：复用真实 Hermes、v2 online PPO 和 Basic 固定超时生命周期，以公开数学任务研究请求到达变化；新复杂 workflow 并行调研。 不改 PPO
+数学、不接 revision／Reference，不扩展 GPU 拓扑。
+
+### 工作负载与首轮配置
+
+- 数据：[`open-r1/DAPO-Math-17k-Processed`](https://huggingface.co/datasets/open-r1/DAPO-Math-17k-Processed)
+  的 `en`／`train`；上游已去重，保留原始题目和标签，固定 revision、内容摘要与题目
+  ID。仅在划分预跑／训练／评估集时按空白规范化题干分组，防止格式变体跨集。 本地已生成 200／1,000／200 题清单；训练算法仍沿用当前
+  PPO，标准答案只由评分器持有。
+- 每个外部请求是一道独立题、一个 session／episode；Hermes 按需调用隔离 Python 工具，读取结果后继续推理。
+  不强制第二轮或工具调用次数；真实执行新轨迹，不回放参考解。
+- 模型沿用已验收的 Qwen3-4B-Instruct-2507 固定 revision；初始固定 FSDP4＋SGLang1，使用已授权的 8×H20 范围。
+  先核对服务器可达性、空闲资源、模型和完整 checkpoint 空间；每组使用独立状态与日志目录。
+- 起点：`n_samples=1`、B=4 个独立 episode、staleness=2，关闭 singleton group 的中心化；同一 episode
+  的多次模型调用沿用原生导出与奖励传播。分别记录 episode、模型调用、导出序列、工具调用、有效训练 token 和 update。
+- 按需组使用 Basic idle=60s、最短驻留=120s；常驻组保持 Actor 常驻。生成／上下文预算、工具限额、训练配置和周期保存规则由预跑确定后冻结。
+
+### 阶段与完成标准
+
+| 阶段            | 工作                                                                                                                      | 完成标准                                                                                                                    |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| 1．任务闭环     | 数据适配、数学答案评分；自动创建 session、请求真实 Hermes、回传 episode 奖励并核对导出                                    | 题目与答案分离；按最终数学答案评分；正常任务错误保持 0 分，评分器／服务异常单列；奖励覆盖该 episode 的真实模型输出          |
+| 2．模型预跑     | 先少量正常冒烟，再固定随机约 200 题，用独立推理评估路径运行，不占训练 inbox 的 admission 额度；记录工具与 token／耗时分布 | 确认可解析答案和有效奖励，报告自然工具使用率、正确率与预算截断；若几乎全错或全对，调整模型／题集，另留未用于选择的评估题    |
+| 3．持续在线训练 | 固定约 1,000–2,000 题的初始任务清单与顺序，接通持续到达、PPO、权重发布和 Basic 启停                                       | 无等待训练完成再发题的客户端屏障；保存真实 episode 身份、奖励回执、导出和消费记录；Agent Service／Rollout 跨 Actor 代次存活 |
+| 4．收益对照     | 同一请求时间表分别运行常驻／按需；覆盖稳定、低→高→低、突发三种到达模式                                                    | 首轮 3×2 组完整报告；同时比较训练完成量、延迟、过期比例和资源占用，不能以少训练代替节省；随后对主要结果重复运行             |
+
+阶段 1–3 的实现现统一位于 `examples/task_workflows/`，复用原生 session／reward、PPOTrainer、Monitor
+和启停规则；具体分工见上文共享边界。运行数据、环境配置、报告与图保留在 artifacts，仓库仅保留入口和必要说明。
+
+数学任务位于 `benchmarks/dapo_math.py`，Python 工具位于 `environments/python.py`，Hermes 适配位于
+`harnesses/hermes.py`，共用 `client.py`／`service.py`／`train.py`。八卡评测和1.7B训练步骤分别见
+[EVAL_8H20.md](../task_workflows/EVAL_8H20.md) 与
+[TRAIN_8H20.md](../task_workflows/TRAIN_8H20.md)；正式配方迁移至
+`configs/dapo_17b_resident.yaml`，训练参数保持，原 OOM 未解决。
+
+### 请求与比较方法
+
+- 用常驻基线测得可持续处理能力 μ，再固定各阶段的 requests/s、持续时间、随机种子与请求清单；具体数值不凭空指定。 固定平均到达率可用 Poisson
+  间隔，变化场景使用分段到达率；原始计划到达时间表供两组共用。
+- 请求发生器按时间独立产生任务；执行并发另设上限。分别记录计划到达、实际发出、admission、完成、评分与消费时间； 并发满和 429
+  背压显式排队、记录等待，重试保留同一任务身份，不丢弃任务或等待上一条完成后重置到达计时。
+- 两组固定初始权重、题目顺序、采样／优化设置、batch、staleness、工具资源、保存周期及开始／结束边界。
+  请求窗口后采用统一收尾规则与截止时间，列出剩余任务；再按相同有效训练量复核收益，不要求在线轨迹逐 token 相同。
+- 指标：Actor、Rollout 及合计的 GPU 进程驻留卡时（含启停／恢复／发布／保存开销），另列预留配额； 完成任务与更新数、有效 token、吞吐、请求／训练等待
+  p50／p95、过期与截断、队列、工具等待、奖励及独立评估。 GPU 进程退出不等于 Slurm 配额归还，受控到达表不称为真实生产
+  trace；小规模结果不直接声称学习提升。
+- 交付同一时间轴的 Agent Service／Rollout／Actor 三行图，标明工作／等待、工具、批次就绪、PPO、发布、保存和释放／恢复，并保留实际时长。
+- 改动完成后集中做必要正常路径检查与 GPU 实验；暂不做 corner case／故障注入。首轮 FSDP 结论限定该布局，Megatron 另行复核。
+
 ## 公司端数据与补测
 
 版本约束：用户确认九条 Tau2 来自 AReaL v1，目标系统是 v2。执行版本、配置与计时边界进入历史输入身份； 公司端先核对两版的

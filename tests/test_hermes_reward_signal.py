@@ -8,9 +8,328 @@ import pytest
 import torch
 import yaml
 
-from areal.api.cli_args import PPOActorConfig
-
 _CONFIG_PATH = Path(__file__).resolve().parents[1] / "examples/hermes/config.yaml"
+
+
+def test_hermes_math_tool_captures_real_python_output():
+    from examples.task_workflows.environments.python import run_limited
+
+    result = run_limited(
+        [sys.executable, "-c", "print(6 * 7)"], timeout=10, output_bytes=1024
+    )
+    assert result["status"] == "completed"
+    assert result["exit_code"] == 0
+    assert result["output"].strip() == "42"
+
+
+def test_hermes_math_sampling_keeps_episode_on_direct_and_recreated_clients(
+    monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+
+    from examples.task_workflows import service
+    from examples.task_workflows.environments import python as python_environment
+    from examples.task_workflows.harnesses import hermes
+    from examples.task_workflows.harnesses.hermes import _Upstream
+
+    requests = []
+    clock = SimpleNamespace(value=0.0)
+
+    def chunks():
+        for text in ("hello", "world"):
+            clock.value += 2.0
+            yield text
+
+    def client():
+        def create(**kwargs):
+            requests.append(kwargs)
+            clock.value += 1.0
+            return chunks() if kwargs.get("stream") else kwargs
+
+        return SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+        )
+
+    class Agent:
+        def __init__(self, **kwargs):
+            assert kwargs["enabled_toolsets"] == [
+                python_environment.PythonSandbox.toolset
+            ]
+            self.request_overrides = kwargs.get("request_overrides", {})
+            self.client = client()
+
+        def _create_openai_client(self, *args, **kwargs):
+            return client()
+
+    module = ModuleType("run_agent")
+    module.AIAgent = Agent
+    monkeypatch.setitem(sys.modules, "run_agent", module)
+    monkeypatch.setenv("AREAL_TASK_PYTHON_IMAGE", "local-python-image")
+    monkeypatch.setenv("AREAL_TASK_TOOL_ROOT", str(tmp_path))
+    monkeypatch.setenv("AREAL_TASK_MAX_TOKENS", "123")
+    monkeypatch.setattr(
+        hermes,
+        "time",
+        SimpleNamespace(time=lambda: clock.value, perf_counter=lambda: clock.value),
+    )
+    monkeypatch.setattr(python_environment, "time", hermes.time)
+    monkeypatch.setattr(service.importlib.metadata, "version", lambda name: "0.19.0")
+    monkeypatch.setattr(service, "register_environment_tools", lambda provider: None)
+    monkeypatch.setattr(python_environment.shutil, "which", lambda name: "/bin/docker")
+    monkeypatch.setattr(
+        python_environment.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(stdout="sha256:test-image\n"),
+    )
+    identity = {"incarnation_id": "math-source", "trajectory_id": 2}
+    adapter = service.TaskAgent()
+    agent = adapter._build_agent(
+        _Upstream("http://inference/v1", "session-key", "test", identity)
+    )
+    agent.client.chat.completions.create(model="test", messages=[])
+    stream = agent._create_openai_client().chat.completions.create(
+        model="test", messages=[], stream=True
+    )
+    assert agent._areal_inference_calls[1]["finished"] is None
+    assert list(stream) == ["hello", "world"]
+    stream.close()
+    assert [call["seconds"] for call in agent._areal_inference_calls] == [1.0, 5.0]
+    tool = SimpleNamespace(call_timings=[])
+
+    def execute(code):
+        clock.value += 4.0
+        return "42"
+
+    tool.execute = execute
+    tool.invoke = lambda name, arguments: python_environment.PythonSandbox.invoke(
+        tool, name, arguments
+    )
+    monkeypatch.setitem(hermes._runtimes, "timed-task", tool)
+    assert (
+        hermes._dispatch_tool(
+            "math_python", {"code": "print(6 * 7)"}, task_id="timed-task"
+        )
+        == "42"
+    )
+    assert tool.call_timings[0]["seconds"] == 4.0
+    assert len(requests) == 2
+    for request in requests:
+        assert request["extra_body"]["areal_episode"] == identity
+        assert request["max_tokens"] == 123
+        assert request["temperature"] == request["top_p"] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_hermes_math_client_scores_and_confirms_durable_episode(tmp_path):
+    import httpx
+
+    from examples.task_workflows.benchmarks.dapo_math import MathTask, question_id
+    from examples.task_workflows.client import ClientSettings, EpisodeClient
+
+    from areal.elastic.state.episode_inbox import OnlineInbox
+
+    state = tmp_path / "state"
+    inbox = OnlineInbox(state / "inbox", batch_size=1, max_staleness=2)
+    output = tmp_path / "client"
+    output.mkdir()
+    identity = {"incarnation_id": "math-incarnation", "trajectory_id": 0}
+    session_id = "math-session"
+    admission = None
+    observed = []
+
+    def respond(request):
+        nonlocal admission
+        body = json.loads(request.content)
+        observed.append((request.url.path, body))
+        if request.url.path == "/rl/start_session":
+            return httpx.Response(
+                201,
+                json={
+                    "sessions": [
+                        {
+                            "session_id": session_id,
+                            "session_api_key": "session-secret",
+                            "areal_episode": identity,
+                        }
+                    ]
+                },
+            )
+        if request.url.path == "/v1/responses":
+            assert "gold_answer" not in request.content.decode()
+            assert "42" not in body["input"][0]["content"]
+            assert body["inf_episode"] == identity
+            admission = inbox.admit("worker:math-incarnation", session_id, 0)
+            return httpx.Response(
+                200,
+                json={
+                    "status": "completed",
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [{"type": "output_text", "text": r"\boxed{42}"}],
+                        }
+                    ],
+                    "metadata": {
+                        "completed": True,
+                        "api_calls": 1,
+                        "environment": {"calls": []},
+                    },
+                },
+            )
+        if request.url.path == "/rl/set_reward":
+            assert body == {"reward": 1.0, "areal_episode": identity}
+            inbox.receive(
+                admission["episode_id"],
+                admission["lease"],
+                {
+                    "input_ids": torch.tensor([[1, 2]]),
+                    "attention_mask": torch.tensor([[1, 1]]),
+                    "loss_mask": torch.tensor([[0, 1]]),
+                    "logprobs": torch.tensor([[0.0, -0.1]]),
+                    "versions": torch.tensor([[0, 0]]),
+                    "rewards": torch.tensor([1.0]),
+                },
+            )
+            inbox.acknowledge_source(admission["episode_id"], admission["lease"])
+            return httpx.Response(
+                200,
+                json={
+                    "trajectory_id": 0,
+                    "trajectory_ready": True,
+                    "interaction_count": 1,
+                },
+            )
+        if request.url.path == "/sessions/close":
+            return httpx.Response(200, json={"status": "closed"})
+        raise AssertionError(request.url.path)
+
+    settings = ClientSettings(
+        agent_url="http://agent",
+        inference_url="http://inference",
+        agent_key="agent-secret",
+        inference_key="inference-secret",
+        model="test-model",
+        mode="on_demand",
+        output=output,
+        state_root=state,
+        concurrency=1,
+    )
+    question = "Compute six times seven."
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        summary = await EpisodeClient(settings, http).run(
+            [MathTask(question_id(question), question, "42")]
+        )
+    assert (
+        summary["completed"] == summary["durable_handoffs"] == summary["correct"] == 1
+    )
+    row = json.loads((output / "episodes.jsonl").read_text())
+    assert row["handoff"]["digest"]
+    assert row["handoff"]["source_acked"] == 1
+    assert "session-secret" not in json.dumps(row)
+    assert [path for path, _ in observed] == [
+        "/rl/start_session",
+        "/v1/responses",
+        "/rl/set_reward",
+        "/sessions/close",
+    ]
+
+
+def test_hermes_math_config_shares_training_settings_across_lifecycles(
+    monkeypatch, tmp_path
+):
+    from omegaconf import OmegaConf
+
+    path = _CONFIG_PATH.parent.parent / "task_workflows/configs/dapo.yaml"
+    for key, value in {
+        "AREAL_TASK_RUN_ROOT": str(tmp_path / "runs"),
+        "AREAL_TASK_STATE_ROOT": str(tmp_path / "state"),
+        "AREAL_MODEL_PATH": str(tmp_path / "model"),
+        "AREAL_INFERENCE_ADMIN_KEY": "inference-test",
+        "AREAL_ACTOR_ADMIN_KEY": "actor-test",
+        "AREAL_CHECKPOINT_ESTIMATED_BYTES": str(80 << 30),
+    }.items():
+        monkeypatch.setenv(key, value)
+    configs = []
+    for mode in ("resident", "on_demand"):
+        monkeypatch.setenv("AREAL_ACTOR_LIFECYCLE", mode)
+        config = OmegaConf.to_container(OmegaConf.load(path), resolve=True)
+        assert config["actor_lifecycle"].pop("mode") == mode
+        assert config["train_dataset"]["batch_size"] == 4
+        assert config["rollout"]["consumer_batch_size"] == 4
+        assert config["rollout"]["agent"]["set_reward_finish_timeout"] == 0
+        configs.append(config)
+    assert configs[0] == configs[1]
+
+
+@pytest.mark.asyncio
+async def test_hermes_math_eval_does_not_create_or_reward_training_sessions(tmp_path):
+    import httpx
+
+    from examples.task_workflows.benchmarks.dapo_math import MathTask, question_id
+    from examples.task_workflows.client import ClientSettings, EpisodeClient
+
+    paths = []
+
+    def respond(request):
+        paths.append(request.url.path)
+        body = json.loads(request.content)
+        if request.url.path == "/v1/responses":
+            assert body["session_api_key"] == "inference-admin"
+            assert "inf_episode" not in body
+            return httpx.Response(
+                200,
+                json={
+                    "status": "completed",
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [{"type": "output_text", "text": r"\boxed{42}"}],
+                        }
+                    ],
+                    "metadata": {
+                        "completed": True,
+                        "api_calls": 1,
+                        "inference_calls": [
+                            {"started": 10.0, "finished": 13.0, "seconds": 3.0}
+                        ],
+                        "environment": {
+                            "timing_calls": [
+                                {"started": 12.0, "finished": 14.0, "seconds": 2.0}
+                            ],
+                            "calls": [
+                                {
+                                    "status": "completed",
+                                    "started": 13.0,
+                                    "finished": 14.0,
+                                    "seconds": 0.5,
+                                }
+                            ],
+                        },
+                    },
+                },
+            )
+        assert request.url.path == "/sessions/close"
+        return httpx.Response(200, json={"status": "closed"})
+
+    question = "Compute six times seven."
+    settings = ClientSettings(
+        agent_url="http://agent",
+        inference_url="http://inference",
+        agent_key="agent-admin",
+        inference_key="inference-admin",
+        model="test-model",
+        mode="eval",
+        output=tmp_path,
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+        result = await EpisodeClient(settings, http).run_task(
+            MathTask(question_id(question), question, "42")
+        )
+    assert result["score"]["reward"] == 1
+    assert result["timing"]["total_seconds"] >= 0
+    assert result["timing"]["inference_seconds"] == 3.0
+    assert result["timing"]["tool_seconds"] == 2.0
+    assert paths == ["/v1/responses", "/sessions/close"]
 
 
 def _load_config() -> dict:
@@ -18,6 +337,8 @@ def _load_config() -> dict:
 
 
 def test_hermes_singleton_online_config_preserves_each_outcome_signal():
+    from areal.api.cli_args import PPOActorConfig
+
     config = _load_config()
     actor = config["actor"]
 
