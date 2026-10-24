@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
-"""Drive benchmark episodes through any task-capable v2 Agent Service."""
+"""Drive benchmark episodes through a task executor and the native v2 RL lifecycle."""
 
 from __future__ import annotations
 
@@ -19,7 +19,12 @@ from typing import Any
 import httpx
 from tqdm import tqdm
 
-from examples.task_workflows.types import Benchmark, TaskResult, get_benchmark
+from examples.task_workflows.types import (
+    Benchmark,
+    TaskExecutor,
+    TaskResult,
+    get_benchmark,
+)
 
 
 class InboxAudit:
@@ -95,6 +100,7 @@ class ClientSettings:
     request_timeout: float = 900.0
     handoff_timeout: float = 180.0
     benchmark: str = "dapo_math"
+    backend: str = "agent_service"
 
     def __post_init__(self) -> None:
         if self.mode not in ("on_demand", "resident", "eval"):
@@ -107,7 +113,11 @@ class ClientSettings:
             )
         if min(self.concurrency, self.request_timeout, self.handoff_timeout) <= 0:
             raise ValueError("Concurrency and timeouts must be positive")
-        if not self.agent_key or not self.inference_key:
+        if self.backend not in ("agent_service", "arena"):
+            raise ValueError("Unsupported execution backend")
+        if not self.inference_key or (
+            self.backend == "agent_service" and not self.agent_key
+        ):
             raise ValueError("Agent and inference API keys are required")
 
 
@@ -117,9 +127,13 @@ class EpisodeClient:
         settings: ClientSettings,
         http: httpx.AsyncClient,
         benchmark: Benchmark | None = None,
+        executor: TaskExecutor | None = None,
     ) -> None:
         self.settings, self.http = settings, http
         self.benchmark = benchmark or get_benchmark(settings.benchmark)
+        if (settings.backend == "arena") != (executor is not None):
+            raise ValueError("Arena settings require an explicit task executor")
+        self.executor = executor
         self._write_lock = asyncio.Lock()
         self.audit = (
             InboxAudit(settings.state_root) if settings.mode == "on_demand" else None
@@ -186,10 +200,19 @@ class EpisodeClient:
     def _task_result(self, response: dict) -> TaskResult:
         return TaskResult.from_response(response)
 
-    async def run_task(self, task: Any) -> dict[str, Any]:
+    async def run_task(
+        self, task: Any, *, request_id: str | None = None
+    ) -> dict[str, Any]:
         started = time.time()
         clock = time.perf_counter()
-        request_id = self.benchmark.request_prefix + "-" + uuid.uuid4().hex
+        request_id = (
+            request_id or self.benchmark.request_prefix + "-" + uuid.uuid4().hex
+        )
+        saved = await self.executor.load(request_id) if self.executor else {}
+        if saved and saved.get("task_id") != task.task_id:
+            raise ValueError("Resume task differs from the saved episode")
+        if saved.get("completed_result"):
+            return saved["completed_result"]
         credentials = None
         rewarded = False
         agent_finished = False
@@ -200,63 +223,80 @@ class EpisodeClient:
         }
         try:
             settings = self.settings
+            if self.executor:
+                await self.executor.save(request_id, task_id=task.task_id)
             if settings.mode != "eval":
-                response = await self._post(
-                    settings.inference_url,
-                    "/rl/start_session",
-                    settings.inference_key,
-                    {"task_id": request_id},
-                )
-                if len(response["sessions"]) != 1:
-                    raise RuntimeError("Independent task requests require one session")
-                credentials = response["sessions"][0]
+                credentials = saved.get("credentials")
+                if credentials is None:
+                    if saved.get("session_intent"):
+                        raise RuntimeError(
+                            "Session creation outcome is unknown; inspect before retrying"
+                        )
+                    if self.executor:
+                        await self.executor.save(request_id, session_intent=True)
+                    response = await self._post(
+                        settings.inference_url,
+                        "/rl/start_session",
+                        settings.inference_key,
+                        {"task_id": request_id},
+                    )
+                    if len(response["sessions"]) != 1:
+                        raise RuntimeError(
+                            "Independent task requests require one session"
+                        )
+                    credentials = response["sessions"][0]
+                    if self.executor:
+                        await self.executor.save(request_id, credentials=credentials)
                 if settings.mode == "on_demand" and not credentials.get(
                     "areal_episode"
                 ):
                     raise RuntimeError(
                         "Inference service did not return a durable episode identity"
                     )
+                if self.executor and not credentials.get("areal_episode"):
+                    raise RuntimeError(
+                        "Arena training requires an explicit AReaL episode identity"
+                    )
+                if not saved.get("admitted"):
+                    await self._admit(credentials)
+                    if self.executor:
+                        await self.executor.save(request_id, admitted=True)
                 result.update(
                     session_id=credentials["session_id"],
                     episode=credentials.get("areal_episode"),
                 )
-                await self._admit(credentials)
             task_input = self.benchmark.prepare(task)
             result["submitted"] = time.time()
-            payload = {
-                "input": [{"type": "message", "content": task_input.message}],
-                "model": "task-agent",
-                "metadata": {
-                    "task_id": task_input.task_id,
-                    "task_environment": asdict(task_input.environment),
-                },
-                "user": request_id,
-                "inf_base_url": settings.inference_url.rstrip("/") + "/v1",
-                "inf_model": settings.model,
-                # Eval uses the admin-authenticated standalone inference path:
-                # no RL session, reward callback, or training admission credit.
-                "session_api_key": credentials["session_api_key"]
-                if credentials
-                else settings.inference_key,
-            }
-            if credentials and credentials.get("areal_episode"):
-                payload["inf_episode"] = credentials["areal_episode"]
-            response = await self._post(
-                settings.agent_url,
-                "/v1/responses",
-                settings.agent_key,
-                payload,
-                session_key=request_id,
-            )
+            remote_score = None
+            if self.executor:
+                execution = await self.executor.execute(
+                    task_input,
+                    request_id=request_id,
+                    base_url=settings.inference_url.rstrip("/") + "/v1",
+                    api_key=credentials["session_api_key"]
+                    if credentials
+                    else settings.inference_key,
+                    model=settings.model,
+                    episode=credentials.get("areal_episode") if credentials else None,
+                )
+                task_result, metadata, remote_score = (
+                    execution.result,
+                    execution.metadata,
+                    execution.score,
+                )
+            else:
+                response = await self._execute_agent(
+                    task_input, request_id, credentials
+                )
+                agent_finished = True
+                task_result = self._task_result(response)
+                metadata = response.get("metadata", {})
             agent_finished = True
-            task_result = self._task_result(response)
-            metadata = response.get("metadata", {})
-            # Normalized environment metadata is shared by every benchmark/harness.
             metadata = {**metadata, "environment": task_result.environment}
             result["metadata"] = metadata
             result.update(answer=task_result.answer, answered=time.time())
             result.update(self.benchmark.result_metadata(task))
-            score = await asyncio.to_thread(
+            score = remote_score or await asyncio.to_thread(
                 self.benchmark.grade, task, task_result, settings.output / request_id
             )
             result["score"] = asdict(score)
@@ -265,12 +305,28 @@ class EpisodeClient:
                 reward_body = {"reward": score.reward}
                 if credentials.get("areal_episode"):
                     reward_body["areal_episode"] = credentials["areal_episode"]
-                receipt = await self._post(
-                    settings.inference_url,
-                    "/rl/set_reward",
-                    credentials["session_api_key"],
-                    reward_body,
-                )
+                if saved.get("reward_payload") not in (None, reward_body):
+                    raise RuntimeError("Reward differs from the saved submission")
+                receipt = saved.get("reward_receipt")
+                if receipt is None:
+                    if saved.get("reward_intent") and not credentials.get(
+                        "areal_episode"
+                    ):
+                        raise RuntimeError(
+                            "Reward outcome is unknown without episode identity"
+                        )
+                    if self.executor:
+                        await self.executor.save(
+                            request_id, reward_intent=True, reward_payload=reward_body
+                        )
+                    receipt = await self._post(
+                        settings.inference_url,
+                        "/rl/set_reward",
+                        credentials["session_api_key"],
+                        reward_body,
+                    )
+                    if self.executor:
+                        await self.executor.save(request_id, reward_receipt=receipt)
                 rewarded = True
                 if receipt.get("trajectory_id") is None or not receipt.get(
                     "trajectory_ready"
@@ -284,6 +340,8 @@ class EpisodeClient:
                     != credentials["areal_episode"]["trajectory_id"]
                 ):
                     raise RuntimeError("Reward receipt targets a different trajectory")
+                if receipt.get("session_id") not in (None, credentials["session_id"]):
+                    raise RuntimeError("Reward receipt targets a different session")
                 result["reward_receipt"] = receipt
                 result["handoff"] = await self._handoff(credentials)
                 result["handed_off"] = time.time()
@@ -293,31 +351,35 @@ class EpisodeClient:
             result.update(
                 status="infrastructure_error", error=f"{type(exc).__name__}: {exc}"
             )
-            # No generation retries. A known-finished unscored episode may be
-            # explicitly aborted; uncertain in-flight work is left for inspection.
             if (
                 credentials
                 and credentials.get("areal_episode")
                 and agent_finished
                 and not rewarded
             ):
-                try:
-                    result["abort_receipt"] = await self._post(
-                        self.settings.inference_url,
-                        "/rl/abort_episode",
-                        credentials["session_api_key"],
-                        {
-                            **credentials["areal_episode"],
-                            "reason": "task_client_infrastructure_error",
-                        },
-                    )
-                except Exception as abort_error:
-                    result["abort_error"] = type(abort_error).__name__
+                # A submitted reward may already have sealed the episode. Leave
+                # that outcome for identity-preserving resume rather than abort.
+                checkpoint = (
+                    await self.executor.load(request_id) if self.executor else {}
+                )
+                if not checkpoint.get("reward_intent"):
+                    try:
+                        result["abort_receipt"] = await self._post(
+                            self.settings.inference_url,
+                            "/rl/abort_episode",
+                            credentials["session_api_key"],
+                            {
+                                **credentials["areal_episode"],
+                                "reason": "task_client_infrastructure_error",
+                            },
+                        )
+                    except Exception as abort_error:
+                        result["abort_error"] = type(abort_error).__name__
             return result
         finally:
             if credentials:
                 self._starting.pop(credentials["session_id"], None)
-            if agent_finished:
+            if agent_finished and self.executor is None:
                 try:
                     await self._post(
                         self.settings.agent_url,
@@ -345,8 +407,62 @@ class EpisodeClient:
                 and all(call["finished"] is not None for call in tools)
                 else None,
             }
+            if self.executor:
+                await self.executor.save(
+                    request_id,
+                    **{
+                        "completed_result"
+                        if result.get("status") == "completed"
+                        else "last_result": result
+                    },
+                )
 
-    async def run(self, tasks: list[Any]) -> dict[str, Any]:
+    async def _execute_agent(self, task_input, request_id, credentials):
+        settings = self.settings
+        payload = {
+            "input": [{"type": "message", "content": task_input.message}],
+            "model": "task-agent",
+            "metadata": {
+                "task_id": task_input.task_id,
+                "task_environment": asdict(task_input.environment),
+            },
+            "user": request_id,
+            "inf_base_url": settings.inference_url.rstrip("/") + "/v1",
+            "inf_model": settings.model,
+            # Eval uses the admin-authenticated standalone inference path:
+            # no RL session, reward callback, or training admission credit.
+            "session_api_key": credentials["session_api_key"]
+            if credentials
+            else settings.inference_key,
+        }
+        if credentials and credentials.get("areal_episode"):
+            payload["inf_episode"] = credentials["areal_episode"]
+        response = await self._post(
+            settings.agent_url,
+            "/v1/responses",
+            settings.agent_key,
+            payload,
+            session_key=request_id,
+        )
+        return response
+
+    async def run(
+        self, tasks: list[Any], *, request_ids: list[str] | None = None
+    ) -> dict[str, Any]:
+        if request_ids is not None and (
+            len(request_ids) != len(tasks) or len(set(request_ids)) != len(tasks)
+        ):
+            raise ValueError("Each planned task requires one distinct request ID")
+        if self.executor and self.audit and request_ids:
+            # Reservations predating this process still count against admission.
+            # Restore them before any fresh episode can ask for capacity.
+            for request_id in request_ids:
+                checkpoint = await self.executor.load(request_id)
+                if checkpoint.get("admitted") and not checkpoint.get(
+                    "completed_result"
+                ):
+                    credentials = checkpoint["credentials"]
+                    self._starting[credentials["session_id"]] = credentials
         semaphore = asyncio.Semaphore(self.settings.concurrency)
         available_at = time.time()
         failed = asyncio.Event()
@@ -357,7 +473,9 @@ class EpisodeClient:
                 if failed.is_set():
                     row = {"task_id": task.task_id, "status": "not_submitted"}
                 else:
-                    row = await self.run_task(task)
+                    row = await self.run_task(
+                        task, request_id=request_ids[index] if request_ids else None
+                    )
                     if row["status"] != "completed":
                         failed.set()
                 row.update(task_index=index, available_at=available_at)

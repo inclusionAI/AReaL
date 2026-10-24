@@ -108,6 +108,16 @@ class PythonSandbox:
     def _command(self, *args: str) -> list[str]:
         return ["docker", "exec", self.container, *args]
 
+    def _run_code(self, code: str) -> dict[str, Any]:
+        return run_limited(
+            self._command("python", "-I", "-u", "-c", code),
+            timeout=self.settings.timeout,
+            output_bytes=self.settings.max_output_bytes,
+            process_group=getattr(self, "host_process_group", False),
+            env=getattr(self, "host_env", None),
+            separate_stderr=True,
+        )
+
     def _start(self) -> None:
         if self.container is not None:
             return
@@ -168,20 +178,7 @@ class PythonSandbox:
             try:
                 self._start()
                 name = self.container
-                result = run_limited(
-                    self._command(
-                        "python",
-                        "-I",
-                        "-u",
-                        "-c",
-                        code,
-                    ),
-                    timeout=self.settings.timeout,
-                    output_bytes=self.settings.max_output_bytes,
-                    process_group=getattr(self, "host_process_group", False),
-                    env=getattr(self, "host_env", None),
-                    separate_stderr=True,
-                )
+                result = self._run_code(code)
                 if result["exit_code"] in (125, 126, 127):
                     result["status"] = "infrastructure_error"
                 if result["status"] != "completed":

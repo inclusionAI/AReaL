@@ -16,6 +16,13 @@
 - `state/control/monitor/policy`
   分工；Basic与冻结Expert分离，AutoPilot提供revision／activation。原生PPO与FP32 master／moments语义保留。
 - Hermes／CC × DAPO／SWE共享任务、环境与评分，训练沿用online PPO；Docker默认，Slurm／Singularity为显式执行方式。
+- `lws/feat/elastic-envarena`
+  新增[Hermes／DAPO Arena runner](examples/task_workflows/arena/README.md)。真实平台的单题CPU链路已通过：Hermes
+  0.19.0、隔离Python工具、独立Reward与产物；模型响应为模拟接口，未验证真实推理或RL训练。
+- 同一固定源 revision 的 DAPO `en/train`
+  全量14,116题已发布，逐题保留原prompt与独立oracle，并核对发布配置；未重新划分既有实验题单，未运行全量评测或训练。
+- Arena 客户端新增固定组合检查、任务执行后端与保存身份的恢复入口，复用共享 session／admission／reward／inbox
+  回执流程。相关CPU正常路径通过（服务为接口替身）；真实平台只读核对全量题目映射及一题prompt通过，真实模型／Actor仍待验收。
 - 数学工具分开保存
   `stdout`／`stderr`，`output`仅含标准输出；宿主支持Python3.6.8，`TASK_PROC_MODE=none`可关闭工具／评分容器的`/proc`挂载。
 - 工作流41项离线正常路径、真实3.6.8宿主14项跨版本检查通过；其中容器命令与模型响应为替身，完整公司环境待验收。
@@ -23,6 +30,8 @@
 
 **阻塞与下一步**
 
+1. Arena 后续需验证真实模型可达性、AReaL
+   token采集、reward／持久轨迹交接。工具使用独立命名空间和受限tmpfs；进程地址空间限制与原Docker聚合内存限制仍有语义差异。
 1. 公司端先跑[CPU工具探针](examples/task_workflows/RUN_SLURM_SINGULARITY.md)，确认两路输出，再做16题纯推理评测；SWE先验证参考补丁评分。
 1. 1.7B正式5轮／batch40／125更新的原运行第4次更新反传OOM，仅3次更新、998题正常结果和2题服务错误，无checkpoint，相关进程已清理。正式重跑未启动；`n_mbs=10`和分配器配置均未构成已验证修复，须覆盖原失败规模及64K完整前后向。
 1. 显存验收后先做16题／4更新常驻训练，核对Trainer更新数、HF导出、逐调用计时与双方退出码，再推进正式训练和其余组合；[操作文档](examples/task_workflows/RUN_2X2_8GPU.md)。

@@ -29,7 +29,7 @@ def test_hermes_math_sampling_keeps_episode_on_direct_and_recreated_clients(
 
     from examples.task_workflows import service
     from examples.task_workflows.environments import python as python_environment
-    from examples.task_workflows.harnesses import hermes
+    from examples.task_workflows.harnesses import hermes, hermes_runtime
     from examples.task_workflows.harnesses.hermes import _Upstream
 
     requests = []
@@ -73,6 +73,7 @@ def test_hermes_math_sampling_keeps_episode_on_direct_and_recreated_clients(
         SimpleNamespace(time=lambda: clock.value, perf_counter=lambda: clock.value),
     )
     monkeypatch.setattr(python_environment, "time", hermes.time)
+    monkeypatch.setattr(hermes_runtime, "time", hermes.time)
     monkeypatch.setattr(service.importlib.metadata, "version", lambda name: "0.19.0")
     monkeypatch.setattr(service, "register_environment_tools", lambda provider: None)
     monkeypatch.setattr(python_environment.shutil, "which", lambda name: "/bin/docker")

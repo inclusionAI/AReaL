@@ -78,6 +78,32 @@ class GradeResult:
             raise ValueError("Benchmark reward must be finite")
 
 
+@dataclass(frozen=True)
+class TaskExecution:
+    result: TaskResult
+    metadata: dict[str, Any]
+    score: GradeResult | None = None
+
+
+class TaskExecutor(Protocol):
+    """Optional execution backend; the episode client owns the RL lifecycle."""
+
+    async def load(self, request_id: str) -> dict[str, Any]: ...
+
+    async def save(self, request_id: str, **values: Any) -> None: ...
+
+    async def execute(
+        self,
+        task: TaskInput,
+        *,
+        request_id: str,
+        base_url: str,
+        api_key: str,
+        model: str,
+        episode: dict[str, Any] | None,
+    ) -> TaskExecution: ...
+
+
 class Benchmark(Protocol):
     name: str
     request_prefix: str

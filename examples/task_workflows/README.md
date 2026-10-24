@@ -11,6 +11,11 @@ harness。训练沿用现有 online PPO，DAPO 在这里指数学数据集。
 
 执行方式并列保留：默认按[本地Docker](RUN_2X2_8GPU.md)运行；公司集群可选择[Slurm＋Singularity](RUN_SLURM_SINGULARITY.md)，通过宿主侧工具服务执行任务与评分，训练镜像内部不需要容器命令。两者复用同一任务／harness／评分契约。
 
+Hermes／DAPO 还可通过[Arena 独立 runner](arena/README.md)执行。该适配复用题目、评分和逐调用 trace，支持使用模拟模型完成无需
+GPU 的平台验证；真实模型与 AReaL 训练交接需另行验收。 `python -m examples.task_workflows.arena.cli` 提供固定组合的
+`check`、`run`、`resume`，复用本客户端的 session／admission／reward／持久交接逻辑；选择 Arena 时无需启动 Agent
+Service。
+
 | 模块                               | 职责                                                    |
 | ---------------------------------- | ------------------------------------------------------- |
 | `benchmarks/dapo_math.py`          | 原 DAPO 清单、prompt、最终答案评分                      |
