@@ -11,6 +11,7 @@ import os
 import re
 import time
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote_to_bytes
@@ -233,7 +234,14 @@ class ArenaExecutor:
             )
         state = await self.load(request_id)
         value = self.config.value
-        job_id = "arena-" + request_id
+        # Legacy explicit IDs require short-name-YYMMDDHHMM. Persist the chosen
+        # timestamp with the intent so a later resume retains the same identity.
+        job_id = state.get("arena_job_id") or (
+            "a"
+            + hashlib.sha256(request_id.encode()).hexdigest()[:12]
+            + "-"
+            + datetime.now(UTC).strftime("%y%m%d%H%M")
+        )
         env_key = row["data_id"][4:].rsplit("@", 1)[0]
         expected_task_id = f"{job_id}:{env_key}:0"
         if state.get("launch_intent"):

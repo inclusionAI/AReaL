@@ -118,6 +118,10 @@ unconfirmed reward can be replayed using AReaL's existing idempotent receipt sem
 Resume cannot repair expired sessions, lost inference workers, or uncertain generations.
 Mock configurations are refused for training.
 
+Explicit Job IDs follow the legacy `short-name-YYMMDDHHMM` constraint. The client
+combines a request digest with a UTC timestamp and checkpoints the selected ID before
+submission; resume reuses that stored ID even in a later minute.
+
 ## Export one frozen task
 
 From the checkout root, supply a split with its existing sibling `manifest.json`:
@@ -214,6 +218,12 @@ Usage is synthetic. This tests external connectivity and tool execution; it does
 solve the selected DAPO question, so even score zero can be a successful protocol probe.
 An `external` transport label in the Harness answer is not proof of a real model; record
 these runs as scripted probes and keep them out of training and quality results.
+
+The `0.1.3` runtime can represent a Hermes provider connection failure as an incomplete
+answer with reward zero. Platform `DONE`, Reward `OK`, or the client's completed task
+count therefore cannot certify connectivity. Inspect `answer.completed`, successful
+request completion IDs, and the expected tool roundtrip. Structured provider failure
+classification is still required before accepting this runner for RL training.
 
 ## CPU smoke and verification
 

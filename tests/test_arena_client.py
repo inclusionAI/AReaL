@@ -90,7 +90,7 @@ def arena_fixture(tmp_path, monkeypatch):
         + sys.executable
         + "\n"
         + r"""
-import json, os, pathlib, sys
+import datetime, json, os, pathlib, re, sys
 root = pathlib.Path(os.environ["ARENA_FIXTURE_ROOT"])
 fixture = json.loads((root / "registry.json").read_text())
 args = sys.argv[sys.argv.index("--json") + 1:]
@@ -114,6 +114,8 @@ elif kind == "api":
     offset = int(args[-1].split("=")[-1])
     data = {"data_ids": [fixture["rows"][offset]["data_id"]], "total": 2}
 elif kind == "stream" and action == "launch":
+    assert re.fullmatch(r"[a-z][a-z0-9-]*-[0-9]{10}", body["job_id"])
+    datetime.datetime.strptime(body["job_id"].rsplit("-", 1)[1], "%y%m%d%H%M")
     env_key = body["data_id"][4:].split("@")[0]
     data = {"job_id": body["job_id"], "task_id": body["job_id"] + ":" + env_key + ":0"}
     (root / "launch.json").write_text(json.dumps(body))
@@ -335,6 +337,7 @@ async def test_arena_client_preserves_episode_reward_trace_and_completed_resume(
     saved = output / "math-stable/state.json"
     assert saved.stat().st_mode & 0o777 == 0o600
     assert json.loads(saved.read_text())["completed_result"] == result
+    assert json.loads(saved.read_text())["arena_job_id"] == launch["job_id"]
     trace = json.loads((saved.parent / "artifacts/call_trace.json").read_text())
     assert trace["nodes"][-1]["predecessors"] == ["tool-2"]
     calls = [json.loads(line) for line in calls_before.splitlines()]
