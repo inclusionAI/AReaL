@@ -189,6 +189,32 @@ process**. The Arena task's aggregate memory limit is separate; this is not iden
 the Docker backend's aggregate 512 MiB cgroup limit. The interpreter/base libraries are
 read-only. The startup isolation probe is included in `environment.json`.
 
+## External CPU network probe
+
+`network_probe_server.py` is a standalone Python standard-library server. Copy this
+single file to a CPU development host; it does not import AReaL or require a GPU:
+
+```bash
+python3 network_probe_server.py --bind 0.0.0.0 --port 8000 --output "$PROBE_DIR"
+```
+
+It writes a private `key` file, `server.json` and credential-free `requests.jsonl`.
+Transfer the key file to the caller and use its value through an environment variable
+for an `eval` run. You can instead pre-create `$PROBE_DIR/key` with an explicit
+disposable fixture value shared with the caller; never use a real model or Arena token
+for this scripted endpoint. Keep the server running while submitting one task with the
+published external Harness, `--model scripted-network-probe` and the host's reachable
+origin. `/healthz` reports the server instance ID. A browser-authenticated
+port-forwarding URL does not by itself establish that Arena can reach the service.
+
+The server asks Hermes to run authored `print(6 * 7)` code, then returns the tool's
+output in a final answer. It supports JSON/SSE responses, records completion IDs for
+matching against `call_trace.json`, and refuses requests containing `areal_episode`.
+Usage is synthetic. This tests external connectivity and tool execution; it does not
+solve the selected DAPO question, so even score zero can be a successful protocol probe.
+An `external` transport label in the Harness answer is not proof of a real model; record
+these runs as scripted probes and keep them out of training and quality results.
+
 ## CPU smoke and verification
 
 A smoke recipe has only `prompt_sha256` and authored Python `code`, with no gold. The
